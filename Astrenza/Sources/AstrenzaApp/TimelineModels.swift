@@ -103,6 +103,12 @@ struct TimelinePost: Identifiable {
     }
 }
 
+extension TimelinePost {
+    var shouldObscureExternalAttachments: Bool {
+        !author.isFollowed && (repostedBy != nil || replyContext != nil)
+    }
+}
+
 struct TimelineContentWarning {
     let reason: String?
 
@@ -182,6 +188,22 @@ struct QuotedTimelinePost {
     let body: String
     let timestamp: String
     let isAvailable: Bool
+
+    func timelinePost() -> TimelinePost {
+        TimelinePost(
+            id: "quoted-\(author.pubkey)-\(timestamp)",
+            author: author,
+            avatar: avatar,
+            body: body,
+            timestamp: timestamp,
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
+    }
 }
 
 struct TimelineAuthor {
@@ -190,6 +212,7 @@ struct TimelineAuthor {
     let nip05Status: NIP05Status
     let pubkey: String
     let isMetadataResolved: Bool
+    let isFollowed: Bool
 
     var primaryText: String {
         guard let displayName, !displayName.isEmpty else {
@@ -224,7 +247,7 @@ struct TimelineAuthor {
         case .unchecked:
             return "questionmark.circle"
         case .absent:
-            return "key.horizontal"
+            return "person.crop.circle"
         }
     }
 
@@ -232,26 +255,30 @@ struct TimelineAuthor {
         displayName: String,
         nip05: String?,
         nip05Status: NIP05Status = .valid,
-        pubkey: String
+        pubkey: String,
+        isFollowed: Bool = true
     ) -> TimelineAuthor {
         TimelineAuthor(
             displayName: displayName,
             nip05: nip05,
             nip05Status: nip05 == nil ? .absent : nip05Status,
             pubkey: pubkey,
-            isMetadataResolved: true
+            isMetadataResolved: true,
+            isFollowed: isFollowed
         )
     }
 
     static func unresolved(pubkey: String) -> TimelineAuthor {
-        TimelineAuthor(displayName: nil, nip05: nil, nip05Status: .absent, pubkey: pubkey, isMetadataResolved: false)
+        TimelineAuthor(displayName: nil, nip05: nil, nip05Status: .absent, pubkey: pubkey, isMetadataResolved: false, isFollowed: false)
     }
 
     static func mockPubkey(for seed: String) -> String {
-        let suffix = seed.lowercased()
-            .filter { $0.isLetter || $0.isNumber }
-            .padding(toLength: 8, withPad: "0", startingAt: 0)
-        return "npub1\(suffix)8x7k2p9q4m6v0s3n5rjcw"
+        let bytes = seed.utf8.reduce(into: [UInt8](repeating: 0, count: 32)) { result, byte in
+            let index = Int(byte) % result.count
+            result[index] = result[index] &+ byte &+ UInt8(index)
+        }
+
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     private func displayableNIP05(_ identifier: String) -> String {
@@ -263,9 +290,107 @@ struct TimelineAuthor {
     }
 
     private var abbreviatedPubkey: String {
-        guard pubkey.count > 16 else { return pubkey }
+        let displayPubkey = NIP19Display.npub(fromHexPubkey: pubkey) ?? pubkey
+        guard displayPubkey.count > 16 else { return displayPubkey }
 
-        return "\(pubkey.prefix(10))...\(pubkey.suffix(6))"
+        return "\(displayPubkey.prefix(10))...\(displayPubkey.suffix(6))"
+    }
+}
+
+private enum NIP19Display {
+    private static let charset = Array("qpzry9x8gf2tvdw0s3jn54khce6mua7l")
+    private static let generator: [Int] = [
+        0x3b6a57b2,
+        0x26508e6d,
+        0x1ea119fa,
+        0x3d4233dd,
+        0x2a1462b3
+    ]
+
+    static func npub(fromHexPubkey hexPubkey: String) -> String? {
+        guard let bytes = bytes(fromHex: hexPubkey), bytes.count == 32 else {
+            return nil
+        }
+
+        let data = convertBits(bytes, fromBits: 8, toBits: 5, pad: true)
+        return bech32Encode(hrp: "npub", data: data)
+    }
+
+    private static func bytes(fromHex hex: String) -> [UInt8]? {
+        guard hex.count % 2 == 0 else { return nil }
+
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(hex.count / 2)
+
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let nextIndex = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<nextIndex], radix: 16) else {
+                return nil
+            }
+
+            bytes.append(byte)
+            index = nextIndex
+        }
+
+        return bytes
+    }
+
+    private static func convertBits(_ data: [UInt8], fromBits: Int, toBits: Int, pad: Bool) -> [Int] {
+        var accumulator = 0
+        var bitCount = 0
+        let maxValue = (1 << toBits) - 1
+        var output: [Int] = []
+
+        for value in data {
+            accumulator = (accumulator << fromBits) | Int(value)
+            bitCount += fromBits
+
+            while bitCount >= toBits {
+                bitCount -= toBits
+                output.append((accumulator >> bitCount) & maxValue)
+            }
+        }
+
+        if pad, bitCount > 0 {
+            output.append((accumulator << (toBits - bitCount)) & maxValue)
+        }
+
+        return output
+    }
+
+    private static func bech32Encode(hrp: String, data: [Int]) -> String {
+        let checksum = createChecksum(hrp: hrp, data: data)
+        let encodedData = (data + checksum).map { String(charset[$0]) }.joined()
+        return "\(hrp)1\(encodedData)"
+    }
+
+    private static func createChecksum(hrp: String, data: [Int]) -> [Int] {
+        let values = hrpExpand(hrp) + data + [0, 0, 0, 0, 0, 0]
+        let polymodValue = polymod(values) ^ 1
+
+        return (0..<6).map { index in
+            (polymodValue >> (5 * (5 - index))) & 31
+        }
+    }
+
+    private static func hrpExpand(_ hrp: String) -> [Int] {
+        hrp.utf8.map { Int($0) >> 5 } + [0] + hrp.utf8.map { Int($0) & 31 }
+    }
+
+    private static func polymod(_ values: [Int]) -> Int {
+        var checksum = 1
+
+        for value in values {
+            let top = checksum >> 25
+            checksum = ((checksum & 0x1ffffff) << 5) ^ value
+
+            for index in 0..<5 where ((top >> index) & 1) == 1 {
+                checksum ^= generator[index]
+            }
+        }
+
+        return checksum
     }
 }
 
@@ -352,7 +477,6 @@ enum AvatarPictureState {
 }
 
 enum TimelineMedia {
-    case weather
     case gallery([MediaTile])
     case linkPreview(LinkPreview)
     case unresolvedLink(UnresolvedLinkPreview)
@@ -369,11 +493,33 @@ struct LinkPreview {
     let title: String
     let subtitle: String
     let host: String
+    let url: String
 }
 
 struct UnresolvedLinkPreview {
     let host: String
     let url: String
+}
+
+extension TimelineMedia {
+    var browserURL: URL? {
+        switch self {
+        case .linkPreview(let preview):
+            URL(string: preview.url)
+        case .unresolvedLink(let preview):
+            URL(string: preview.url)
+        case .gallery:
+            nil
+        }
+    }
+
+    var isFullscreenMedia: Bool {
+        if case .gallery = self {
+            return true
+        }
+
+        return false
+    }
 }
 
 enum MockTimelineData {
@@ -386,10 +532,10 @@ enum MockTimelineData {
     private static let basePosts: [TimelinePost] = [
         TimelinePost(
             id: "thread-a-root",
-            authorName: "Yuki Sato",
-            handle: "@yuki@relay.town",
+            authorName: "User Alpha",
+            handle: "@alpha@mock.example",
             avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles"),
-            body: "Nostr の relay を切り替えても、既読位置がふわっと戻る体験を最優先にしたい。タイムラインは速さより「迷子にならない」ほうが大事。",
+            body: "リレー構成を切り替えても、既読位置が自然に戻る体験を最優先にしたい。タイムラインは速さより迷子にならないことを大事にしたい。",
             timestamp: "2m",
             replyCount: nil,
             boostCount: 7,
@@ -400,43 +546,50 @@ enum MockTimelineData {
             actionState: TimelinePostActionState(didReply: false, didRepost: true, didFavorite: true, didZap: false)
         ),
         TimelinePost(
-            authorName: "Astral Notes",
-            handle: "@astral@nostr.example",
+            authorName: "User Beta",
+            handle: "@beta@mock.example",
             avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
-            body: "Home / Local / Federated ではなく、Nostr では Home / Relays / Lists という切替が気持ちよさそう。Tapbots 的な密度で、relay 状態だけ少し見えるようにする。",
+            body: "Home / Relays / Lists の切り替えを、投稿密度を崩さずに扱いたい。接続状態は少しだけ見えているくらいが気持ちよさそう。",
             timestamp: "18m",
             replyCount: 2,
             boostCount: 14,
             favoriteCount: 46,
             isLocked: false,
             media: .linkPreview(LinkPreview(
-                title: "NIP-65 Outbox Model",
-                subtitle: "Read/write relays を分けて timeline を安定させる設計メモ",
-                host: "docs.astrenza.app"
+                title: "Relay Routing Notes",
+                subtitle: "read/write relay を分けて timeline を安定させる設計メモ",
+                host: "docs.mock.example",
+                url: "https://docs.mock.example/relay-routing"
             )),
-            context: "Pinned research",
+            context: nil,
             actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: true)
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Taro Relay",
-                nip05: "taro@relay.town",
-                pubkey: "npub1tarorelay9q4m6v0s3n5rjcw"
+                displayName: "User Gamma",
+                nip05: "gamma@mock.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-gamma"),
+                isFollowed: false
             ),
             avatar: AvatarStyle(primary: .mint, secondary: .blue, symbolName: "arrow.triangle.2.circlepath"),
-            body: "週末にリレー構成を少し整理したら、TLの読み込みがだいぶ落ち着いた。read/write を分けて眺めるだけでも体感が変わる。",
+            body: "週末に接続先を少し整理したら、TLの読み込みがだいぶ落ち着いた。read/write を分けて眺めるだけでも体感が変わる。",
             timestamp: "26m",
             replyCount: 1,
             boostCount: 9,
             favoriteCount: 24,
             isLocked: false,
-            media: nil,
+            media: .linkPreview(LinkPreview(
+                title: "Relay Maintenance Log",
+                subtitle: "フォロー外ユーザー由来のRTではOGPだけを保護表示にする",
+                host: "logs.mock.example",
+                url: "https://logs.mock.example/relay-maintenance"
+            )),
             context: nil,
             repostedBy: TimelineRepostAttribution(
                 author: .resolved(
-                    displayName: "Yuki Sato",
-                    nip05: "yuki@relay.town",
-                    pubkey: "npub1yukirepost9q4m6v0s3n5rjcw"
+                    displayName: "User Alpha",
+                    nip05: "alpha@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "user-alpha-repost")
                 ),
                 avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles"),
                 timestamp: "5m"
@@ -445,12 +598,12 @@ enum MockTimelineData {
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Kedama",
-                nip05: "kedama@foresdon.jp",
-                pubkey: "npub1kedamacontentwarning9q4m6v0s3n5rjcw"
+                displayName: "User Delta",
+                nip05: "delta@mock.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-delta")
             ),
             avatar: AvatarStyle(primary: .brown, secondary: .yellow, symbolName: "exclamationmark.triangle.fill"),
-            body: "シュタゲ0 のアニメを観ています ep.16\nん〜アニメでは多少のフォローは入ってているけど……真帆が紅莉栖に勝てない絶望と、見知った顔の幸せそうな「今」を何度も奪って、それでも目の前で見知った顔が繰り返し繰り返し何度もしんでいく絶望を、同列に語るのは……ちょっと重さが違うんですよねぇ……。",
+            body: "架空作品の最新話を観ています。\nこの先は展開に触れるので、タイムラインでは本文だけを伏せておきたい。詳細画面では理由がわかるように表示しておく。",
             timestamp: "31m",
             replyCount: nil,
             boostCount: nil,
@@ -458,42 +611,28 @@ enum MockTimelineData {
             isLocked: false,
             media: nil,
             context: nil,
-            contentWarning: TimelineContentWarning(reason: "Steins;Gate 0 episode 16 spoilers")
-        ),
-        TimelinePost(
-            authorName: "Mika",
-            handle: "@mika@notes.cafe",
-            avatar: AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill"),
-            body: "今日のテスト端末、外が暑すぎて手から滑りそう。32 度で。",
-            timestamp: "35m",
-            replyCount: 1,
-            boostCount: nil,
-            favoriteCount: 9,
-            isLocked: false,
-            media: .weather,
-            context: nil,
-            actionState: TimelinePostActionState(didReply: true, didRepost: false, didFavorite: false, didZap: false)
+            contentWarning: TimelineContentWarning(reason: "Fictional episode spoilers")
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Nozomi",
-                nip05: "nozomi@design.pub",
-                pubkey: "npub1nozomiquoted9q4m6v0s3n5rjcw"
+                displayName: "User Zeta",
+                nip05: "zeta@mock.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-zeta")
             ),
             avatar: AvatarStyle(primary: .pink, secondary: .orange, symbolName: "quote.bubble.fill"),
-            body: "Quoted repost は reply thread に混ぜたくないので、本文中の nostr:nevent 参照は q tag として扱うのがよさそう。UIは引用カードとして本文の直下に置く。",
+            body: "引用投稿は reply thread に混ぜず、本文の直下にカードとして置くと読みやすい。通常の返信とは見え方を分けたい。",
             timestamp: "39m",
             replyCount: 2,
             boostCount: 6,
             favoriteCount: 21,
             isLocked: false,
             media: nil,
-            context: "Quoted repost",
+            context: nil,
             quotedPost: QuotedTimelinePost(
                 author: .resolved(
-                    displayName: "Ren",
-                    nip05: "ren@web.nostr",
-                    pubkey: "npub1renquotedsource9q4m6v0s3n5rjcw"
+                    displayName: "User Eta",
+                    nip05: "eta@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "user-eta")
                 ),
                 avatar: AvatarStyle(
                     primary: .indigo,
@@ -501,7 +640,7 @@ enum MockTimelineData {
                     symbolName: "link.circle.fill",
                     pictureState: .missing
                 ),
-                body: "NIP-18 の q tag は quote repost をreply扱いにしないための手がかりになる。countにも使いやすい。",
+                body: "引用参照は返信扱いにしないための手がかりになる。表示上もcount上も別物として扱いたい。",
                 timestamp: "31m",
                 isAvailable: true
             ),
@@ -509,12 +648,12 @@ enum MockTimelineData {
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Hota",
-                nip05: "hota@relay.cafe",
-                pubkey: "npub1hotareply9q4m6v0s3n5rjcw"
+                displayName: "User Theta",
+                nip05: "theta@mock.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-theta")
             ),
             avatar: AvatarStyle(primary: .blue, secondary: .indigo, symbolName: "person.crop.circle.fill"),
-            body: "緊急すぎて上級者モードしか回せてなかった",
+            body: "急いでいたので設定画面をちゃんと見直せていなかった。",
             timestamp: "40m",
             replyCount: 1,
             boostCount: 2,
@@ -524,25 +663,25 @@ enum MockTimelineData {
             context: nil,
             replyContext: TimelineReplyContext(
                 author: .resolved(
-                    displayName: "unarist",
-                    nip05: "unarist@relay.maud.io",
-                    pubkey: "npub1unaristreplysource9q4m6v0s3n5rjcw"
+                    displayName: "User Iota",
+                    nip05: "iota@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "user-iota")
                 ),
                 avatar: AvatarStyle(primary: .cyan, secondary: .white, symbolName: "circle.dotted"),
                 timestamp: "45m",
-                bodyPreview: "あーわかった、ディスクフルだ多分。",
+                bodyPreview: "原因がわかったかもしれない。たぶん保存領域まわりです。",
                 isSelfReply: false
             ),
             actionState: TimelinePostActionState(didReply: false, didRepost: true, didFavorite: false, didZap: false)
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "unarist",
-                nip05: "unarist@relay.maud.io",
-                pubkey: "npub1unaristreplysource9q4m6v0s3n5rjcw"
+                displayName: "User Iota",
+                nip05: "iota@mock.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-iota")
             ),
             avatar: AvatarStyle(primary: .cyan, secondary: .white, symbolName: "circle.dotted"),
-            body: "ああ...言われてみればこのマシンならUSBポートにガタが来てても別におかしくないか...さんきゅう...",
+            body: "言われてみれば、この端末なら接続まわりの不調も疑ったほうがよさそう。助かりました。",
             timestamp: "41m",
             replyCount: nil,
             boostCount: nil,
@@ -552,42 +691,42 @@ enum MockTimelineData {
             context: nil,
             replyContext: TimelineReplyContext(
                 author: .resolved(
-                    displayName: "pikepikeid",
-                    nip05: "pikepikeid@relay.tools",
-                    pubkey: "npub1pikepikeidreply9q4m6v0s3n5rjcw"
+                    displayName: "User Kappa",
+                    nip05: "kappa@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "user-kappa")
                 ),
                 avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "wrench.and.screwdriver.fill"),
                 timestamp: "43m",
-                bodyPreview: "USBの接触も疑ったほうがよさそう",
+                bodyPreview: "接続部分の状態も疑ったほうがよさそう。",
                 isSelfReply: false
             ),
-            replyMention: TimelineReplyMention(text: "@pikepikeid", isExternal: true)
+            replyMention: TimelineReplyMention(text: "@kappa", isExternal: true)
         ),
         TimelinePost(
-            author: .unresolved(pubkey: "npub1ren9q3z6r4m8x2k0v5c7n1pwaesdftimelinefallback"),
+            author: .unresolved(pubkey: TimelineAuthor.mockPubkey(for: "user-unknown")),
             avatar: AvatarStyle(
                 primary: .indigo,
                 secondary: .blue,
                 symbolName: "link.circle.fill",
                 pictureState: .metadataPending
             ),
-            body: "OGP が解決できないURLも、カードの高さは固定しておくと復帰位置が安定しそう。",
+            body: "リンクプレビューが解決できないURLも、カードの高さは固定しておくと復帰位置が安定しそう。",
             timestamp: "42m",
             replyCount: nil,
             boostCount: 4,
             favoriteCount: 17,
             isLocked: false,
             media: .unresolvedLink(UnresolvedLinkPreview(
-                host: "unknown.example",
-                url: "https://unknown.example/posts/nostr-client-layout"
+                host: "unknown.mock.example",
+                url: "https://unknown.mock.example/posts/client-layout"
             )),
             context: nil
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Relay Watch",
+                displayName: "User Lambda",
                 nip05: nil,
-                pubkey: "npub1relaywatch9s8d7f6g5h4j3k2l1monitor"
+                pubkey: TimelineAuthor.mockPubkey(for: "user-lambda")
             ),
             avatar: AvatarStyle(
                 primary: .green,
@@ -595,21 +734,21 @@ enum MockTimelineData {
                 symbolName: "antenna.radiowaves.left.and.right",
                 pictureState: .missing
             ),
-            body: "wss://relay.damus.io と wss://nos.lol は catch-up 済み。wss://relay.snort.social は AUTH required。",
+            body: "wss://relay-a.mock.example と wss://relay-b.mock.example は catch-up 済み。wss://relay-c.mock.example は AUTH required。",
             timestamp: "1h",
             replyCount: nil,
             boostCount: 3,
             favoriteCount: 12,
-            isLocked: true,
+            isLocked: false,
             media: nil,
             context: nil
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Nozomi with an unnecessarily long display name for timeline stress testing",
-                nip05: "nozomi.with.a.very.long.nip05.identifier.for.timeline.layout.testing@designers-and-relays.example",
+                displayName: "User Mu with an unnecessarily long display name for timeline stress testing",
+                nip05: "mu.with.a.very.long.nip05.identifier.for.timeline.layout.testing@mock-long-domain.example",
                 nip05Status: .unchecked,
-                pubkey: "npub1nozomi7k2p9q4m6v0s3n5rjcw"
+                pubkey: TimelineAuthor.mockPubkey(for: "user-mu")
             ),
             avatar: AvatarStyle(
                 primary: .pink,
@@ -630,12 +769,12 @@ enum MockTimelineData {
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Haru",
-                nip05: "_@photo.pub",
-                pubkey: "npub1haru7k2p9q4m6v0s3n5rjcw"
+                displayName: "User Nu",
+                nip05: "_@mock-photo.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-nu")
             ),
             avatar: AvatarStyle(primary: .blue, secondary: .teal, symbolName: "camera.aperture"),
-            body: "メディア grid は Ivory みたいに角丸を抑えて、余白も詰めると feed の密度が保てる。",
+            body: "メディア grid は角丸を抑えて、余白も詰めると feed の密度が保てる。",
             timestamp: "2h",
             replyCount: 4,
             boostCount: 21,
@@ -649,8 +788,8 @@ enum MockTimelineData {
             actionState: TimelinePostActionState(didReply: false, didRepost: true, didFavorite: false, didZap: true)
         ),
         TimelinePost(
-            authorName: "Sora",
-            handle: "@sora@relay.art",
+            authorName: "User Xi",
+            handle: "@xi@mock.example",
             avatar: AvatarStyle(primary: .teal, secondary: .mint, symbolName: "paintbrush.pointed.fill"),
             body: "3枚は上2枚、下1枚。最後の1枚を大きく見せると、投稿の締めが少し強くなる。",
             timestamp: "2h",
@@ -666,8 +805,8 @@ enum MockTimelineData {
             context: nil
         ),
         TimelinePost(
-            authorName: "Luna",
-            handle: "@luna@media.nostr",
+            authorName: "User Omicron",
+            handle: "@omicron@mock.example",
             avatar: AvatarStyle(primary: .purple, secondary: .blue, symbolName: "sparkles"),
             body: "4枚は2+2で安定。feedの中で一番スキャンしやすい構図かもしれない。",
             timestamp: "2h",
@@ -684,8 +823,8 @@ enum MockTimelineData {
             context: nil
         ),
         TimelinePost(
-            authorName: "Mori",
-            handle: "@mori@photo.example",
+            authorName: "User Pi",
+            handle: "@pi@mock.example",
             avatar: AvatarStyle(primary: .green, secondary: .yellow, symbolName: "leaf.fill"),
             body: "5枚以上は4枚gridの最後に +n。隠れている枚数がわかるだけで、見た目の密度が落ち着く。",
             timestamp: "3h",
@@ -705,13 +844,13 @@ enum MockTimelineData {
         ),
         TimelinePost(
             author: .resolved(
-                displayName: "Kai",
-                nip05: "kai@dev.nostr",
+                displayName: "User Rho",
+                nip05: "rho@mock.example",
                 nip05Status: .invalid,
-                pubkey: "npub1differentpubkey9q4m6v0s3n5rjcw"
+                pubkey: TimelineAuthor.mockPubkey(for: "user-rho")
             ),
             avatar: AvatarStyle(primary: .gray, secondary: .white, symbolName: "terminal.fill"),
-            body: "まずは UI shell。次に timeline store、relay manager、NIP-01 event parser。順番を間違えると、見た目の気持ちよさが後で壊れがち。",
+            body: "まずは UI shell。次に timeline store、relay manager、event parser。順番を間違えると、見た目の気持ちよさが後で壊れがち。",
             timestamp: "3h",
             replyCount: nil,
             boostCount: 5,
@@ -822,28 +961,43 @@ private struct MockTimelineStore {
             actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: false)
         ).timelinePost()
 
-        let secondReply = MockNostrEvent(
+        let secondReplyAuthor = TimelineAuthor.resolved(
+            displayName: "User Sigma",
+            nip05: "sigma@mock.example",
+            pubkey: TimelineAuthor.mockPubkey(for: "user-sigma"),
+            isFollowed: false
+        )
+        let secondReplyAvatar = AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill")
+        let secondReply = TimelinePost(
             id: "thread-c-reply",
-            author: .resolved(
-                displayName: "Mika",
-                nip05: "mika@notes.cafe",
-                pubkey: "npub1mikareplydetail9q4m6v0s3n5rjcw"
-            ),
-            avatar: AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill"),
-            content: "このへん、再接続後に既読位置を戻すタイミングを少し遅らせると見た目も安定しそう。",
+            author: secondReplyAuthor,
+            avatar: secondReplyAvatar,
+            body: "このへん、再接続後に既読位置を戻すタイミングを少し遅らせると見た目も安定しそう。",
             timestamp: "6m",
-            replyTo: firstReply,
-            replyMention: TimelineReplyMention(text: "@\(firstReply.author.replyMentionHandle)", isExternal: true),
-            reposts: 1,
-            reactions: 9,
-            actionState: .none
-        ).timelinePost()
+            replyCount: nil,
+            boostCount: 1,
+            favoriteCount: 9,
+            isLocked: false,
+            media: .gallery([
+                MediaTile(title: "Trace", colors: [.orange, .yellow], symbolName: "point.topleft.down.curvedto.point.bottomright.up"),
+                MediaTile(title: "Relay", colors: [.blue, .purple], symbolName: "network")
+            ]),
+            context: nil,
+            replyContext: TimelineReplyContext(
+                author: firstReply.author,
+                avatar: firstReply.avatar,
+                timestamp: firstReply.timestamp,
+                bodyPreview: firstReply.body,
+                isSelfReply: secondReplyAuthor.pubkey == firstReply.author.pubkey
+            ),
+            replyMention: TimelineReplyMention(text: "@\(firstReply.author.replyMentionHandle)", isExternal: true)
+        )
 
         let thirdReply = MockNostrEvent(
             id: "thread-d-reply",
             author: root.author,
             avatar: root.avatar,
-            content: "さらにメモ: ツリーは表示用に作るんじゃなくて、event の reply chain から切り出すほうが事故らない。",
+            content: "さらにメモ: ツリーは表示用に作るのではなく、event の reply chain から切り出すほうが事故らない。",
             timestamp: "8m",
             replyTo: secondReply,
             replyMention: TimelineReplyMention(text: "@\(secondReply.author.replyMentionHandle)", isExternal: true),

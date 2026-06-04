@@ -1,12 +1,39 @@
 import SwiftUI
+import SafariServices
 
 struct TimelineMediaView: View {
     let media: TimelineMedia
+    var isObscured = false
 
     var body: some View {
+        ZStack {
+            content
+                .blur(radius: isObscured ? 10 : 0)
+                .saturation(isObscured ? 0.65 : 1)
+
+            if isObscured {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.82)
+
+                VStack(spacing: 8) {
+                    Image(systemName: "eye.slash.fill")
+                        .font(.system(size: 24, weight: .bold))
+                    Text("From outside your follows")
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    Text("Tap to reveal")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.primary)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch media {
-        case .weather:
-            WeatherAttachmentView()
         case .gallery(let tiles):
             GalleryAttachmentView(tiles: tiles)
         case .linkPreview(let preview):
@@ -17,49 +44,277 @@ struct TimelineMediaView: View {
     }
 }
 
-private struct WeatherAttachmentView: View {
+struct TimelineAttachmentButton: View {
+    let media: TimelineMedia
+    let isProtected: Bool
+    let accessibilityLabel: String
+    let onOpen: (TimelineMedia) -> Void
+    @State private var isRevealed = false
+
+    private var isObscured: Bool {
+        isProtected && !isRevealed
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            WeatherDayView(title: "今日 6/2", symbol: "moon.stars.fill", temperature: "27°", low: "17°", tint: .yellow)
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(width: 1)
-            WeatherDayView(title: "明日 6/3", symbol: "sun.max.fill", temperature: "32°", low: "18°", tint: .orange)
+        Button {
+            if isObscured {
+                withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
+                    isRevealed = true
+                }
+            } else {
+                onOpen(media)
+            }
+        } label: {
+            TimelineMediaView(media: media, isObscured: isObscured)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 126)
-        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        .buttonStyle(.plain)
+        .accessibilityLabel(isObscured ? "\(accessibilityLabel), protected" : accessibilityLabel)
+        .accessibilityHint(isObscured ? "Reveals the attachment without opening it" : "Opens the attachment")
+        .accessibilityAction {
+            if isObscured {
+                isRevealed = true
+            } else {
+                onOpen(media)
+            }
         }
     }
 }
 
-private struct WeatherDayView: View {
-    let title: String
-    let symbol: String
-    let temperature: String
-    let low: String
-    let tint: Color
+struct TimelineBrowserDestination: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+struct TimelineFullscreenMediaViewer: View {
+    let media: TimelineMedia
+    let onClose: () -> Void
+    @State private var selectedTileIndex = 0
+    @GestureState private var dismissalDrag = CGSize.zero
+
+    private var galleryTiles: [MediaTile]? {
+        if case .gallery(let tiles) = media {
+            return tiles
+        }
+
+        return nil
+    }
 
     var body: some View {
-        VStack(spacing: 9) {
-            Text(title)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
-            Image(systemName: symbol)
-                .font(.system(size: 38, weight: .bold))
-                .foregroundStyle(tint)
-            HStack(spacing: 11) {
-                Text(temperature)
-                    .foregroundStyle(.red.opacity(0.86))
-                Text(low)
-                    .foregroundStyle(.blue.opacity(0.86))
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let galleryTiles {
+                galleryViewer(tiles: galleryTiles)
+            } else {
+                TimelineMediaView(media: media)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: dismissalDrag.height)
+                    .scaleEffect(dismissalScale)
             }
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close media viewer")
+                }
+                .padding(.top, 18)
+                .padding(.horizontal, 18)
+
+                Spacer()
+
+                if let galleryTiles, galleryTiles.count > 1 {
+                    Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.bottom, 24)
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
+        .simultaneousGesture(dismissalGesture)
+        .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func galleryViewer(tiles: [MediaTile]) -> some View {
+        TabView(selection: $selectedTileIndex) {
+            ForEach(Array(tiles.enumerated()), id: \.element.id) { index, tile in
+                TimelineFullscreenMediaPage(tile: tile)
+                    .padding(.horizontal, 18)
+                    .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .offset(y: dismissalDrag.height)
+        .scaleEffect(dismissalScale)
+        .animation(.spring(duration: 0.22, bounce: 0.08), value: selectedTileIndex)
+    }
+
+    private var dismissalGesture: some Gesture {
+        DragGesture(minimumDistance: 28)
+            .updating($dismissalDrag) { value, state, _ in
+                guard isDismissalDrag(value) else { return }
+                state = value.translation
+            }
+            .onEnded { value in
+                guard isDismissalDrag(value) else { return }
+                let predictedHeight = value.predictedEndTranslation.height
+                if abs(predictedHeight) > 190 || abs(value.translation.height) > 150 {
+                    onClose()
+                }
+            }
+    }
+
+    private var dismissalScale: CGFloat {
+        let progress = min(abs(dismissalDrag.height) / 420, 1)
+        return 1 - progress * 0.1
+    }
+
+    private func isDismissalDrag(_ value: DragGesture.Value) -> Bool {
+        abs(value.translation.height) > abs(value.translation.width) * 1.25
+    }
+}
+
+private struct TimelineFullscreenMediaPage: View {
+    let tile: MediaTile
+    @State private var scale: CGFloat = 1
+    @State private var offset = CGSize.zero
+    @GestureState private var gestureScale: CGFloat = 1
+    @GestureState private var gestureOffset = CGSize.zero
+
+    private var effectiveScale: CGFloat {
+        min(max(scale * gestureScale, 1), 4.5)
+    }
+
+    private var effectiveOffset: CGSize {
+        CGSize(
+            width: offset.width + gestureOffset.width,
+            height: offset.height + gestureOffset.height
+        )
+    }
+
+    var body: some View {
+        pageContent
+            .gesture(zoomGesture)
+            .modifier(ZoomPanModifier(isEnabled: effectiveScale > 1.01, gesture: panGesture))
+            .highPriorityGesture(doubleTapZoomGesture)
+            .onChange(of: scale) { _, newValue in
+                if newValue <= 1.01 {
+                    withAnimation(.spring(duration: 0.22, bounce: 0.08)) {
+                        offset = .zero
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Image \(tile.title)")
+    }
+
+    private var pageContent: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.white.opacity(0.04))
+
+            LinearGradient(colors: tile.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+
+            Image(systemName: tile.symbolName)
+                .font(.system(size: 82, weight: .bold))
+                .foregroundStyle(.white.opacity(0.9))
+
+            VStack {
+                Spacer()
+                Text(tile.title)
+                    .font(.system(size: 19, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(.black.opacity(0.28), in: Capsule())
+                    .padding(.bottom, 18)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .aspectRatio(0.82, contentMode: .fit)
+        .scaleEffect(effectiveScale)
+        .offset(effectiveOffset)
+    }
+
+    private var doubleTapZoomGesture: some Gesture {
+        TapGesture(count: 2)
+            .onEnded {
+                withAnimation(.spring(duration: 0.26, bounce: 0.1)) {
+                    if effectiveScale > 1.01 {
+                        scale = 1
+                        offset = .zero
+                    } else {
+                        scale = 2.4
+                    }
+                }
+            }
+    }
+
+    private var zoomGesture: some Gesture {
+        MagnifyGesture(minimumScaleDelta: 0.01)
+            .updating($gestureScale) { value, state, _ in
+                state = value.magnification
+            }
+            .onEnded { value in
+                withAnimation(.spring(duration: 0.24, bounce: 0.1)) {
+                    scale = min(max(scale * value.magnification, 1), 4.5)
+                    if scale <= 1.01 {
+                        offset = .zero
+                    }
+                }
+            }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .updating($gestureOffset) { value, state, _ in
+                state = value.translation
+            }
+            .onEnded { value in
+                withAnimation(.spring(duration: 0.22, bounce: 0.08)) {
+                    offset.width += value.translation.width
+                    offset.height += value.translation.height
+                }
+            }
+    }
+}
+
+private struct ZoomPanModifier<G: Gesture>: ViewModifier {
+    let isEnabled: Bool
+    let gesture: G
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.simultaneousGesture(gesture)
+        } else {
+            content
+        }
+    }
+}
+
+struct TimelineInAppBrowserView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let configuration = SFSafariViewController.Configuration()
+        configuration.entersReaderIfAvailable = false
+        let controller = SFSafariViewController(url: url, configuration: configuration)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {
     }
 }
 

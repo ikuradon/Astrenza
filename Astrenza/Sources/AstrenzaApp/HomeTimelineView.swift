@@ -13,6 +13,8 @@ struct HomeTimelineView: View {
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
     @State private var postNavigationPath: [SelectedPostRoute] = []
     @State private var unreadBadgeFrame: CGRect = .zero
+    @State private var fullscreenMedia: TimelineMedia?
+    @State private var browserDestination: TimelineBrowserDestination?
 
     private var actionMenuTopClearance: CGFloat {
         max(unreadBadgeFrame.maxY + 10, 96)
@@ -86,6 +88,17 @@ struct HomeTimelineView: View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
         }
+        .fullScreenCover(isPresented: isFullscreenMediaPresented) {
+            if let fullscreenMedia {
+                TimelineFullscreenMediaViewer(media: fullscreenMedia) {
+                    self.fullscreenMedia = nil
+                }
+            }
+        }
+        .sheet(item: $browserDestination) { destination in
+            TimelineInAppBrowserView(url: destination.url)
+                .ignoresSafeArea()
+        }
     }
 
     private var nativeTabs: some View {
@@ -105,12 +118,19 @@ struct HomeTimelineView: View {
             TimelineFeedView(
                 posts: MockTimelineData.posts,
                 actionMenuTopClearance: actionMenuTopClearance,
-                onOpenPost: openPost
+                onOpenPost: openPost,
+                onOpenMedia: openMedia,
+                onOpenURL: openURL
             ) { offset in
                 handleTimelineScrollOffset(offset)
             }
             .navigationDestination(for: SelectedPostRoute.self) { route in
-                PostDetailView(post: route.post, onOpenPost: openPost)
+                PostDetailView(
+                    post: route.post,
+                    onOpenPost: openPost,
+                    onOpenMedia: openMedia,
+                    onOpenURL: openURL
+                )
             }
         }
     }
@@ -138,6 +158,27 @@ struct HomeTimelineView: View {
     private func openPost(_ post: TimelinePost) {
         dismissFloatingMenus()
         postNavigationPath.append(SelectedPostRoute(post: post))
+    }
+
+    private func openMedia(_ media: TimelineMedia) {
+        dismissFloatingMenus()
+        fullscreenMedia = media
+    }
+
+    private func openURL(_ url: URL) {
+        dismissFloatingMenus()
+        browserDestination = TimelineBrowserDestination(url: url)
+    }
+
+    private var isFullscreenMediaPresented: Binding<Bool> {
+        Binding(
+            get: { fullscreenMedia != nil },
+            set: { isPresented in
+                if !isPresented {
+                    fullscreenMedia = nil
+                }
+            }
+        )
     }
 
     private func dismissFloatingMenus() {

@@ -3,6 +3,8 @@ import SwiftUI
 struct PostDetailView: View {
     let post: TimelinePost
     let onOpenPost: (TimelinePost) -> Void
+    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenURL: (URL) -> Void
     @State private var isReplyAncestorStackVisible = false
 
     var body: some View {
@@ -15,7 +17,8 @@ struct PostDetailView: View {
                                 DetailThreadPostRow(
                                     post: ancestorPost,
                                     relation: .parent,
-                                    onOpenPost: onOpenPost
+                                    onOpenPost: onOpenPost,
+                                    onOpenAttachment: openAttachment
                                 )
                             }
                         }
@@ -36,11 +39,22 @@ struct PostDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         if let quotedPost = post.quotedPost {
-                            DetailQuotedPostCard(quotedPost: quotedPost)
+                            Button {
+                                onOpenPost(quotedPost.timelinePost())
+                            } label: {
+                                DetailQuotedPostCard(quotedPost: quotedPost)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
                         }
 
                         if let media = post.media {
-                            TimelineMediaView(media: media)
+                            TimelineAttachmentButton(
+                                media: media,
+                                isProtected: post.shouldObscureExternalAttachments,
+                                accessibilityLabel: "Open attachment for post by \(post.author.primaryText)",
+                                onOpen: openAttachment
+                            )
                         }
 
                         detailActionRow
@@ -76,6 +90,14 @@ struct PostDetailView: View {
 
     private var showsReplyParentIndicator: Bool {
         !replyAncestorPosts.isEmpty && !isReplyAncestorStackVisible
+    }
+
+    private func openAttachment(_ media: TimelineMedia) {
+        if media.isFullscreenMedia {
+            onOpenMedia(media)
+        } else if let url = media.browserURL {
+            onOpenURL(url)
+        }
     }
 
     private var postHeader: some View {
@@ -172,7 +194,8 @@ struct PostDetailView: View {
                 DetailThreadPostRow(
                     post: reply,
                     relation: .child,
-                    onOpenPost: onOpenPost
+                    onOpenPost: onOpenPost,
+                    onOpenAttachment: openAttachment
                 )
             }
         }
@@ -331,6 +354,7 @@ private struct DetailThreadPostRow: View {
     let post: TimelinePost
     let relation: DetailThreadRelation
     let onOpenPost: (TimelinePost) -> Void
+    let onOpenAttachment: (TimelineMedia) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -363,6 +387,28 @@ private struct DetailThreadPostRow: View {
                     }
 
                     TimelinePostBodyText(text: post.body, mention: post.replyMention, fontSize: 19)
+
+                    if let quotedPost = post.quotedPost {
+                        Button {
+                            onOpenPost(quotedPost.timelinePost())
+                        } label: {
+                            DetailQuotedPostCard(quotedPost: quotedPost)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
+                        .accessibilityAction {
+                            onOpenPost(quotedPost.timelinePost())
+                        }
+                    }
+
+                    if let media = post.media {
+                        TimelineAttachmentButton(
+                            media: media,
+                            isProtected: post.shouldObscureExternalAttachments,
+                            accessibilityLabel: "Open attachment for post by \(post.author.primaryText)",
+                            onOpen: onOpenAttachment
+                        )
+                    }
 
                     HStack(spacing: 0) {
                         detailReplyActionButton("bubble.left")

@@ -4,6 +4,8 @@ struct TimelineFeedView: View {
     let posts: [TimelinePost]
     let actionMenuTopClearance: CGFloat
     let onOpenPost: (TimelinePost) -> Void
+    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenURL: (URL) -> Void
     let onScrollOffsetChanged: (CGFloat) -> Void
     @State private var menuState = TimelinePostMenuState()
     private let actionMenuGap: CGFloat = 12
@@ -17,13 +19,15 @@ struct TimelineFeedView: View {
                         post: post,
                         isActionMenuPresented: menuState.openedMenu?.postID == post.id && menuState.openedMenu?.kind == .more,
                         onActionEvent: handlePostActionEvent,
-                        onOpenPost: {
+                        onOpenPost: { selectedPost in
                             if menuState.isOpen {
                                 closeFloatingPostMenus()
                             } else {
-                                onOpenPost(post)
+                                onOpenPost(selectedPost)
                             }
-                        }
+                        },
+                        onOpenMedia: openMedia,
+                        onOpenURL: openURL
                     ) {
                         if menuState.isOpen {
                             closeFloatingPostMenus()
@@ -93,6 +97,16 @@ struct TimelineFeedView: View {
         withAnimation(.spring(duration: 0.26, bounce: 0.14)) {
             menuState.reset()
         }
+    }
+
+    private func openMedia(_ media: TimelineMedia) {
+        closeFloatingPostMenus()
+        onOpenMedia(media)
+    }
+
+    private func openURL(_ url: URL) {
+        closeFloatingPostMenus()
+        onOpenURL(url)
     }
 
     private func handlePostActionEvent(_ event: TimelinePostActionEvent) {

@@ -26,13 +26,14 @@ struct TimelinePostRow: View {
     let post: TimelinePost
     let isActionMenuPresented: Bool
     let onActionEvent: (TimelinePostActionEvent) -> Void
-    let onOpenPost: () -> Void
+    let onOpenPost: (TimelinePost) -> Void
+    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenURL: (URL) -> Void
     let onDismissActionMenu: () -> Void
     @State private var didHandleActionGesture = false
 
     var body: some View {
         rowContent
-            .onTapGesture(perform: handleRowTap)
     }
 
     private var rowContent: some View {
@@ -41,22 +42,26 @@ struct TimelinePostRow: View {
                 RepostAttributionView(attribution: repostedBy)
                     .padding(.leading, 47)
                     .padding(.trailing, 16)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: handleRowTap)
             }
 
             HStack(alignment: .top, spacing: 12) {
                 AvatarView(style: post.avatar, size: 54)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: handleRowTap)
 
                 VStack(alignment: .leading, spacing: 8) {
                     if let replyContext = post.replyContext {
                         TimelineReplyContextView(context: replyContext, style: .timeline)
                             .padding(.bottom, -2)
+                            .contentShape(Rectangle())
+                            .onTapGesture(perform: handleRowTap)
                     }
 
                     header
-
-                    if let context = post.context {
-                        ContextPill(text: context)
-                    }
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: handleRowTap)
 
                     sensitiveAwareContent
 
@@ -101,6 +106,8 @@ struct TimelinePostRow: View {
             SensitiveTimelineContent(contentWarning: contentWarning) {
                 postContent
             }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: handleRowTap)
         } else {
             postContent
         }
@@ -109,14 +116,30 @@ struct TimelinePostRow: View {
     private var postContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             TimelinePostBodyText(text: post.body, mention: post.replyMention)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: handleRowTap)
 
             if let quotedPost = post.quotedPost {
-                QuotedPostCard(quotedPost: quotedPost)
+                Button {
+                    openEmbeddedPost(quotedPost.timelinePost())
+                } label: {
+                    QuotedPostCard(quotedPost: quotedPost)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
+                .accessibilityAction {
+                    openEmbeddedPost(quotedPost.timelinePost())
+                }
             }
 
             if let media = post.media {
-                TimelineMediaView(media: media)
-                    .padding(.top, 2)
+                TimelineAttachmentButton(
+                    media: media,
+                    isProtected: post.shouldObscureExternalAttachments,
+                    accessibilityLabel: "Open attachment for post by \(post.author.primaryText)",
+                    onOpen: openAttachment
+                )
+                .padding(.top, 2)
             }
         }
     }
@@ -211,7 +234,24 @@ struct TimelinePostRow: View {
         }
 
         onDismissActionMenu()
-        onOpenPost()
+        onOpenPost(post)
+    }
+
+    private func openEmbeddedPost(_ selectedPost: TimelinePost) {
+        didHandleActionGesture = true
+        onDismissActionMenu()
+        onOpenPost(selectedPost)
+    }
+
+    private func openAttachment(_ media: TimelineMedia) {
+        didHandleActionGesture = true
+        onDismissActionMenu()
+
+        if media.isFullscreenMedia {
+            onOpenMedia(media)
+        } else if let url = media.browserURL {
+            onOpenURL(url)
+        }
     }
 }
 
@@ -708,18 +748,5 @@ private struct PostActionMenuDivider: View {
             .padding(.vertical, 2)
             .padding(.leading, 44)
             .frame(height: FloatingMenuMetrics.dividerHeight)
-    }
-}
-
-private struct ContextPill: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 13, weight: .heavy, design: .rounded))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.08), in: Capsule())
     }
 }
