@@ -1,12 +1,13 @@
 import SwiftUI
 import UIKit
 
-struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentable {
+struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIViewControllerRepresentable {
     @Binding var selectedTab: TimelineTab
     @Binding var previousTab: TimelineTab
     let minimizeDirection: TabBarMinimizeDirection
     let isTabBarHidden: Bool
     let timelineList: TimelineContent
+    let profileView: ProfileContent
     let onMinimizeDirectionChanged: (TabBarMinimizeDirection) -> Void
     let onComposeTap: () -> Void
 
@@ -103,10 +104,10 @@ struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentabl
         }
 
         func updateHostedViews() {
-            hosts[.home]?.rootView = AnyView(parent.timelineList)
-            hosts[.notifications]?.rootView = AnyView(PlaceholderTabView(tab: .notifications))
-            hosts[.profile]?.rootView = AnyView(PlaceholderTabView(tab: .profile))
-            hosts[.explore]?.rootView = AnyView(PlaceholderTabView(tab: .explore))
+            let currentRootView = rootView(for: parent.selectedTab)
+            hosts.values.forEach { host in
+                host.rootView = currentRootView
+            }
         }
 
         func select(_ tab: TimelineTab, on controller: UITabBarController) {
@@ -233,7 +234,7 @@ struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentabl
             case .notifications:
                 AnyView(PlaceholderTabView(tab: .notifications))
             case .profile:
-                AnyView(PlaceholderTabView(tab: .profile))
+                AnyView(parent.profileView)
             case .explore:
                 AnyView(PlaceholderTabView(tab: .explore))
             case .compose:

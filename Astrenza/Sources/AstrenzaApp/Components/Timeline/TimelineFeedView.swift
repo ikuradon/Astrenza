@@ -5,6 +5,7 @@ struct TimelineFeedView: View {
     let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
+    let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
@@ -27,6 +28,13 @@ struct TimelineFeedView: View {
                                 closeFloatingPostMenus()
                             } else {
                                 onOpenPost(selectedPost)
+                            }
+                        },
+                        onOpenProfile: { selectedPost in
+                            if menuState.isOpen {
+                                closeFloatingPostMenus()
+                            } else {
+                                onOpenProfile(selectedPost)
                             }
                         },
                         onReplyPost: onReplyPost,

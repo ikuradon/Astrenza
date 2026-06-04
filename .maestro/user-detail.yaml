@@ -1,0 +1,17 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp
+- assertVisible:
+    id: timeline.feed
+- tapOn:
+    text: Profile
+- assertVisible:
+    id: user.detail
+- assertVisible:
+    text: Edit Profile
+- swipe:
+    start: 50%, 76%
+    end: 50%, 28%
+    duration: 450
+- assertVisible:
+    text: User Alpha

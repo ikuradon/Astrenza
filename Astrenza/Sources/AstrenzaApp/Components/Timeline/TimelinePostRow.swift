@@ -6,6 +6,7 @@ struct TimelinePostRow: View {
     let swipeSettings: TimelineSwipeSettings
     let onActionEvent: (TimelinePostActionEvent) -> Void
     let onOpenPost: (TimelinePost) -> Void
+    let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
@@ -37,7 +38,8 @@ struct TimelinePostRow: View {
             HStack(alignment: .top, spacing: 12) {
                 AvatarView(style: post.avatar, size: 54)
                     .contentShape(Rectangle())
-                    .onTapGesture(perform: handleRowTap)
+                    .onTapGesture(perform: handleAvatarTap)
+                    .accessibilityIdentifier("timeline.avatar.\(post.id)")
 
                 VStack(alignment: .leading, spacing: 8) {
                     if let replyContext = post.replyContext {
@@ -276,6 +278,16 @@ struct TimelinePostRow: View {
 
         onDismissActionMenu()
         onOpenPost(post)
+    }
+
+    private func handleAvatarTap() {
+        if didHandleActionGesture {
+            didHandleActionGesture = false
+            return
+        }
+
+        onDismissActionMenu()
+        onOpenProfile(post)
     }
 
     private func openEmbeddedPost(_ selectedPost: TimelinePost) {

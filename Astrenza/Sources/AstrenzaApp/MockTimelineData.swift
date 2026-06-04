@@ -5,7 +5,218 @@ enum MockTimelineData {
         store.homeTimeline
     }
 
+    static let selfProfile = UserProfile(
+        id: "profile-self",
+        author: .resolved(
+            displayName: "User Alpha",
+            nip05: "_@mock.example",
+            pubkey: TimelineAuthor.mockPubkey(for: "user-alpha-profile")
+        ),
+        avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles"),
+        banner: ProfileBannerStyle(colors: [.cyan, .indigo, .purple], symbolName: "network"),
+        bio: "Nostr client の読み心地を整えています。relay、timeline、gesture、Liquid Glass。",
+        isCurrentUser: true,
+        isFollowed: true,
+        followerCount: 558,
+        followingCount: 2_139,
+        postCount: 13_034,
+        relayCount: 7,
+        latestFollowers: [
+            AvatarStyle(primary: .pink, secondary: .orange, symbolName: "quote.bubble.fill"),
+            AvatarStyle(primary: .purple, secondary: .blue, symbolName: "sparkles"),
+            AvatarStyle(primary: .green, secondary: .mint, symbolName: "antenna.radiowaves.left.and.right"),
+            AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill"),
+            AvatarStyle(primary: .blue, secondary: .teal, symbolName: "camera.aperture"),
+            AvatarStyle(primary: .gray, secondary: .white, symbolName: "terminal.fill"),
+            AvatarStyle(primary: .mint, secondary: .blue, symbolName: "arrow.triangle.2.circlepath")
+        ],
+        featuredHashtags: [
+            UserFeaturedHashtag(tag: "#nostrclient", lastUsed: "Used 2 days ago", count: 42),
+            UserFeaturedHashtag(tag: "#timeline", lastUsed: "Used 1 week ago", count: 18)
+        ]
+    )
+
+    static var selfProfilePosts: [TimelinePost] {
+        [
+            TimelinePost(
+                id: "profile-self-note-1",
+                author: selfProfile.author,
+                avatar: selfProfile.avatar,
+                body: "Profile画面は、kind:0 と NIP-05 の状態が一目でわかるくらいがちょうどいい。細かいrelay hintは奥に置く。",
+                timestamp: "8m",
+                replyCount: 2,
+                boostCount: 6,
+                favoriteCount: 18,
+                isLocked: false,
+                media: nil,
+                context: nil,
+                actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: false)
+            ),
+            TimelinePost(
+                id: "profile-self-note-2",
+                author: selfProfile.author,
+                avatar: selfProfile.avatar,
+                body: "Featured Hashtags はNIPの専用機能ではなく、投稿やlistから集計したクライアント側の見せ方として扱うのが自然そう。",
+                timestamp: "31m",
+                replyCount: nil,
+                boostCount: 3,
+                favoriteCount: 14,
+                isLocked: false,
+                media: .linkPreview(LinkPreview(
+                    title: "Profile Surface Notes",
+                    subtitle: "kind:0, follow list, relay metadata, count query をプロフィール表示へ落とし込む",
+                    host: "design.mock.example",
+                    url: "https://design.mock.example/profile-surface"
+                )),
+                context: nil
+            ),
+            TimelinePost(
+                id: "profile-self-reply-1",
+                author: selfProfile.author,
+                avatar: selfProfile.avatar,
+                body: "返信込みのタブでは、会話文脈をTLと同じComponentで見せたい。",
+                timestamp: "1h",
+                replyCount: 1,
+                boostCount: nil,
+                favoriteCount: 7,
+                isLocked: false,
+                media: nil,
+                context: nil,
+                replyContext: TimelineReplyContext(
+                    author: .resolved(
+                        displayName: "User Beta",
+                        nip05: "beta@mock.example",
+                        pubkey: TimelineAuthor.mockPubkey(for: "profile-reply-parent")
+                    ),
+                    avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
+                    timestamp: "1h",
+                    bodyPreview: "プロフィールの投稿一覧もTLと同じ触り心地にしたい。",
+                    isSelfReply: false
+                ),
+                replyMention: TimelineReplyMention(text: "@beta", isExternal: true)
+            ),
+            TimelinePost(
+                id: "profile-self-boost-1",
+                author: .resolved(
+                    displayName: "User Sigma",
+                    nip05: "sigma@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "profile-boost-source"),
+                    isFollowed: false
+                ),
+                avatar: AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill"),
+                body: "User Detailのヘッダーは大きく、投稿行はいつもの密度。ここが揃うとアプリ全体の手触りがかなり安定する。",
+                timestamp: "2h",
+                replyCount: nil,
+                boostCount: 9,
+                favoriteCount: 24,
+                isLocked: false,
+                media: nil,
+                context: nil,
+                repostedBy: TimelineRepostAttribution(
+                    author: selfProfile.author,
+                    avatar: selfProfile.avatar,
+                    timestamp: "48m"
+                )
+            )
+        ]
+    }
+
+    static func profile(for post: TimelinePost) -> UserProfile {
+        if post.author.pubkey == selfProfile.author.pubkey {
+            return selfProfile
+        }
+
+        let score = profileScore(for: post.author.pubkey)
+
+        return UserProfile(
+            id: "profile-\(post.author.pubkey)",
+            author: post.author,
+            avatar: post.avatar,
+            banner: ProfileBannerStyle(
+                colors: [
+                    post.avatar.primary.opacity(0.92),
+                    post.avatar.secondary.opacity(0.88),
+                    Color.astrenzaAccent.opacity(0.72)
+                ],
+                symbolName: post.avatar.symbolName
+            ),
+            bio: "\(post.author.primaryText) のmock profile。kind:0、NIP-05、follow stateをTLと同じComponentから確認するための表示です。",
+            isCurrentUser: false,
+            isFollowed: post.author.isFollowed,
+            followerCount: 180 + score % 9_000,
+            followingCount: 24 + score % 1_200,
+            postCount: 400 + score % 24_000,
+            relayCount: 3 + score % 9,
+            latestFollowers: followerAvatars(for: post.avatar),
+            featuredHashtags: [
+                UserFeaturedHashtag(tag: "#mockprofile", lastUsed: "Used 3 days ago", count: 12 + score % 40),
+                UserFeaturedHashtag(tag: "#nostr", lastUsed: "Used 2 weeks ago", count: 8 + score % 22)
+            ]
+        )
+    }
+
+    static func profilePosts(for profile: UserProfile) -> [TimelinePost] {
+        if profile.id == selfProfile.id {
+            return selfProfilePosts
+        }
+
+        let relatedPosts = posts.filter { $0.author.pubkey == profile.author.pubkey }
+
+        return relatedPosts + [
+            TimelinePost(
+                id: "\(profile.id)-mock-note-1",
+                author: profile.author,
+                avatar: profile.avatar,
+                body: "プロフィールから見た投稿一覧のmock。TLからアバターをタップした時も、同じRowの見た目とジェスチャで動くようにしている。",
+                timestamp: "18m",
+                replyCount: 1,
+                boostCount: 4,
+                favoriteCount: 16,
+                isLocked: false,
+                media: nil,
+                context: nil
+            ),
+            TimelinePost(
+                id: "\(profile.id)-mock-reply-1",
+                author: profile.author,
+                avatar: profile.avatar,
+                body: "返信込みタブでは、親投稿の文脈だけ軽く添えて密度を落とさない。",
+                timestamp: "47m",
+                replyCount: nil,
+                boostCount: 1,
+                favoriteCount: 9,
+                isLocked: false,
+                media: nil,
+                context: nil,
+                replyContext: TimelineReplyContext(
+                    author: selfProfile.author,
+                    avatar: selfProfile.avatar,
+                    timestamp: "51m",
+                    bodyPreview: "プロフィール内でもTLと同じ返信Componentを使いたい。",
+                    isSelfReply: false
+                ),
+                replyMention: TimelineReplyMention(text: "@alpha", isExternal: true)
+            )
+        ]
+    }
+
     private static let store = MockTimelineStore(basePosts: basePosts)
+
+    private static func profileScore(for seed: String) -> Int {
+        seed.unicodeScalars.reduce(0) { result, scalar in
+            abs(result &* 31 &+ Int(scalar.value))
+        }
+    }
+
+    private static func followerAvatars(for avatar: AvatarStyle) -> [AvatarStyle] {
+        [
+            avatar,
+            AvatarStyle(primary: .pink, secondary: .orange, symbolName: "quote.bubble.fill"),
+            AvatarStyle(primary: .purple, secondary: .blue, symbolName: "sparkles"),
+            AvatarStyle(primary: .green, secondary: .mint, symbolName: "antenna.radiowaves.left.and.right"),
+            AvatarStyle(primary: .blue, secondary: .teal, symbolName: "camera.aperture")
+        ]
+    }
 
     private static let basePosts: [TimelinePost] = [
         TimelinePost(

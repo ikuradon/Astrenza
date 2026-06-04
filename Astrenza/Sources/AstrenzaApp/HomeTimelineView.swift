@@ -12,7 +12,8 @@ struct HomeTimelineView: View {
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
-    @State private var postNavigationPath: [SelectedPostRoute] = []
+    @State private var postNavigationPath: [TimelineNavigationRoute] = []
+    @State private var profileNavigationPath: [TimelineNavigationRoute] = []
     @State private var unreadBadgeFrame: CGRect = .zero
     @State private var fullscreenMedia: TimelineMedia?
     @State private var browserDestination: TimelineBrowserDestination?
@@ -31,7 +32,7 @@ struct HomeTimelineView: View {
     }
 
     private var isPostDetailPresented: Bool {
-        !postNavigationPath.isEmpty
+        !postNavigationPath.isEmpty || !profileNavigationPath.isEmpty
     }
 
     var body: some View {
@@ -43,7 +44,7 @@ struct HomeTimelineView: View {
                     TapGesture().onEnded(dismissFloatingMenus)
                 )
 
-            if !isPostDetailPresented {
+            if visibleTab == .home && !isPostDetailPresented {
                 VStack {
                     HomeTimelineTopBar(
                         visibleTab: visibleTab,
@@ -117,6 +118,7 @@ struct HomeTimelineView: View {
             minimizeDirection: tabBarMinimizeDirection,
             isTabBarHidden: isPostDetailPresented,
             timelineList: timelineList,
+            profileView: profileView,
             onMinimizeDirectionChanged: updateTabBarMinimizeDirection,
             onComposeTap: presentComposer
         )
@@ -129,6 +131,7 @@ struct HomeTimelineView: View {
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 onOpenPost: openPost,
+                onOpenProfile: openProfile,
                 onReplyPost: { _ in
                     presentReplyComposer()
                 },
@@ -137,19 +140,97 @@ struct HomeTimelineView: View {
             ) { offset in
                 handleTimelineScrollOffset(offset)
             }
-            .navigationDestination(for: SelectedPostRoute.self) { route in
-                PostDetailView(
-                    post: route.post,
-                    swipeSettings: swipeSettings,
-                    onOpenPost: openPost,
-                    onReplyPost: { _ in
-                        presentReplyComposer()
-                    },
-                    onOpenMedia: openMedia,
-                    onOpenURL: openURL
-                )
+            .navigationDestination(for: TimelineNavigationRoute.self) { route in
+                timelineDestination(for: route)
             }
         }
+    }
+
+    private var profileView: some View {
+        NavigationStack(path: $profileNavigationPath) {
+            UserDetailView(
+                profile: MockTimelineData.selfProfile,
+                posts: MockTimelineData.selfProfilePosts,
+                swipeSettings: swipeSettings,
+                onOpenPost: openProfilePost,
+                onOpenProfile: openProfileFromProfile,
+                onReplyPost: { _ in
+                    presentReplyComposer()
+                },
+                onOpenMedia: openMedia,
+                onOpenURL: openURL
+            )
+            .navigationDestination(for: TimelineNavigationRoute.self) { route in
+                profileDestination(for: route)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func timelineDestination(for route: TimelineNavigationRoute) -> some View {
+        switch route {
+        case .post(let selectedPost):
+            PostDetailView(
+                post: selectedPost.post,
+                swipeSettings: swipeSettings,
+                onOpenPost: openPost,
+                onReplyPost: { _ in
+                    presentReplyComposer()
+                },
+                onOpenMedia: openMedia,
+                onOpenURL: openURL
+            )
+        case .profile(let selectedProfile):
+            userDetailView(
+                for: selectedProfile.post,
+                onOpenPost: openPost,
+                onOpenProfile: openProfile
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func profileDestination(for route: TimelineNavigationRoute) -> some View {
+        switch route {
+        case .post(let selectedPost):
+            PostDetailView(
+                post: selectedPost.post,
+                swipeSettings: swipeSettings,
+                onOpenPost: openProfilePost,
+                onReplyPost: { _ in
+                    presentReplyComposer()
+                },
+                onOpenMedia: openMedia,
+                onOpenURL: openURL
+            )
+        case .profile(let selectedProfile):
+            userDetailView(
+                for: selectedProfile.post,
+                onOpenPost: openProfilePost,
+                onOpenProfile: openProfileFromProfile
+            )
+        }
+    }
+
+    private func userDetailView(
+        for post: TimelinePost,
+        onOpenPost: @escaping (TimelinePost) -> Void,
+        onOpenProfile: @escaping (TimelinePost) -> Void
+    ) -> some View {
+        let profile = MockTimelineData.profile(for: post)
+
+        return UserDetailView(
+            profile: profile,
+            posts: MockTimelineData.profilePosts(for: profile),
+            swipeSettings: swipeSettings,
+            onOpenPost: onOpenPost,
+            onOpenProfile: onOpenProfile,
+            onReplyPost: { _ in
+                presentReplyComposer()
+            },
+            onOpenMedia: openMedia,
+            onOpenURL: openURL
+        )
     }
 
     private func completeInitialAppearanceIfNeeded() {
@@ -174,7 +255,22 @@ struct HomeTimelineView: View {
 
     private func openPost(_ post: TimelinePost) {
         dismissFloatingMenus()
-        postNavigationPath.append(SelectedPostRoute(post: post))
+        postNavigationPath.append(.post(SelectedPostRoute(post: post)))
+    }
+
+    private func openProfile(_ post: TimelinePost) {
+        dismissFloatingMenus()
+        postNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
+    }
+
+    private func openProfilePost(_ post: TimelinePost) {
+        dismissFloatingMenus()
+        profileNavigationPath.append(.post(SelectedPostRoute(post: post)))
+    }
+
+    private func openProfileFromProfile(_ post: TimelinePost) {
+        dismissFloatingMenus()
+        profileNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
     }
 
     private func openMedia(_ media: TimelineMedia) {
@@ -253,6 +349,11 @@ struct HomeTimelineView: View {
     }
 }
 
+private enum TimelineNavigationRoute: Hashable {
+    case post(SelectedPostRoute)
+    case profile(SelectedProfileRoute)
+}
+
 private struct SelectedPostRoute: Identifiable, Hashable {
     let post: TimelinePost
 
@@ -261,6 +362,22 @@ private struct SelectedPostRoute: Identifiable, Hashable {
     }
 
     static func == (lhs: SelectedPostRoute, rhs: SelectedPostRoute) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
+private struct SelectedProfileRoute: Identifiable, Hashable {
+    let post: TimelinePost
+
+    var id: String {
+        post.author.pubkey
+    }
+
+    static func == (lhs: SelectedProfileRoute, rhs: SelectedProfileRoute) -> Bool {
         lhs.id == rhs.id
     }
 
