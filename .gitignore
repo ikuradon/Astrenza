@@ -1,5 +1,19 @@
+# macOS
 .DS_Store
+
+# Local agent state
 .serena/
+
+# Xcode / XcodeGen generated files
+Astrenza.xcodeproj/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+*.xcresult/
+
+# SwiftPM / build products
+.build/
+
+# Reference screenshots and captures
+Documents/Screenshot*/
+Documents/Screenshots*/

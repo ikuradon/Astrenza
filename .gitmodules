@@ -1,0 +1,3 @@
+[submodule "Documents/Reference/nips"]
+	path = Documents/Reference/nips
+	url = https://github.com/nostr-protocol/nips.git
