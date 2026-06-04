@@ -31,12 +31,13 @@ struct TimelineFeedView: View {
                         },
                         onReplyPost: onReplyPost,
                         onOpenMedia: openMedia,
-                        onOpenURL: openURL
-                    ) {
-                        if menuState.isOpen {
-                            closeFloatingPostMenus()
+                        onOpenURL: openURL,
+                        onDismissActionMenu: {
+                            if menuState.isOpen {
+                                closeFloatingPostMenus()
+                            }
                         }
-                    }
+                    )
                     .zIndex(menuState.openedMenu?.postID == post.id ? 20 : 0)
                 }
             }

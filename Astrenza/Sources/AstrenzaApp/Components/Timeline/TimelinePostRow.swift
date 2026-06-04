@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum FloatingMenuMetrics {
     static let actionWidth: CGFloat = 184
@@ -33,8 +34,9 @@ struct TimelinePostRow: View {
     let onOpenURL: (URL) -> Void
     let onDismissActionMenu: () -> Void
     @State private var didHandleActionGesture = false
+    @State private var isActionLongPressActive = false
     @State private var swipeFeedback: TimelineSwipeAction?
-    @GestureState private var swipeTranslation: CGFloat = 0
+    @State private var swipeTranslation: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -43,7 +45,15 @@ struct TimelinePostRow: View {
                 .offset(x: displayedSwipeOffset)
         }
         .clipped()
-        .simultaneousGesture(rowSwipeGesture)
+        .contentShape(Rectangle())
+        .background {
+            TimelineRowPanGestureHost(
+                isEnabled: !isActionLongPressActive,
+                onChanged: handleSwipeChanged,
+                onEnded: handleSwipeEnded
+            )
+            .allowsHitTesting(false)
+        }
         .overlay(alignment: .top) {
             if let swipeFeedback {
                 TimelineSwipeFeedbackView(action: swipeFeedback)
@@ -84,23 +94,6 @@ struct TimelinePostRow: View {
     private var currentSwipeAction: TimelineSwipeAction? {
         guard let classification = swipeClassification(for: swipeTranslation) else { return nil }
         return swipeAction(for: classification)
-    }
-
-    private var rowSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .updating($swipeTranslation) { value, state, _ in
-                guard isHorizontalSwipe(value) else { return }
-                state = value.translation.width
-            }
-            .onEnded { value in
-                guard isHorizontalSwipe(value),
-                      let classification = swipeClassification(for: value.translation.width)
-                else {
-                    return
-                }
-
-                performSwipeAction(swipeAction(for: classification))
-            }
     }
 
     private var rowContent: some View {
@@ -182,10 +175,18 @@ struct TimelinePostRow: View {
 
     private var postContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TimelinePostBodyText(text: post.body, mention: post.replyMention)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: handleRowTap)
+            textContent
 
+            attachmentContent
+        }
+    }
+
+    private var textContent: some View {
+        TimelinePostBodyText(text: post.body, mention: post.replyMention)
+    }
+
+    private var attachmentContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let quotedPost = post.quotedPost {
                 Button {
                     openEmbeddedPost(quotedPost.timelinePost())
@@ -229,12 +230,14 @@ struct TimelinePostRow: View {
                     sendActionEvent(.repost, phase: .tap)
                 },
                 onLongPress: {
+                    isActionLongPressActive = true
                     sendActionEvent(.repost, phase: .longPressBegan)
                 },
                 onLongPressDragChanged: { location in
                     sendActionEvent(.repost, phase: .dragChanged(location))
                 },
                 onLongPressDragEnded: { location in
+                    isActionLongPressActive = false
                     sendActionEvent(.repost, phase: .dragEnded(location))
                 }
             )
@@ -249,12 +252,14 @@ struct TimelinePostRow: View {
                     sendActionEvent(.favorite, phase: .tap)
                 },
                 onLongPress: {
+                    isActionLongPressActive = true
                     sendActionEvent(.favorite, phase: .longPressBegan)
                 },
                 onLongPressDragChanged: { location in
                     sendActionEvent(.favorite, phase: .dragChanged(location))
                 },
                 onLongPressDragEnded: { location in
+                    isActionLongPressActive = false
                     sendActionEvent(.favorite, phase: .dragEnded(location))
                 }
             )
@@ -275,12 +280,14 @@ struct TimelinePostRow: View {
                     sendActionEvent(.more, phase: .tap)
                 },
                 onLongPress: {
+                    isActionLongPressActive = true
                     sendActionEvent(.more, phase: .longPressBegan)
                 },
                 onLongPressDragChanged: { location in
                     sendActionEvent(.more, phase: .dragChanged(location))
                 },
                 onLongPressDragEnded: { location in
+                    isActionLongPressActive = false
                     sendActionEvent(.more, phase: .dragEnded(location))
                 }
             )
@@ -321,8 +328,23 @@ struct TimelinePostRow: View {
         }
     }
 
-    private func isHorizontalSwipe(_ value: DragGesture.Value) -> Bool {
-        abs(value.translation.width) > abs(value.translation.height) * 1.35
+    private func handleSwipeChanged(_ translationWidth: CGFloat) {
+        onDismissActionMenu()
+        swipeTranslation = translationWidth
+    }
+
+    private func handleSwipeEnded(_ translationWidth: CGFloat) {
+        defer {
+            withAnimation(.spring(duration: 0.2, bounce: 0.1)) {
+                swipeTranslation = 0
+            }
+        }
+
+        guard let classification = swipeClassification(for: translationWidth) else {
+            return
+        }
+
+        performSwipeAction(swipeAction(for: classification))
     }
 
     private func swipeClassification(for translationWidth: CGFloat) -> TimelineSwipeClassification? {
@@ -382,6 +404,144 @@ struct TimelinePostRow: View {
                 }
             }
         }
+    }
+}
+
+private struct TimelineRowPanGestureHost: UIViewRepresentable {
+    let isEnabled: Bool
+    let onChanged: (CGFloat) -> Void
+    let onEnded: (CGFloat) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> MarkerView {
+        let view = MarkerView()
+        view.isUserInteractionEnabled = false
+        view.onMovedToWindow = { markerView in
+            context.coordinator.attachIfNeeded(from: markerView)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: MarkerView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.markerView = uiView
+        DispatchQueue.main.async {
+            context.coordinator.attachIfNeeded(from: uiView)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: TimelineRowPanGestureHost
+        weak var markerView: UIView?
+        private weak var scrollView: UIScrollView?
+        private var recognizer: UIPanGestureRecognizer?
+        private var beganInsideRow = false
+
+        init(parent: TimelineRowPanGestureHost) {
+            self.parent = parent
+        }
+
+        deinit {
+            if let recognizer, let scrollView {
+                DispatchQueue.main.async {
+                    scrollView.removeGestureRecognizer(recognizer)
+                }
+            }
+        }
+
+        func attachIfNeeded(from markerView: UIView) {
+            self.markerView = markerView
+            guard let targetScrollView = markerView.enclosingScrollView() else { return }
+            guard scrollView !== targetScrollView else { return }
+
+            if let recognizer, let scrollView {
+                scrollView.removeGestureRecognizer(recognizer)
+            }
+
+            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            recognizer.minimumNumberOfTouches = 1
+            recognizer.maximumNumberOfTouches = 1
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesBegan = false
+            recognizer.delaysTouchesEnded = false
+            recognizer.delegate = self
+            targetScrollView.addGestureRecognizer(recognizer)
+
+            self.scrollView = targetScrollView
+            self.recognizer = recognizer
+        }
+
+        @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+            guard parent.isEnabled, beganInsideRow else { return }
+            let translation = recognizer.translation(in: scrollView).x
+
+            switch recognizer.state {
+            case .began, .changed:
+                parent.onChanged(translation)
+            case .ended:
+                parent.onEnded(translation)
+                beganInsideRow = false
+            case .cancelled, .failed:
+                parent.onEnded(0)
+                beganInsideRow = false
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard parent.isEnabled,
+                  let panRecognizer = gestureRecognizer as? UIPanGestureRecognizer,
+                  let markerView,
+                  let scrollView
+            else {
+                return false
+            }
+
+            let locationInRow = panRecognizer.location(in: markerView)
+            guard markerView.bounds.contains(locationInRow) else {
+                beganInsideRow = false
+                return false
+            }
+
+            let velocity = panRecognizer.velocity(in: scrollView)
+            let horizontalSpeed = abs(velocity.x)
+            let verticalSpeed = abs(velocity.y)
+            beganInsideRow = horizontalSpeed > 120 && horizontalSpeed > verticalSpeed * 1.35
+            return beganInsideRow
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            false
+        }
+    }
+
+    final class MarkerView: UIView {
+        var onMovedToWindow: ((MarkerView) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onMovedToWindow?(self)
+        }
+    }
+}
+
+private extension UIView {
+    func enclosingScrollView() -> UIScrollView? {
+        var currentView = superview
+        while let view = currentView {
+            if let scrollView = view as? UIScrollView {
+                return scrollView
+            }
+            currentView = view.superview
+        }
+        return nil
     }
 }
 

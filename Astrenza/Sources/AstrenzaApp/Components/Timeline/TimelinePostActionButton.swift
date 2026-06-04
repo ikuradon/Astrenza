@@ -134,11 +134,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            if gestureRecognizer is UITapGestureRecognizer || otherGestureRecognizer is UITapGestureRecognizer {
-                return false
-            }
-
-            return true
+            false
         }
 
         private func windowLocation(for recognizer: UILongPressGestureRecognizer) -> CGPoint {
