@@ -1,0 +1,83 @@
+import SwiftUI
+import UIKit
+
+enum TimelineKind: String, CaseIterable, Identifiable {
+    case home
+    case relays
+    case lists
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .home: "Home"
+        case .relays: "Relays"
+        case .lists: "Lists"
+        }
+    }
+
+    var systemName: String {
+        switch self {
+        case .home: "house"
+        case .relays: "globe.asia.australia"
+        case .lists: "list.bullet.rectangle"
+        }
+    }
+}
+
+enum TimelineTab: String, CaseIterable, Identifiable {
+    case home
+    case notifications
+    case profile
+    case explore
+    case compose
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .home: "Home"
+        case .notifications: "Notifications"
+        case .profile: "Profile"
+        case .explore: "Explore"
+        case .compose: "Post"
+        }
+    }
+
+    func systemName(isSelected: Bool) -> String {
+        switch self {
+        case .home: isSelected ? "house.fill" : "house"
+        case .notifications: "bell.badge"
+        case .profile: "person.crop.square"
+        case .explore: "binoculars"
+        case .compose: "square.and.pencil"
+        }
+    }
+}
+
+enum TabBarMinimizeDirection: Equatable {
+    case towardOlder
+    case towardNewer
+
+    var swiftUIBehavior: TabBarMinimizeBehavior {
+        switch self {
+        case .towardOlder: .onScrollDown
+        case .towardNewer: .onScrollUp
+        }
+    }
+
+    var uiKitBehavior: UITabBarController.MinimizeBehavior {
+        switch self {
+        case .towardOlder: .onScrollDown
+        case .towardNewer: .onScrollUp
+        }
+    }
+}
+
+struct UnreadBadgeFramePreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
