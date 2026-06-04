@@ -7,16 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		22C639EA7E1F647431CC3823 /* TimelinePostRowGestures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1953B038423B3D36758B8615 /* TimelinePostRowGestures.swift */; };
 		2F7292ADB016E60489167553 /* RelayStatusRingButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0EFE8CCDA62F4FE86A1008 /* RelayStatusRingButton.swift */; };
 		312D444E2C2CB101698C55A5 /* AvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68EDBDC01E5977E1B8AD7BB4 /* AvatarView.swift */; };
 		319E16DA71F652541D92C259 /* TimelinePostMenuState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23804BC65BA490A86B88DEF /* TimelinePostMenuState.swift */; };
 		365B18828562098B65BA23B9 /* AstrenzaTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A6355CFF04BCCCB4EC6FE2D /* AstrenzaTheme.swift */; };
+		366F7A76231C26BF4AB07CC1 /* TimelinePostSwipeActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176BE08BA89E6A4E6816C3FD /* TimelinePostSwipeActions.swift */; };
 		4C604A37790E4C493BDC117E /* HomeTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702687E1AE3C3E494E5EB6FF /* HomeTimelineView.swift */; };
 		51370E5EF11103ACE253AEFD /* PostDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95780B0022D686DC60B820D9 /* PostDetailView.swift */; };
 		529A663DDA285BDCB2A65B21 /* HomeTimelineTopChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2A93083623E0B51C7D8A3EB /* HomeTimelineTopChrome.swift */; };
 		574D8535E79503D3699B7A86 /* AstrenzaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD51462A04AFBCCF3C553678 /* AstrenzaApp.swift */; };
 		59CF715FB7214BB03229BFC3 /* HomeTimelineTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D0243D45D3D14AD0C15501 /* HomeTimelineTypes.swift */; };
+		65F2DFD6AB4554A709110A9E /* MockTimelineData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6879B0C20115011EAAE156D6 /* MockTimelineData.swift */; };
 		6C5386DCC51866449251F6F0 /* TimelinePostRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */; };
+		82483B52FDC5F04137831C2F /* TimelinePostFloatingMenus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D6FB3A4B0D2E47219651F0 /* TimelinePostFloatingMenus.swift */; };
 		9752CD3286B90C1B90AAFB93 /* TimelineReplyContextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68179E9671D96407F9AE3340 /* TimelineReplyContextView.swift */; };
 		9B59B96CBDC1868E3D7BEE86 /* TimelineAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */; };
 		B60D0E622F4FD352C0934DAC /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44AD3C86560AB45E3CCC96D2 /* SettingsView.swift */; };
@@ -26,20 +30,26 @@
 		C74C1C25B89B4E42B616DE5D /* HomeUserSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B16ECF4FA86BE6F83A2F2342 /* HomeUserSwitcher.swift */; };
 		D01C06E30D743026E87EDBA7 /* HomeTimelineTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0ED6B6653FF7C3FF175A5E /* HomeTimelineTabs.swift */; };
 		D36EFBBA1ADD581710928F7C /* TimelineFeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */; };
+		DEA7E1E2EE26570B46C1A195 /* TimelinePostRowSupplementaryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AF77F083C8C8B2FB87CE4C8 /* TimelinePostRowSupplementaryViews.swift */; };
 		E51E4A37AB8DC18E5976688F /* TimelineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRow.swift; sourceTree = "<group>"; };
+		176BE08BA89E6A4E6816C3FD /* TimelinePostSwipeActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostSwipeActions.swift; sourceTree = "<group>"; };
+		1953B038423B3D36758B8615 /* TimelinePostRowGestures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRowGestures.swift; sourceTree = "<group>"; };
 		3A6355CFF04BCCCB4EC6FE2D /* AstrenzaTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstrenzaTheme.swift; sourceTree = "<group>"; };
 		3E9E03F52C4984D98395970D /* ComposeSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeSheetView.swift; sourceTree = "<group>"; };
 		44AD3C86560AB45E3CCC96D2 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineFeedView.swift; sourceTree = "<group>"; };
 		5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineAttachments.swift; sourceTree = "<group>"; };
 		68179E9671D96407F9AE3340 /* TimelineReplyContextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReplyContextView.swift; sourceTree = "<group>"; };
+		6879B0C20115011EAAE156D6 /* MockTimelineData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockTimelineData.swift; sourceTree = "<group>"; };
 		68EDBDC01E5977E1B8AD7BB4 /* AvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarView.swift; sourceTree = "<group>"; };
 		702687E1AE3C3E494E5EB6FF /* HomeTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTimelineView.swift; sourceTree = "<group>"; };
+		7AF77F083C8C8B2FB87CE4C8 /* TimelinePostRowSupplementaryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRowSupplementaryViews.swift; sourceTree = "<group>"; };
 		860CD1CC83219006F805EE2C /* TimelinePostActionButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostActionButton.swift; sourceTree = "<group>"; };
+		91D6FB3A4B0D2E47219651F0 /* TimelinePostFloatingMenus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostFloatingMenus.swift; sourceTree = "<group>"; };
 		95780B0022D686DC60B820D9 /* PostDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostDetailView.swift; sourceTree = "<group>"; };
 		A2A93083623E0B51C7D8A3EB /* HomeTimelineTopChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTimelineTopChrome.swift; sourceTree = "<group>"; };
 		B16ECF4FA86BE6F83A2F2342 /* HomeUserSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeUserSwitcher.swift; sourceTree = "<group>"; };
@@ -59,6 +69,7 @@
 			children = (
 				BD51462A04AFBCCF3C553678 /* AstrenzaApp.swift */,
 				702687E1AE3C3E494E5EB6FF /* HomeTimelineView.swift */,
+				6879B0C20115011EAAE156D6 /* MockTimelineData.swift */,
 				C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */,
 				444F1CB559CD00847A753556 /* Components */,
 			);
@@ -80,8 +91,12 @@
 				5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */,
 				4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */,
 				860CD1CC83219006F805EE2C /* TimelinePostActionButton.swift */,
+				91D6FB3A4B0D2E47219651F0 /* TimelinePostFloatingMenus.swift */,
 				E23804BC65BA490A86B88DEF /* TimelinePostMenuState.swift */,
 				118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */,
+				1953B038423B3D36758B8615 /* TimelinePostRowGestures.swift */,
+				7AF77F083C8C8B2FB87CE4C8 /* TimelinePostRowSupplementaryViews.swift */,
+				176BE08BA89E6A4E6816C3FD /* TimelinePostSwipeActions.swift */,
 				68179E9671D96407F9AE3340 /* TimelineReplyContextView.swift */,
 			);
 			path = Timeline;
@@ -213,6 +228,7 @@
 				59CF715FB7214BB03229BFC3 /* HomeTimelineTypes.swift in Sources */,
 				4C604A37790E4C493BDC117E /* HomeTimelineView.swift in Sources */,
 				C74C1C25B89B4E42B616DE5D /* HomeUserSwitcher.swift in Sources */,
+				65F2DFD6AB4554A709110A9E /* MockTimelineData.swift in Sources */,
 				51370E5EF11103ACE253AEFD /* PostDetailView.swift in Sources */,
 				2F7292ADB016E60489167553 /* RelayStatusRingButton.swift in Sources */,
 				B60D0E622F4FD352C0934DAC /* SettingsView.swift in Sources */,
@@ -220,8 +236,12 @@
 				D36EFBBA1ADD581710928F7C /* TimelineFeedView.swift in Sources */,
 				E51E4A37AB8DC18E5976688F /* TimelineModels.swift in Sources */,
 				C24D09B71A72F1D7C35FF796 /* TimelinePostActionButton.swift in Sources */,
+				82483B52FDC5F04137831C2F /* TimelinePostFloatingMenus.swift in Sources */,
 				319E16DA71F652541D92C259 /* TimelinePostMenuState.swift in Sources */,
 				6C5386DCC51866449251F6F0 /* TimelinePostRow.swift in Sources */,
+				22C639EA7E1F647431CC3823 /* TimelinePostRowGestures.swift in Sources */,
+				DEA7E1E2EE26570B46C1A195 /* TimelinePostRowSupplementaryViews.swift in Sources */,
+				366F7A76231C26BF4AB07CC1 /* TimelinePostSwipeActions.swift in Sources */,
 				9752CD3286B90C1B90AAFB93 /* TimelineReplyContextView.swift in Sources */,
 				B9B3F76180F825C6435513C2 /* TimelineSwitcherMenu.swift in Sources */,
 			);
