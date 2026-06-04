@@ -158,3 +158,133 @@ struct TimelineSwipeFeedbackView: View {
         .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
     }
 }
+
+struct TimelineSwipeContainer<Content: View>: View {
+    let swipeSettings: TimelineSwipeSettings
+    var isEnabled = true
+    let onSwipeChanged: () -> Void
+    let onSwipeAction: (TimelineSwipeAction) -> Bool
+    @ViewBuilder let content: () -> Content
+    @State private var swipeFeedback: TimelineSwipeAction?
+    @State private var swipeTranslation: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            swipeActionBackdrop
+
+            content()
+                .offset(x: displayedSwipeOffset)
+        }
+        .clipped()
+        .contentShape(Rectangle())
+        .background {
+            TimelineRowPanGestureHost(
+                isEnabled: isEnabled,
+                onChanged: handleSwipeChanged,
+                onEnded: handleSwipeEnded
+            )
+            .allowsHitTesting(false)
+        }
+        .overlay(alignment: .top) {
+            if let swipeFeedback {
+                TimelineSwipeFeedbackView(action: swipeFeedback)
+                    .padding(.top, 10)
+                    .transition(.scale(scale: 0.84).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var displayedSwipeOffset: CGFloat {
+        guard abs(swipeTranslation) > 0 else { return 0 }
+        let cappedOffset = min(abs(swipeTranslation), 178)
+        return cappedOffset * (swipeTranslation < 0 ? -1 : 1)
+    }
+
+    private var swipeProgress: Double {
+        min(max(abs(swipeTranslation) / TimelineSwipeMetrics.longThreshold, 0.18), 1)
+    }
+
+    private var currentSwipeAction: TimelineSwipeAction? {
+        guard let classification = swipeClassification(for: swipeTranslation) else { return nil }
+        return swipeAction(for: classification)
+    }
+
+    @ViewBuilder
+    private var swipeActionBackdrop: some View {
+        if let action = currentSwipeAction {
+            HStack {
+                if swipeTranslation > 0 {
+                    TimelineSwipeActionIndicator(action: action, alignment: .leading)
+                    Spacer(minLength: 0)
+                } else {
+                    Spacer(minLength: 0)
+                    TimelineSwipeActionIndicator(action: action, alignment: .trailing)
+                }
+            }
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(action.backgroundColor.opacity(swipeProgress))
+        }
+    }
+
+    private func handleSwipeChanged(_ translationWidth: CGFloat) {
+        onSwipeChanged()
+        swipeTranslation = translationWidth
+    }
+
+    private func handleSwipeEnded(_ translationWidth: CGFloat) {
+        defer {
+            withAnimation(.spring(duration: 0.2, bounce: 0.1)) {
+                swipeTranslation = 0
+            }
+        }
+
+        guard let classification = swipeClassification(for: translationWidth) else {
+            return
+        }
+
+        let action = swipeAction(for: classification)
+        if onSwipeAction(action) {
+            showSwipeFeedback(action)
+        }
+    }
+
+    private func swipeClassification(for translationWidth: CGFloat) -> TimelineSwipeClassification? {
+        let distance = abs(translationWidth)
+        guard distance >= TimelineSwipeMetrics.shortThreshold else { return nil }
+
+        let direction: TimelineSwipeDirection = translationWidth < 0 ? .left : .right
+        let length: TimelineSwipeLength = distance >= TimelineSwipeMetrics.longThreshold ? .long : .short
+        return TimelineSwipeClassification(direction: direction, length: length)
+    }
+
+    private func swipeAction(for classification: TimelineSwipeClassification) -> TimelineSwipeAction {
+        let title: String
+        switch (classification.direction, classification.length) {
+        case (.left, .long):
+            title = swipeSettings.longLeftSwipe
+        case (.right, .long):
+            title = swipeSettings.longRightSwipe
+        case (.left, .short):
+            title = swipeSettings.shortLeftSwipe
+        case (.right, .short):
+            title = swipeSettings.shortRightSwipe
+        }
+
+        return TimelineSwipeAction(title: title)
+    }
+
+    private func showSwipeFeedback(_ action: TimelineSwipeAction) {
+        withAnimation(.spring(duration: 0.24, bounce: 0.16)) {
+            swipeFeedback = action
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
+            withAnimation(.easeOut(duration: 0.18)) {
+                if swipeFeedback == action {
+                    swipeFeedback = nil
+                }
+            }
+        }
+    }
+}

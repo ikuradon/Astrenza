@@ -140,7 +140,11 @@ struct HomeTimelineView: View {
             .navigationDestination(for: SelectedPostRoute.self) { route in
                 PostDetailView(
                     post: route.post,
+                    swipeSettings: swipeSettings,
                     onOpenPost: openPost,
+                    onReplyPost: { _ in
+                        presentReplyComposer()
+                    },
                     onOpenMedia: openMedia,
                     onOpenURL: openURL
                 )

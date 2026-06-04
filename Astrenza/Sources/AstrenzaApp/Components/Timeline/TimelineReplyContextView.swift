@@ -66,6 +66,71 @@ struct TimelineReplyMarker: View {
     }
 }
 
+enum TimelineBodySummaryProminence {
+    case normal
+    case muted
+    case warning
+}
+
+struct TimelineBodySummaryPill: View {
+    let systemName: String
+    let text: String
+    var prominence: TimelineBodySummaryProminence = .normal
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .black))
+
+            Text(text)
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .lineLimit(1)
+        }
+        .foregroundStyle(foregroundStyle)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(backgroundColor, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(borderColor, lineWidth: 1)
+        }
+        .fixedSize()
+    }
+
+    private var foregroundStyle: Color {
+        switch prominence {
+        case .normal:
+            Color.astrenzaAccent
+        case .muted:
+            .secondary
+        case .warning:
+            .orange
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch prominence {
+        case .normal:
+            Color.astrenzaAccent.opacity(0.12)
+        case .muted:
+            Color.white.opacity(0.06)
+        case .warning:
+            Color.orange.opacity(0.13)
+        }
+    }
+
+    private var borderColor: Color {
+        switch prominence {
+        case .normal:
+            Color.astrenzaAccent.opacity(0.18)
+        case .muted:
+            Color.white.opacity(0.08)
+        case .warning:
+            Color.orange.opacity(0.24)
+        }
+    }
+}
+
 struct TimelinePostBodyText: View {
     let text: String
     let mention: TimelineReplyMention?

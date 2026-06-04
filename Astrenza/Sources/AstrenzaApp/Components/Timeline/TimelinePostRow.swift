@@ -12,64 +12,15 @@ struct TimelinePostRow: View {
     let onDismissActionMenu: () -> Void
     @State private var didHandleActionGesture = false
     @State private var isActionLongPressActive = false
-    @State private var swipeFeedback: TimelineSwipeAction?
-    @State private var swipeTranslation: CGFloat = 0
 
     var body: some View {
-        ZStack {
-            swipeActionBackdrop
+        TimelineSwipeContainer(
+            swipeSettings: swipeSettings,
+            isEnabled: !isActionLongPressActive,
+            onSwipeChanged: onDismissActionMenu,
+            onSwipeAction: performSwipeAction
+        ) {
             rowContent
-                .offset(x: displayedSwipeOffset)
-        }
-        .clipped()
-        .contentShape(Rectangle())
-        .background {
-            TimelineRowPanGestureHost(
-                isEnabled: !isActionLongPressActive,
-                onChanged: handleSwipeChanged,
-                onEnded: handleSwipeEnded
-            )
-            .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            if let swipeFeedback {
-                TimelineSwipeFeedbackView(action: swipeFeedback)
-                    .padding(.top, 10)
-                    .transition(.scale(scale: 0.84).combined(with: .opacity))
-            }
-        }
-    }
-
-    private var displayedSwipeOffset: CGFloat {
-        guard abs(swipeTranslation) > 0 else { return 0 }
-        let cappedOffset = min(abs(swipeTranslation), 178)
-        return cappedOffset * (swipeTranslation < 0 ? -1 : 1)
-    }
-
-    private var swipeProgress: Double {
-        min(max(abs(swipeTranslation) / TimelineSwipeMetrics.longThreshold, 0.18), 1)
-    }
-
-    private var currentSwipeAction: TimelineSwipeAction? {
-        guard let classification = swipeClassification(for: swipeTranslation) else { return nil }
-        return swipeAction(for: classification)
-    }
-
-    @ViewBuilder
-    private var swipeActionBackdrop: some View {
-        if let action = currentSwipeAction {
-            HStack {
-                if swipeTranslation > 0 {
-                    TimelineSwipeActionIndicator(action: action, alignment: .leading)
-                    Spacer(minLength: 0)
-                } else {
-                    Spacer(minLength: 0)
-                    TimelineSwipeActionIndicator(action: action, alignment: .trailing)
-                }
-            }
-            .padding(.horizontal, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(action.backgroundColor.opacity(swipeProgress))
         }
     }
 
@@ -154,15 +105,46 @@ struct TimelinePostRow: View {
         VStack(alignment: .leading, spacing: 8) {
             textContent
 
+            bodySummaryContent
+
             attachmentContent
         }
     }
 
     private var textContent: some View {
-        TimelinePostBodyText(text: post.body, mention: post.replyMention)
+        TimelinePostBodyText(
+            text: post.body,
+            mention: post.replyMention,
+            lineLimit: post.bodyPresentation.timelineLineLimit
+        )
             .contentShape(Rectangle())
             .accessibilityIdentifier("timeline.body.\(post.id)")
             .onTapGesture(perform: handleRowTap)
+    }
+
+    @ViewBuilder
+    private var bodySummaryContent: some View {
+        if post.bodyPresentation.collapseReason != nil || post.linkSummary != nil {
+            HStack(spacing: 7) {
+                if let collapseReason = post.bodyPresentation.collapseReason {
+                    TimelineBodySummaryPill(
+                        systemName: collapseReason.systemName,
+                        text: collapseReason.label,
+                        prominence: collapseReason == .lowTrustLinks ? .warning : .normal
+                    )
+                }
+
+                if let linkSummary = post.linkSummary {
+                    TimelineBodySummaryPill(
+                        systemName: "link",
+                        text: linkSummary.compactText,
+                        prominence: linkSummary.unresolvedCount > 0 ? .muted : .normal
+                    )
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: handleRowTap)
+        }
     }
 
     private var attachmentContent: some View {
@@ -313,54 +295,9 @@ struct TimelinePostRow: View {
         }
     }
 
-    private func handleSwipeChanged(_ translationWidth: CGFloat) {
-        onDismissActionMenu()
-        swipeTranslation = translationWidth
-    }
-
-    private func handleSwipeEnded(_ translationWidth: CGFloat) {
-        defer {
-            withAnimation(.spring(duration: 0.2, bounce: 0.1)) {
-                swipeTranslation = 0
-            }
-        }
-
-        guard let classification = swipeClassification(for: translationWidth) else {
-            return
-        }
-
-        performSwipeAction(swipeAction(for: classification))
-    }
-
-    private func swipeClassification(for translationWidth: CGFloat) -> TimelineSwipeClassification? {
-        let distance = abs(translationWidth)
-        guard distance >= TimelineSwipeMetrics.shortThreshold else { return nil }
-
-        let direction: TimelineSwipeDirection = translationWidth < 0 ? .left : .right
-        let length: TimelineSwipeLength = distance >= TimelineSwipeMetrics.longThreshold ? .long : .short
-        return TimelineSwipeClassification(direction: direction, length: length)
-    }
-
-    private func swipeAction(for classification: TimelineSwipeClassification) -> TimelineSwipeAction {
-        let title: String
-        switch (classification.direction, classification.length) {
-        case (.left, .long):
-            title = swipeSettings.longLeftSwipe
-        case (.right, .long):
-            title = swipeSettings.longRightSwipe
-        case (.left, .short):
-            title = swipeSettings.shortLeftSwipe
-        case (.right, .short):
-            title = swipeSettings.shortRightSwipe
-        }
-
-        return TimelineSwipeAction(title: title)
-    }
-
-    private func performSwipeAction(_ action: TimelineSwipeAction) {
+    private func performSwipeAction(_ action: TimelineSwipeAction) -> Bool {
         guard action.kind != .noAction else {
-            showSwipeFeedback(action)
-            return
+            return true
         }
 
         onDismissActionMenu()
@@ -368,26 +305,14 @@ struct TimelinePostRow: View {
         switch action.kind {
         case .viewDetail:
             onOpenPost(post)
+            return false
         case .reply:
             onReplyPost(post)
+            return false
         case .favorite, .repost, .quote, .bookmark, .openLink, .copyLink, .copyPost, .sharePost, .readLater, .translate:
-            showSwipeFeedback(action)
+            return true
         case .noAction:
-            break
-        }
-    }
-
-    private func showSwipeFeedback(_ action: TimelineSwipeAction) {
-        withAnimation(.spring(duration: 0.24, bounce: 0.16)) {
-            swipeFeedback = action
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
-            withAnimation(.easeOut(duration: 0.18)) {
-                if swipeFeedback == action {
-                    swipeFeedback = nil
-                }
-            }
+            return true
         }
     }
 }

@@ -17,6 +17,8 @@ struct TimelinePost: Identifiable {
     let replyContext: TimelineReplyContext?
     let replyMention: TimelineReplyMention?
     let contentWarning: TimelineContentWarning?
+    let bodyPresentation: TimelineBodyPresentation
+    let linkSummary: TimelineLinkSummary?
     let actionState: TimelinePostActionState
 
     init(
@@ -37,6 +39,8 @@ struct TimelinePost: Identifiable {
         replyContext: TimelineReplyContext? = nil,
         replyMention: TimelineReplyMention? = nil,
         contentWarning: TimelineContentWarning? = nil,
+        bodyPresentation: TimelineBodyPresentation = .standard,
+        linkSummary: TimelineLinkSummary? = nil,
         actionState: TimelinePostActionState = .none
     ) {
         let author = TimelineAuthor.resolved(
@@ -61,6 +65,8 @@ struct TimelinePost: Identifiable {
         self.replyContext = replyContext
         self.replyMention = replyMention
         self.contentWarning = contentWarning
+        self.bodyPresentation = bodyPresentation
+        self.linkSummary = linkSummary
         self.actionState = actionState
     }
 
@@ -81,6 +87,8 @@ struct TimelinePost: Identifiable {
         replyContext: TimelineReplyContext? = nil,
         replyMention: TimelineReplyMention? = nil,
         contentWarning: TimelineContentWarning? = nil,
+        bodyPresentation: TimelineBodyPresentation = .standard,
+        linkSummary: TimelineLinkSummary? = nil,
         actionState: TimelinePostActionState = .none
     ) {
         self.id = id
@@ -99,6 +107,8 @@ struct TimelinePost: Identifiable {
         self.replyContext = replyContext
         self.replyMention = replyMention
         self.contentWarning = contentWarning
+        self.bodyPresentation = bodyPresentation
+        self.linkSummary = linkSummary
         self.actionState = actionState
     }
 }
@@ -138,6 +148,79 @@ struct TimelineReplyContext {
 struct TimelineReplyMention {
     let text: String
     let isExternal: Bool
+}
+
+enum TimelineBodyPresentation {
+    case standard
+    case collapsed(lineLimit: Int, reason: TimelineBodyCollapseReason)
+
+    var timelineLineLimit: Int? {
+        switch self {
+        case .standard:
+            nil
+        case .collapsed(let lineLimit, _):
+            lineLimit
+        }
+    }
+
+    var collapseReason: TimelineBodyCollapseReason? {
+        switch self {
+        case .standard:
+            nil
+        case .collapsed(_, let reason):
+            reason
+        }
+    }
+}
+
+enum TimelineBodyCollapseReason: Equatable {
+    case longText
+    case linkHeavy
+    case lowTrustLinks
+
+    var label: String {
+        switch self {
+        case .longText:
+            "Show more"
+        case .linkHeavy:
+            "Link-heavy post"
+        case .lowTrustLinks:
+            "Tap to inspect"
+        }
+    }
+
+    var systemName: String {
+        switch self {
+        case .longText:
+            "text.alignleft"
+        case .linkHeavy:
+            "link"
+        case .lowTrustLinks:
+            "eye.slash"
+        }
+    }
+}
+
+struct TimelineLinkSummary {
+    let totalCount: Int
+    let visibleHosts: [String]
+    let unresolvedCount: Int
+
+    var compactText: String {
+        if totalCount == 1 {
+            return visibleHosts.first ?? "1 link"
+        }
+
+        return "\(totalCount) links"
+    }
+
+    var detailText: String {
+        let hosts = visibleHosts.prefix(3).joined(separator: " / ")
+        guard !hosts.isEmpty else { return compactText }
+
+        let suffix = totalCount > visibleHosts.count ? " +\(totalCount - visibleHosts.count)" : ""
+        return "\(hosts)\(suffix)"
+    }
 }
 
 struct MockNostrEvent {

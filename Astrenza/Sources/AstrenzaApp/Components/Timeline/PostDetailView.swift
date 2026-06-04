@@ -2,7 +2,9 @@ import SwiftUI
 
 struct PostDetailView: View {
     let post: TimelinePost
+    let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
+    let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
     @State private var isReplyAncestorStackVisible = false
@@ -17,7 +19,9 @@ struct PostDetailView: View {
                                 DetailThreadPostRow(
                                     post: ancestorPost,
                                     relation: .parent,
+                                    swipeSettings: swipeSettings,
                                     onOpenPost: onOpenPost,
+                                    onReplyPost: onReplyPost,
                                     onOpenAttachment: openAttachment
                                 )
                             }
@@ -37,6 +41,10 @@ struct PostDetailView: View {
 
                         TimelinePostBodyText(text: post.body, mention: post.replyMention, fontSize: 22)
                             .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let linkSummary = post.linkSummary {
+                            DetailLinkSummaryView(summary: linkSummary)
+                        }
 
                         if let quotedPost = post.quotedPost {
                             Button {
@@ -195,7 +203,9 @@ struct PostDetailView: View {
                 DetailThreadPostRow(
                     post: reply,
                     relation: .child,
+                    swipeSettings: swipeSettings,
                     onOpenPost: onOpenPost,
+                    onReplyPost: onReplyPost,
                     onOpenAttachment: openAttachment
                 )
             }
@@ -286,6 +296,47 @@ private struct SensitiveDetailBanner: View {
     }
 }
 
+private struct DetailLinkSummaryView: View {
+    let summary: TimelineLinkSummary
+    var isCompact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: "link")
+                    .font(.system(size: 13, weight: .black))
+
+                Text(summary.compactText)
+                    .font(.system(size: isCompact ? 13 : 15, weight: .heavy, design: .rounded))
+
+                if summary.unresolvedCount > 0 {
+                    Text("\(summary.unresolvedCount) unresolved")
+                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                }
+            }
+            .foregroundStyle(Color.astrenzaAccent)
+
+            Text(summary.detailText)
+                .font(.system(size: isCompact ? 12 : 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(isCompact ? 1 : 2)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, isCompact ? 10 : 12)
+        .padding(.vertical, isCompact ? 8 : 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        }
+    }
+}
+
 private struct DetailMetricCell: View {
     let value: Int
     let title: String
@@ -354,10 +405,30 @@ private enum DetailThreadRelation {
 private struct DetailThreadPostRow: View {
     let post: TimelinePost
     let relation: DetailThreadRelation
+    let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
+    let onReplyPost: (TimelinePost) -> Void
     let onOpenAttachment: (TimelineMedia) -> Void
 
     var body: some View {
+        TimelineSwipeContainer(
+            swipeSettings: swipeSettings,
+            onSwipeChanged: {},
+            onSwipeAction: performSwipeAction
+        ) {
+            rowContent
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: openReply)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAction {
+            openPost()
+        }
+    }
+
+    private var rowContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 14) {
                 AvatarView(style: post.avatar, size: 58)
@@ -388,6 +459,10 @@ private struct DetailThreadPostRow: View {
                     }
 
                     TimelinePostBodyText(text: post.body, mention: post.replyMention, fontSize: 19)
+
+                    if let linkSummary = post.linkSummary {
+                        DetailLinkSummaryView(summary: linkSummary, isCompact: true)
+                    }
 
                     if let quotedPost = post.quotedPost {
                         Button {
@@ -426,14 +501,6 @@ private struct DetailThreadPostRow: View {
         .overlay(alignment: .top) {
             Divider().overlay(Color.astrenzaSeparator)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: openReply)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityAction {
-            openPost()
-        }
     }
 
     private func detailReplyActionButton(_ systemName: String) -> some View {
@@ -463,6 +530,23 @@ private struct DetailThreadPostRow: View {
 
     private func openPost() {
         onOpenPost(post)
+    }
+
+    private func performSwipeAction(_ action: TimelineSwipeAction) -> Bool {
+        guard action.kind != .noAction else { return true }
+
+        switch action.kind {
+        case .viewDetail:
+            onOpenPost(post)
+            return false
+        case .reply:
+            onReplyPost(post)
+            return false
+        case .favorite, .repost, .quote, .bookmark, .openLink, .copyLink, .copyPost, .sharePost, .readLater, .translate:
+            return true
+        case .noAction:
+            return true
+        }
     }
 }
 

@@ -43,6 +43,92 @@ enum MockTimelineData {
             actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: true)
         ),
         TimelinePost(
+            authorName: "User Longform",
+            handle: "@longform@mock.example",
+            avatar: AvatarStyle(primary: .green, secondary: .cyan, symbolName: "text.alignleft"),
+            body: """
+            TL上で長文を全部表示すると、読み進めるリズムと復帰位置の安定性が同時に壊れやすい。
+            なので本文そのものは受け止めつつ、Homeでは一定行数で折りたたむ。
+            Detailに入れば全文を読めるので、投稿者の意図を削るわけではない。
+            重要なのは、折りたたみが検閲っぽく見えないこと。
+            そのため警告色ではなく、本文の続きがあることだけを小さく示す。
+            画像やOGPがある投稿でも高さ推定を崩さないように、本文・添付・アクションの各ブロックをそれぞれ固定ルールにしておく。
+            長文投稿は悪ではないけれど、TLではほかの投稿と同じ呼吸で並んでいてほしい。
+            ここから先はDetailで読めばいい、という導線が自然に見えるかを確認するためのモックです。
+            """,
+            timestamp: "21m",
+            replyCount: 3,
+            boostCount: 8,
+            favoriteCount: 29,
+            isLocked: false,
+            media: nil,
+            context: nil,
+            bodyPresentation: .collapsed(lineLimit: 8, reason: .longText)
+        ),
+        TimelinePost(
+            authorName: "User Linkset",
+            handle: "@linkset@mock.example",
+            avatar: AvatarStyle(primary: .teal, secondary: .blue, symbolName: "link"),
+            body: """
+            調査メモをまとめた。docs.mock.example/research/relay-routing と docs.mock.example/research/local-cache、あと design.mock.example/timeline/height-estimates。関連: notes.mock.example/a/b/c, mirror.mock.example/thread/2048, archive.mock.example/client-notes。
+            """,
+            timestamp: "23m",
+            replyCount: 1,
+            boostCount: 4,
+            favoriteCount: 16,
+            isLocked: false,
+            media: .linkPreview(LinkPreview(
+                title: "Timeline Height Estimates",
+                subtitle: "長文とURL大量投稿でも復帰位置を安定させるための表示ルール",
+                host: "design.mock.example",
+                url: "https://design.mock.example/timeline/height-estimates"
+            )),
+            context: nil,
+            bodyPresentation: .collapsed(lineLimit: 3, reason: .linkHeavy),
+            linkSummary: TimelineLinkSummary(
+                totalCount: 12,
+                visibleHosts: ["docs.mock.example", "design.mock.example", "notes.mock.example"],
+                unresolvedCount: 2
+            )
+        ),
+        TimelinePost(
+            author: .resolved(
+                displayName: "User Outside",
+                nip05: "outside@mock.example",
+                pubkey: TimelineAuthor.mockPubkey(for: "user-outside-links"),
+                isFollowed: false
+            ),
+            avatar: AvatarStyle(primary: .orange, secondary: .red, symbolName: "eye.slash.fill"),
+            body: "フォロー外ユーザーの返信ツリー経由で入ってきたURL多めの投稿。short.mock/a short.mock/b short.mock/c short.mock/d unknown.mock.example/free-offer unknown.mock.example/more。",
+            timestamp: "24m",
+            replyCount: nil,
+            boostCount: 2,
+            favoriteCount: 5,
+            isLocked: false,
+            media: .unresolvedLink(UnresolvedLinkPreview(
+                host: "unknown.mock.example",
+                url: "https://unknown.mock.example/free-offer"
+            )),
+            context: nil,
+            replyContext: TimelineReplyContext(
+                author: .resolved(
+                    displayName: "User Beta",
+                    nip05: "beta@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "user-beta")
+                ),
+                avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
+                timestamp: "18m",
+                bodyPreview: "Home / Relays / Lists の切り替えを、投稿密度を崩さずに扱いたい。",
+                isSelfReply: false
+            ),
+            bodyPresentation: .collapsed(lineLimit: 4, reason: .lowTrustLinks),
+            linkSummary: TimelineLinkSummary(
+                totalCount: 9,
+                visibleHosts: ["short.mock", "unknown.mock.example"],
+                unresolvedCount: 6
+            )
+        ),
+        TimelinePost(
             author: .resolved(
                 displayName: "User Gamma",
                 nip05: "gamma@mock.example",

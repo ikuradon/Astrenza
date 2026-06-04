@@ -10,4 +10,6 @@ appId: com.ikuradon.Astrenza
     end: 50%, 35%
     duration: 450
 - assertVisible:
-    text: User Gamma
+    text: User Longform
+- assertVisible:
+    text: Show more
