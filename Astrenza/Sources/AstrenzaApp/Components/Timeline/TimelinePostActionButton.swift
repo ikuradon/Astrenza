@@ -73,7 +73,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         control.addSubview(control.imageView)
 
         let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
-        tapRecognizer.cancelsTouchesInView = false
+        tapRecognizer.cancelsTouchesInView = true
         tapRecognizer.delegate = context.coordinator
         control.addGestureRecognizer(tapRecognizer)
 
@@ -134,7 +134,11 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            true
+            if gestureRecognizer is UITapGestureRecognizer || otherGestureRecognizer is UITapGestureRecognizer {
+                return false
+            }
+
+            return true
         }
 
         private func windowLocation(for recognizer: UILongPressGestureRecognizer) -> CGPoint {

@@ -3,6 +3,7 @@ import SwiftUI
 struct TimelineFeedView: View {
     let posts: [TimelinePost]
     let actionMenuTopClearance: CGFloat
+    let onOpenPost: (TimelinePost) -> Void
     let onScrollOffsetChanged: (CGFloat) -> Void
     @State private var menuState = TimelinePostMenuState()
     private let actionMenuGap: CGFloat = 12
@@ -15,7 +16,14 @@ struct TimelineFeedView: View {
                     TimelinePostRow(
                         post: post,
                         isActionMenuPresented: menuState.openedMenu?.postID == post.id && menuState.openedMenu?.kind == .more,
-                        onActionEvent: handlePostActionEvent
+                        onActionEvent: handlePostActionEvent,
+                        onOpenPost: {
+                            if menuState.isOpen {
+                                closeFloatingPostMenus()
+                            } else {
+                                onOpenPost(post)
+                            }
+                        }
                     ) {
                         if menuState.isOpen {
                             closeFloatingPostMenus()
@@ -97,12 +105,12 @@ struct TimelineFeedView: View {
             menuState.setWindowDragLocation(location)
         case .dragEnded(let location):
             let normalizedLocation = location.map(menuState.normalizedWindowLocation)
-            if shouldCloseChoiceMenu(
+            if shouldFinishChoiceMenu(
                 endLocation: normalizedLocation,
                 menuFrame: menuState.frame,
                 selectedChoice: menuState.selectedChoice
             ) {
-                closeFloatingPostMenus()
+                finishSelectedChoiceIfNeeded()
             }
         }
     }
@@ -113,12 +121,12 @@ struct TimelineFeedView: View {
                 menuState.setLocalDragLocation(value.location)
             }
             .onEnded { value in
-                if shouldCloseChoiceMenu(
+                if shouldFinishChoiceMenu(
                     endLocation: value.location,
                     menuFrame: menuState.frame,
                     selectedChoice: menuState.selectedChoice
                 ) {
-                    closeFloatingPostMenus()
+                    finishSelectedChoiceIfNeeded()
                 } else {
                     menuState.clearDragSelection()
                 }
@@ -154,8 +162,8 @@ struct TimelineFeedView: View {
         case .more:
             let currentChoice = postActionChoice(at: menuState.dragLocation, in: menuFrame)
 
-            PostActionMenu(selectedChoice: currentChoice) {
-                closeFloatingPostMenus()
+            PostActionMenu(selectedChoice: currentChoice) { choice in
+                handlePostActionChoice(choice, postID: menu.postID)
             }
             .onChange(of: currentChoice) { _, newValue in
                 menuState.selectedChoice = newValue.map(FloatingPostMenuSelection.more)
@@ -178,6 +186,37 @@ struct TimelineFeedView: View {
             .onChange(of: currentChoice) { _, newValue in
                 menuState.selectedChoice = newValue.map(FloatingPostMenuSelection.favorite)
             }
+        }
+    }
+
+    private func finishSelectedChoiceIfNeeded() {
+        guard let openedMenu = menuState.openedMenu,
+              let selectedChoice = menuState.selectedChoice
+        else {
+            closeFloatingPostMenus()
+            return
+        }
+
+        switch selectedChoice {
+        case .more(let choice):
+            handlePostActionChoice(choice, postID: openedMenu.postID)
+        case .repost, .favorite:
+            closeFloatingPostMenus()
+        }
+    }
+
+    private func handlePostActionChoice(_ choice: PostActionChoice, postID: TimelinePost.ID) {
+        switch choice {
+        case .viewDetails:
+            guard let post = posts.first(where: { $0.id == postID }) else {
+                closeFloatingPostMenus()
+                return
+            }
+
+            closeFloatingPostMenus()
+            onOpenPost(post)
+        case .report, .mute, .translate, .bookmark, .copyLink, .shareLink:
+            closeFloatingPostMenus()
         }
     }
 
@@ -244,7 +283,7 @@ struct TimelineFeedView: View {
         return choices[index]
     }
 
-    private func shouldCloseChoiceMenu<Choice>(
+    private func shouldFinishChoiceMenu<Choice>(
         endLocation: CGPoint?,
         menuFrame: CGRect?,
         selectedChoice: Choice?

@@ -1,7 +1,54 @@
 import SwiftUI
 
+enum ComposeSheetMode {
+    case post
+    case reply
+
+    var title: String {
+        switch self {
+        case .post: "New note"
+        case .reply: "Reply"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .post: "Posting as ikuradon"
+        case .reply: "Replying as ikuradon"
+        }
+    }
+
+    var prompt: String {
+        switch self {
+        case .post: "Nostrに投稿する内容を入力"
+        case .reply: "返信する内容を入力"
+        }
+    }
+
+    var bodyText: String {
+        switch self {
+        case .post:
+            "ここはあとで実際の投稿エディタに差し替えます。今は下から出てくる標準モーダルの動きと、投稿タブの分離配置を確認するためのモックです。"
+        case .reply:
+            "ここはあとで実際の返信エディタに差し替えます。今は投稿詳細から返信FABを押したときの導線を確認するためのモックです。"
+        }
+    }
+
+    var actionTitle: String {
+        switch self {
+        case .post: "Post"
+        case .reply: "Reply"
+        }
+    }
+}
+
 struct ComposeSheetView: View {
     @Environment(\.dismiss) private var dismiss
+    let mode: ComposeSheetMode
+
+    init(mode: ComposeSheetMode = .post) {
+        self.mode = mode
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -10,12 +57,12 @@ struct ComposeSheetView: View {
             Divider().overlay(Color.astrenzaSeparator)
 
             VStack(alignment: .leading, spacing: 18) {
-                Text("Nostrに投稿する内容を入力")
+                Text(mode.prompt)
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("ここはあとで実際の投稿エディタに差し替えます。今は下から出てくる標準モーダルの動きと、投稿タブの分離配置を確認するためのモックです。")
+                Text(mode.bodyText)
                     .font(.system(size: 16, weight: .medium, design: .rounded))
                     .foregroundStyle(Color.astrenzaText)
                     .lineSpacing(4)
@@ -36,9 +83,9 @@ struct ComposeSheetView: View {
             AvatarView(style: AvatarStyle(primary: .black, secondary: .cyan, symbolName: "cat.fill"), size: 38)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("New note")
+                Text(mode.title)
                     .font(.system(size: 19, weight: .bold, design: .rounded))
-                Text("Posting as ikuradon")
+                Text(mode.subtitle)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -82,7 +129,7 @@ struct ComposeSheetView: View {
             Spacer()
 
             Button(action: dismiss.callAsFunction) {
-                Text("Post")
+                Text(mode.actionTitle)
                     .font(.system(size: 16, weight: .heavy, design: .rounded))
                     .foregroundStyle(.black)
                     .padding(.horizontal, 22)

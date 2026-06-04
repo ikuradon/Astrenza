@@ -5,6 +5,7 @@ struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentabl
     @Binding var selectedTab: TimelineTab
     @Binding var previousTab: TimelineTab
     let minimizeDirection: TabBarMinimizeDirection
+    let isTabBarHidden: Bool
     let timelineList: TimelineContent
     let onMinimizeDirectionChanged: (TabBarMinimizeDirection) -> Void
     let onComposeTap: () -> Void
@@ -23,6 +24,7 @@ struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentabl
         context.coordinator.installTabs(on: controller)
         context.coordinator.installDirectionProbe(on: controller)
         context.coordinator.select(selectedTab, on: controller)
+        context.coordinator.setTabBarHidden(isTabBarHidden, on: controller, animated: false)
         return controller
     }
 
@@ -32,6 +34,7 @@ struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentabl
         configureAppearance(for: controller)
         context.coordinator.updateHostedViews()
         context.coordinator.select(selectedTab, on: controller)
+        context.coordinator.setTabBarHidden(isTabBarHidden, on: controller, animated: true)
     }
 
     private func configureAppearance(for controller: UITabBarController) {
@@ -110,6 +113,30 @@ struct UIKitTimelineTabView<TimelineContent: View>: UIViewControllerRepresentabl
             guard tab != .compose, let uiTab = tabs[tab] else { return }
             guard controller.selectedTab !== uiTab else { return }
             controller.selectedTab = uiTab
+        }
+
+        func setTabBarHidden(_ isHidden: Bool, on controller: UITabBarController, animated: Bool) {
+            guard controller.tabBar.isHidden != isHidden || controller.tabBar.alpha != (isHidden ? 0 : 1) else { return }
+
+            let updates = {
+                controller.tabBar.alpha = isHidden ? 0 : 1
+            }
+
+            controller.tabBar.isUserInteractionEnabled = !isHidden
+            if !isHidden {
+                controller.tabBar.isHidden = false
+            }
+
+            if animated {
+                UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                    updates()
+                } completion: { _ in
+                    controller.tabBar.isHidden = isHidden
+                }
+            } else {
+                updates()
+                controller.tabBar.isHidden = isHidden
+            }
         }
 
         func installDirectionProbe(on controller: UITabBarController) {

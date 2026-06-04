@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct TimelinePost: Identifiable {
-    let id = UUID()
+    let id: String
     let author: TimelineAuthor
     let avatar: AvatarStyle
     let body: String
@@ -14,9 +14,13 @@ struct TimelinePost: Identifiable {
     let context: String?
     let repostedBy: TimelineRepostAttribution?
     let quotedPost: QuotedTimelinePost?
+    let replyContext: TimelineReplyContext?
+    let replyMention: TimelineReplyMention?
+    let contentWarning: TimelineContentWarning?
     let actionState: TimelinePostActionState
 
     init(
+        id: String = UUID().uuidString,
         authorName: String,
         handle: String,
         avatar: AvatarStyle,
@@ -30,6 +34,9 @@ struct TimelinePost: Identifiable {
         context: String?,
         repostedBy: TimelineRepostAttribution? = nil,
         quotedPost: QuotedTimelinePost? = nil,
+        replyContext: TimelineReplyContext? = nil,
+        replyMention: TimelineReplyMention? = nil,
+        contentWarning: TimelineContentWarning? = nil,
         actionState: TimelinePostActionState = .none
     ) {
         let author = TimelineAuthor.resolved(
@@ -38,6 +45,7 @@ struct TimelinePost: Identifiable {
             nip05Status: .valid,
             pubkey: TimelineAuthor.mockPubkey(for: authorName)
         )
+        self.id = id
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
@@ -50,10 +58,14 @@ struct TimelinePost: Identifiable {
         self.context = context
         self.repostedBy = repostedBy
         self.quotedPost = quotedPost
+        self.replyContext = replyContext
+        self.replyMention = replyMention
+        self.contentWarning = contentWarning
         self.actionState = actionState
     }
 
     init(
+        id: String = UUID().uuidString,
         author: TimelineAuthor,
         avatar: AvatarStyle,
         body: String,
@@ -66,8 +78,12 @@ struct TimelinePost: Identifiable {
         context: String?,
         repostedBy: TimelineRepostAttribution? = nil,
         quotedPost: QuotedTimelinePost? = nil,
+        replyContext: TimelineReplyContext? = nil,
+        replyMention: TimelineReplyMention? = nil,
+        contentWarning: TimelineContentWarning? = nil,
         actionState: TimelinePostActionState = .none
     ) {
+        self.id = id
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
@@ -80,7 +96,22 @@ struct TimelinePost: Identifiable {
         self.context = context
         self.repostedBy = repostedBy
         self.quotedPost = quotedPost
+        self.replyContext = replyContext
+        self.replyMention = replyMention
+        self.contentWarning = contentWarning
         self.actionState = actionState
+    }
+}
+
+struct TimelineContentWarning {
+    let reason: String?
+
+    var displayReason: String {
+        guard let reason, !reason.isEmpty else {
+            return "The author marked this post as sensitive."
+        }
+
+        return reason
     }
 }
 
@@ -88,6 +119,61 @@ struct TimelineRepostAttribution {
     let author: TimelineAuthor
     let avatar: AvatarStyle
     let timestamp: String
+}
+
+struct TimelineReplyContext {
+    let author: TimelineAuthor
+    let avatar: AvatarStyle
+    let timestamp: String
+    let bodyPreview: String
+    let isSelfReply: Bool
+}
+
+struct TimelineReplyMention {
+    let text: String
+    let isExternal: Bool
+}
+
+struct MockNostrEvent {
+    let id: String
+    let author: TimelineAuthor
+    let avatar: AvatarStyle
+    let content: String
+    let timestamp: String
+    let replyTo: TimelinePost?
+    let replyMention: TimelineReplyMention?
+    let reposts: Int?
+    let reactions: Int?
+    let actionState: TimelinePostActionState
+
+    func timelinePost() -> TimelinePost {
+        TimelinePost(
+            id: id,
+            author: author,
+            avatar: avatar,
+            body: content,
+            timestamp: timestamp,
+            replyCount: nil,
+            boostCount: reposts,
+            favoriteCount: reactions,
+            isLocked: false,
+            media: nil,
+            context: nil,
+            replyContext: replyTo.map(replyContext(for:)),
+            replyMention: replyMention,
+            actionState: actionState
+        )
+    }
+
+    private func replyContext(for parent: TimelinePost) -> TimelineReplyContext {
+        TimelineReplyContext(
+            author: parent.author,
+            avatar: parent.avatar,
+            timestamp: parent.timestamp,
+            bodyPreview: parent.body,
+            isSelfReply: author.pubkey == parent.author.pubkey
+        )
+    }
 }
 
 struct QuotedTimelinePost {
@@ -291,8 +377,15 @@ struct UnresolvedLinkPreview {
 }
 
 enum MockTimelineData {
-    static let posts: [TimelinePost] = [
+    static var posts: [TimelinePost] {
+        store.homeTimeline
+    }
+
+    private static let store = MockTimelineStore(basePosts: basePosts)
+
+    private static let basePosts: [TimelinePost] = [
         TimelinePost(
+            id: "thread-a-root",
             authorName: "Yuki Sato",
             handle: "@yuki@relay.town",
             avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles"),
@@ -331,7 +424,7 @@ enum MockTimelineData {
                 pubkey: "npub1tarorelay9q4m6v0s3n5rjcw"
             ),
             avatar: AvatarStyle(primary: .mint, secondary: .blue, symbolName: "arrow.triangle.2.circlepath"),
-            body: "kind:6 repost は repost event 自体ではなく、元 note を読む体験に寄せたい。誰がRTしたかは上に静かに出すくらいがちょうどいい。",
+            body: "週末にリレー構成を少し整理したら、TLの読み込みがだいぶ落ち着いた。read/write を分けて眺めるだけでも体感が変わる。",
             timestamp: "26m",
             replyCount: 1,
             boostCount: 9,
@@ -349,6 +442,23 @@ enum MockTimelineData {
                 timestamp: "5m"
             ),
             actionState: TimelinePostActionState(didReply: false, didRepost: true, didFavorite: false, didZap: false)
+        ),
+        TimelinePost(
+            author: .resolved(
+                displayName: "Kedama",
+                nip05: "kedama@foresdon.jp",
+                pubkey: "npub1kedamacontentwarning9q4m6v0s3n5rjcw"
+            ),
+            avatar: AvatarStyle(primary: .brown, secondary: .yellow, symbolName: "exclamationmark.triangle.fill"),
+            body: "シュタゲ0 のアニメを観ています ep.16\nん〜アニメでは多少のフォローは入ってているけど……真帆が紅莉栖に勝てない絶望と、見知った顔の幸せそうな「今」を何度も奪って、それでも目の前で見知った顔が繰り返し繰り返し何度もしんでいく絶望を、同列に語るのは……ちょっと重さが違うんですよねぇ……。",
+            timestamp: "31m",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil,
+            contentWarning: TimelineContentWarning(reason: "Steins;Gate 0 episode 16 spoilers")
         ),
         TimelinePost(
             authorName: "Mika",
@@ -396,6 +506,62 @@ enum MockTimelineData {
                 isAvailable: true
             ),
             actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: false)
+        ),
+        TimelinePost(
+            author: .resolved(
+                displayName: "Hota",
+                nip05: "hota@relay.cafe",
+                pubkey: "npub1hotareply9q4m6v0s3n5rjcw"
+            ),
+            avatar: AvatarStyle(primary: .blue, secondary: .indigo, symbolName: "person.crop.circle.fill"),
+            body: "緊急すぎて上級者モードしか回せてなかった",
+            timestamp: "40m",
+            replyCount: 1,
+            boostCount: 2,
+            favoriteCount: 11,
+            isLocked: false,
+            media: nil,
+            context: nil,
+            replyContext: TimelineReplyContext(
+                author: .resolved(
+                    displayName: "unarist",
+                    nip05: "unarist@relay.maud.io",
+                    pubkey: "npub1unaristreplysource9q4m6v0s3n5rjcw"
+                ),
+                avatar: AvatarStyle(primary: .cyan, secondary: .white, symbolName: "circle.dotted"),
+                timestamp: "45m",
+                bodyPreview: "あーわかった、ディスクフルだ多分。",
+                isSelfReply: false
+            ),
+            actionState: TimelinePostActionState(didReply: false, didRepost: true, didFavorite: false, didZap: false)
+        ),
+        TimelinePost(
+            author: .resolved(
+                displayName: "unarist",
+                nip05: "unarist@relay.maud.io",
+                pubkey: "npub1unaristreplysource9q4m6v0s3n5rjcw"
+            ),
+            avatar: AvatarStyle(primary: .cyan, secondary: .white, symbolName: "circle.dotted"),
+            body: "ああ...言われてみればこのマシンならUSBポートにガタが来てても別におかしくないか...さんきゅう...",
+            timestamp: "41m",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: 7,
+            isLocked: false,
+            media: nil,
+            context: nil,
+            replyContext: TimelineReplyContext(
+                author: .resolved(
+                    displayName: "pikepikeid",
+                    nip05: "pikepikeid@relay.tools",
+                    pubkey: "npub1pikepikeidreply9q4m6v0s3n5rjcw"
+                ),
+                avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "wrench.and.screwdriver.fill"),
+                timestamp: "43m",
+                bodyPreview: "USBの接触も疑ったほうがよさそう",
+                isSelfReply: false
+            ),
+            replyMention: TimelineReplyMention(text: "@pikepikeid", isExternal: true)
         ),
         TimelinePost(
             author: .unresolved(pubkey: "npub1ren9q3z6r4m8x2k0v5c7n1pwaesdftimelinefallback"),
@@ -555,4 +721,177 @@ enum MockTimelineData {
             context: nil
         )
     ]
+
+    static func detailReplies(for post: TimelinePost) -> [TimelinePost] {
+        store.descendants(of: post)
+    }
+
+    static func replyParent(for post: TimelinePost) -> TimelinePost? {
+        store.parent(of: post)
+    }
+
+    static func replyAncestors(for post: TimelinePost) -> [TimelinePost] {
+        store.ancestors(of: post)
+    }
+}
+
+private struct MockTimelineRecord {
+    let post: TimelinePost
+    let replyToID: TimelinePost.ID?
+    let appearsInHome: Bool
+}
+
+private struct MockTimelineStore {
+    let records: [MockTimelineRecord]
+
+    init(basePosts: [TimelinePost]) {
+        var nextRecords: [MockTimelineRecord] = []
+
+        for post in basePosts {
+            if let replyContext = post.replyContext {
+                let parentPost = Self.parentPost(from: replyContext, childID: post.id)
+                nextRecords.append(MockTimelineRecord(post: parentPost, replyToID: nil, appearsInHome: false))
+                nextRecords.append(MockTimelineRecord(post: post, replyToID: parentPost.id, appearsInHome: true))
+            } else {
+                nextRecords.append(MockTimelineRecord(post: post, replyToID: nil, appearsInHome: true))
+            }
+        }
+
+        if let featuredThreadRoot = basePosts.first(where: { $0.id == "thread-a-root" }) {
+            nextRecords.append(contentsOf: Self.featuredReplyThreadRecords(root: featuredThreadRoot))
+        }
+
+        records = nextRecords
+    }
+
+    var homeTimeline: [TimelinePost] {
+        records
+            .filter(\.appearsInHome)
+            .map(\.post)
+    }
+
+    func replies(to post: TimelinePost) -> [TimelinePost] {
+        records
+            .filter { $0.replyToID == post.id }
+            .map(\.post)
+    }
+
+    func parent(of post: TimelinePost) -> TimelinePost? {
+        guard let replyToID = records.first(where: { $0.post.id == post.id })?.replyToID else {
+            return nil
+        }
+
+        return records.first(where: { $0.post.id == replyToID })?.post
+    }
+
+    func ancestors(of post: TimelinePost) -> [TimelinePost] {
+        var ancestors: [TimelinePost] = []
+        var currentPost = post
+
+        while let parentPost = parent(of: currentPost) {
+            ancestors.insert(parentPost, at: 0)
+            currentPost = parentPost
+        }
+
+        return ancestors
+    }
+
+    func descendants(of post: TimelinePost) -> [TimelinePost] {
+        var descendants: [TimelinePost] = []
+        var currentPost = post
+
+        while let childPost = replies(to: currentPost).first {
+            descendants.append(childPost)
+            currentPost = childPost
+        }
+
+        return descendants
+    }
+
+    private static func featuredReplyThreadRecords(root: TimelinePost) -> [MockTimelineRecord] {
+        let firstReply = MockNostrEvent(
+            id: "thread-b-reply",
+            author: root.author,
+            avatar: root.avatar,
+            content: "追記: これ、relay側の遅延だけじゃなくてclient側の復帰処理も絡んでいそう。",
+            timestamp: "1m",
+            replyTo: root,
+            replyMention: TimelineReplyMention(text: "@\(root.author.replyMentionHandle)", isExternal: false),
+            reposts: nil,
+            reactions: 4,
+            actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: false)
+        ).timelinePost()
+
+        let secondReply = MockNostrEvent(
+            id: "thread-c-reply",
+            author: .resolved(
+                displayName: "Mika",
+                nip05: "mika@notes.cafe",
+                pubkey: "npub1mikareplydetail9q4m6v0s3n5rjcw"
+            ),
+            avatar: AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill"),
+            content: "このへん、再接続後に既読位置を戻すタイミングを少し遅らせると見た目も安定しそう。",
+            timestamp: "6m",
+            replyTo: firstReply,
+            replyMention: TimelineReplyMention(text: "@\(firstReply.author.replyMentionHandle)", isExternal: true),
+            reposts: 1,
+            reactions: 9,
+            actionState: .none
+        ).timelinePost()
+
+        let thirdReply = MockNostrEvent(
+            id: "thread-d-reply",
+            author: root.author,
+            avatar: root.avatar,
+            content: "さらにメモ: ツリーは表示用に作るんじゃなくて、event の reply chain から切り出すほうが事故らない。",
+            timestamp: "8m",
+            replyTo: secondReply,
+            replyMention: TimelineReplyMention(text: "@\(secondReply.author.replyMentionHandle)", isExternal: true),
+            reposts: nil,
+            reactions: 3,
+            actionState: .none
+        ).timelinePost()
+
+        return [
+            MockTimelineRecord(
+                post: firstReply,
+                replyToID: root.id,
+                appearsInHome: false
+            ),
+            MockTimelineRecord(
+                post: secondReply,
+                replyToID: firstReply.id,
+                appearsInHome: false
+            ),
+            MockTimelineRecord(
+                post: thirdReply,
+                replyToID: secondReply.id,
+                appearsInHome: false
+            )
+        ]
+    }
+
+    private static func parentPost(from replyContext: TimelineReplyContext, childID: TimelinePost.ID) -> TimelinePost {
+        TimelinePost(
+            id: "\(childID)-reply-parent",
+            author: replyContext.author,
+            avatar: replyContext.avatar,
+            body: replyContext.bodyPreview,
+            timestamp: replyContext.timestamp,
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
+    }
+}
+
+private extension TimelineAuthor {
+    var replyMentionHandle: String {
+        primaryText
+            .filter { !$0.isWhitespace }
+            .lowercased()
+    }
 }

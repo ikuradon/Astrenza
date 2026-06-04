@@ -26,14 +26,20 @@ struct TimelinePostRow: View {
     let post: TimelinePost
     let isActionMenuPresented: Bool
     let onActionEvent: (TimelinePostActionEvent) -> Void
+    let onOpenPost: () -> Void
     let onDismissActionMenu: () -> Void
     @State private var didHandleActionGesture = false
 
     var body: some View {
+        rowContent
+            .onTapGesture(perform: handleRowTap)
+    }
+
+    private var rowContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let repostedBy = post.repostedBy {
                 RepostAttributionView(attribution: repostedBy)
-                    .padding(.leading, 82)
+                    .padding(.leading, 47)
                     .padding(.trailing, 16)
             }
 
@@ -41,26 +47,18 @@ struct TimelinePostRow: View {
                 AvatarView(style: post.avatar, size: 54)
 
                 VStack(alignment: .leading, spacing: 8) {
+                    if let replyContext = post.replyContext {
+                        TimelineReplyContextView(context: replyContext, style: .timeline)
+                            .padding(.bottom, -2)
+                    }
+
                     header
 
                     if let context = post.context {
                         ContextPill(text: context)
                     }
 
-                    Text(post.body)
-                        .font(.system(size: 18, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(Color.astrenzaText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let quotedPost = post.quotedPost {
-                        QuotedPostCard(quotedPost: quotedPost)
-                    }
-
-                    if let media = post.media {
-                        TimelineMediaView(media: media)
-                            .padding(.top, 2)
-                    }
+                    sensitiveAwareContent
 
                     actionRow
                 }
@@ -74,14 +72,6 @@ struct TimelinePostRow: View {
                 .padding(.leading, 82)
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            if didHandleActionGesture {
-                didHandleActionGesture = false
-                return
-            }
-
-            onDismissActionMenu()
-        }
     }
 
     private var header: some View {
@@ -92,11 +82,42 @@ struct TimelinePostRow: View {
 
             Spacer(minLength: 8)
 
+            if post.replyContext != nil {
+                TimelineReplyMarker()
+                    .fixedSize()
+            }
+
             Text(post.timestamp)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var sensitiveAwareContent: some View {
+        if let contentWarning = post.contentWarning {
+            SensitiveTimelineContent(contentWarning: contentWarning) {
+                postContent
+            }
+        } else {
+            postContent
+        }
+    }
+
+    private var postContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TimelinePostBodyText(text: post.body, mention: post.replyMention)
+
+            if let quotedPost = post.quotedPost {
+                QuotedPostCard(quotedPost: quotedPost)
+            }
+
+            if let media = post.media {
+                TimelineMediaView(media: media)
+                    .padding(.top, 2)
+            }
         }
     }
 
@@ -181,6 +202,68 @@ struct TimelinePostRow: View {
     private func sendActionEvent(_ kind: TimelinePostActionKind, phase: TimelinePostActionPhase) {
         didHandleActionGesture = true
         onActionEvent(TimelinePostActionEvent(postID: post.id, kind: kind, phase: phase))
+    }
+
+    private func handleRowTap() {
+        if didHandleActionGesture {
+            didHandleActionGesture = false
+            return
+        }
+
+        onDismissActionMenu()
+        onOpenPost()
+    }
+}
+
+private struct SensitiveTimelineContent<Content: View>: View {
+    let contentWarning: TimelineContentWarning
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack {
+            content()
+                .blur(radius: 10, opaque: false)
+                .saturation(0.55)
+                .opacity(0.62)
+
+            SensitiveTimelineOverlay(contentWarning: contentWarning)
+        }
+        .frame(height: 118)
+        .clipped()
+        .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct SensitiveTimelineOverlay: View {
+    let contentWarning: TimelineContentWarning
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 15, weight: .black))
+                Text("CONTENT WARNING")
+                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .tracking(0.8)
+            }
+            .foregroundStyle(.black.opacity(0.72))
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .background(Color.secondary.opacity(0.92), in: Capsule())
+
+            Text(contentWarning.displayReason)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+
+            Text("Tap to open detail")
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color.astrenzaAccent)
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.astrenzaBackground.opacity(0.18))
     }
 }
 
@@ -486,7 +569,7 @@ private extension View {
 
 struct PostActionMenu: View {
     let selectedChoice: PostActionChoice?
-    let onSelect: () -> Void
+    let onSelect: (PostActionChoice) -> Void
 
     var body: some View {
         FloatingMenuSurface(width: FloatingMenuMetrics.actionWidth, accessibilityLabel: "Post actions") {
@@ -496,7 +579,9 @@ struct PostActionMenu: View {
                     systemName: choice.systemName,
                     height: FloatingMenuMetrics.actionRowHeight,
                     isSelected: selectedChoice == choice,
-                    action: onSelect
+                    action: {
+                        onSelect(choice)
+                    }
                 )
 
                 if choice.followsDivider {
