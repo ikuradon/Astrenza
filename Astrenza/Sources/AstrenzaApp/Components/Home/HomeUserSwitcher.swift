@@ -14,6 +14,8 @@ struct UserSwitchButton: View {
 }
 
 struct UserSwitcherMenu: View {
+    let onSettingsTap: () -> Void
+
     var body: some View {
         VStack(spacing: 0) {
             UserSwitcherRow(
@@ -34,8 +36,7 @@ struct UserSwitcherMenu: View {
                 .overlay(Color.astrenzaSeparator)
                 .padding(.vertical, 2)
 
-            Button {
-            } label: {
+            Button(action: onSettingsTap) {
                 HStack(spacing: 10) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 16, weight: .bold))

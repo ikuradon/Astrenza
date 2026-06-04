@@ -7,6 +7,7 @@ struct HomeTimelineTopBar: View {
     @Binding var isUserSwitcherPresented: Bool
     let collapseProgress: CGFloat
     let onDismissFloatingMenus: () -> Void
+    let onSettingsTap: () -> Void
 
     var body: some View {
         ZStack {
@@ -19,7 +20,7 @@ struct HomeTimelineTopBar: View {
                 .buttonStyle(.plain)
                 .overlay(alignment: .topLeading) {
                     if isUserSwitcherPresented {
-                        UserSwitcherMenu()
+                        UserSwitcherMenu(onSettingsTap: onSettingsTap)
                             .offset(y: 44)
                             .transition(.scale(scale: 0.72, anchor: .topLeading).combined(with: .opacity))
                             .zIndex(20)

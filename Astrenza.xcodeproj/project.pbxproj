@@ -19,6 +19,7 @@
 		6C5386DCC51866449251F6F0 /* TimelinePostRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */; };
 		9752CD3286B90C1B90AAFB93 /* TimelineReplyContextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68179E9671D96407F9AE3340 /* TimelineReplyContextView.swift */; };
 		9B59B96CBDC1868E3D7BEE86 /* TimelineAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */; };
+		B60D0E622F4FD352C0934DAC /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44AD3C86560AB45E3CCC96D2 /* SettingsView.swift */; };
 		B9B3F76180F825C6435513C2 /* TimelineSwitcherMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA3366D6414391B11CA64D8C /* TimelineSwitcherMenu.swift */; };
 		BD202CE2ADFD17DD252589DD /* ComposeSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E9E03F52C4984D98395970D /* ComposeSheetView.swift */; };
 		C24D09B71A72F1D7C35FF796 /* TimelinePostActionButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860CD1CC83219006F805EE2C /* TimelinePostActionButton.swift */; };
@@ -32,6 +33,7 @@
 		118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRow.swift; sourceTree = "<group>"; };
 		3A6355CFF04BCCCB4EC6FE2D /* AstrenzaTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstrenzaTheme.swift; sourceTree = "<group>"; };
 		3E9E03F52C4984D98395970D /* ComposeSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeSheetView.swift; sourceTree = "<group>"; };
+		44AD3C86560AB45E3CCC96D2 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineFeedView.swift; sourceTree = "<group>"; };
 		5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineAttachments.swift; sourceTree = "<group>"; };
 		68179E9671D96407F9AE3340 /* TimelineReplyContextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReplyContextView.swift; sourceTree = "<group>"; };
@@ -63,6 +65,14 @@
 			path = AstrenzaApp;
 			sourceTree = "<group>";
 		};
+		38B33FDF362498BFFC1DD327 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				44AD3C86560AB45E3CCC96D2 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
 		420C55023FAF61327332EA92 /* Timeline */ = {
 			isa = PBXGroup;
 			children = (
@@ -81,6 +91,7 @@
 			isa = PBXGroup;
 			children = (
 				48C1C79E37E5522BEDC6670D /* Home */,
+				38B33FDF362498BFFC1DD327 /* Settings */,
 				8CF8DD9B01F98E18BFFD1901 /* Shared */,
 				420C55023FAF61327332EA92 /* Timeline */,
 			);
@@ -204,6 +215,7 @@
 				C74C1C25B89B4E42B616DE5D /* HomeUserSwitcher.swift in Sources */,
 				51370E5EF11103ACE253AEFD /* PostDetailView.swift in Sources */,
 				2F7292ADB016E60489167553 /* RelayStatusRingButton.swift in Sources */,
+				B60D0E622F4FD352C0934DAC /* SettingsView.swift in Sources */,
 				9B59B96CBDC1868E3D7BEE86 /* TimelineAttachments.swift in Sources */,
 				D36EFBBA1ADD581710928F7C /* TimelineFeedView.swift in Sources */,
 				E51E4A37AB8DC18E5976688F /* TimelineModels.swift in Sources */,

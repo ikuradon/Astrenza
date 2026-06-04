@@ -7,6 +7,7 @@ struct HomeTimelineView: View {
     @State private var isTimelineMenuPresented = false
     @State private var isUserSwitcherPresented = false
     @State private var isComposerPresented = false
+    @State private var isSettingsPresented = false
     @State private var composeSheetMode: ComposeSheetMode = .post
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
@@ -15,6 +16,7 @@ struct HomeTimelineView: View {
     @State private var unreadBadgeFrame: CGRect = .zero
     @State private var fullscreenMedia: TimelineMedia?
     @State private var browserDestination: TimelineBrowserDestination?
+    @State private var swipeSettings = TimelineSwipeSettings()
 
     private var actionMenuTopClearance: CGFloat {
         max(unreadBadgeFrame.maxY + 10, 96)
@@ -49,7 +51,8 @@ struct HomeTimelineView: View {
                         isTimelineMenuPresented: $isTimelineMenuPresented,
                         isUserSwitcherPresented: $isUserSwitcherPresented,
                         collapseProgress: topChromeCollapseProgress,
-                        onDismissFloatingMenus: dismissFloatingMenus
+                        onDismissFloatingMenus: dismissFloatingMenus,
+                        onSettingsTap: presentSettings
                     )
                     .zIndex(30)
 
@@ -88,6 +91,12 @@ struct HomeTimelineView: View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
         }
+        .sheet(isPresented: $isSettingsPresented) {
+            SettingsView(onClose: {
+                isSettingsPresented = false
+            }, swipeSettings: $swipeSettings)
+            .presentationCornerRadius(26)
+        }
         .fullScreenCover(isPresented: isFullscreenMediaPresented) {
             if let fullscreenMedia {
                 TimelineFullscreenMediaViewer(media: fullscreenMedia) {
@@ -118,7 +127,11 @@ struct HomeTimelineView: View {
             TimelineFeedView(
                 posts: MockTimelineData.posts,
                 actionMenuTopClearance: actionMenuTopClearance,
+                swipeSettings: swipeSettings,
                 onOpenPost: openPost,
+                onReplyPost: { _ in
+                    presentReplyComposer()
+                },
                 onOpenMedia: openMedia,
                 onOpenURL: openURL
             ) { offset in
@@ -210,9 +223,15 @@ struct HomeTimelineView: View {
         presentComposer(mode: .reply)
     }
 
+    private func presentSettings() {
+        dismissFloatingMenus()
+        guard !isComposerPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        isSettingsPresented = true
+    }
+
     private func presentComposer(mode: ComposeSheetMode) {
         dismissFloatingMenus()
-        guard didCompleteInitialAppearance, !isComposerPresented else { return }
+        guard didCompleteInitialAppearance, !isComposerPresented, !isSettingsPresented else { return }
         composeSheetMode = mode
         DispatchQueue.main.async {
             isComposerPresented = true

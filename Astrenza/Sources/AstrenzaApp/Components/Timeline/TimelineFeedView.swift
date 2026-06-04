@@ -3,7 +3,9 @@ import SwiftUI
 struct TimelineFeedView: View {
     let posts: [TimelinePost]
     let actionMenuTopClearance: CGFloat
+    let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
+    let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
     let onScrollOffsetChanged: (CGFloat) -> Void
@@ -18,6 +20,7 @@ struct TimelineFeedView: View {
                     TimelinePostRow(
                         post: post,
                         isActionMenuPresented: menuState.openedMenu?.postID == post.id && menuState.openedMenu?.kind == .more,
+                        swipeSettings: swipeSettings,
                         onActionEvent: handlePostActionEvent,
                         onOpenPost: { selectedPost in
                             if menuState.isOpen {
@@ -26,6 +29,7 @@ struct TimelineFeedView: View {
                                 onOpenPost(selectedPost)
                             }
                         },
+                        onReplyPost: onReplyPost,
                         onOpenMedia: openMedia,
                         onOpenURL: openURL
                     ) {

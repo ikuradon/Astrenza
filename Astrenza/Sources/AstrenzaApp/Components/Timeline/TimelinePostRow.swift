@@ -25,15 +25,82 @@ enum FloatingMenuMetrics {
 struct TimelinePostRow: View {
     let post: TimelinePost
     let isActionMenuPresented: Bool
+    let swipeSettings: TimelineSwipeSettings
     let onActionEvent: (TimelinePostActionEvent) -> Void
     let onOpenPost: (TimelinePost) -> Void
+    let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
     let onDismissActionMenu: () -> Void
     @State private var didHandleActionGesture = false
+    @State private var swipeFeedback: TimelineSwipeAction?
+    @GestureState private var swipeTranslation: CGFloat = 0
 
     var body: some View {
-        rowContent
+        ZStack {
+            swipeActionBackdrop
+            rowContent
+                .offset(x: displayedSwipeOffset)
+        }
+        .clipped()
+        .simultaneousGesture(rowSwipeGesture)
+        .overlay(alignment: .top) {
+            if let swipeFeedback {
+                TimelineSwipeFeedbackView(action: swipeFeedback)
+                    .padding(.top, 10)
+                    .transition(.scale(scale: 0.84).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var displayedSwipeOffset: CGFloat {
+        guard abs(swipeTranslation) > 0 else { return 0 }
+        let cappedOffset = min(abs(swipeTranslation), 178)
+        return cappedOffset * (swipeTranslation < 0 ? -1 : 1)
+    }
+
+    @ViewBuilder
+    private var swipeActionBackdrop: some View {
+        if let action = currentSwipeAction {
+            HStack {
+                if swipeTranslation > 0 {
+                    TimelineSwipeActionIndicator(action: action, alignment: .leading)
+                    Spacer(minLength: 0)
+                } else {
+                    Spacer(minLength: 0)
+                    TimelineSwipeActionIndicator(action: action, alignment: .trailing)
+                }
+            }
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(action.backgroundColor.opacity(swipeProgress))
+        }
+    }
+
+    private var swipeProgress: Double {
+        min(max(abs(swipeTranslation) / TimelineSwipeMetrics.longThreshold, 0.18), 1)
+    }
+
+    private var currentSwipeAction: TimelineSwipeAction? {
+        guard let classification = swipeClassification(for: swipeTranslation) else { return nil }
+        return swipeAction(for: classification)
+    }
+
+    private var rowSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .updating($swipeTranslation) { value, state, _ in
+                guard isHorizontalSwipe(value) else { return }
+                state = value.translation.width
+            }
+            .onEnded { value in
+                guard isHorizontalSwipe(value),
+                      let classification = swipeClassification(for: value.translation.width)
+                else {
+                    return
+                }
+
+                performSwipeAction(swipeAction(for: classification))
+            }
     }
 
     private var rowContent: some View {
@@ -253,6 +320,69 @@ struct TimelinePostRow: View {
             onOpenURL(url)
         }
     }
+
+    private func isHorizontalSwipe(_ value: DragGesture.Value) -> Bool {
+        abs(value.translation.width) > abs(value.translation.height) * 1.35
+    }
+
+    private func swipeClassification(for translationWidth: CGFloat) -> TimelineSwipeClassification? {
+        let distance = abs(translationWidth)
+        guard distance >= TimelineSwipeMetrics.shortThreshold else { return nil }
+
+        let direction: TimelineSwipeDirection = translationWidth < 0 ? .left : .right
+        let length: TimelineSwipeLength = distance >= TimelineSwipeMetrics.longThreshold ? .long : .short
+        return TimelineSwipeClassification(direction: direction, length: length)
+    }
+
+    private func swipeAction(for classification: TimelineSwipeClassification) -> TimelineSwipeAction {
+        let title: String
+        switch (classification.direction, classification.length) {
+        case (.left, .long):
+            title = swipeSettings.longLeftSwipe
+        case (.right, .long):
+            title = swipeSettings.longRightSwipe
+        case (.left, .short):
+            title = swipeSettings.shortLeftSwipe
+        case (.right, .short):
+            title = swipeSettings.shortRightSwipe
+        }
+
+        return TimelineSwipeAction(title: title)
+    }
+
+    private func performSwipeAction(_ action: TimelineSwipeAction) {
+        guard action.kind != .noAction else {
+            showSwipeFeedback(action)
+            return
+        }
+
+        onDismissActionMenu()
+
+        switch action.kind {
+        case .viewDetail:
+            onOpenPost(post)
+        case .reply:
+            onReplyPost(post)
+        case .favorite, .repost, .quote, .bookmark, .openLink, .copyLink, .copyPost, .sharePost, .readLater, .translate:
+            showSwipeFeedback(action)
+        case .noAction:
+            break
+        }
+    }
+
+    private func showSwipeFeedback(_ action: TimelineSwipeAction) {
+        withAnimation(.spring(duration: 0.24, bounce: 0.16)) {
+            swipeFeedback = action
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
+            withAnimation(.easeOut(duration: 0.18)) {
+                if swipeFeedback == action {
+                    swipeFeedback = nil
+                }
+            }
+        }
+    }
 }
 
 private struct SensitiveTimelineContent<Content: View>: View {
@@ -304,6 +434,165 @@ private struct SensitiveTimelineOverlay: View {
         .padding(.horizontal, 28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.astrenzaBackground.opacity(0.18))
+    }
+}
+
+private enum TimelineSwipeMetrics {
+    static let shortThreshold: CGFloat = 58
+    static let longThreshold: CGFloat = 146
+}
+
+private enum TimelineSwipeDirection {
+    case left
+    case right
+}
+
+private enum TimelineSwipeLength {
+    case short
+    case long
+}
+
+private struct TimelineSwipeClassification {
+    let direction: TimelineSwipeDirection
+    let length: TimelineSwipeLength
+}
+
+private struct TimelineSwipeAction: Equatable {
+    let title: String
+
+    var kind: Kind {
+        switch title {
+        case "Favorite":
+            .favorite
+        case "Repost", "Boost":
+            .repost
+        case "Quote":
+            .quote
+        case "Bookmark":
+            .bookmark
+        case "Open Link to Post":
+            .openLink
+        case "Copy Link to Post":
+            .copyLink
+        case "Copy Post":
+            .copyPost
+        case "Share Post":
+            .sharePost
+        case "Add to Read Later":
+            .readLater
+        case "Translate":
+            .translate
+        case "Reply":
+            .reply
+        case "View Detail":
+            .viewDetail
+        default:
+            .noAction
+        }
+    }
+
+    var systemName: String {
+        switch kind {
+        case .favorite:
+            "star.fill"
+        case .repost:
+            "arrow.triangle.2.circlepath"
+        case .quote:
+            "quote.bubble.fill"
+        case .bookmark:
+            "bookmark.fill"
+        case .openLink:
+            "safari.fill"
+        case .copyLink:
+            "link"
+        case .copyPost:
+            "doc.on.doc.fill"
+        case .sharePost:
+            "square.and.arrow.up.fill"
+        case .readLater:
+            "clock.fill"
+        case .translate:
+            "character.bubble.fill"
+        case .reply:
+            "bubble.left.fill"
+        case .viewDetail:
+            "info.circle.fill"
+        case .noAction:
+            "xmark"
+        }
+    }
+
+    var backgroundColor: Color {
+        switch kind {
+        case .favorite:
+            .yellow
+        case .repost:
+            .green
+        case .quote, .reply, .openLink:
+            .blue
+        case .bookmark, .readLater:
+            .orange
+        case .copyLink, .copyPost, .sharePost:
+            .cyan
+        case .translate:
+            .purple
+        case .viewDetail:
+            Color.astrenzaAccent
+        case .noAction:
+            .gray
+        }
+    }
+
+    enum Kind {
+        case favorite
+        case repost
+        case quote
+        case bookmark
+        case openLink
+        case copyLink
+        case copyPost
+        case sharePost
+        case readLater
+        case translate
+        case reply
+        case viewDetail
+        case noAction
+    }
+}
+
+private struct TimelineSwipeActionIndicator: View {
+    let action: TimelineSwipeAction
+    let alignment: HorizontalAlignment
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 6) {
+            Image(systemName: action.systemName)
+                .font(.system(size: 24, weight: .black))
+            Text(action.title)
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+        }
+        .foregroundStyle(.white)
+        .frame(width: 104, alignment: alignment == .leading ? .leading : .trailing)
+        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+    }
+}
+
+private struct TimelineSwipeFeedbackView: View {
+    let action: TimelineSwipeAction
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: action.systemName)
+            Text(action.title)
+        }
+        .font(.system(size: 13, weight: .heavy, design: .rounded))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(action.backgroundColor.opacity(0.92), in: Capsule())
+        .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
     }
 }
 
