@@ -1,0 +1,366 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		312D444E2C2CB101698C55A5 /* AvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68EDBDC01E5977E1B8AD7BB4 /* AvatarView.swift */; };
+		319E16DA71F652541D92C259 /* TimelinePostMenuState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23804BC65BA490A86B88DEF /* TimelinePostMenuState.swift */; };
+		365B18828562098B65BA23B9 /* AstrenzaTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A6355CFF04BCCCB4EC6FE2D /* AstrenzaTheme.swift */; };
+		4C604A37790E4C493BDC117E /* HomeTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702687E1AE3C3E494E5EB6FF /* HomeTimelineView.swift */; };
+		574D8535E79503D3699B7A86 /* AstrenzaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD51462A04AFBCCF3C553678 /* AstrenzaApp.swift */; };
+		6C5386DCC51866449251F6F0 /* TimelinePostRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */; };
+		9B59B96CBDC1868E3D7BEE86 /* TimelineAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */; };
+		C24D09B71A72F1D7C35FF796 /* TimelinePostActionButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860CD1CC83219006F805EE2C /* TimelinePostActionButton.swift */; };
+		D36EFBBA1ADD581710928F7C /* TimelineFeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */; };
+		E51E4A37AB8DC18E5976688F /* TimelineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRow.swift; sourceTree = "<group>"; };
+		3A6355CFF04BCCCB4EC6FE2D /* AstrenzaTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstrenzaTheme.swift; sourceTree = "<group>"; };
+		4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineFeedView.swift; sourceTree = "<group>"; };
+		5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineAttachments.swift; sourceTree = "<group>"; };
+		68EDBDC01E5977E1B8AD7BB4 /* AvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarView.swift; sourceTree = "<group>"; };
+		702687E1AE3C3E494E5EB6FF /* HomeTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTimelineView.swift; sourceTree = "<group>"; };
+		860CD1CC83219006F805EE2C /* TimelinePostActionButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostActionButton.swift; sourceTree = "<group>"; };
+		BD51462A04AFBCCF3C553678 /* AstrenzaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstrenzaApp.swift; sourceTree = "<group>"; };
+		BF4280270932A3DBC5F70254 /* Astrenza.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Astrenza.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineModels.swift; sourceTree = "<group>"; };
+		E23804BC65BA490A86B88DEF /* TimelinePostMenuState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostMenuState.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		07051728F09DF220EBCDD1EF /* AstrenzaApp */ = {
+			isa = PBXGroup;
+			children = (
+				BD51462A04AFBCCF3C553678 /* AstrenzaApp.swift */,
+				702687E1AE3C3E494E5EB6FF /* HomeTimelineView.swift */,
+				C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */,
+				444F1CB559CD00847A753556 /* Components */,
+			);
+			path = AstrenzaApp;
+			sourceTree = "<group>";
+		};
+		420C55023FAF61327332EA92 /* Timeline */ = {
+			isa = PBXGroup;
+			children = (
+				5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */,
+				4F61FB1FC2F5D278C067A1DA /* TimelineFeedView.swift */,
+				860CD1CC83219006F805EE2C /* TimelinePostActionButton.swift */,
+				E23804BC65BA490A86B88DEF /* TimelinePostMenuState.swift */,
+				118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */,
+			);
+			path = Timeline;
+			sourceTree = "<group>";
+		};
+		444F1CB559CD00847A753556 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				8CF8DD9B01F98E18BFFD1901 /* Shared */,
+				420C55023FAF61327332EA92 /* Timeline */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		795BCB5EB0072A9E965CB4C0 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				07051728F09DF220EBCDD1EF /* AstrenzaApp */,
+			);
+			name = Sources;
+			path = Astrenza/Sources;
+			sourceTree = "<group>";
+		};
+		82FD9E08224C63C16891C0DC = {
+			isa = PBXGroup;
+			children = (
+				795BCB5EB0072A9E965CB4C0 /* Sources */,
+				FA32F3BFDB65DC7239590911 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		8CF8DD9B01F98E18BFFD1901 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				3A6355CFF04BCCCB4EC6FE2D /* AstrenzaTheme.swift */,
+				68EDBDC01E5977E1B8AD7BB4 /* AvatarView.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		FA32F3BFDB65DC7239590911 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				BF4280270932A3DBC5F70254 /* Astrenza.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2F1EA54191738C3AE4B85256 /* Astrenza */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C20ADD3548DA98490367E50A /* Build configuration list for PBXNativeTarget "Astrenza" */;
+			buildPhases = (
+				73F54A99E88EF4608C1724EF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Astrenza;
+			packageProductDependencies = (
+			);
+			productName = Astrenza;
+			productReference = BF4280270932A3DBC5F70254 /* Astrenza.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7943740C083D2ACCE28C8498 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					2F1EA54191738C3AE4B85256 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = 0EF37BCAB78C31D7798E4450 /* Build configuration list for PBXProject "Astrenza" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 82FD9E08224C63C16891C0DC;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FA32F3BFDB65DC7239590911 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				2F1EA54191738C3AE4B85256 /* Astrenza */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		73F54A99E88EF4608C1724EF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				574D8535E79503D3699B7A86 /* AstrenzaApp.swift in Sources */,
+				365B18828562098B65BA23B9 /* AstrenzaTheme.swift in Sources */,
+				312D444E2C2CB101698C55A5 /* AvatarView.swift in Sources */,
+				4C604A37790E4C493BDC117E /* HomeTimelineView.swift in Sources */,
+				9B59B96CBDC1868E3D7BEE86 /* TimelineAttachments.swift in Sources */,
+				D36EFBBA1ADD581710928F7C /* TimelineFeedView.swift in Sources */,
+				E51E4A37AB8DC18E5976688F /* TimelineModels.swift in Sources */,
+				C24D09B71A72F1D7C35FF796 /* TimelinePostActionButton.swift in Sources */,
+				319E16DA71F652541D92C259 /* TimelinePostMenuState.swift in Sources */,
+				6C5386DCC51866449251F6F0 /* TimelinePostRow.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2E9BC2F70931366CED087448 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Astrenza;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ikuradon.Astrenza;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7C75C52D415CCEECA742BE3E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		8C1EB7AA2EF83FD13FBC6C2B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Astrenza;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ikuradon.Astrenza;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9AA3E705FE9A3A49D10FAF24 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0EF37BCAB78C31D7798E4450 /* Build configuration list for PBXProject "Astrenza" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9AA3E705FE9A3A49D10FAF24 /* Debug */,
+				7C75C52D415CCEECA742BE3E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C20ADD3548DA98490367E50A /* Build configuration list for PBXNativeTarget "Astrenza" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2E9BC2F70931366CED087448 /* Debug */,
+				8C1EB7AA2EF83FD13FBC6C2B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 7943740C083D2ACCE28C8498 /* Project object */;
+}

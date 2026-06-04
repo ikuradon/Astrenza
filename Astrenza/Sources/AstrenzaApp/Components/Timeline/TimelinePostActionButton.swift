@@ -1,0 +1,164 @@
+import SwiftUI
+import UIKit
+
+struct TimelinePostActionButton: View {
+    let inactiveSystemName: String
+    let activeSystemName: String
+    let isActive: Bool
+    let accessibilityLabel: String
+    var supportsLongPressDrag = false
+    var action: () -> Void = {}
+    var onLongPress: () -> Void = {}
+    var onLongPressDragChanged: (CGPoint) -> Void = { _ in }
+    var onLongPressDragEnded: (CGPoint?) -> Void = { _ in }
+
+    var body: some View {
+        UIKitTimelinePostActionButton(
+            systemName: isActive ? activeSystemName : inactiveSystemName,
+            isActive: isActive,
+            accessibilityLabel: accessibilityLabel,
+            supportsLongPressDrag: supportsLongPressDrag,
+            action: action,
+            onLongPress: onLongPress,
+            onLongPressDragChanged: onLongPressDragChanged,
+            onLongPressDragEnded: onLongPressDragEnded
+        )
+        .frame(height: 30)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+private struct UIKitTimelinePostActionButton: UIViewRepresentable {
+    let systemName: String
+    let isActive: Bool
+    let accessibilityLabel: String
+    let supportsLongPressDrag: Bool
+    let action: () -> Void
+    let onBegan: () -> Void
+    let onMoved: (CGPoint) -> Void
+    let onEnded: (CGPoint?) -> Void
+
+    init(
+        systemName: String,
+        isActive: Bool,
+        accessibilityLabel: String,
+        supportsLongPressDrag: Bool,
+        action: @escaping () -> Void,
+        onLongPress: @escaping () -> Void,
+        onLongPressDragChanged: @escaping (CGPoint) -> Void,
+        onLongPressDragEnded: @escaping (CGPoint?) -> Void
+    ) {
+        self.systemName = systemName
+        self.isActive = isActive
+        self.accessibilityLabel = accessibilityLabel
+        self.supportsLongPressDrag = supportsLongPressDrag
+        self.action = action
+        self.onBegan = onLongPress
+        self.onMoved = onLongPressDragChanged
+        self.onEnded = onLongPressDragEnded
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> ActionButtonControl {
+        let control = ActionButtonControl()
+        control.backgroundColor = .clear
+        control.isAccessibilityElement = true
+        control.accessibilityTraits = [.button]
+        control.imageView.contentMode = .center
+        control.addSubview(control.imageView)
+
+        let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        tapRecognizer.cancelsTouchesInView = false
+        tapRecognizer.delegate = context.coordinator
+        control.addGestureRecognizer(tapRecognizer)
+
+        let longPressRecognizer = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        longPressRecognizer.minimumPressDuration = 0.42
+        longPressRecognizer.allowableMovement = 14
+        longPressRecognizer.cancelsTouchesInView = false
+        longPressRecognizer.delaysTouchesBegan = false
+        longPressRecognizer.delaysTouchesEnded = false
+        longPressRecognizer.delegate = context.coordinator
+        control.addGestureRecognizer(longPressRecognizer)
+
+        return control
+    }
+
+    func updateUIView(_ uiView: ActionButtonControl, context: Context) {
+        context.coordinator.parent = self
+        uiView.update(systemName: systemName, isActive: isActive)
+        uiView.accessibilityLabel = accessibilityLabel
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: UIKitTimelinePostActionButton
+        private var didBegin = false
+
+        init(parent: UIKitTimelinePostActionButton) {
+            self.parent = parent
+        }
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            parent.action()
+        }
+
+        @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard parent.supportsLongPressDrag else { return }
+
+            switch recognizer.state {
+            case .began:
+                didBegin = true
+                parent.onBegan()
+                parent.onMoved(windowLocation(for: recognizer))
+            case .changed:
+                guard didBegin else { return }
+                parent.onMoved(windowLocation(for: recognizer))
+            case .ended:
+                parent.onEnded(didBegin ? windowLocation(for: recognizer) : nil)
+                didBegin = false
+            case .cancelled, .failed:
+                parent.onEnded(nil)
+                didBegin = false
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        private func windowLocation(for recognizer: UILongPressGestureRecognizer) -> CGPoint {
+            guard let view = recognizer.view else {
+                return recognizer.location(in: nil)
+            }
+
+            return view.convert(recognizer.location(in: view), to: nil)
+        }
+    }
+
+    final class ActionButtonControl: UIView {
+        let imageView = UIImageView()
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            imageView.frame = bounds
+        }
+
+        func update(systemName: String, isActive: Bool) {
+            let configuration = UIImage.SymbolConfiguration(pointSize: 21, weight: isActive ? .bold : .semibold)
+            imageView.image = UIImage(systemName: systemName, withConfiguration: configuration)
+            imageView.tintColor = isActive ? UIColor.label : UIColor.secondaryLabel
+            imageView.preferredSymbolConfiguration = configuration
+        }
+    }
+}
