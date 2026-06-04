@@ -69,6 +69,7 @@ struct TimelineAttachmentButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(isObscured ? "\(accessibilityLabel), protected" : accessibilityLabel)
+        .accessibilityIdentifier("timeline.attachment")
         .accessibilityHint(isObscured ? "Reveals the attachment without opening it" : "Opens the attachment")
         .accessibilityAction {
             if isObscured {

@@ -24,4 +24,16 @@ targets:
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
     scheme:
-      testTargets: []
+      testTargets:
+        - AstrenzaTests
+  AstrenzaTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Astrenza/Tests/AstrenzaTests
+    dependencies:
+      - target: Astrenza
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ikuradon.AstrenzaTests
+        GENERATE_INFOPLIST_FILE: YES

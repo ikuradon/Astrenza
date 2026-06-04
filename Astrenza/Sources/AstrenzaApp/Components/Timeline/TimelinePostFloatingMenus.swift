@@ -200,6 +200,7 @@ struct PostActionMenu: View {
                 }
             }
         }
+        .accessibilityIdentifier("post.menu.more")
     }
 }
 
@@ -209,6 +210,7 @@ struct RepostChoiceMenu: View {
 
     var body: some View {
         FloatingChoiceMenu(selectedChoice: selectedChoice, accessibilityLabel: "Repost options", onSelect: onSelect)
+            .accessibilityIdentifier("post.menu.repost")
     }
 }
 
@@ -218,6 +220,7 @@ struct FavoriteChoiceMenu: View {
 
     var body: some View {
         FloatingChoiceMenu(selectedChoice: selectedChoice, accessibilityLabel: "Favorite options", onSelect: onSelect)
+            .accessibilityIdentifier("post.menu.favorite")
     }
 }
 

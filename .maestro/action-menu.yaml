@@ -1,0 +1,14 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp
+- assertVisible:
+    id: timeline.feed
+- assertVisible:
+    text: User Alpha
+- assertVisible:
+    id: timeline.action.more.thread-a-root
+- tapOn:
+    id: timeline.action.more.thread-a-root
+- waitForAnimationToEnd
+- assertVisible:
+    text: Report

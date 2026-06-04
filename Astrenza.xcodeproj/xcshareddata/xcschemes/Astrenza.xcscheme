@@ -39,6 +39,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "FD172113FDD70FDDE8356F69"
+               BuildableName = "AstrenzaTests.xctest"
+               BlueprintName = "AstrenzaTests"
+               ReferencedContainer = "container:Astrenza.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

@@ -1,0 +1,13 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp
+- assertVisible:
+    id: timeline.feed
+- assertVisible:
+    text: User Alpha
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+    duration: 450
+- assertVisible:
+    text: User Gamma

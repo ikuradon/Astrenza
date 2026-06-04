@@ -23,6 +23,7 @@
 		82483B52FDC5F04137831C2F /* TimelinePostFloatingMenus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D6FB3A4B0D2E47219651F0 /* TimelinePostFloatingMenus.swift */; };
 		9752CD3286B90C1B90AAFB93 /* TimelineReplyContextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68179E9671D96407F9AE3340 /* TimelineReplyContextView.swift */; };
 		9B59B96CBDC1868E3D7BEE86 /* TimelineAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED8A80EC32DEAEC9388D369 /* TimelineAttachments.swift */; };
+		ABD8AB0779365B177F9624BD /* TimelineModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A8F35A14BACDB8583842E4A /* TimelineModelTests.swift */; };
 		B60D0E622F4FD352C0934DAC /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44AD3C86560AB45E3CCC96D2 /* SettingsView.swift */; };
 		B9B3F76180F825C6435513C2 /* TimelineSwitcherMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA3366D6414391B11CA64D8C /* TimelineSwitcherMenu.swift */; };
 		BD202CE2ADFD17DD252589DD /* ComposeSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E9E03F52C4984D98395970D /* ComposeSheetView.swift */; };
@@ -34,7 +35,19 @@
 		E51E4A37AB8DC18E5976688F /* TimelineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		6FB3CEDC85C1DD172256DFE5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7943740C083D2ACCE28C8498 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2F1EA54191738C3AE4B85256;
+			remoteInfo = Astrenza;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		0335DB1537CBCBDECE86E05B /* AstrenzaTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AstrenzaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A8F35A14BACDB8583842E4A /* TimelineModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineModelTests.swift; sourceTree = "<group>"; };
 		118F6DCCE80607BED8F7B363 /* TimelinePostRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRow.swift; sourceTree = "<group>"; };
 		176BE08BA89E6A4E6816C3FD /* TimelinePostSwipeActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostSwipeActions.swift; sourceTree = "<group>"; };
 		1953B038423B3D36758B8615 /* TimelinePostRowGestures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostRowGestures.swift; sourceTree = "<group>"; };
@@ -55,7 +68,7 @@
 		B16ECF4FA86BE6F83A2F2342 /* HomeUserSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeUserSwitcher.swift; sourceTree = "<group>"; };
 		BC0ED6B6653FF7C3FF175A5E /* HomeTimelineTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTimelineTabs.swift; sourceTree = "<group>"; };
 		BD51462A04AFBCCF3C553678 /* AstrenzaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstrenzaApp.swift; sourceTree = "<group>"; };
-		BF4280270932A3DBC5F70254 /* Astrenza.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Astrenza.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BF4280270932A3DBC5F70254 /* Astrenza.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Astrenza.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C94EBBDEF22F5047CBFB4274 /* TimelineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineModels.swift; sourceTree = "<group>"; };
 		E23804BC65BA490A86B88DEF /* TimelinePostMenuState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePostMenuState.swift; sourceTree = "<group>"; };
 		EA0EFE8CCDA62F4FE86A1008 /* RelayStatusRingButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayStatusRingButton.swift; sourceTree = "<group>"; };
@@ -74,6 +87,15 @@
 				444F1CB559CD00847A753556 /* Components */,
 			);
 			path = AstrenzaApp;
+			sourceTree = "<group>";
+		};
+		0D9646F5FFCC3CC2CC611B6D /* AstrenzaTests */ = {
+			isa = PBXGroup;
+			children = (
+				0A8F35A14BACDB8583842E4A /* TimelineModelTests.swift */,
+			);
+			name = AstrenzaTests;
+			path = Astrenza/Tests/AstrenzaTests;
 			sourceTree = "<group>";
 		};
 		38B33FDF362498BFFC1DD327 /* Settings */ = {
@@ -139,6 +161,7 @@
 		82FD9E08224C63C16891C0DC = {
 			isa = PBXGroup;
 			children = (
+				0D9646F5FFCC3CC2CC611B6D /* AstrenzaTests */,
 				795BCB5EB0072A9E965CB4C0 /* Sources */,
 				FA32F3BFDB65DC7239590911 /* Products */,
 			);
@@ -157,6 +180,7 @@
 			isa = PBXGroup;
 			children = (
 				BF4280270932A3DBC5F70254 /* Astrenza.app */,
+				0335DB1537CBCBDECE86E05B /* AstrenzaTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -181,6 +205,24 @@
 			productReference = BF4280270932A3DBC5F70254 /* Astrenza.app */;
 			productType = "com.apple.product-type.application";
 		};
+		FD172113FDD70FDDE8356F69 /* AstrenzaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D4F964F7A91F5FC76FC082EA /* Build configuration list for PBXNativeTarget "AstrenzaTests" */;
+			buildPhases = (
+				AFB0CE193856F38335874685 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5E38344588039D15F6BF1883 /* PBXTargetDependency */,
+			);
+			name = AstrenzaTests;
+			packageProductDependencies = (
+			);
+			productName = AstrenzaTests;
+			productReference = 0335DB1537CBCBDECE86E05B /* AstrenzaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -190,7 +232,7 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
-					2F1EA54191738C3AE4B85256 = {
+					FD172113FDD70FDDE8356F69 = {
 						DevelopmentTeam = "";
 					};
 				};
@@ -210,6 +252,7 @@
 			projectRoot = "";
 			targets = (
 				2F1EA54191738C3AE4B85256 /* Astrenza */,
+				FD172113FDD70FDDE8356F69 /* AstrenzaTests */,
 			);
 		};
 /* End PBXProject section */
@@ -247,7 +290,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AFB0CE193856F38335874685 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABD8AB0779365B177F9624BD /* TimelineModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5E38344588039D15F6BF1883 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2F1EA54191738C3AE4B85256 /* Astrenza */;
+			targetProxy = 6FB3CEDC85C1DD172256DFE5 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		2E9BC2F70931366CED087448 /* Debug */ = {
@@ -256,6 +315,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 5NJM5R3DGF;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Astrenza;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -267,6 +327,23 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.ikuradon.Astrenza;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7A57805B08D07EEAFC7EBB00 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ikuradon.AstrenzaTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Astrenza.app/Astrenza";
 			};
 			name = Debug;
 		};
@@ -335,6 +412,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 5NJM5R3DGF;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Astrenza;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -346,6 +424,23 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.ikuradon.Astrenza;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		8D3FA7D8917913B1DC9B4027 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ikuradon.AstrenzaTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Astrenza.app/Astrenza";
 			};
 			name = Release;
 		};
@@ -432,6 +527,15 @@
 			buildConfigurations = (
 				2E9BC2F70931366CED087448 /* Debug */,
 				8C1EB7AA2EF83FD13FBC6C2B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D4F964F7A91F5FC76FC082EA /* Build configuration list for PBXNativeTarget "AstrenzaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7A57805B08D07EEAFC7EBB00 /* Debug */,
+				8D3FA7D8917913B1DC9B4027 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

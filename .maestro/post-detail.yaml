@@ -1,0 +1,11 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp
+- assertVisible:
+    id: timeline.feed
+- assertVisible:
+    id: timeline.body.thread-a-root
+- tapOn:
+    id: timeline.body.thread-a-root
+- assertVisible:
+    id: post.detail

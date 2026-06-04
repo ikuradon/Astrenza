@@ -160,6 +160,9 @@ struct TimelinePostRow: View {
 
     private var textContent: some View {
         TimelinePostBodyText(text: post.body, mention: post.replyMention)
+            .contentShape(Rectangle())
+            .accessibilityIdentifier("timeline.body.\(post.id)")
+            .onTapGesture(perform: handleRowTap)
     }
 
     private var attachmentContent: some View {
@@ -195,13 +198,15 @@ struct TimelinePostRow: View {
                 inactiveSystemName: "bubble.left",
                 activeSystemName: "bubble.left.fill",
                 isActive: post.actionState.didReply,
-                accessibilityLabel: "Reply"
+                accessibilityLabel: "Reply",
+                accessibilityIdentifier: "timeline.action.reply.\(post.id)"
             )
             TimelinePostActionButton(
                 inactiveSystemName: "arrow.triangle.2.circlepath",
                 activeSystemName: "arrow.triangle.2.circlepath",
                 isActive: post.actionState.didRepost,
                 accessibilityLabel: "Repost",
+                accessibilityIdentifier: "timeline.action.repost.\(post.id)",
                 supportsLongPressDrag: true,
                 action: {
                     sendActionEvent(.repost, phase: .tap)
@@ -224,6 +229,7 @@ struct TimelinePostRow: View {
                 activeSystemName: "star.fill",
                 isActive: post.actionState.didFavorite,
                 accessibilityLabel: "Favorite",
+                accessibilityIdentifier: "timeline.action.favorite.\(post.id)",
                 supportsLongPressDrag: true,
                 action: {
                     sendActionEvent(.favorite, phase: .tap)
@@ -245,13 +251,15 @@ struct TimelinePostRow: View {
                 inactiveSystemName: "bolt",
                 activeSystemName: "bolt.fill",
                 isActive: post.actionState.didZap,
-                accessibilityLabel: "Zap"
+                accessibilityLabel: "Zap",
+                accessibilityIdentifier: "timeline.action.zap.\(post.id)"
             )
             TimelinePostActionButton(
                 inactiveSystemName: "gearshape",
                 activeSystemName: "gearshape.fill",
                 isActive: isActionMenuPresented,
                 accessibilityLabel: "More actions",
+                accessibilityIdentifier: "timeline.action.more.\(post.id)",
                 supportsLongPressDrag: true,
                 action: {
                     sendActionEvent(.more, phase: .tap)

@@ -76,6 +76,7 @@ struct PostDetailView: View {
             }
         }
         .background(Color.astrenzaBackground)
+        .accessibilityIdentifier("post.detail")
         .navigationTitle("Detail")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)

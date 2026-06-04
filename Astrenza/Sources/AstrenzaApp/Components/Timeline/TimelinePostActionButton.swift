@@ -6,6 +6,7 @@ struct TimelinePostActionButton: View {
     let activeSystemName: String
     let isActive: Bool
     let accessibilityLabel: String
+    var accessibilityIdentifier: String?
     var supportsLongPressDrag = false
     var action: () -> Void = {}
     var onLongPress: () -> Void = {}
@@ -17,6 +18,7 @@ struct TimelinePostActionButton: View {
             systemName: isActive ? activeSystemName : inactiveSystemName,
             isActive: isActive,
             accessibilityLabel: accessibilityLabel,
+            accessibilityIdentifier: accessibilityIdentifier,
             supportsLongPressDrag: supportsLongPressDrag,
             action: action,
             onLongPress: onLongPress,
@@ -26,6 +28,7 @@ struct TimelinePostActionButton: View {
         .frame(height: 30)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier ?? accessibilityLabel)
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -34,6 +37,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
     let systemName: String
     let isActive: Bool
     let accessibilityLabel: String
+    let accessibilityIdentifier: String?
     let supportsLongPressDrag: Bool
     let action: () -> Void
     let onBegan: () -> Void
@@ -44,6 +48,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         systemName: String,
         isActive: Bool,
         accessibilityLabel: String,
+        accessibilityIdentifier: String?,
         supportsLongPressDrag: Bool,
         action: @escaping () -> Void,
         onLongPress: @escaping () -> Void,
@@ -53,6 +58,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         self.systemName = systemName
         self.isActive = isActive
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
         self.supportsLongPressDrag = supportsLongPressDrag
         self.action = action
         self.onBegan = onLongPress
@@ -93,6 +99,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         context.coordinator.parent = self
         uiView.update(systemName: systemName, isActive: isActive)
         uiView.accessibilityLabel = accessibilityLabel
+        uiView.accessibilityIdentifier = accessibilityIdentifier
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {

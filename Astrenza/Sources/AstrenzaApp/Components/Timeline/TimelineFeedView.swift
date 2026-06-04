@@ -53,6 +53,7 @@ struct TimelineFeedView: View {
         .scrollDisabled(menuState.isOpen)
         .scrollIndicators(.visible)
         .background(Color.astrenzaBackground)
+        .accessibilityIdentifier("timeline.feed")
         .overlayPreferenceValue(TimelinePostActionAnchorKey.self) { anchors in
             GeometryReader { proxy in
                 ZStack {
