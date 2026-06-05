@@ -112,7 +112,12 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            false
+            guard parent.isEnabled,
+                  gestureRecognizer === recognizer,
+                  beganInsideRow
+            else { return false }
+
+            return true
         }
     }
 

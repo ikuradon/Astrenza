@@ -1,0 +1,16 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: timeline.feed
+- assertVisible:
+    text: Relay Routing Notes
+- swipe:
+    start: 48%, 43%
+    end: 76%, 43%
+    duration: 420
+- assertVisible:
+    text: Favorite
+- assertNotVisible:
+    id: in.app.browser
