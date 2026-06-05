@@ -1,8 +1,39 @@
 import SwiftUI
 
+private struct ProfileNavigationChromeLayout {
+    let height: CGFloat
+
+    func compactAvatarCenterY(in context: UserDetailNavigationContext) -> CGFloat {
+        switch context {
+        case .root:
+            height / 2
+        case .pushed:
+            -height / 2
+        }
+    }
+
+    var backdropHeight: CGFloat {
+        height
+    }
+}
+
+enum UserDetailNavigationContext {
+    case root
+    case pushed
+}
+
+private struct ProfileHeroBoundsPreferenceKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct UserDetailView: View {
     let profile: UserProfile
     let posts: [TimelinePost]
+    let navigationContext: UserDetailNavigationContext
     let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
@@ -11,53 +42,94 @@ struct UserDetailView: View {
     let onOpenURL: (URL) -> Void
     @State private var selectedTab: UserProfileTimelineTab = .posts
     @State private var scrollOffset: CGFloat = 0
+    @State private var initialScrollOffset: CGFloat?
+    private let profileHeroHeight: CGFloat = 268
+    private let expandedAvatarSize: CGFloat = 132
+    private let compactAvatarSize: CGFloat = 42
+    private let navigationChromeLayout = ProfileNavigationChromeLayout(height: 60)
+
+    private var normalizedScrollOffset: CGFloat {
+        scrollOffset - (initialScrollOffset ?? scrollOffset)
+    }
 
     private var compactChromeProgress: CGFloat {
-        min(max((scrollOffset - 118) / 96, 0), 1)
+        min(max((normalizedScrollOffset - 118) / 96, 0), 1)
+    }
+
+    private var navigationBlurProgress: CGFloat {
+        min(max((compactChromeProgress - 0.18) / 0.3, 0), 1)
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            ScrollView {
-                VStack(spacing: 0) {
-                    profileHero
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        profileHero
 
-                    VStack(spacing: 22) {
-                        profileSummary
-                        latestFollowers
-                        statsCard
-                        profileLinksCard
-                        featuredHashtags
-                        timelineTabs
-                        timelineRows
+                        VStack(spacing: 22) {
+                            profileSummary
+                            latestFollowers
+                            statsCard
+                            profileLinksCard
+                            featuredHashtags
+                            timelineTabs
+                            timelineRows
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 132)
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 132)
+                    .frame(width: proxy.size.width)
+                    .clipped()
                 }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentOffset.y
+                } action: { _, nextOffset in
+                    if initialScrollOffset == nil {
+                        initialScrollOffset = nextOffset
+                    }
+                    scrollOffset = nextOffset
+                }
+                .scrollIndicators(.visible)
+                .ignoresSafeArea(edges: .top)
             }
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.y
-            } action: { _, nextOffset in
-                scrollOffset = nextOffset
-            }
-            .scrollIndicators(.visible)
 
-            compactProfileChrome
+            navigationBlurBackdrop(chromeLayout: navigationChromeLayout)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+
+        }
+        .overlayPreferenceValue(ProfileHeroBoundsPreferenceKey.self) { heroBounds in
+            GeometryReader { proxy in
+                let expandedCenterY = heroBounds.map { proxy[$0].maxY } ?? profileHeroHeight - normalizedScrollOffset
+
+                shrinkingProfileAvatar(
+                    chromeLayout: navigationChromeLayout,
+                    navigationContext: navigationContext,
+                    containerWidth: proxy.size.width,
+                    expandedCenterY: expandedCenterY
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            .allowsHitTesting(false)
         }
         .background(Color.astrenzaBackground)
         .accessibilityIdentifier("user.detail")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
     }
 
     private var profileHero: some View {
         ZStack(alignment: .bottom) {
             ProfileBannerView(style: profile.banner)
-                .frame(height: 268)
-                .overlay(alignment: .topLeading) {
-                    AvatarView(style: profile.avatar, size: 42)
-                        .padding(.leading, 18)
-                        .padding(.top, 58)
-                        .opacity(1 - compactChromeProgress)
+                .frame(height: profileHeroHeight)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .anchorPreference(key: ProfileHeroBoundsPreferenceKey.self, value: .bounds) { bounds in
+                    bounds
                 }
                 .overlay(alignment: .topTrailing) {
                     Button {
@@ -74,67 +146,45 @@ struct UserDetailView: View {
                     .padding(.top, 58)
                     .accessibilityLabel(profile.isCurrentUser ? "Edit profile" : "Profile options")
                 }
-
-            AvatarView(style: profile.avatar, size: 132)
-                .overlay {
-                    Circle()
-                        .stroke(Color.astrenzaBackground, lineWidth: 5)
-                }
-                .offset(y: 66)
         }
         .padding(.bottom, 76)
     }
 
-    private var compactProfileChrome: some View {
-        HStack(spacing: 10) {
-            AvatarView(style: profile.avatar, size: 38)
-                .scaleEffect(0.86 + compactChromeProgress * 0.14)
+    private func navigationBlurBackdrop(chromeLayout: ProfileNavigationChromeLayout) -> some View {
+        let height = chromeLayout.backdropHeight
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 5) {
-                    Text(profile.author.primaryText)
-                        .font(.system(size: 17, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        return ProfileBannerView(style: profile.banner)
+            .frame(height: profileHeroHeight)
+            .offset(y: height - profileHeroHeight)
+            .blur(radius: 14, opaque: true)
+            .saturation(1.16)
+            .overlay(Color.black.opacity(0.18))
+            .frame(height: height, alignment: .top)
+            .clipped()
+            .opacity(navigationBlurProgress)
+            .ignoresSafeArea(edges: .top)
+            .animation(.easeOut(duration: 0.18), value: navigationBlurProgress)
+    }
 
-                    if profile.author.nip05Status == .valid {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 11, weight: .black))
-                            .foregroundStyle(Color.green)
-                    }
-                }
+    private func shrinkingProfileAvatar(
+        chromeLayout: ProfileNavigationChromeLayout,
+        navigationContext: UserDetailNavigationContext,
+        containerWidth: CGFloat,
+        expandedCenterY: CGFloat
+    ) -> some View {
+        let progress = compactChromeProgress
+        let avatarSize = expandedAvatarSize + (compactAvatarSize - expandedAvatarSize) * progress
+        let compactCenterY = chromeLayout.compactAvatarCenterY(in: navigationContext)
+        let centerY = expandedCenterY + (compactCenterY - expandedCenterY) * progress
+        let strokeWidth = 5 * (1 - progress)
 
-                Text(profile.author.secondaryText)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        return AvatarView(style: profile.avatar, size: avatarSize)
+            .overlay {
+                Circle()
+                    .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
             }
-            .frame(maxWidth: 190, alignment: .leading)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 12)
-        .padding(.top, 50)
-        .padding(.bottom, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.82 * compactChromeProgress)
-                .ignoresSafeArea(edges: .top)
-        }
-        .overlay(alignment: .bottom) {
-            Divider()
-                .overlay(Color.astrenzaSeparator)
-                .opacity(compactChromeProgress)
-        }
-        .opacity(compactChromeProgress)
-        .offset(y: -18 + compactChromeProgress * 18)
-        .allowsHitTesting(compactChromeProgress > 0.9)
-        .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
+            .position(x: containerWidth / 2, y: centerY)
+            .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
     }
 
     private var profileSummary: some View {
@@ -447,6 +497,7 @@ private struct UserFeaturedHashtagRow: View {
     UserDetailView(
         profile: MockTimelineData.selfProfile,
         posts: MockTimelineData.selfProfilePosts,
+        navigationContext: .root,
         swipeSettings: TimelineSwipeSettings(),
         onOpenPost: { _ in },
         onOpenProfile: { _ in },
