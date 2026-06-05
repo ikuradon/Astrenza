@@ -100,29 +100,14 @@ struct HomeTimelineView: View {
         .onChange(of: selectedTimeline) { _, _ in
             loadTimelineRestoreState()
         }
-        .sheet(isPresented: $isComposerPresented) {
-            ComposeSheetView(mode: composeSheetMode)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.hidden)
-                .presentationCornerRadius(28)
-        }
-        .sheet(isPresented: $isSettingsPresented) {
-            SettingsView(onClose: {
-                isSettingsPresented = false
-            }, swipeSettings: $swipeSettings)
-            .presentationCornerRadius(26)
-        }
-        .fullScreenCover(isPresented: isFullscreenMediaPresented) {
-            if let fullscreenMedia {
-                TimelineFullscreenMediaViewer(media: fullscreenMedia) {
-                    self.fullscreenMedia = nil
-                }
-            }
-        }
-        .sheet(item: $browserDestination) { destination in
-            TimelineInAppBrowserView(url: destination.url)
-                .ignoresSafeArea()
-        }
+        .homeTimelinePresentations(
+            isComposerPresented: $isComposerPresented,
+            isSettingsPresented: $isSettingsPresented,
+            composeSheetMode: $composeSheetMode,
+            fullscreenMedia: $fullscreenMedia,
+            browserDestination: $browserDestination,
+            swipeSettings: $swipeSettings
+        )
     }
 }
 
@@ -305,17 +290,6 @@ private extension HomeTimelineView {
     func openURL(_ url: URL) {
         dismissFloatingMenus()
         browserDestination = TimelineBrowserDestination(url: url)
-    }
-
-    var isFullscreenMediaPresented: Binding<Bool> {
-        Binding(
-            get: { fullscreenMedia != nil },
-            set: { isPresented in
-                if !isPresented {
-                    fullscreenMedia = nil
-                }
-            }
-        )
     }
 
     func dismissFloatingMenus() {

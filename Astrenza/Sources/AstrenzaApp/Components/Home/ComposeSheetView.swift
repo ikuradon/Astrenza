@@ -1,7 +1,6 @@
 import PhotosUI
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 struct ComposeSheetView: View {
     @Environment(\.dismiss) private var dismiss
@@ -149,40 +148,17 @@ struct ComposeSheetView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomComposerControls
         }
-        .confirmationDialog("Camera", isPresented: $isCameraPresented, titleVisibility: .visible) {
-            Button("Open Camera") {}
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Camera capture is mocked in this compose prototype.")
-        }
-        .fileImporter(
-            isPresented: $isFileImporterPresented,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: true
-        ) { _ in }
-        .confirmationDialog("", isPresented: $isDraftCloseDialogPresented, titleVisibility: .hidden) {
-            Button("Ignore Draft", role: .destructive) {
-                dismiss()
-            }
-            Button("Save Draft") {
-                saveCurrentDraft()
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .sheet(isPresented: $isDraftsViewPresented) {
-            ComposeDraftsView(
-                drafts: savedDrafts,
-                onDelete: { _ in
-                    deleteSavedDraft()
-                }
-            ) { draft in
-                text = draft.text
-                isDraftsViewPresented = false
-                isEditorFocused = true
-            }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.hidden)
-        }
+        .composeSheetPresentations(
+            isCameraPresented: $isCameraPresented,
+            isFileImporterPresented: $isFileImporterPresented,
+            isDraftCloseDialogPresented: $isDraftCloseDialogPresented,
+            isDraftsViewPresented: $isDraftsViewPresented,
+            savedDrafts: savedDrafts,
+            onIgnoreDraft: { dismiss() },
+            onSaveDraft: saveCurrentDraft,
+            onDeleteDrafts: { _ in deleteSavedDraft() },
+            onSelectDraft: restoreDraft
+        )
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
                 isEditorFocused = true
@@ -199,198 +175,48 @@ struct ComposeSheetView: View {
     }
 
     private var navigationBar: some View {
-        ZStack {
-            Text(mode.title)
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
-                .foregroundStyle(.primary)
-
-            HStack {
-                Button("Close", action: closeComposer)
-                    .font(.system(size: 18, weight: .heavy, design: .rounded))
-                    .foregroundStyle(accent)
-
-                Spacer()
-
-                Button(mode.actionTitle) {
-                    dismiss()
-                }
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(canSubmit ? accent : Color.secondary.opacity(0.55))
-                .disabled(!canSubmit)
-            }
-        }
-        .padding(.horizontal, 20)
-        .frame(height: 72)
+        ComposeNavigationBar(
+            mode: mode,
+            canSubmit: canSubmit,
+            accent: accent,
+            onClose: closeComposer,
+            onSubmit: { dismiss() }
+        )
     }
 
     private var editorArea: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Button {
-                withAnimation(.spring(duration: 0.28, bounce: 0.2)) {
-                    isUserSwitcherPresented.toggle()
-                }
-            } label: {
-                UserSwitchButton(isExpanded: isUserSwitcherPresented)
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
-            .accessibilityLabel("Switch user")
-
-            VStack(alignment: .leading, spacing: 8) {
-                ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text(mode.placeholder)
-                            .font(.system(size: 18, weight: .medium, design: .rounded))
-                            .foregroundStyle(Color.secondary.opacity(0.78))
-                            .padding(.top, 26)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextEditor(text: $text)
-                        .font(.system(size: 19, weight: .medium, design: .rounded))
-                        .foregroundStyle(.primary)
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                        .focused($isEditorFocused)
-                        .padding(.top, 16)
-                        .padding(.leading, -4)
-                        .frame(minHeight: selectedMediaItems.isEmpty ? 320 : 64)
-                        .accessibilityLabel(mode.placeholder)
-                }
-
-                if !selectedMediaItems.isEmpty {
-                    ComposeSelectedMediaStrip(items: selectedMediaItems) { media in
-                        withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
-                            activeMediaMenuItem = media
-                        }
-                    }
-                    .transition(.scale(scale: 0.96, anchor: .topLeading).combined(with: .opacity))
-                    .padding(.leading, 2)
-                }
-            }
-
-            Text("\(remainingCharacters)")
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundStyle(remainingCharacters < 0 ? .red : Color.secondary.opacity(0.78))
-                .padding(.top, 26)
-                .frame(width: 48, alignment: .trailing)
-        }
-        .padding(.horizontal, 18)
+        ComposeEditorArea(
+            mode: mode,
+            text: $text,
+            isEditorFocused: $isEditorFocused,
+            selectedMediaItems: selectedMediaItems,
+            activeMediaMenuItem: $activeMediaMenuItem,
+            isUserSwitcherPresented: $isUserSwitcherPresented,
+            remainingCharacters: remainingCharacters
+        )
     }
 
     @ViewBuilder
     private var bottomComposerControls: some View {
-        VStack(spacing: 0) {
-            if isSensitiveReasonVisible {
-                sensitiveReasonField
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            if isCustomEmojiPickerPresented {
-                ComposeCustomEmojiPicker(isContinuousInput: isContinuousCustomEmojiInput) { candidate in
-                    if isContinuousCustomEmojiInput {
-                        insertContinuousCustomEmoji(candidate.shortcode)
-                    } else {
-                        insertStandaloneToken(candidate.shortcode)
-                        withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
-                            isCustomEmojiPickerPresented = false
-                        }
-                    }
-                } onReturn: {
-                    finishContinuousCustomEmojiInput()
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if let completion = activeCompletion {
-                ComposeCompletionBar(completion: completion) { value in
-                    insertCompletion(value)
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else {
-                composeToolbar
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(duration: 0.22, bounce: 0.1), value: activeCompletion?.trigger)
-        .animation(.spring(duration: 0.22, bounce: 0.1), value: isSensitiveReasonVisible)
-        .animation(.spring(duration: 0.24, bounce: 0.12), value: isCustomEmojiPickerPresented)
-    }
-
-    private var sensitiveReasonField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 16, weight: .black))
-                .foregroundStyle(accent)
-
-            TextField("Sensitive reason", text: $sensitiveReason)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.primary)
-                .textFieldStyle(.plain)
-                .submitLabel(.done)
-        }
-        .padding(.horizontal, 13)
-        .frame(height: 44)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(accent.opacity(0.26), lineWidth: 1)
-        }
-    }
-
-    private var composeToolbar: some View {
-        HStack(spacing: 0) {
-            PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 8, matching: .images) {
-                ComposeToolIcon(systemName: "photo.on.rectangle.angled")
-            }
-            .buttonStyle(.plain)
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.45)
-                    .onEnded { _ in
-                        isCameraPresented = true
-                    }
-            )
-            .accessibilityLabel("Add media")
-
-            ComposeEmojiToolButton(
-                onTap: { presentCustomEmojiPicker(isContinuous: false) },
-                onLongPress: { presentCustomEmojiPicker(isContinuous: true) }
-            )
-
-            ComposeToolButton(systemName: "exclamationmark.triangle", label: "Content warning") {
-                isCustomEmojiPickerPresented = false
-                isContinuousCustomEmojiInput = false
-                isSensitiveReasonVisible.toggle()
-            }
-
-            ComposeToolButton(systemName: "at", label: "Mention") {
-                isCustomEmojiPickerPresented = false
-                isContinuousCustomEmojiInput = false
-                insertTrigger("@")
-            }
-
-            ComposeToolButton(systemName: "number", label: "Hashtag") {
-                isCustomEmojiPickerPresented = false
-                isContinuousCustomEmojiInput = false
-                insertTrigger("#")
-            }
-
-            Spacer(minLength: 0)
-
-            Button {
-                withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
-                    isComposerSettingsPresented.toggle()
-                }
-            } label: {
-                ComposeToolIcon(systemName: "gearshape")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Composer settings")
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 60)
-        .background(Color.black.opacity(0.28))
+        ComposeBottomControls(
+            sensitiveReason: $sensitiveReason,
+            isSensitiveReasonVisible: isSensitiveReasonVisible,
+            isCustomEmojiPickerPresented: isCustomEmojiPickerPresented,
+            isContinuousCustomEmojiInput: isContinuousCustomEmojiInput,
+            selectedPhotoItems: $selectedPhotoItems,
+            activeCompletion: activeCompletion,
+            accent: accent,
+            onEmojiSelected: handleCustomEmojiSelection,
+            onEmojiReturn: finishContinuousCustomEmojiInput,
+            onCameraRequested: { isCameraPresented = true },
+            onEmojiTap: { presentCustomEmojiPicker(isContinuous: false) },
+            onEmojiLongPress: { presentCustomEmojiPicker(isContinuous: true) },
+            onSensitiveToggle: toggleSensitiveReason,
+            onMentionTap: { insertTrigger("@") },
+            onHashtagTap: { insertTrigger("#") },
+            onSettingsTap: toggleComposerSettings,
+            onCompletionSelected: insertCompletion
+        )
     }
 
     private var activeCompletion: ComposeCompletion? {
@@ -461,11 +287,34 @@ struct ComposeSheetView: View {
         text += value
     }
 
+    private func handleCustomEmojiSelection(_ candidate: ComposeCustomEmojiCandidate) {
+        if isContinuousCustomEmojiInput {
+            insertContinuousCustomEmoji(candidate.shortcode)
+        } else {
+            insertStandaloneToken(candidate.shortcode)
+            withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
+                isCustomEmojiPickerPresented = false
+            }
+        }
+    }
+
     private func presentCustomEmojiPicker(isContinuous: Bool) {
         isEditorFocused = false
         isContinuousCustomEmojiInput = isContinuous
         withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
             isCustomEmojiPickerPresented = true
+        }
+    }
+
+    private func toggleSensitiveReason() {
+        isCustomEmojiPickerPresented = false
+        isContinuousCustomEmojiInput = false
+        isSensitiveReasonVisible.toggle()
+    }
+
+    private func toggleComposerSettings() {
+        withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
+            isComposerSettingsPresented.toggle()
         }
     }
 
@@ -528,6 +377,12 @@ struct ComposeSheetView: View {
     private func deleteSavedDraft() {
         savedDraftText = ""
         savedDraftMediaCount = 0
+    }
+
+    private func restoreDraft(_ draft: ComposeDraft) {
+        text = draft.text
+        isDraftsViewPresented = false
+        isEditorFocused = true
     }
 
 }
