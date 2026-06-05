@@ -146,14 +146,25 @@ struct TimelineFullscreenMediaViewer: View {
 
             Spacer()
 
-            if let galleryTiles, galleryTiles.count > 1 {
-                Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.bottom, 24)
+            if let galleryTiles {
+                VStack(spacing: 8) {
+                    Text(galleryTiles[selectedTileIndex].title)
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.94))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+
+                    if galleryTiles.count > 1 {
+                        Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.78))
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, 26)
+                .padding(.bottom, 24)
             }
         }
     }
@@ -249,17 +260,6 @@ private struct TimelineFullscreenMediaPage: View {
             Image(systemName: tile.symbolName)
                 .font(.system(size: 82, weight: .bold))
                 .foregroundStyle(.white.opacity(0.9))
-
-            VStack {
-                Spacer()
-                Text(tile.title)
-                    .font(.system(size: 19, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.black.opacity(0.28), in: Capsule())
-                    .padding(.bottom, 18)
-            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .aspectRatio(0.82, contentMode: .fit)
