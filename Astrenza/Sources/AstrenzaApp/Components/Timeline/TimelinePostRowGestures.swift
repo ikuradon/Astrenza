@@ -33,6 +33,7 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
         private weak var scrollView: UIScrollView?
         private var recognizer: UIPanGestureRecognizer?
         private var beganInsideRow = false
+        private var lockedScrollViewWasEnabled: Bool?
 
         init(parent: TimelineRowPanGestureHost) {
             self.parent = parent
@@ -73,14 +74,19 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
             let translation = recognizer.translation(in: scrollView).x
 
             switch recognizer.state {
-            case .began, .changed:
+            case .began:
+                lockScrollViewIfNeeded()
+                parent.onChanged(translation)
+            case .changed:
                 parent.onChanged(translation)
             case .ended:
                 parent.onEnded(translation)
                 beganInsideRow = false
+                unlockScrollViewIfNeeded()
             case .cancelled, .failed:
                 parent.onEnded(0)
                 beganInsideRow = false
+                unlockScrollViewIfNeeded()
             default:
                 break
             }
@@ -101,6 +107,12 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
                 return false
             }
 
+            let locationInScrollView = panRecognizer.location(in: scrollView)
+            guard locationInScrollView.x > 32 else {
+                beganInsideRow = false
+                return false
+            }
+
             let velocity = panRecognizer.velocity(in: scrollView)
             let horizontalSpeed = abs(velocity.x)
             let verticalSpeed = abs(velocity.y)
@@ -114,10 +126,41 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
         ) -> Bool {
             guard parent.isEnabled,
                   gestureRecognizer === recognizer,
-                  beganInsideRow
+                  beganInsideRow,
+                  let scrollView
             else { return false }
 
+            if otherGestureRecognizer === scrollView.panGestureRecognizer {
+                return false
+            }
+
+            if otherGestureRecognizer is UIScreenEdgePanGestureRecognizer {
+                return false
+            }
+
+            if otherGestureRecognizer.view?.isDescendant(of: scrollView) != true {
+                return false
+            }
+
             return true
+        }
+
+        private func lockScrollViewIfNeeded() {
+            guard lockedScrollViewWasEnabled == nil,
+                  let scrollView
+            else { return }
+
+            lockedScrollViewWasEnabled = scrollView.isScrollEnabled
+            scrollView.isScrollEnabled = false
+        }
+
+        private func unlockScrollViewIfNeeded() {
+            guard let lockedScrollViewWasEnabled,
+                  let scrollView
+            else { return }
+
+            scrollView.isScrollEnabled = lockedScrollViewWasEnabled
+            self.lockedScrollViewWasEnabled = nil
         }
     }
 

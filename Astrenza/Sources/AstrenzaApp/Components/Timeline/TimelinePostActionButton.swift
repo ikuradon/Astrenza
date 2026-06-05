@@ -105,6 +105,8 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: UIKitTimelinePostActionButton
         private var didBegin = false
+        private weak var lockedScrollView: UIScrollView?
+        private var lockedScrollViewWasEnabled: Bool?
 
         init(parent: UIKitTimelinePostActionButton) {
             self.parent = parent
@@ -121,6 +123,7 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
             switch recognizer.state {
             case .began:
                 didBegin = true
+                lockScrollViewIfNeeded(from: recognizer.view)
                 parent.onBegan()
                 parent.onMoved(windowLocation(for: recognizer))
             case .changed:
@@ -129,9 +132,11 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
             case .ended:
                 parent.onEnded(didBegin ? windowLocation(for: recognizer) : nil)
                 didBegin = false
+                unlockScrollViewIfNeeded()
             case .cancelled, .failed:
                 parent.onEnded(nil)
                 didBegin = false
+                unlockScrollViewIfNeeded()
             default:
                 break
             }
@@ -151,9 +156,29 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
 
             return view.convert(recognizer.location(in: view), to: nil)
         }
+
+        private func lockScrollViewIfNeeded(from view: UIView?) {
+            guard lockedScrollViewWasEnabled == nil,
+                  let scrollView = view?.enclosingScrollView()
+            else { return }
+
+            lockedScrollView = scrollView
+            lockedScrollViewWasEnabled = scrollView.isScrollEnabled
+            scrollView.isScrollEnabled = false
+        }
+
+        private func unlockScrollViewIfNeeded() {
+            guard let lockedScrollViewWasEnabled,
+                  let lockedScrollView
+            else { return }
+
+            lockedScrollView.isScrollEnabled = lockedScrollViewWasEnabled
+            self.lockedScrollViewWasEnabled = nil
+            self.lockedScrollView = nil
+        }
     }
 
-    final class ActionButtonControl: UIView {
+    final class ActionButtonControl: UIControl {
         let imageView = UIImageView()
 
         override func layoutSubviews() {
@@ -167,5 +192,18 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
             imageView.tintColor = isActive ? UIColor.label : UIColor.secondaryLabel
             imageView.preferredSymbolConfiguration = configuration
         }
+    }
+}
+
+private extension UIView {
+    func enclosingScrollView() -> UIScrollView? {
+        var currentView = superview
+        while let view = currentView {
+            if let scrollView = view as? UIScrollView {
+                return scrollView
+            }
+            currentView = view.superview
+        }
+        return nil
     }
 }

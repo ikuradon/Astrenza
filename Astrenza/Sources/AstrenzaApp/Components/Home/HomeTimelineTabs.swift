@@ -253,10 +253,13 @@ private final class TabBarDirectionProbeGestureRecognizer: UIGestureRecognizer {
 
     private var initialLocation: CGPoint?
     private var didResolveDirection = false
+    private var shouldIgnoreCurrentTouch = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        initialLocation = touches.first?.location(in: view)
+        let firstTouch = touches.first
+        initialLocation = firstTouch?.location(in: view)
         didResolveDirection = false
+        shouldIgnoreCurrentTouch = firstTouch.map(touchBeginsInControl) ?? false
         super.touchesBegan(touches, with: event)
     }
 
@@ -265,7 +268,8 @@ private final class TabBarDirectionProbeGestureRecognizer: UIGestureRecognizer {
             super.touchesMoved(touches, with: event)
         }
 
-        guard !didResolveDirection,
+        guard !shouldIgnoreCurrentTouch,
+              !didResolveDirection,
               let initialLocation,
               let currentLocation = touches.first?.location(in: view)
         else { return }
@@ -292,7 +296,23 @@ private final class TabBarDirectionProbeGestureRecognizer: UIGestureRecognizer {
     override func reset() {
         initialLocation = nil
         didResolveDirection = false
+        shouldIgnoreCurrentTouch = false
         super.reset()
+    }
+
+    private func touchBeginsInControl(_ touch: UITouch) -> Bool {
+        guard let view else { return false }
+        let location = touch.location(in: view)
+        var hitView = view.hitTest(location, with: nil)
+
+        while let currentView = hitView {
+            if currentView is UIControl {
+                return true
+            }
+            hitView = currentView.superview
+        }
+
+        return false
     }
 }
 
