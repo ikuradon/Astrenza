@@ -49,6 +49,24 @@ struct TimelineLayoutSnapshot {
         offsetsByPostID = nextOffsets
     }
 
+    init(entries: [TimelineFeedEntry], layoutCache: TimelineLayoutCache, topContentPadding: CGFloat) {
+        var nextOffsets: [TimelinePost.ID: CGFloat] = [:]
+        nextOffsets.reserveCapacity(entries.count)
+
+        var offset = topContentPadding
+        for entry in entries {
+            switch entry {
+            case .post(let post):
+                nextOffsets[post.id] = offset
+                offset += layoutCache.height(for: post)
+            case .gap(let gap):
+                offset += TimelineLayoutEstimator.estimatedHeight(for: gap)
+            }
+        }
+
+        offsetsByPostID = nextOffsets
+    }
+
     func offset(for postID: TimelinePost.ID) -> CGFloat? {
         offsetsByPostID[postID]
     }
@@ -63,6 +81,17 @@ enum TimelineViewportResolver {
         anchorLineY: CGFloat
     ) -> CGFloat? {
         let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: layoutCache, topContentPadding: topContentPadding)
+        return restoredContentOffsetY(snapshot: snapshot, state: state, anchorLineY: anchorLineY)
+    }
+
+    static func restoredContentOffsetY(
+        entries: [TimelineFeedEntry],
+        state: TimelineViewportState,
+        layoutCache: TimelineLayoutCache,
+        topContentPadding: CGFloat,
+        anchorLineY: CGFloat
+    ) -> CGFloat? {
+        let snapshot = TimelineLayoutSnapshot(entries: entries, layoutCache: layoutCache, topContentPadding: topContentPadding)
         return restoredContentOffsetY(snapshot: snapshot, state: state, anchorLineY: anchorLineY)
     }
 
@@ -82,6 +111,18 @@ enum TimelineViewportResolver {
 }
 
 enum TimelineLayoutEstimator {
+    static func estimatedHeight(for gap: TimelineGap) -> CGFloat {
+        74
+    }
+
+    static func estimatedReplacementDelta(for gap: TimelineGap, layoutCache: TimelineLayoutCache) -> CGFloat {
+        let insertedHeight = gap.backfilledPosts.reduce(CGFloat.zero) { height, post in
+            height + layoutCache.height(for: post)
+        }
+
+        return max(0, insertedHeight - estimatedHeight(for: gap))
+    }
+
     static func estimatedHeight(for post: TimelinePost) -> CGFloat {
         var height: CGFloat = 92
         height += bodyHeight(for: post)

@@ -118,6 +118,123 @@ struct TimelinePost: Identifiable {
     }
 }
 
+enum TimelineFeedEntry: Identifiable {
+    case post(TimelinePost)
+    case gap(TimelineGap)
+
+    var id: String {
+        switch self {
+        case .post(let post):
+            post.id
+        case .gap(let gap):
+            gap.id
+        }
+    }
+
+    var post: TimelinePost? {
+        switch self {
+        case .post(let post):
+            post
+        case .gap:
+            nil
+        }
+    }
+}
+
+enum TimelineGapFillDirection: Equatable {
+    case newer
+    case older
+
+    var systemName: String {
+        switch self {
+        case .newer:
+            "arrow.up"
+        case .older:
+            "arrow.down"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .newer:
+            "Backfill newer notes"
+        case .older:
+            "Backfill older notes"
+        }
+    }
+}
+
+struct TimelineGap: Identifiable, Equatable {
+    enum State: Equatable {
+        case needsBackfill
+        case fetching
+        case limited
+    }
+
+    let id: String
+    let newerPostID: TimelinePost.ID
+    let olderPostID: TimelinePost.ID
+    let missingEstimate: Int
+    let relayCount: Int
+    let state: State
+    let backfilledPosts: [TimelinePost]
+
+    static func == (lhs: TimelineGap, rhs: TimelineGap) -> Bool {
+        lhs.id == rhs.id
+            && lhs.newerPostID == rhs.newerPostID
+            && lhs.olderPostID == rhs.olderPostID
+            && lhs.missingEstimate == rhs.missingEstimate
+            && lhs.relayCount == rhs.relayCount
+            && lhs.state == rhs.state
+            && lhs.backfilledPosts.map(\.id) == rhs.backfilledPosts.map(\.id)
+    }
+
+    func replacingState(_ state: State) -> TimelineGap {
+        TimelineGap(
+            id: id,
+            newerPostID: newerPostID,
+            olderPostID: olderPostID,
+            missingEstimate: missingEstimate,
+            relayCount: relayCount,
+            state: state,
+            backfilledPosts: backfilledPosts
+        )
+    }
+
+    var title: String {
+        switch state {
+        case .needsBackfill:
+            "Missing notes"
+        case .fetching:
+            "Fetching gap"
+        case .limited:
+            "Relay limit reached"
+        }
+    }
+
+    var detail: String {
+        switch state {
+        case .needsBackfill:
+            "Tap to backfill \(missingEstimate) cached interval from \(relayCount) relays"
+        case .fetching:
+            "Requesting smaller since/until windows"
+        case .limited:
+            "Try a narrower relay window later"
+        }
+    }
+
+    var systemName: String {
+        switch state {
+        case .needsBackfill:
+            "arrow.down.doc"
+        case .fetching:
+            "arrow.triangle.2.circlepath"
+        case .limited:
+            "exclamationmark.triangle.fill"
+        }
+    }
+}
+
 extension TimelinePost {
     var shouldObscureExternalAttachments: Bool {
         !author.isFollowed && (repostedBy != nil || replyContext != nil)

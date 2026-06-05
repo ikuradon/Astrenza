@@ -8,6 +8,22 @@ appId: com.ikuradon.Astrenza
     text: User Alpha
 - swipe:
     start: 50%, 75%
+    end: 50%, 56%
+    duration: 320
+- assertVisible:
+    id: timeline.gap.row
+- assertVisible:
+    text: Missing notes
+- tapOn:
+    id: timeline.gap.row
+- assertVisible:
+    text: User Cache
+- assertVisible:
+    text: User Relay
+- assertNotVisible:
+    text: Missing notes
+- swipe:
+    start: 50%, 75%
     end: 50%, 35%
     duration: 450
 - assertVisible:

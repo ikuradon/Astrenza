@@ -4,6 +4,10 @@ enum MockTimelineData {
     static var posts: [TimelinePost] {
         store.homeTimeline
     }
+
+    static var homeEntries: [TimelineFeedEntry] {
+        store.homeEntries
+    }
 }
 
 extension MockTimelineData {
@@ -688,10 +692,83 @@ private struct MockTimelineStore {
             .map(\.post)
     }
 
+    var homeEntries: [TimelineFeedEntry] {
+        let posts = homeTimeline
+        guard posts.count > 7 else {
+            return posts.map(TimelineFeedEntry.post)
+        }
+
+        let gap = TimelineGap(
+            id: "home-gap-relay-catchup-1",
+            newerPostID: posts[1].id,
+            olderPostID: posts[2].id,
+            missingEstimate: 24,
+            relayCount: 5,
+            state: .needsBackfill,
+            backfilledPosts: Self.backfilledHomePosts(after: posts[1], before: posts[2])
+        )
+
+        var entries: [TimelineFeedEntry] = []
+        entries.reserveCapacity(posts.count + 1)
+
+        for (index, post) in posts.enumerated() {
+            if index == 2 {
+                entries.append(.gap(gap))
+            }
+
+            entries.append(.post(post))
+        }
+
+        return entries
+    }
+
     func replies(to post: TimelinePost) -> [TimelinePost] {
         records
             .filter { $0.replyToID == post.id }
             .map(\.post)
+    }
+
+    private static func backfilledHomePosts(after newerPost: TimelinePost, before olderPost: TimelinePost) -> [TimelinePost] {
+        [
+            TimelinePost(
+                id: "home-gap-filled-relay-window",
+                author: .resolved(
+                    displayName: "User Cache",
+                    nip05: "cache@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "home-gap-filled-relay-window")
+                ),
+                avatar: AvatarStyle(primary: .indigo, secondary: .cyan, symbolName: "tray.and.arrow.down.fill"),
+                body: "再接続後に relay cursor から補完されたmock投稿。EOSE後の差分として入ってきたので、Gap Rowは消えて通常の投稿Rowとして扱う。",
+                timestamp: "19m",
+                replyCount: nil,
+                boostCount: 4,
+                favoriteCount: 16,
+                isLocked: false,
+                media: nil,
+                context: nil,
+                actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: false)
+            ),
+            TimelinePost(
+                id: "home-gap-filled-secondary-fetch",
+                author: .resolved(
+                    displayName: "User Relay",
+                    nip05: "relay@mock.example",
+                    pubkey: TimelineAuthor.mockPubkey(for: "home-gap-filled-secondary-fetch")
+                ),
+                avatar: AvatarStyle(primary: .purple, secondary: .blue, symbolName: "antenna.radiowaves.left.and.right"),
+                body: "secondary fetch で拾えたmock投稿。大きい範囲を一気に取らず、since/untilを狭めながら埋めていく想定。",
+                timestamp: "20m",
+                replyCount: 1,
+                boostCount: 2,
+                favoriteCount: 11,
+                isLocked: false,
+                media: .unresolvedLink(UnresolvedLinkPreview(
+                    host: "relay.mock.example",
+                    url: "https://relay.mock.example/catch-up"
+                )),
+                context: nil
+            )
+        ]
     }
 
     func parent(of post: TimelinePost) -> TimelinePost? {

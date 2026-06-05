@@ -14,6 +14,23 @@ struct TimelineModelTests {
         #expect(posts.count >= 12)
     }
 
+    @Test("Home timeline entries can include relay catch-up gaps")
+    func homeTimelineEntriesIncludeGap() throws {
+        let entries = MockTimelineData.homeEntries
+        let gap = try #require(entries.compactMap { entry -> TimelineGap? in
+            guard case .gap(let gap) = entry else { return nil }
+            return gap
+        }.first)
+
+        #expect(gap.state == .needsBackfill)
+        #expect(gap.missingEstimate > 0)
+        #expect(gap.backfilledPosts.map(\.id) == [
+            "home-gap-filled-relay-window",
+            "home-gap-filled-secondary-fetch"
+        ])
+        #expect(entries.compactMap(\.post).map(\.id) == MockTimelineData.posts.map(\.id))
+    }
+
     @Test("Implicit mock post IDs are stable across construction")
     func implicitMockPostIDsAreStable() {
         let author = TimelineAuthor.resolved(
@@ -167,6 +184,65 @@ struct TimelineModelTests {
         )
 
         #expect(restoredOffset == 324)
+    }
+
+    @Test("Timeline viewport resolver includes gap height in entry snapshots")
+    func timelineViewportResolverIncludesGapHeight() throws {
+        let posts = Array(MockTimelineData.posts.prefix(3))
+        let anchorPost = try #require(posts.last)
+        let gap = TimelineGap(
+            id: "test-gap",
+            newerPostID: posts[0].id,
+            olderPostID: posts[1].id,
+            missingEstimate: 10,
+            relayCount: 3,
+            state: .needsBackfill,
+            backfilledPosts: []
+        )
+        let entries: [TimelineFeedEntry] = [
+            .post(posts[0]),
+            .gap(gap),
+            .post(posts[1]),
+            .post(anchorPost)
+        ]
+        var cache = TimelineLayoutCache()
+        cache.merge(measuredFrames: [
+            posts[0].id: CGRect(x: 0, y: 0, width: 390, height: 120),
+            posts[1].id: CGRect(x: 0, y: 120, width: 390, height: 180),
+            anchorPost.id: CGRect(x: 0, y: 300, width: 390, height: 220)
+        ])
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: anchorPost.id,
+            anchorOffset: 24,
+            contentOffset: 0,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        let restoredOffset = TimelineViewportResolver.restoredContentOffsetY(
+            entries: entries,
+            state: state,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        )
+
+        #expect(restoredOffset == 398)
+    }
+
+    @Test("Timeline gap replacement estimates positive inserted height delta")
+    func timelineGapReplacementDelta() throws {
+        let gap = try #require(MockTimelineData.homeEntries.compactMap { entry -> TimelineGap? in
+            guard case .gap(let gap) = entry else { return nil }
+            return gap
+        }.first)
+        let delta = TimelineLayoutEstimator.estimatedReplacementDelta(
+            for: gap,
+            layoutCache: TimelineLayoutCache()
+        )
+
+        #expect(delta > 0)
     }
 
     @Test("Timeline viewport resolver restores exact content offset when available")

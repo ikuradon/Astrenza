@@ -143,7 +143,7 @@ private extension HomeTimelineView {
     var timelineList: some View {
         NavigationStack(path: $postNavigationPath) {
             TimelineFeedView(
-                posts: MockTimelineData.posts,
+                entries: MockTimelineData.homeEntries,
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: homeViewportState,
