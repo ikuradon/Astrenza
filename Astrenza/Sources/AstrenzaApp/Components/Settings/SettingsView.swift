@@ -42,7 +42,7 @@ struct SettingsView: View {
                         avatarStyle: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill")
                     )
                     SettingsNavigationRow(title: "Add Account", icon: "plus", tint: .green) {
-                        EmptySettingsDestination(title: "Add Account")
+                        OnboardingView()
                     }
                 }
 
