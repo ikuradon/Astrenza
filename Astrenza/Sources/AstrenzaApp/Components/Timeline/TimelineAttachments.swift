@@ -90,6 +90,7 @@ struct TimelineFullscreenMediaViewer: View {
     let media: TimelineMedia
     let onClose: () -> Void
     @State private var selectedTileIndex = 0
+    @State private var isChromeVisible = false
     @GestureState private var dismissalDrag = CGSize.zero
 
     private var galleryTiles: [MediaTile]? {
@@ -114,37 +115,47 @@ struct TimelineFullscreenMediaViewer: View {
                     .scaleEffect(dismissalScale)
             }
 
-            VStack {
-                HStack {
-                    Spacer()
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .black))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close media viewer")
-                }
-                .padding(.top, 18)
-                .padding(.horizontal, 18)
-
-                Spacer()
-
-                if let galleryTiles, galleryTiles.count > 1 {
-                    Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
-                        .font(.system(size: 14, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(.bottom, 24)
-                }
+            if isChromeVisible {
+                viewerChrome
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(chromeToggleGesture)
         .simultaneousGesture(dismissalGesture)
+        .animation(.spring(duration: 0.2, bounce: 0.08), value: isChromeVisible)
         .preferredColorScheme(.dark)
+    }
+
+    private var viewerChrome: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close media viewer")
+            }
+            .padding(.top, 18)
+            .padding(.horizontal, 18)
+
+            Spacer()
+
+            if let galleryTiles, galleryTiles.count > 1 {
+                Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
+                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+            }
+        }
     }
 
     @ViewBuilder
@@ -174,6 +185,13 @@ struct TimelineFullscreenMediaViewer: View {
                 if abs(predictedHeight) > 190 || abs(value.translation.height) > 150 {
                     onClose()
                 }
+            }
+    }
+
+    private var chromeToggleGesture: some Gesture {
+        TapGesture()
+            .onEnded {
+                isChromeVisible.toggle()
             }
     }
 

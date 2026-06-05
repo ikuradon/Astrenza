@@ -49,6 +49,26 @@ struct UserDetailView: View {
         min(max((compactChromeProgress - 0.72) / 0.2, 0), 1)
     }
 
+    private var profileAvatarMedia: TimelineMedia {
+        .gallery([
+            MediaTile(
+                title: "\(profile.author.primaryText) Avatar",
+                colors: [profile.avatar.primary, profile.avatar.secondary],
+                symbolName: profile.avatar.symbolName
+            )
+        ])
+    }
+
+    private var profileBannerMedia: TimelineMedia {
+        .gallery([
+            MediaTile(
+                title: "\(profile.author.primaryText) Hero",
+                colors: profile.banner.colors,
+                symbolName: profile.banner.symbolName
+            )
+        ])
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             GeometryReader { proxy in
@@ -99,7 +119,6 @@ struct UserDetailView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .allowsHitTesting(false)
         }
         .background(Color.astrenzaBackground)
         .accessibilityIdentifier("user.detail")
@@ -121,13 +140,19 @@ struct UserDetailView: View {
 
     private var profileHero: some View {
         ZStack(alignment: .bottom) {
-            ProfileBannerView(style: profile.banner)
-                .frame(height: profileHeroHeight)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .anchorPreference(key: ProfileHeroBoundsPreferenceKey.self, value: .bounds) { bounds in
-                    bounds
-                }
+            Button {
+                onOpenMedia(profileBannerMedia)
+            } label: {
+                ProfileBannerView(style: profile.banner)
+                    .frame(height: profileHeroHeight)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .anchorPreference(key: ProfileHeroBoundsPreferenceKey.self, value: .bounds) { bounds in
+                        bounds
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open profile hero image")
         }
         .padding(.bottom, 76)
     }
@@ -142,13 +167,19 @@ struct UserDetailView: View {
     }
 
     private var compactProfileAvatarToolbarItem: some View {
-        AvatarView(style: profile.avatar, size: compactAvatarSize)
-            .opacity(toolbarAvatarProgress)
-            .scaleEffect(0.92 + (0.08 * toolbarAvatarProgress))
-            .frame(width: compactAvatarSize, height: compactAvatarSize)
-            .allowsHitTesting(false)
-            .accessibilityHidden(toolbarAvatarProgress < 0.85)
-            .animation(.spring(duration: 0.24, bounce: 0.12), value: toolbarAvatarProgress)
+        Button {
+            onOpenMedia(profileAvatarMedia)
+        } label: {
+            AvatarView(style: profile.avatar, size: compactAvatarSize)
+                .scaleEffect(0.92 + (0.08 * toolbarAvatarProgress))
+                .frame(width: compactAvatarSize, height: compactAvatarSize)
+        }
+        .buttonStyle(.plain)
+        .opacity(toolbarAvatarProgress)
+        .disabled(toolbarAvatarProgress < 0.85)
+        .accessibilityLabel("Open compact profile avatar")
+        .accessibilityHidden(toolbarAvatarProgress < 0.85)
+        .animation(.spring(duration: 0.24, bounce: 0.12), value: toolbarAvatarProgress)
     }
 
     private func navigationBlurBackdrop(chromeLayout: ProfileNavigationChromeLayout) -> some View {
@@ -178,14 +209,22 @@ struct UserDetailView: View {
         let centerY = expandedCenterY + (compactCenterY - expandedCenterY) * progress
         let strokeWidth = 5 * (1 - progress)
 
-        return AvatarView(style: profile.avatar, size: avatarSize)
-            .overlay {
-                Circle()
-                    .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
-            }
-            .position(x: containerWidth / 2, y: centerY)
-            .opacity(1 - toolbarAvatarProgress)
-            .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
+        return Button {
+            onOpenMedia(profileAvatarMedia)
+        } label: {
+            AvatarView(style: profile.avatar, size: avatarSize)
+                .overlay {
+                    Circle()
+                        .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
+                }
+        }
+        .buttonStyle(.plain)
+        .position(x: containerWidth / 2, y: centerY)
+        .opacity(1 - toolbarAvatarProgress)
+        .disabled(toolbarAvatarProgress > 0.85)
+        .accessibilityLabel("Open profile avatar")
+        .accessibilityHidden(toolbarAvatarProgress > 0.85)
+        .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
     }
 
     private var profileSummary: some View {
