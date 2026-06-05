@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var isComposerPresented: Bool
     @Binding var isSettingsPresented: Bool
+    @Binding var isRelayStatusPresented: Bool
     @Binding var composeSheetMode: ComposeSheetMode
     @Binding var fullscreenMedia: TimelineMedia?
     @Binding var browserDestination: TimelineBrowserDestination?
@@ -21,6 +22,12 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                     isSettingsPresented = false
                 }, swipeSettings: $swipeSettings)
                 .presentationCornerRadius(26)
+            }
+            .sheet(isPresented: $isRelayStatusPresented) {
+                RelayStatusSheetView()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(26)
             }
             .fullScreenCover(isPresented: isFullscreenMediaPresented) {
                 if let media = fullscreenMedia {
@@ -51,6 +58,7 @@ extension View {
     func homeTimelinePresentations(
         isComposerPresented: Binding<Bool>,
         isSettingsPresented: Binding<Bool>,
+        isRelayStatusPresented: Binding<Bool>,
         composeSheetMode: Binding<ComposeSheetMode>,
         fullscreenMedia: Binding<TimelineMedia?>,
         browserDestination: Binding<TimelineBrowserDestination?>,
@@ -60,6 +68,7 @@ extension View {
             HomeTimelinePresentationModifier(
                 isComposerPresented: isComposerPresented,
                 isSettingsPresented: isSettingsPresented,
+                isRelayStatusPresented: isRelayStatusPresented,
                 composeSheetMode: composeSheetMode,
                 fullscreenMedia: fullscreenMedia,
                 browserDestination: browserDestination,

@@ -80,6 +80,9 @@ struct SettingsView: View {
                     SettingsNavigationRow(title: "Notifications", icon: "bell.fill", tint: .purple) {
                         EmptySettingsDestination(title: "Notifications")
                     }
+                    SettingsNavigationRow(title: "Relays", icon: "antenna.radiowaves.left.and.right", tint: .green) {
+                        RelaySettingsView()
+                    }
                     SettingsToggleRow(title: "Sounds", icon: "speaker.wave.2.fill", tint: .brown, isOn: $isSoundsEnabled)
                     SettingsToggleRow(title: "Haptics", icon: "circle.dotted.circle", tint: .gray, isOn: $isHapticsEnabled)
                     SettingsValueNavigationRow(title: "Browser", value: "Astrenza", icon: "safari.fill", tint: .cyan) {

@@ -8,6 +8,7 @@ struct HomeTimelineView: View {
     @State private var isUserSwitcherPresented = false
     @State private var isComposerPresented = false
     @State private var isSettingsPresented = false
+    @State private var isRelayStatusPresented = false
     @State private var composeSheetMode: ComposeSheetMode = .post
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
@@ -64,6 +65,7 @@ struct HomeTimelineView: View {
                         isUserSwitcherPresented: $isUserSwitcherPresented,
                         collapseProgress: topChromeCollapseProgress,
                         onDismissFloatingMenus: dismissFloatingMenus,
+                        onRelayStatusTap: presentRelayStatus,
                         onSettingsTap: presentSettings
                     )
                     .zIndex(30)
@@ -103,6 +105,7 @@ struct HomeTimelineView: View {
         .homeTimelinePresentations(
             isComposerPresented: $isComposerPresented,
             isSettingsPresented: $isSettingsPresented,
+            isRelayStatusPresented: $isRelayStatusPresented,
             composeSheetMode: $composeSheetMode,
             fullscreenMedia: $fullscreenMedia,
             browserDestination: $browserDestination,
@@ -323,8 +326,14 @@ private extension HomeTimelineView {
 
     func presentSettings() {
         dismissFloatingMenus()
-        guard !isComposerPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        guard !isComposerPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
         isSettingsPresented = true
+    }
+
+    func presentRelayStatus() {
+        dismissFloatingMenus()
+        guard !isComposerPresented && !isSettingsPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        isRelayStatusPresented = true
     }
 
     func presentComposer(mode: ComposeSheetMode) {

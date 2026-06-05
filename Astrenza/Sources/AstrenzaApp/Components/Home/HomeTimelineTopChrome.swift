@@ -7,6 +7,7 @@ struct HomeTimelineTopBar: View {
     @Binding var isUserSwitcherPresented: Bool
     let collapseProgress: CGFloat
     let onDismissFloatingMenus: () -> Void
+    let onRelayStatusTap: () -> Void
     let onSettingsTap: () -> Void
 
     var body: some View {
@@ -29,10 +30,10 @@ struct HomeTimelineTopBar: View {
 
                 Spacer(minLength: 0)
 
-                Button(action: onDismissFloatingMenus) {
+                Button(action: onRelayStatusTap) {
                     RelayStatusRingButton(
-                        connected: 7,
-                        planned: 12,
+                        connected: RelayMockStore.connectedCount,
+                        planned: RelayMockStore.plannedCount,
                         collapseProgress: collapseProgress
                     )
                 }
