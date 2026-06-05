@@ -174,7 +174,6 @@ private extension HomeTimelineView {
             UserDetailView(
                 profile: MockTimelineData.selfProfile,
                 posts: MockTimelineData.selfProfilePosts,
-                navigationContext: .root,
                 swipeSettings: swipeSettings,
                 onOpenPost: openProfilePost,
                 onOpenProfile: openProfileFromProfile,
@@ -246,7 +245,6 @@ private extension HomeTimelineView {
         return UserDetailView(
             profile: profile,
             posts: MockTimelineData.profilePosts(for: profile),
-            navigationContext: .pushed,
             swipeSettings: swipeSettings,
             onOpenPost: onOpenPost,
             onOpenProfile: onOpenProfile,

@@ -3,23 +3,9 @@ import SwiftUI
 private struct ProfileNavigationChromeLayout {
     let height: CGFloat
 
-    func compactAvatarCenterY(in context: UserDetailNavigationContext) -> CGFloat {
-        switch context {
-        case .root:
-            height / 2
-        case .pushed:
-            -height / 2
-        }
-    }
-
     var backdropHeight: CGFloat {
         height
     }
-}
-
-enum UserDetailNavigationContext {
-    case root
-    case pushed
 }
 
 private struct ProfileHeroBoundsPreferenceKey: PreferenceKey {
@@ -33,7 +19,6 @@ private struct ProfileHeroBoundsPreferenceKey: PreferenceKey {
 struct UserDetailView: View {
     let profile: UserProfile
     let posts: [TimelinePost]
-    let navigationContext: UserDetailNavigationContext
     let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
@@ -58,6 +43,10 @@ struct UserDetailView: View {
 
     private var navigationBlurProgress: CGFloat {
         min(max((compactChromeProgress - 0.18) / 0.3, 0), 1)
+    }
+
+    private var toolbarAvatarProgress: CGFloat {
+        min(max((compactChromeProgress - 0.72) / 0.2, 0), 1)
     }
 
     var body: some View {
@@ -105,7 +94,6 @@ struct UserDetailView: View {
 
                 shrinkingProfileAvatar(
                     chromeLayout: navigationChromeLayout,
-                    navigationContext: navigationContext,
                     containerWidth: proxy.size.width,
                     expandedCenterY: expandedCenterY
                 )
@@ -119,6 +107,15 @@ struct UserDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                compactProfileAvatarToolbarItem
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                profileNavigationActionButton
+            }
+        }
         .preferredColorScheme(.dark)
     }
 
@@ -131,23 +128,27 @@ struct UserDetailView: View {
                 .anchorPreference(key: ProfileHeroBoundsPreferenceKey.self, value: .bounds) { bounds in
                     bounds
                 }
-                .overlay(alignment: .topTrailing) {
-                    Button {
-                    } label: {
-                        Image(systemName: profile.isCurrentUser ? "pencil" : "gearshape")
-                            .font(.system(size: 24, weight: .heavy))
-                            .foregroundStyle(.white)
-                            .frame(width: 54, height: 54)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .astrenzaGlass(tint: Color.black.opacity(0.18), in: Circle())
-                    .padding(.trailing, 18)
-                    .padding(.top, 58)
-                    .accessibilityLabel(profile.isCurrentUser ? "Edit profile" : "Profile options")
-                }
         }
         .padding(.bottom, 76)
+    }
+
+    private var profileNavigationActionButton: some View {
+        Button {
+        } label: {
+            Image(systemName: profile.isCurrentUser ? "pencil" : "gearshape")
+                .imageScale(.large)
+        }
+        .accessibilityLabel(profile.isCurrentUser ? "Edit profile" : "Profile options")
+    }
+
+    private var compactProfileAvatarToolbarItem: some View {
+        AvatarView(style: profile.avatar, size: compactAvatarSize)
+            .opacity(toolbarAvatarProgress)
+            .scaleEffect(0.92 + (0.08 * toolbarAvatarProgress))
+            .frame(width: compactAvatarSize, height: compactAvatarSize)
+            .allowsHitTesting(false)
+            .accessibilityHidden(toolbarAvatarProgress < 0.85)
+            .animation(.spring(duration: 0.24, bounce: 0.12), value: toolbarAvatarProgress)
     }
 
     private func navigationBlurBackdrop(chromeLayout: ProfileNavigationChromeLayout) -> some View {
@@ -168,13 +169,12 @@ struct UserDetailView: View {
 
     private func shrinkingProfileAvatar(
         chromeLayout: ProfileNavigationChromeLayout,
-        navigationContext: UserDetailNavigationContext,
         containerWidth: CGFloat,
         expandedCenterY: CGFloat
     ) -> some View {
         let progress = compactChromeProgress
         let avatarSize = expandedAvatarSize + (compactAvatarSize - expandedAvatarSize) * progress
-        let compactCenterY = chromeLayout.compactAvatarCenterY(in: navigationContext)
+        let compactCenterY = -chromeLayout.backdropHeight / 2
         let centerY = expandedCenterY + (compactCenterY - expandedCenterY) * progress
         let strokeWidth = 5 * (1 - progress)
 
@@ -184,6 +184,7 @@ struct UserDetailView: View {
                     .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
             }
             .position(x: containerWidth / 2, y: centerY)
+            .opacity(1 - toolbarAvatarProgress)
             .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
     }
 
@@ -497,7 +498,6 @@ private struct UserFeaturedHashtagRow: View {
     UserDetailView(
         profile: MockTimelineData.selfProfile,
         posts: MockTimelineData.selfProfilePosts,
-        navigationContext: .root,
         swipeSettings: TimelineSwipeSettings(),
         onOpenPost: { _ in },
         onOpenProfile: { _ in },
