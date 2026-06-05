@@ -4,13 +4,17 @@ appId: com.ikuradon.Astrenza
     clearState: true
 - assertVisible:
     id: timeline.feed
-- assertVisible:
-    text: User Alpha
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+    duration: 450
 - swipe:
     start: 50%, 75%
     end: 50%, 35%
     duration: 450
 - assertVisible:
-    text: User Longform
+    text: Timeline Height Estimates
+- stopApp
+- launchApp
 - assertVisible:
-    text: Show more
+    text: Timeline Height Estimates

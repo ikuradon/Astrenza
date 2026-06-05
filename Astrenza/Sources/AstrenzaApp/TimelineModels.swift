@@ -22,7 +22,7 @@ struct TimelinePost: Identifiable {
     let actionState: TimelinePostActionState
 
     init(
-        id: String = UUID().uuidString,
+        id: String? = nil,
         authorName: String,
         handle: String,
         avatar: AvatarStyle,
@@ -49,7 +49,7 @@ struct TimelinePost: Identifiable {
             nip05Status: .valid,
             pubkey: TimelineAuthor.mockPubkey(for: authorName)
         )
-        self.id = id
+        self.id = id ?? Self.stableMockID(authorKey: author.pubkey, body: body, timestamp: timestamp)
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
@@ -71,7 +71,7 @@ struct TimelinePost: Identifiable {
     }
 
     init(
-        id: String = UUID().uuidString,
+        id: String? = nil,
         author: TimelineAuthor,
         avatar: AvatarStyle,
         body: String,
@@ -91,7 +91,7 @@ struct TimelinePost: Identifiable {
         linkSummary: TimelineLinkSummary? = nil,
         actionState: TimelinePostActionState = .none
     ) {
-        self.id = id
+        self.id = id ?? Self.stableMockID(authorKey: author.pubkey, body: body, timestamp: timestamp)
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
@@ -110,6 +110,11 @@ struct TimelinePost: Identifiable {
         self.bodyPresentation = bodyPresentation
         self.linkSummary = linkSummary
         self.actionState = actionState
+    }
+
+    private static func stableMockID(authorKey: String, body: String, timestamp: String) -> String {
+        let seed = "\(authorKey)|\(timestamp)|\(body)"
+        return "mock-\(TimelineAuthor.mockPubkey(for: seed).prefix(24))"
     }
 }
 

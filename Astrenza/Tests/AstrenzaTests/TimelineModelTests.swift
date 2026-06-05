@@ -1,3 +1,5 @@
+import CoreGraphics
+import Foundation
 import Testing
 @testable import Astrenza
 
@@ -10,6 +12,42 @@ struct TimelineModelTests {
         #expect(posts.contains { $0.id == "thread-a-root" })
         #expect(posts.contains { $0.id == "thread-b-reply" } == false)
         #expect(posts.count >= 12)
+    }
+
+    @Test("Implicit mock post IDs are stable across construction")
+    func implicitMockPostIDsAreStable() {
+        let author = TimelineAuthor.resolved(
+            displayName: "Stable",
+            nip05: nil,
+            pubkey: TimelineAuthor.mockPubkey(for: "stable-author")
+        )
+        let first = TimelinePost(
+            author: author,
+            avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
+            body: "Stable body",
+            timestamp: "now",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
+        let second = TimelinePost(
+            author: author,
+            avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
+            body: "Stable body",
+            timestamp: "now",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
+
+        #expect(first.id == second.id)
+        #expect(first.id.hasPrefix("mock-"))
     }
 
     @Test("Reply tree exposes ancestors and descendants from mock store")
@@ -72,5 +110,143 @@ struct TimelineModelTests {
         #expect(author.primaryText.contains("..."))
         #expect(author.secondaryText == "kind:0 pending")
         #expect(author.secondarySystemName == "clock")
+    }
+
+    @Test("Timeline layout estimator gives media and long posts more room")
+    func timelineLayoutEstimates() throws {
+        let posts = MockTimelineData.posts
+        let compactPost = try #require(posts.first { $0.id == "thread-a-root" })
+        let mediaPost = try #require(posts.first { $0.media?.isFullscreenMedia == true })
+        let longPost = try #require(posts.first { $0.bodyPresentation.collapseReason != nil })
+
+        #expect(TimelineLayoutEstimator.estimatedHeight(for: mediaPost) > TimelineLayoutEstimator.estimatedHeight(for: compactPost))
+        #expect(TimelineLayoutEstimator.estimatedHeight(for: longPost) > TimelineLayoutEstimator.estimatedHeight(for: compactPost))
+    }
+
+    @Test("Timeline layout cache prefers measured row heights")
+    func timelineLayoutCacheUsesMeasuredHeight() throws {
+        let post = try #require(MockTimelineData.posts.first)
+        var cache = TimelineLayoutCache()
+
+        cache.merge(measuredFrames: [post.id: CGRect(x: 0, y: 0, width: 390, height: 321)])
+
+        #expect(cache.height(for: post) == 321)
+    }
+
+    @Test("Timeline viewport resolver converts anchor offset into content offset")
+    func timelineViewportResolverUsesAnchorOffset() throws {
+        let posts = Array(MockTimelineData.posts.prefix(3))
+        let anchorPost = try #require(posts.last)
+        var cache = TimelineLayoutCache()
+        cache.merge(measuredFrames: [
+            posts[0].id: CGRect(x: 0, y: 0, width: 390, height: 120),
+            posts[1].id: CGRect(x: 0, y: 120, width: 390, height: 180),
+            anchorPost.id: CGRect(x: 0, y: 300, width: 390, height: 220)
+        ])
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: anchorPost.id,
+            anchorOffset: 24,
+            contentOffset: 0,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        let restoredOffset = TimelineViewportResolver.restoredContentOffsetY(
+            posts: posts,
+            state: state,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        )
+
+        #expect(restoredOffset == 324)
+    }
+
+    @Test("Timeline viewport resolver restores exact content offset when available")
+    func timelineViewportResolverPrefersExactContentOffset() throws {
+        let posts = Array(MockTimelineData.posts.prefix(3))
+        let anchorPost = try #require(posts.last)
+        let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: TimelineLayoutCache(), topContentPadding: 72)
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: anchorPost.id,
+            anchorOffset: 24,
+            contentOffset: 512,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        let restoredOffset = TimelineViewportResolver.restoredContentOffsetY(
+            snapshot: snapshot,
+            state: state,
+            anchorLineY: 72
+        )
+
+        #expect(restoredOffset == 512)
+    }
+
+    @Test("Timeline viewport resolver handles large timelines by snapshot offset")
+    func timelineViewportResolverHandlesLargeTimeline() throws {
+        let posts = (0..<10_000).map { index in
+            TimelinePost(
+                id: "large-\(index)",
+                author: .resolved(
+                    displayName: "User \(index)",
+                    nip05: nil,
+                    pubkey: TimelineAuthor.mockPubkey(for: "large-\(index)")
+                ),
+                avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
+                body: "Large timeline row \(index)",
+                timestamp: "\(index)m",
+                replyCount: nil,
+                boostCount: nil,
+                favoriteCount: nil,
+                isLocked: false,
+                media: nil,
+                context: nil
+            )
+        }
+        var cache = TimelineLayoutCache()
+        cache.measuredHeights = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, CGFloat(80)) })
+        let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: cache, topContentPadding: 72)
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: "large-9876",
+            anchorOffset: 19,
+            contentOffset: 0,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        let restoredOffset = TimelineViewportResolver.restoredContentOffsetY(
+            snapshot: snapshot,
+            state: state,
+            anchorLineY: 72
+        )
+
+        #expect(restoredOffset == CGFloat(9876 * 80 + 19))
+    }
+
+    @Test("Timeline restore store persists viewport state per timeline key")
+    func timelineRestoreStorePersistsViewport() throws {
+        let suiteName = "TimelineRestoreStoreTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = TimelineRestoreStore(defaults: defaults)
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: "thread-a-root",
+            anchorOffset: 14,
+            contentOffset: 240,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        store.saveViewportState(state)
+
+        #expect(store.viewportState(accountID: "account-a", timelineKey: "home") == state)
+        #expect(store.viewportState(accountID: "account-a", timelineKey: "lists") == nil)
+        defaults.removePersistentDomain(forName: suiteName)
     }
 }

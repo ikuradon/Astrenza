@@ -18,6 +18,11 @@ struct HomeTimelineView: View {
     @State private var fullscreenMedia: TimelineMedia?
     @State private var browserDestination: TimelineBrowserDestination?
     @State private var swipeSettings = TimelineSwipeSettings()
+    @State private var timelineRestoreStore = TimelineRestoreStore()
+    @State private var homeViewportState = TimelineRestoreStore().viewportState(accountID: "mock-account", timelineKey: "home")
+    @State private var homeLayoutCache = TimelineRestoreStore().layoutCache(accountID: "mock-account", timelineKey: "home")
+
+    private let accountID = "mock-account"
 
     private var actionMenuTopClearance: CGFloat {
         max(unreadBadgeFrame.maxY + 10, 96)
@@ -86,6 +91,9 @@ struct HomeTimelineView: View {
         .onChange(of: selectedTab) { _, newValue in
             handleTabSelection(newValue)
         }
+        .onChange(of: selectedTimeline) { _, _ in
+            loadTimelineRestoreState()
+        }
         .sheet(isPresented: $isComposerPresented) {
             ComposeSheetView(mode: composeSheetMode)
                 .presentationDetents([.medium, .large])
@@ -130,6 +138,8 @@ struct HomeTimelineView: View {
                 posts: MockTimelineData.posts,
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
+                viewportState: homeViewportState,
+                layoutCache: homeLayoutCache,
                 onOpenPost: openPost,
                 onOpenProfile: openProfile,
                 onReplyPost: { _ in
@@ -139,7 +149,12 @@ struct HomeTimelineView: View {
                 onOpenURL: openURL
             ) { offset in
                 handleTimelineScrollOffset(offset)
+            } onViewportStateChanged: { state in
+                saveTimelineViewportState(state)
+            } onLayoutCacheChanged: { cache in
+                saveTimelineLayoutCache(cache)
             }
+            .id(selectedTimeline.id)
             .navigationDestination(for: TimelineNavigationRoute.self) { route in
                 timelineDestination(for: route)
             }
@@ -235,6 +250,7 @@ struct HomeTimelineView: View {
 
     private func completeInitialAppearanceIfNeeded() {
         guard !didCompleteInitialAppearance else { return }
+        loadTimelineRestoreState()
         if selectedTab == .compose {
             selectedTab = previousTab
         }
@@ -346,6 +362,38 @@ struct HomeTimelineView: View {
         withTransaction(transaction) {
             tabBarMinimizeDirection = nextDirection
         }
+    }
+
+    private func loadTimelineRestoreState() {
+        homeViewportState = timelineRestoreStore.viewportState(accountID: accountID, timelineKey: selectedTimeline.id)
+        homeLayoutCache = timelineRestoreStore.layoutCache(accountID: accountID, timelineKey: selectedTimeline.id)
+    }
+
+    private func saveTimelineViewportState(_ state: TimelineViewportState) {
+        let nextState = TimelineViewportState(
+            accountID: accountID,
+            timelineKey: selectedTimeline.id,
+            anchorPostID: state.anchorPostID,
+            anchorOffset: state.anchorOffset,
+            contentOffset: state.contentOffset,
+            updatedAt: state.updatedAt
+        )
+
+        if let homeViewportState,
+           homeViewportState.anchorPostID == nextState.anchorPostID,
+           abs(homeViewportState.anchorOffset - nextState.anchorOffset) < 0.5,
+           abs(homeViewportState.contentOffset - nextState.contentOffset) < 0.5 {
+            return
+        }
+
+        homeViewportState = nextState
+        timelineRestoreStore.saveViewportState(nextState)
+    }
+
+    private func saveTimelineLayoutCache(_ cache: TimelineLayoutCache) {
+        guard homeLayoutCache != cache else { return }
+        homeLayoutCache = cache
+        timelineRestoreStore.saveLayoutCache(cache, accountID: accountID, timelineKey: selectedTimeline.id)
     }
 }
 
