@@ -87,7 +87,9 @@ struct TimelineFeedView: View {
             GeometryReader { proxy in
                 ZStack {
                     if let openedPostMenu = menuState.openedMenu,
-                       let anchor = anchors[TimelinePostActionAnchorID(postID: openedPostMenu.postID, kind: openedPostMenu.kind)] {
+                       let anchor = anchors[
+                        TimelinePostActionAnchorID(postID: openedPostMenu.postID, kind: openedPostMenu.kind)
+                       ] {
                         let sourceFrame = proxy[anchor]
                         let menuPlacement = actionMenuPlacement(
                             gearFrame: sourceFrame,
@@ -127,8 +129,10 @@ struct TimelineFeedView: View {
             .allowsHitTesting(menuState.isOpen)
         }
     }
+}
 
-    private func rowFrameReader(postID: TimelinePost.ID) -> some View {
+private extension TimelineFeedView {
+    func rowFrameReader(postID: TimelinePost.ID) -> some View {
         GeometryReader { proxy in
             Color.clear.preference(
                 key: TimelinePostFramePreferenceKey.self,
@@ -137,7 +141,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private func restoreViewportIfNeeded() {
+    func restoreViewportIfNeeded() {
         guard !didRestoreViewport,
               let viewportState,
               posts.contains(where: { $0.id == viewportState.anchorPostID })
@@ -166,7 +170,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private func handleRowFrames(_ frames: [TimelinePost.ID: CGRect]) {
+    func handleRowFrames(_ frames: [TimelinePost.ID: CGRect]) {
         guard !frames.isEmpty else { return }
 
         var nextCache = measuredLayoutCache
@@ -186,7 +190,7 @@ struct TimelineFeedView: View {
         saveViewportStateIfPossible()
     }
 
-    private func viewportAnchor(from frames: [TimelinePost.ID: CGRect]) -> TimelineViewportAnchor? {
+    func viewportAnchor(from frames: [TimelinePost.ID: CGRect]) -> TimelineViewportAnchor? {
         let containingAnchorLine = frames.filter { _, frame in
             frame.minY <= rowAnchorLineY && frame.maxY > rowAnchorLineY
         }
@@ -208,7 +212,7 @@ struct TimelineFeedView: View {
             }
     }
 
-    private func saveViewportStateIfPossible() {
+    func saveViewportStateIfPossible() {
         guard !isRestoringViewport,
               let currentViewportAnchor
         else { return }
@@ -225,29 +229,29 @@ struct TimelineFeedView: View {
         )
     }
 
-    private func handleObservedContentOffset(_ offset: CGFloat) {
+    func handleObservedContentOffset(_ offset: CGFloat) {
         currentContentOffset = offset
         onScrollOffsetChanged(offset)
         saveViewportStateIfPossible()
     }
 
-    private func closeFloatingPostMenus() {
+    func closeFloatingPostMenus() {
         withAnimation(.spring(duration: 0.26, bounce: 0.14)) {
             menuState.reset()
         }
     }
 
-    private func openMedia(_ media: TimelineMedia) {
+    func openMedia(_ media: TimelineMedia) {
         closeFloatingPostMenus()
         onOpenMedia(media)
     }
 
-    private func openURL(_ url: URL) {
+    func openURL(_ url: URL) {
         closeFloatingPostMenus()
         onOpenURL(url)
     }
 
-    private func handlePostActionEvent(_ event: TimelinePostActionEvent) {
+    func handlePostActionEvent(_ event: TimelinePostActionEvent) {
         switch event.phase {
         case .tap:
             handlePostActionTap(event)
@@ -267,7 +271,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private var choiceSelectionGesture: some Gesture {
+    var choiceSelectionGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("timelineFeedOverlay"))
             .onChanged { value in
                 menuState.setLocalDragLocation(value.location)
@@ -285,7 +289,7 @@ struct TimelineFeedView: View {
             }
     }
 
-    private func handlePostActionTap(_ event: TimelinePostActionEvent) {
+    func handlePostActionTap(_ event: TimelinePostActionEvent) {
         switch event.kind {
         case .more:
             withAnimation(.spring(duration: 0.32, bounce: 0.22)) {
@@ -297,7 +301,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private func showFloatingPostMenu(postID: TimelinePost.ID, kind: TimelinePostActionKind) {
+    func showFloatingPostMenu(postID: TimelinePost.ID, kind: TimelinePostActionKind) {
         DispatchQueue.main.async {
             let menu = OpenedPostMenu(postID: postID, kind: kind)
             guard menuState.openedMenu != menu else { return }
@@ -309,7 +313,7 @@ struct TimelineFeedView: View {
     }
 
     @ViewBuilder
-    private func floatingPostMenu(_ menu: OpenedPostMenu, menuFrame: CGRect) -> some View {
+    func floatingPostMenu(_ menu: OpenedPostMenu, menuFrame: CGRect) -> some View {
         switch menu.kind {
         case .more:
             let currentChoice = postActionChoice(at: menuState.dragLocation, in: menuFrame)
@@ -341,7 +345,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private func finishSelectedChoiceIfNeeded() {
+    func finishSelectedChoiceIfNeeded() {
         guard let openedMenu = menuState.openedMenu,
               let selectedChoice = menuState.selectedChoice
         else {
@@ -357,7 +361,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private func handlePostActionChoice(_ choice: PostActionChoice, postID: TimelinePost.ID) {
+    func handlePostActionChoice(_ choice: PostActionChoice, postID: TimelinePost.ID) {
         switch choice {
         case .viewDetails:
             guard let post = posts.first(where: { $0.id == postID }) else {
@@ -372,7 +376,7 @@ struct TimelineFeedView: View {
         }
     }
 
-    private func actionMenuPlacement(gearFrame: CGRect, menuSize: CGSize, containerSize: CGSize) -> ActionMenuPlacement {
+    func actionMenuPlacement(gearFrame: CGRect, menuSize: CGSize, containerSize: CGSize) -> ActionMenuPlacement {
         let rightInset: CGFloat = 16
         let availableTop = actionMenuTopClearance
         let availableBottom = containerSize.height - bottomChromeClearance
@@ -401,11 +405,11 @@ struct TimelineFeedView: View {
         )
     }
 
-    private func repostChoice(at location: CGPoint?, in menuFrame: CGRect) -> RepostChoice? {
+    func repostChoice(at location: CGPoint?, in menuFrame: CGRect) -> RepostChoice? {
         choice(at: location, in: menuFrame, as: RepostChoice.self)
     }
 
-    private func postActionChoice(at location: CGPoint?, in menuFrame: CGRect) -> PostActionChoice? {
+    func postActionChoice(at location: CGPoint?, in menuFrame: CGRect) -> PostActionChoice? {
         guard let location, menuFrame.contains(location) else { return nil }
 
         var localY = location.y - menuFrame.minY - FloatingMenuMetrics.verticalPadding
@@ -427,7 +431,11 @@ struct TimelineFeedView: View {
         return nil
     }
 
-    private func choice<Choice: FloatingChoiceItem>(at location: CGPoint?, in menuFrame: CGRect, as choiceType: Choice.Type) -> Choice? {
+    func choice<Choice: FloatingChoiceItem>(
+        at location: CGPoint?,
+        in menuFrame: CGRect,
+        as choiceType: Choice.Type
+    ) -> Choice? {
         guard let location, menuFrame.contains(location) else { return nil }
         let choices = Array(choiceType.allCases)
         let rowHeight = menuFrame.height / CGFloat(choices.count)
@@ -435,7 +443,7 @@ struct TimelineFeedView: View {
         return choices[index]
     }
 
-    private func shouldFinishChoiceMenu<Choice>(
+    func shouldFinishChoiceMenu<Choice>(
         endLocation: CGPoint?,
         menuFrame: CGRect?,
         selectedChoice: Choice?

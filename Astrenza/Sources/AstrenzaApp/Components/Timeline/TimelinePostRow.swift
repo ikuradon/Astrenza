@@ -264,13 +264,15 @@ struct TimelinePostRow: View {
         }
         .padding(.top, 4)
     }
+}
 
-    private func sendActionEvent(_ kind: TimelinePostActionKind, phase: TimelinePostActionPhase) {
+private extension TimelinePostRow {
+    func sendActionEvent(_ kind: TimelinePostActionKind, phase: TimelinePostActionPhase) {
         didHandleActionGesture = true
         onActionEvent(TimelinePostActionEvent(postID: post.id, kind: kind, phase: phase))
     }
 
-    private func handleRowTap() {
+    func handleRowTap() {
         if didHandleActionGesture {
             didHandleActionGesture = false
             return
@@ -280,7 +282,7 @@ struct TimelinePostRow: View {
         onOpenPost(post)
     }
 
-    private func handleAvatarTap() {
+    func handleAvatarTap() {
         if didHandleActionGesture {
             didHandleActionGesture = false
             return
@@ -290,13 +292,13 @@ struct TimelinePostRow: View {
         onOpenProfile(post)
     }
 
-    private func openEmbeddedPost(_ selectedPost: TimelinePost) {
+    func openEmbeddedPost(_ selectedPost: TimelinePost) {
         didHandleActionGesture = true
         onDismissActionMenu()
         onOpenPost(selectedPost)
     }
 
-    private func openAttachment(_ media: TimelineMedia) {
+    func openAttachment(_ media: TimelineMedia) {
         didHandleActionGesture = true
         onDismissActionMenu()
 
@@ -307,7 +309,7 @@ struct TimelinePostRow: View {
         }
     }
 
-    private func performSwipeAction(_ action: TimelineSwipeAction) -> Bool {
+    func performSwipeAction(_ action: TimelineSwipeAction) -> Bool {
         guard action.kind != .noAction else {
             return true
         }

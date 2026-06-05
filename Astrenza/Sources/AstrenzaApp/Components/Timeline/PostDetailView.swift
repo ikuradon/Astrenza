@@ -16,14 +16,7 @@ struct PostDetailView: View {
                     if !replyAncestorPosts.isEmpty {
                         VStack(spacing: 0) {
                             ForEach(replyAncestorPosts) { ancestorPost in
-                                DetailThreadPostRow(
-                                    post: ancestorPost,
-                                    relation: .parent,
-                                    swipeSettings: swipeSettings,
-                                    onOpenPost: onOpenPost,
-                                    onReplyPost: onReplyPost,
-                                    onOpenAttachment: openAttachment
-                                )
+                                detailThreadRow(ancestorPost)
                             }
                         }
                         .onScrollVisibilityChange(threshold: 0.05) { isVisible in
@@ -50,7 +43,7 @@ struct PostDetailView: View {
                             Button {
                                 onOpenPost(quotedPost.timelinePost())
                             } label: {
-                                DetailQuotedPostCard(quotedPost: quotedPost)
+                                QuotedPostCard(quotedPost: quotedPost)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
@@ -200,16 +193,24 @@ struct PostDetailView: View {
     private var detailReplies: some View {
         VStack(spacing: 0) {
             ForEach(MockTimelineData.detailReplies(for: post)) { reply in
-                DetailThreadPostRow(
-                    post: reply,
-                    relation: .child,
-                    swipeSettings: swipeSettings,
-                    onOpenPost: onOpenPost,
-                    onReplyPost: onReplyPost,
-                    onOpenAttachment: openAttachment
-                )
+                detailThreadRow(reply)
             }
         }
+    }
+
+    private func detailThreadRow(_ threadPost: TimelinePost) -> some View {
+        TimelinePostRow(
+            post: threadPost,
+            isActionMenuPresented: false,
+            swipeSettings: swipeSettings,
+            onActionEvent: { _ in },
+            onOpenPost: onOpenPost,
+            onOpenProfile: { _ in },
+            onReplyPost: onReplyPost,
+            onOpenMedia: onOpenMedia,
+            onOpenURL: onOpenURL,
+            onDismissActionMenu: {}
+        )
     }
 }
 
@@ -298,7 +299,6 @@ private struct SensitiveDetailBanner: View {
 
 private struct DetailLinkSummaryView: View {
     let summary: TimelineLinkSummary
-    var isCompact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -307,7 +307,7 @@ private struct DetailLinkSummaryView: View {
                     .font(.system(size: 13, weight: .black))
 
                 Text(summary.compactText)
-                    .font(.system(size: isCompact ? 13 : 15, weight: .heavy, design: .rounded))
+                    .font(.system(size: 15, weight: .heavy, design: .rounded))
 
                 if summary.unresolvedCount > 0 {
                     Text("\(summary.unresolvedCount) unresolved")
@@ -321,13 +321,13 @@ private struct DetailLinkSummaryView: View {
             .foregroundStyle(Color.astrenzaAccent)
 
             Text(summary.detailText)
-                .font(.system(size: isCompact ? 12 : 14, weight: .semibold, design: .rounded))
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
-                .lineLimit(isCompact ? 1 : 2)
+                .lineLimit(2)
                 .truncationMode(.middle)
         }
-        .padding(.horizontal, isCompact ? 10 : 12)
-        .padding(.vertical, isCompact ? 8 : 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
@@ -394,189 +394,5 @@ private struct ReplyParentIndicator: View {
         }
         .foregroundStyle(.secondary)
         .accessibilityLabel("Reply parent above")
-    }
-}
-
-private enum DetailThreadRelation {
-    case parent
-    case child
-}
-
-private struct DetailThreadPostRow: View {
-    let post: TimelinePost
-    let relation: DetailThreadRelation
-    let swipeSettings: TimelineSwipeSettings
-    let onOpenPost: (TimelinePost) -> Void
-    let onReplyPost: (TimelinePost) -> Void
-    let onOpenAttachment: (TimelineMedia) -> Void
-
-    var body: some View {
-        TimelineSwipeContainer(
-            swipeSettings: swipeSettings,
-            onSwipeChanged: {},
-            onSwipeAction: performSwipeAction
-        ) {
-            rowContent
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: openReply)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityAction {
-            openPost()
-        }
-    }
-
-    private var rowContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 14) {
-                AvatarView(style: post.avatar, size: 58)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Text(post.author.primaryText)
-                            .font(.system(size: 21, weight: .heavy, design: .rounded))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-
-                        Text(post.author.secondaryText)
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-
-                        Spacer(minLength: 8)
-
-                        if post.replyContext != nil {
-                            TimelineReplyMarker()
-                        }
-
-                        Text(post.timestamp)
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                    }
-
-                    TimelinePostBodyText(text: post.body, mention: post.replyMention, fontSize: 19)
-
-                    if let linkSummary = post.linkSummary {
-                        DetailLinkSummaryView(summary: linkSummary, isCompact: true)
-                    }
-
-                    if let quotedPost = post.quotedPost {
-                        Button {
-                            onOpenPost(quotedPost.timelinePost())
-                        } label: {
-                            DetailQuotedPostCard(quotedPost: quotedPost)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
-                        .accessibilityAction {
-                            onOpenPost(quotedPost.timelinePost())
-                        }
-                    }
-
-                    if let media = post.media {
-                        TimelineAttachmentButton(
-                            media: media,
-                            isProtected: post.shouldObscureExternalAttachments,
-                            accessibilityLabel: "Open attachment for post by \(post.author.primaryText)",
-                            onOpen: onOpenAttachment
-                        )
-                    }
-
-                    HStack(spacing: 0) {
-                        detailReplyActionButton("bubble.left")
-                        detailReplyActionButton("arrow.triangle.2.circlepath")
-                        detailReplyActionButton("star")
-                        detailReplyActionButton("square.and.arrow.up")
-                        detailReplyActionButton("gearshape")
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .overlay(alignment: .top) {
-            Divider().overlay(Color.astrenzaSeparator)
-        }
-    }
-
-    private func detailReplyActionButton(_ systemName: String) -> some View {
-        Button {
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(Color.astrenzaAccent)
-                .frame(maxWidth: .infinity)
-                .frame(height: 42)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var accessibilityLabel: String {
-        switch relation {
-        case .parent:
-            "Open reply parent by \(post.author.primaryText)"
-        case .child:
-            "Open reply by \(post.author.primaryText)"
-        }
-    }
-
-    private func openReply() {
-        openPost()
-    }
-
-    private func openPost() {
-        onOpenPost(post)
-    }
-
-    private func performSwipeAction(_ action: TimelineSwipeAction) -> Bool {
-        guard action.kind != .noAction else { return true }
-
-        switch action.kind {
-        case .viewDetail:
-            onOpenPost(post)
-            return false
-        case .reply:
-            onReplyPost(post)
-            return false
-        case .favorite, .repost, .quote, .bookmark, .openLink, .copyLink, .copyPost, .sharePost, .readLater, .translate:
-            return true
-        case .noAction:
-            return true
-        }
-    }
-}
-
-private struct DetailQuotedPostCard: View {
-    let quotedPost: QuotedTimelinePost
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                AvatarView(style: quotedPost.avatar, size: 28)
-                Text(quotedPost.author.primaryText)
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
-                    .lineLimit(1)
-                Spacer()
-                Text(quotedPost.timestamp)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.tertiary)
-            }
-
-            Text(quotedPost.body)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(Color.astrenzaText)
-                .lineLimit(4)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        }
     }
 }

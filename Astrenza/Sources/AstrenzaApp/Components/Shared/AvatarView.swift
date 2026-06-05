@@ -85,19 +85,19 @@ private struct ProceduralAvatarPlaceholder: View {
                 .fill(token.color.opacity(token.opacity))
                 .frame(width: size * token.width, height: size * token.height)
                 .rotationEffect(.degrees(token.rotation))
-                .offset(x: size * token.x, y: size * token.y)
+                .offset(x: size * token.offsetX, y: size * token.offsetY)
         case .capsule:
             Capsule()
                 .fill(token.color.opacity(token.opacity))
                 .frame(width: size * token.width, height: size * token.height)
                 .rotationEffect(.degrees(token.rotation))
-                .offset(x: size * token.x, y: size * token.y)
+                .offset(x: size * token.offsetX, y: size * token.offsetY)
         case .roundedSquare:
             RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
                 .fill(token.color.opacity(token.opacity))
                 .frame(width: size * token.width, height: size * token.height)
                 .rotationEffect(.degrees(token.rotation))
-                .offset(x: size * token.x, y: size * token.y)
+                .offset(x: size * token.offsetX, y: size * token.offsetY)
         }
     }
 }
@@ -134,8 +134,8 @@ private struct ProceduralAvatarDesign {
                 opacity: CGFloat(rng.nextDouble(in: 0.22...0.58)),
                 width: CGFloat(rng.nextDouble(in: 0.16...0.36)),
                 height: CGFloat(rng.nextDouble(in: 0.12...0.34)),
-                x: CGFloat(rng.nextDouble(in: -0.32...0.32)),
-                y: CGFloat(rng.nextDouble(in: -0.3...0.3)),
+                offsetX: CGFloat(rng.nextDouble(in: -0.32...0.32)),
+                offsetY: CGFloat(rng.nextDouble(in: -0.3...0.3)),
                 rotation: rng.nextDouble(in: -35...35)
             )
         }
@@ -155,8 +155,8 @@ private struct ProceduralAvatarToken: Identifiable {
     let opacity: CGFloat
     let width: CGFloat
     let height: CGFloat
-    let x: CGFloat
-    let y: CGFloat
+    let offsetX: CGFloat
+    let offsetY: CGFloat
     let rotation: Double
 }
 
@@ -186,10 +186,10 @@ private struct SeededAvatarRandom {
 
     private mutating func nextUnit() -> Double {
         state &+= 0x9E37_79B9_7F4A_7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        z = z ^ (z >> 31)
-        return Double(z >> 11) / Double(1 << 53)
+        var mixedState = state
+        mixedState = (mixedState ^ (mixedState >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        mixedState = (mixedState ^ (mixedState >> 27)) &* 0x94D0_49BB_1331_11EB
+        mixedState = mixedState ^ (mixedState >> 31)
+        return Double(mixedState >> 11) / Double(1 << 53)
     }
 }

@@ -119,8 +119,14 @@ struct TimelineModelTests {
         let mediaPost = try #require(posts.first { $0.media?.isFullscreenMedia == true })
         let longPost = try #require(posts.first { $0.bodyPresentation.collapseReason != nil })
 
-        #expect(TimelineLayoutEstimator.estimatedHeight(for: mediaPost) > TimelineLayoutEstimator.estimatedHeight(for: compactPost))
-        #expect(TimelineLayoutEstimator.estimatedHeight(for: longPost) > TimelineLayoutEstimator.estimatedHeight(for: compactPost))
+        #expect(
+            TimelineLayoutEstimator.estimatedHeight(for: mediaPost)
+            > TimelineLayoutEstimator.estimatedHeight(for: compactPost)
+        )
+        #expect(
+            TimelineLayoutEstimator.estimatedHeight(for: longPost)
+            > TimelineLayoutEstimator.estimatedHeight(for: compactPost)
+        )
     }
 
     @Test("Timeline layout cache prefers measured row heights")

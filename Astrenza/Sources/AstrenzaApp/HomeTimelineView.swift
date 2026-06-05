@@ -19,8 +19,14 @@ struct HomeTimelineView: View {
     @State private var browserDestination: TimelineBrowserDestination?
     @State private var swipeSettings = TimelineSwipeSettings()
     @State private var timelineRestoreStore = TimelineRestoreStore()
-    @State private var homeViewportState = TimelineRestoreStore().viewportState(accountID: "mock-account", timelineKey: "home")
-    @State private var homeLayoutCache = TimelineRestoreStore().layoutCache(accountID: "mock-account", timelineKey: "home")
+    @State private var homeViewportState = TimelineRestoreStore().viewportState(
+        accountID: "mock-account",
+        timelineKey: "home"
+    )
+    @State private var homeLayoutCache = TimelineRestoreStore().layoutCache(
+        accountID: "mock-account",
+        timelineKey: "home"
+    )
 
     private let accountID = "mock-account"
 
@@ -118,8 +124,10 @@ struct HomeTimelineView: View {
                 .ignoresSafeArea()
         }
     }
+}
 
-    private var nativeTabs: some View {
+private extension HomeTimelineView {
+    var nativeTabs: some View {
         UIKitTimelineTabView(
             selectedTab: $selectedTab,
             previousTab: $previousTab,
@@ -132,7 +140,7 @@ struct HomeTimelineView: View {
         )
     }
 
-    private var timelineList: some View {
+    var timelineList: some View {
         NavigationStack(path: $postNavigationPath) {
             TimelineFeedView(
                 posts: MockTimelineData.posts,
@@ -161,7 +169,7 @@ struct HomeTimelineView: View {
         }
     }
 
-    private var profileView: some View {
+    var profileView: some View {
         NavigationStack(path: $profileNavigationPath) {
             UserDetailView(
                 profile: MockTimelineData.selfProfile,
@@ -182,7 +190,7 @@ struct HomeTimelineView: View {
     }
 
     @ViewBuilder
-    private func timelineDestination(for route: TimelineNavigationRoute) -> some View {
+    func timelineDestination(for route: TimelineNavigationRoute) -> some View {
         switch route {
         case .post(let selectedPost):
             PostDetailView(
@@ -205,7 +213,7 @@ struct HomeTimelineView: View {
     }
 
     @ViewBuilder
-    private func profileDestination(for route: TimelineNavigationRoute) -> some View {
+    func profileDestination(for route: TimelineNavigationRoute) -> some View {
         switch route {
         case .post(let selectedPost):
             PostDetailView(
@@ -227,7 +235,7 @@ struct HomeTimelineView: View {
         }
     }
 
-    private func userDetailView(
+    func userDetailView(
         for post: TimelinePost,
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void
@@ -248,7 +256,7 @@ struct HomeTimelineView: View {
         )
     }
 
-    private func completeInitialAppearanceIfNeeded() {
+    func completeInitialAppearanceIfNeeded() {
         guard !didCompleteInitialAppearance else { return }
         loadTimelineRestoreState()
         if selectedTab == .compose {
@@ -259,7 +267,7 @@ struct HomeTimelineView: View {
         }
     }
 
-    private func handleTimelineScrollOffset(_ offset: CGFloat) {
+    func handleTimelineScrollOffset(_ offset: CGFloat) {
         if isUserSwitcherPresented || isTimelineMenuPresented {
             let didScroll = abs(offset - timelineScrollOffset) > 1
             if didScroll {
@@ -269,37 +277,37 @@ struct HomeTimelineView: View {
         timelineScrollOffset = offset
     }
 
-    private func openPost(_ post: TimelinePost) {
+    func openPost(_ post: TimelinePost) {
         dismissFloatingMenus()
         postNavigationPath.append(.post(SelectedPostRoute(post: post)))
     }
 
-    private func openProfile(_ post: TimelinePost) {
+    func openProfile(_ post: TimelinePost) {
         dismissFloatingMenus()
         postNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
     }
 
-    private func openProfilePost(_ post: TimelinePost) {
+    func openProfilePost(_ post: TimelinePost) {
         dismissFloatingMenus()
         profileNavigationPath.append(.post(SelectedPostRoute(post: post)))
     }
 
-    private func openProfileFromProfile(_ post: TimelinePost) {
+    func openProfileFromProfile(_ post: TimelinePost) {
         dismissFloatingMenus()
         profileNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
     }
 
-    private func openMedia(_ media: TimelineMedia) {
+    func openMedia(_ media: TimelineMedia) {
         dismissFloatingMenus()
         fullscreenMedia = media
     }
 
-    private func openURL(_ url: URL) {
+    func openURL(_ url: URL) {
         dismissFloatingMenus()
         browserDestination = TimelineBrowserDestination(url: url)
     }
 
-    private var isFullscreenMediaPresented: Binding<Bool> {
+    var isFullscreenMediaPresented: Binding<Bool> {
         Binding(
             get: { fullscreenMedia != nil },
             set: { isPresented in
@@ -310,7 +318,7 @@ struct HomeTimelineView: View {
         )
     }
 
-    private func dismissFloatingMenus() {
+    func dismissFloatingMenus() {
         guard isUserSwitcherPresented || isTimelineMenuPresented else { return }
         withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
             isUserSwitcherPresented = false
@@ -318,7 +326,7 @@ struct HomeTimelineView: View {
         }
     }
 
-    private func handleTabSelection(_ newValue: TimelineTab) {
+    func handleTabSelection(_ newValue: TimelineTab) {
         if newValue == .compose {
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -331,21 +339,21 @@ struct HomeTimelineView: View {
         }
     }
 
-    private func presentComposer() {
+    func presentComposer() {
         presentComposer(mode: .post)
     }
 
-    private func presentReplyComposer() {
+    func presentReplyComposer() {
         presentComposer(mode: .reply)
     }
 
-    private func presentSettings() {
+    func presentSettings() {
         dismissFloatingMenus()
         guard !isComposerPresented && browserDestination == nil && fullscreenMedia == nil else { return }
         isSettingsPresented = true
     }
 
-    private func presentComposer(mode: ComposeSheetMode) {
+    func presentComposer(mode: ComposeSheetMode) {
         dismissFloatingMenus()
         guard didCompleteInitialAppearance, !isComposerPresented, !isSettingsPresented else { return }
         composeSheetMode = mode
@@ -354,7 +362,7 @@ struct HomeTimelineView: View {
         }
     }
 
-    private func updateTabBarMinimizeDirection(_ nextDirection: TabBarMinimizeDirection) {
+    func updateTabBarMinimizeDirection(_ nextDirection: TabBarMinimizeDirection) {
         guard tabBarMinimizeDirection != nextDirection else { return }
 
         var transaction = Transaction()
@@ -364,12 +372,12 @@ struct HomeTimelineView: View {
         }
     }
 
-    private func loadTimelineRestoreState() {
+    func loadTimelineRestoreState() {
         homeViewportState = timelineRestoreStore.viewportState(accountID: accountID, timelineKey: selectedTimeline.id)
         homeLayoutCache = timelineRestoreStore.layoutCache(accountID: accountID, timelineKey: selectedTimeline.id)
     }
 
-    private func saveTimelineViewportState(_ state: TimelineViewportState) {
+    func saveTimelineViewportState(_ state: TimelineViewportState) {
         let nextState = TimelineViewportState(
             accountID: accountID,
             timelineKey: selectedTimeline.id,
@@ -390,7 +398,7 @@ struct HomeTimelineView: View {
         timelineRestoreStore.saveViewportState(nextState)
     }
 
-    private func saveTimelineLayoutCache(_ cache: TimelineLayoutCache) {
+    func saveTimelineLayoutCache(_ cache: TimelineLayoutCache) {
         guard homeLayoutCache != cache else { return }
         homeLayoutCache = cache
         timelineRestoreStore.saveLayoutCache(cache, accountID: accountID, timelineKey: selectedTimeline.id)

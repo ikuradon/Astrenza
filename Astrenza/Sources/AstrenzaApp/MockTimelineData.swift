@@ -4,7 +4,9 @@ enum MockTimelineData {
     static var posts: [TimelinePost] {
         store.homeTimeline
     }
+}
 
+extension MockTimelineData {
     static let selfProfile = UserProfile(
         id: "profile-self",
         author: .resolved(
@@ -281,7 +283,9 @@ enum MockTimelineData {
             handle: "@linkset@mock.example",
             avatar: AvatarStyle(primary: .teal, secondary: .blue, symbolName: "link"),
             body: """
-            調査メモをまとめた。docs.mock.example/research/relay-routing と docs.mock.example/research/local-cache、あと design.mock.example/timeline/height-estimates。関連: notes.mock.example/a/b/c, mirror.mock.example/thread/2048, archive.mock.example/client-notes。
+            調査メモをまとめた。docs.mock.example/research/relay-routing と
+            docs.mock.example/research/local-cache、あと design.mock.example/timeline/height-estimates。
+            関連: notes.mock.example/a/b/c, mirror.mock.example/thread/2048, archive.mock.example/client-notes。
             """,
             timestamp: "23m",
             replyCount: 1,
