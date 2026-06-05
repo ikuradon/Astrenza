@@ -19,15 +19,17 @@ struct UserSwitcherMenu: View {
     var body: some View {
         VStack(spacing: 0) {
             UserSwitcherRow(
-                title: "ユーザー1",
-                subtitle: "@ikuradon",
+                title: "User Alpha",
+                npub: "npub1astrenza7q3n9...9h2q",
+                nip05: "mock.example",
                 avatarStyle: AvatarStyle(primary: .black, secondary: .cyan, symbolName: "cat.fill"),
                 isSelected: true
             )
 
             UserSwitcherRow(
-                title: "ユーザー2",
-                subtitle: "@astral",
+                title: "User Beta",
+                npub: "npub1beta4x2ck8...w6mx",
+                nip05: "beta.mock.example",
                 avatarStyle: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
                 isSelected: false
             )
@@ -55,7 +57,7 @@ struct UserSwitcherMenu: View {
             .buttonStyle(.plain)
         }
         .padding(.vertical, 7)
-        .frame(width: 178)
+        .frame(width: 252)
         .astrenzaGlass(tint: Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: .black.opacity(0.38), radius: 18, y: 10)
         .accessibilityElement(children: .contain)
@@ -65,7 +67,8 @@ struct UserSwitcherMenu: View {
 
 private struct UserSwitcherRow: View {
     let title: String
-    let subtitle: String
+    let npub: String
+    let nip05: String
     let avatarStyle: AvatarStyle
     let isSelected: Bool
 
@@ -75,13 +78,20 @@ private struct UserSwitcherRow: View {
             HStack(spacing: 10) {
                 AvatarView(style: avatarStyle, size: 28)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 5) {
+                        Text(nip05)
+                            .foregroundStyle(.secondary)
+                        Text(npub)
+                            .foregroundStyle(Color.secondary.opacity(0.72))
+                    }
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
                 }
 
                 Spacer(minLength: 0)
@@ -93,7 +103,7 @@ private struct UserSwitcherRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .frame(height: 48)
+            .frame(height: 54)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

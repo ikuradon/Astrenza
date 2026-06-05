@@ -1,0 +1,38 @@
+appId: com.ikuradon.Astrenza
+---
+- addMedia:
+    - "assets/compose-media.png"
+    - "assets/compose-media-2.png"
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: timeline.feed
+- tapOn:
+    text: Post
+- assertVisible:
+    text: Compose
+- tapOn:
+    text: Add media
+- runFlow: pick-two-images.yaml
+- assertVisible:
+    id: compose.media.thumbnail
+- assertVisible:
+    id: compose.media.count
+- tapOn:
+    id: compose.media.thumbnail
+- assertVisible:
+    text: Preview
+- assertVisible:
+    text: Add Description
+- assertVisible:
+    text: Remove
+- tapOn:
+    id: compose.media.add-description
+- tapOn:
+    id: compose.media.thumbnail
+- tapOn:
+    id: compose.media.remove
+- assertVisible:
+    id: compose.media.thumbnail
+- assertNotVisible:
+    id: compose.media.count

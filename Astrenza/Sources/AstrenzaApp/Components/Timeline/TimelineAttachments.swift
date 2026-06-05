@@ -116,7 +116,11 @@ struct TimelineFullscreenMediaViewer: View {
             }
 
             if isChromeVisible {
-                viewerChrome
+                TimelineFullscreenMediaChrome(
+                    galleryTiles: galleryTiles,
+                    selectedTileIndex: selectedTileIndex,
+                    onClose: onClose
+                )
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
@@ -125,48 +129,6 @@ struct TimelineFullscreenMediaViewer: View {
         .simultaneousGesture(dismissalGesture)
         .animation(.spring(duration: 0.2, bounce: 0.08), value: isChromeVisible)
         .preferredColorScheme(.dark)
-    }
-
-    private var viewerChrome: some View {
-        VStack {
-            HStack {
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 17, weight: .black))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close media viewer")
-            }
-            .padding(.top, 18)
-            .padding(.horizontal, 18)
-
-            Spacer()
-
-            if let galleryTiles {
-                VStack(spacing: 8) {
-                    Text(galleryTiles[selectedTileIndex].title)
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-
-                    if galleryTiles.count > 1 {
-                        Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.78))
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .padding(.horizontal, 26)
-                .padding(.bottom, 24)
-            }
-        }
     }
 
     @ViewBuilder
@@ -213,6 +175,70 @@ struct TimelineFullscreenMediaViewer: View {
 
     private func isDismissalDrag(_ value: DragGesture.Value) -> Bool {
         abs(value.translation.height) > abs(value.translation.width) * 1.25
+    }
+}
+
+private struct TimelineFullscreenMediaChrome: View {
+    let galleryTiles: [MediaTile]?
+    let selectedTileIndex: Int
+    let onClose: () -> Void
+
+    private var selectedTile: MediaTile? {
+        guard let galleryTiles, galleryTiles.indices.contains(selectedTileIndex) else {
+            return nil
+        }
+
+        return galleryTiles[selectedTileIndex]
+    }
+
+    var body: some View {
+        VStack {
+            closeButtonRow
+
+            Spacer()
+
+            if let selectedTile {
+                mediaInfoPanel(tile: selectedTile)
+            }
+        }
+    }
+
+    private var closeButtonRow: some View {
+        HStack {
+            Spacer()
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 17, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close media viewer")
+        }
+        .padding(.top, 18)
+        .padding(.horizontal, 18)
+    }
+
+    private func mediaInfoPanel(tile: MediaTile) -> some View {
+        VStack(spacing: 8) {
+            Text(tile.title)
+                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.94))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+
+            if let galleryTiles, galleryTiles.count > 1 {
+                Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 26)
+        .padding(.bottom, 24)
     }
 }
 

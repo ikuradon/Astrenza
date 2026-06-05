@@ -1,0 +1,18 @@
+appId: com.ikuradon.Astrenza
+---
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: PXGGridLayout-Info
+          index: 0
+          optional: true
+      - tapOn:
+          text: "Photo, .*"
+          index: 0
+          optional: true
+      - tapOn:
+          text: ".*Photo.*"
+          index: 0
+          optional: true

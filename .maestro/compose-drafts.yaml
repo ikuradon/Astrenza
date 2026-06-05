@@ -1,0 +1,59 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: timeline.feed
+- tapOn:
+    text: Post
+- assertVisible:
+    text: Compose
+- tapOn:
+    text: Composer settings
+- assertVisible:
+    text: Browse Files...
+- assertVisible:
+    text: Camera
+- assertVisible:
+    text: Drafts
+- tapOn:
+    point: "10%,20%"
+- inputText: "g"
+- tapOn:
+    text: Close
+- assertVisible:
+    text: Ignore Draft
+- assertVisible:
+    text: Save Draft
+- tapOn:
+    text: Save Draft
+- assertVisible:
+    id: timeline.feed
+- tapOn:
+    text: Post
+- assertVisible:
+    text: Compose
+- tapOn:
+    text: Composer settings
+- assertVisible:
+    text: Drafts (1)
+- tapOn:
+    text: Drafts (1)
+- assertVisible:
+    text: Drafts
+- assertVisible:
+    text: Edit
+- assertVisible:
+    text: g
+- tapOn:
+    text: Edit
+- assertVisible:
+    text: Done
+- tapOn:
+    text: Done
+- swipe:
+    start: 82%, 20%
+    end: 36%, 20%
+    duration: 350
+- assertVisible:
+    text: Delete

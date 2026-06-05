@@ -102,8 +102,8 @@ struct HomeTimelineView: View {
         }
         .sheet(isPresented: $isComposerPresented) {
             ComposeSheetView(mode: composeSheetMode)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(28)
         }
         .sheet(isPresented: $isSettingsPresented) {

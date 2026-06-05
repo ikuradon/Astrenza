@@ -49,26 +49,6 @@ struct UserDetailView: View {
         min(max((compactChromeProgress - 0.72) / 0.2, 0), 1)
     }
 
-    private var profileAvatarMedia: TimelineMedia {
-        .gallery([
-            MediaTile(
-                title: "\(profile.author.primaryText) Avatar",
-                colors: [profile.avatar.primary, profile.avatar.secondary],
-                symbolName: profile.avatar.symbolName
-            )
-        ])
-    }
-
-    private var profileBannerMedia: TimelineMedia {
-        .gallery([
-            MediaTile(
-                title: "\(profile.author.primaryText) Hero",
-                colors: profile.banner.colors,
-                symbolName: profile.banner.symbolName
-            )
-        ])
-    }
-
     var body: some View {
         ZStack(alignment: .top) {
             GeometryReader { proxy in
@@ -141,7 +121,7 @@ struct UserDetailView: View {
     private var profileHero: some View {
         ZStack(alignment: .bottom) {
             Button {
-                onOpenMedia(profileBannerMedia)
+                onOpenMedia(profile.bannerMedia)
             } label: {
                 ProfileBannerView(style: profile.banner)
                     .frame(height: profileHeroHeight)
@@ -167,17 +147,15 @@ struct UserDetailView: View {
     }
 
     private var compactProfileAvatarToolbarItem: some View {
-        Button {
-            onOpenMedia(profileAvatarMedia)
-        } label: {
-            AvatarView(style: profile.avatar, size: compactAvatarSize)
-                .scaleEffect(0.92 + (0.08 * toolbarAvatarProgress))
-                .frame(width: compactAvatarSize, height: compactAvatarSize)
-        }
-        .buttonStyle(.plain)
+        ProfileAvatarMediaButton(
+            profile: profile,
+            size: compactAvatarSize,
+            label: "Open compact profile avatar",
+            onOpenMedia: onOpenMedia
+        )
+        .scaleEffect(0.92 + (0.08 * toolbarAvatarProgress))
         .opacity(toolbarAvatarProgress)
         .disabled(toolbarAvatarProgress < 0.85)
-        .accessibilityLabel("Open compact profile avatar")
         .accessibilityHidden(toolbarAvatarProgress < 0.85)
         .animation(.spring(duration: 0.24, bounce: 0.12), value: toolbarAvatarProgress)
     }
@@ -209,20 +187,18 @@ struct UserDetailView: View {
         let centerY = expandedCenterY + (compactCenterY - expandedCenterY) * progress
         let strokeWidth = 5 * (1 - progress)
 
-        return Button {
-            onOpenMedia(profileAvatarMedia)
-        } label: {
-            AvatarView(style: profile.avatar, size: avatarSize)
-                .overlay {
-                    Circle()
-                        .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
-                }
+        return ProfileAvatarMediaButton(
+            profile: profile,
+            size: avatarSize,
+            label: "Open profile avatar",
+            onOpenMedia: onOpenMedia
+        ) {
+            Circle()
+                .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
         }
-        .buttonStyle(.plain)
         .position(x: containerWidth / 2, y: centerY)
         .opacity(1 - toolbarAvatarProgress)
         .disabled(toolbarAvatarProgress > 0.85)
-        .accessibilityLabel("Open profile avatar")
         .accessibilityHidden(toolbarAvatarProgress > 0.85)
         .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
     }
@@ -444,6 +420,82 @@ private struct ProfileBannerView: View {
             )
         }
         .clipped()
+    }
+}
+
+private struct ProfileAvatarMediaButton<Overlay: View>: View {
+    let profile: UserProfile
+    let size: CGFloat
+    let label: String
+    let onOpenMedia: (TimelineMedia) -> Void
+    @ViewBuilder let overlay: () -> Overlay
+
+    init(
+        profile: UserProfile,
+        size: CGFloat,
+        label: String,
+        onOpenMedia: @escaping (TimelineMedia) -> Void,
+        @ViewBuilder overlay: @escaping () -> Overlay
+    ) {
+        self.profile = profile
+        self.size = size
+        self.label = label
+        self.onOpenMedia = onOpenMedia
+        self.overlay = overlay
+    }
+
+    var body: some View {
+        Button {
+            onOpenMedia(profile.avatarMedia)
+        } label: {
+            AvatarView(style: profile.avatar, size: size)
+                .overlay {
+                    overlay()
+                }
+        }
+        .buttonStyle(.plain)
+        .frame(width: size, height: size)
+        .accessibilityLabel(label)
+    }
+}
+
+private extension ProfileAvatarMediaButton where Overlay == EmptyView {
+    init(
+        profile: UserProfile,
+        size: CGFloat,
+        label: String,
+        onOpenMedia: @escaping (TimelineMedia) -> Void
+    ) {
+        self.init(
+            profile: profile,
+            size: size,
+            label: label,
+            onOpenMedia: onOpenMedia
+        ) {
+            EmptyView()
+        }
+    }
+}
+
+private extension UserProfile {
+    var avatarMedia: TimelineMedia {
+        .gallery([
+            MediaTile(
+                title: "\(author.primaryText) Avatar",
+                colors: [avatar.primary, avatar.secondary],
+                symbolName: avatar.symbolName
+            )
+        ])
+    }
+
+    var bannerMedia: TimelineMedia {
+        .gallery([
+            MediaTile(
+                title: "\(author.primaryText) Hero",
+                colors: banner.colors,
+                symbolName: banner.symbolName
+            )
+        ])
     }
 }
 

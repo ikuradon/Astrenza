@@ -1,0 +1,44 @@
+appId: com.ikuradon.Astrenza
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: timeline.feed
+- tapOn:
+    text: Post
+- assertVisible:
+    text: Compose
+- assertVisible:
+    text: Say something...
+- inputText: "hello nostr"
+- assertVisible:
+    text: hello nostr
+- tapOn:
+    text: Mention
+- assertVisible:
+    text: Start Typing a User...
+- inputText: "i"
+- assertVisible:
+    text: Ivory by Tapbots
+- tapOn:
+    text: Ivory by Tapbots
+- tapOn:
+    text: Hashtag
+- assertVisible:
+    text: "#fedeloper"
+- tapOn:
+    text: "#fedeloper"
+- tapOn:
+    text: Emoji
+- assertVisible:
+    text: CUSTOM
+- assertVisible:
+    text: PARTY PARROTS
+- assertVisible:
+    text: ":aicp:"
+- tapOn:
+    text: ":aicp:"
+- tapOn:
+    text: Content warning
+- assertVisible:
+    text: Sensitive reason
