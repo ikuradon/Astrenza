@@ -4,6 +4,7 @@ import SwiftUI
 struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var isComposerPresented: Bool
     @Binding var isSettingsPresented: Bool
+    @Binding var isFiltersSettingsPresented: Bool
     @Binding var isRelayStatusPresented: Bool
     @Binding var composeSheetMode: ComposeSheetMode
     @Binding var fullscreenMedia: TimelineMedia?
@@ -33,6 +34,19 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                 SettingsView(onClose: {
                     isSettingsPresented = false
                 }, swipeSettings: $swipeSettings, accountID: accountID, eventStore: eventStore)
+                .presentationCornerRadius(26)
+            }
+            .sheet(isPresented: $isFiltersSettingsPresented) {
+                NavigationStack {
+                    NostrListSettingsView(accountID: accountID, eventStore: eventStore)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close") {
+                                    isFiltersSettingsPresented = false
+                                }
+                            }
+                        }
+                }
                 .presentationCornerRadius(26)
             }
             .sheet(isPresented: $isRelayStatusPresented) {
@@ -70,6 +84,7 @@ extension View {
     func homeTimelinePresentations(
         isComposerPresented: Binding<Bool>,
         isSettingsPresented: Binding<Bool>,
+        isFiltersSettingsPresented: Binding<Bool>,
         isRelayStatusPresented: Binding<Bool>,
         composeSheetMode: Binding<ComposeSheetMode>,
         fullscreenMedia: Binding<TimelineMedia?>,
@@ -85,6 +100,7 @@ extension View {
             HomeTimelinePresentationModifier(
                 isComposerPresented: isComposerPresented,
                 isSettingsPresented: isSettingsPresented,
+                isFiltersSettingsPresented: isFiltersSettingsPresented,
                 isRelayStatusPresented: isRelayStatusPresented,
                 composeSheetMode: composeSheetMode,
                 fullscreenMedia: fullscreenMedia,

@@ -2,6 +2,21 @@ import Foundation
 import AstrenzaCore
 import SwiftUI
 
+struct TimelineFilterStatus: Equatable {
+    var activeRuleCount = 0
+    var warningMatchCount = 0
+    var hiddenMatchCount = 0
+    var isSuspended = false
+
+    var matchedPostCount: Int {
+        warningMatchCount + hiddenMatchCount
+    }
+
+    var isVisible: Bool {
+        activeRuleCount > 0 || isSuspended
+    }
+}
+
 @MainActor
 final class NostrHomeTimelineStore: ObservableObject {
     enum Phase: Equatable {
@@ -47,6 +62,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var isLoadingOlder = false
     @Published private(set) var hasMoreOlder = true
+    @Published private(set) var filterStatus = TimelineFilterStatus()
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
@@ -58,6 +74,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var contactListEvent: NostrEvent?
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     private var relaySyncEvents: [NostrRelaySyncEventRecord] = []
+    private var areTimelineFiltersSuspended = false
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -180,6 +197,18 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account, let eventStore else { return false }
         return ((try? eventStore.localBookmarks(accountID: account.pubkey)) ?? [])
             .contains { $0.eventID == post.id }
+    }
+
+    func suspendTimelineFilters() {
+        guard !areTimelineFiltersSuspended else { return }
+        areTimelineFiltersSuspended = true
+        materializeEntries()
+    }
+
+    func resumeTimelineFilters() {
+        guard areTimelineFiltersSuspended else { return }
+        areTimelineFiltersSuspended = false
+        materializeEntries()
     }
 
     func cancel() {
@@ -352,6 +381,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         nip05Resolutions = [:]
         relaySyncEvents = []
         hasMoreOlder = true
+        filterStatus = TimelineFilterStatus()
     }
 
     private func persistDatabase(account: NostrAccount) {
@@ -380,6 +410,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries() {
+        let filterRules = homeFilterRules()
+        let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
+        let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
         let deletedEntries = account.flatMap { account in
             try? eventStore?.deletedTimelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 250)
         } ?? []
@@ -390,9 +423,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: noteEvents),
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: noteEvents),
-            filterRules: filterRuleSet(),
+            filterRules: materializerFilterRuleSet,
             deletedEntries: deletedEntries
         )
+        filterStatus = timelineFilterStatus(ruleSet: activeFilterRuleSet)
     }
 
     private func materializedPosts(from events: [NostrEvent]) -> [TimelinePost] {
@@ -406,13 +440,20 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: events),
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events),
-            filterRules: filterRuleSet()
+            filterRules: homeFilterRuleSet()
         )
     }
 
-    private func filterRuleSet() -> NostrFilterRuleSet? {
+    private func homeFilterRuleSet() -> NostrFilterRuleSet? {
+        guard !areTimelineFiltersSuspended else { return nil }
+        let rules = homeFilterRules()
+        guard !rules.isEmpty else { return nil }
+        return NostrFilterRuleSet(rules: rules)
+    }
+
+    private func homeFilterRules() -> [NostrFilterRuleRecord] {
         guard let account, let eventStore else {
-            return nil
+            return []
         }
 
         var rules = ((try? eventStore.filterRules(accountID: account.pubkey)) ?? [])
@@ -426,8 +467,31 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         )
 
-        guard !rules.isEmpty else { return nil }
-        return NostrFilterRuleSet(rules: rules)
+        return rules
+    }
+
+    private func timelineFilterStatus(ruleSet: NostrFilterRuleSet?) -> TimelineFilterStatus {
+        guard let ruleSet else {
+            return TimelineFilterStatus(isSuspended: areTimelineFiltersSuspended)
+        }
+
+        var status = TimelineFilterStatus(
+            activeRuleCount: ruleSet.rules.count,
+            isSuspended: areTimelineFiltersSuspended
+        )
+        guard !areTimelineFiltersSuspended else { return status }
+
+        let now = Int(Date().timeIntervalSince1970)
+        for event in noteEvents {
+            guard let match = ruleSet.matchDetail(event: event, timeline: .home, now: now) else { continue }
+            switch match.rule.presentation {
+            case .maskWithWarning:
+                status.warningMatchCount += 1
+            case .hide:
+                status.hiddenMatchCount += 1
+            }
+        }
+        return status
     }
 
     private func cachedPublicMuteItems(accountID: String, eventStore: NostrEventStore) -> [NostrListItemRecord] {

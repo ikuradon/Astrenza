@@ -11,6 +11,7 @@ struct HomeTimelineView: View {
     @State private var isUserSwitcherPresented = false
     @State private var isComposerPresented = false
     @State private var isSettingsPresented = false
+    @State private var isFiltersSettingsPresented = false
     @State private var isRelayStatusPresented = false
     @State private var composeSheetMode: ComposeSheetMode = .post
     @State private var didCompleteInitialAppearance = false
@@ -153,6 +154,20 @@ struct HomeTimelineView: View {
                     .padding(.trailing, 16)
             }
 
+            if visibleTab == .home && !isPostDetailPresented && liveTimelineStore.filterStatus.isVisible {
+                HomeFilterIndicator(
+                    status: liveTimelineStore.filterStatus,
+                    onOpenFilters: presentFiltersSettings,
+                    onClear: liveTimelineStore.suspendTimelineFilters,
+                    onResume: liveTimelineStore.resumeTimelineFilters
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 72)
+                .padding(.leading, 16)
+                .transition(.scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity))
+                .zIndex(32)
+            }
+
             if isPostDetailPresented {
                 ReplyFloatingButton(action: presentReplyComposer)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -180,6 +195,7 @@ struct HomeTimelineView: View {
         .homeTimelinePresentations(
             isComposerPresented: $isComposerPresented,
             isSettingsPresented: $isSettingsPresented,
+            isFiltersSettingsPresented: $isFiltersSettingsPresented,
             isRelayStatusPresented: $isRelayStatusPresented,
             composeSheetMode: $composeSheetMode,
             fullscreenMedia: $fullscreenMedia,
@@ -465,13 +481,19 @@ private extension HomeTimelineView {
 
     func presentSettings() {
         dismissFloatingMenus()
-        guard !isComposerPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        guard !isComposerPresented && !isFiltersSettingsPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
         isSettingsPresented = true
+    }
+
+    func presentFiltersSettings() {
+        dismissFloatingMenus()
+        guard !isComposerPresented && !isSettingsPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        isFiltersSettingsPresented = true
     }
 
     func presentRelayStatus() {
         dismissFloatingMenus()
-        guard !isComposerPresented && !isSettingsPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        guard !isComposerPresented && !isSettingsPresented && !isFiltersSettingsPresented && browserDestination == nil && fullscreenMedia == nil else { return }
         isRelayStatusPresented = true
     }
 
@@ -552,7 +574,7 @@ private extension HomeTimelineView {
 
     func presentComposer(mode: ComposeSheetMode) {
         dismissFloatingMenus()
-        guard didCompleteInitialAppearance, !isComposerPresented, !isSettingsPresented else { return }
+        guard didCompleteInitialAppearance, !isComposerPresented, !isSettingsPresented, !isFiltersSettingsPresented else { return }
         composeSheetMode = mode
         DispatchQueue.main.async {
             isComposerPresented = true

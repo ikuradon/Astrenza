@@ -474,6 +474,122 @@ struct TimelineModelTests {
         #expect(post.bodyPresentation.collapseReason == .filtered)
     }
 
+    @Test("Home timeline store exposes active filter status")
+    @MainActor
+    func homeTimelineStoreExposesActiveFilterStatus() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let matching = timelineEvent(
+            idSeed: "status-filtered-note",
+            pubkey: account.pubkey,
+            createdAt: 200,
+            content: "quiet keyword"
+        )
+        let other = timelineEvent(
+            idSeed: "status-visible-note",
+            pubkey: account.pubkey,
+            createdAt: 100,
+            content: "ordinary text"
+        )
+        let rule = NostrFilterRuleRecord(
+            ruleID: "rule-1",
+            accountID: account.pubkey,
+            kind: .keyword,
+            value: "keyword",
+            scopes: [.home],
+            createdAt: 1,
+            updatedAt: 1
+        )
+
+        try eventStore.saveFilterRule(rule)
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [account.pubkey],
+                noteEvents: [matching, other],
+                metadataEvents: [],
+                hasMoreOlder: false
+            ),
+            accountID: account.pubkey
+        )
+
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.start(account: account)
+
+        #expect(store.filterStatus.activeRuleCount == 1)
+        #expect(store.filterStatus.warningMatchCount == 1)
+        #expect(store.filterStatus.hiddenMatchCount == 0)
+        #expect(store.filterStatus.isSuspended == false)
+        #expect(store.entries.compactMap(\.post).map(\.id) == [matching.id, other.id])
+    }
+
+    @Test("Home timeline store can temporarily suspend and resume filters")
+    @MainActor
+    func homeTimelineStoreSuspendsAndResumesFilters() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "b", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let hidden = timelineEvent(
+            idSeed: "suspended-hidden-note",
+            pubkey: account.pubkey,
+            createdAt: 200,
+            content: "quiet keyword"
+        )
+        let visible = timelineEvent(
+            idSeed: "suspended-visible-note",
+            pubkey: account.pubkey,
+            createdAt: 100,
+            content: "ordinary text"
+        )
+        let rule = NostrFilterRuleRecord(
+            ruleID: "rule-1",
+            accountID: account.pubkey,
+            kind: .keyword,
+            value: "keyword",
+            presentation: .hide,
+            scopes: [.home],
+            createdAt: 1,
+            updatedAt: 1
+        )
+
+        try eventStore.saveFilterRule(rule)
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [account.pubkey],
+                noteEvents: [hidden, visible],
+                metadataEvents: [],
+                hasMoreOlder: false
+            ),
+            accountID: account.pubkey
+        )
+
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.start(account: account)
+
+        #expect(store.entries.compactMap(\.post).map(\.id) == [visible.id])
+        #expect(store.filterStatus.hiddenMatchCount == 1)
+
+        store.suspendTimelineFilters()
+
+        #expect(store.entries.compactMap(\.post).map(\.id) == [hidden.id, visible.id])
+        #expect(store.filterStatus.isSuspended)
+        #expect(store.filterStatus.hiddenMatchCount == 0)
+
+        store.resumeTimelineFilters()
+
+        #expect(store.entries.compactMap(\.post).map(\.id) == [visible.id])
+        #expect(store.filterStatus.isSuspended == false)
+        #expect(store.filterStatus.hiddenMatchCount == 1)
+    }
+
     @Test("Nostr materializer turns kind 6 reposts into attributed timeline posts")
     func nostrMaterializerUsesKind6Reposts() throws {
         let author = String(repeating: "a", count: 64)

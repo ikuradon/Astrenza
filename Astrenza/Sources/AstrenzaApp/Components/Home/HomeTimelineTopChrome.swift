@@ -129,3 +129,74 @@ struct HomeUnreadBadge: View {
         }
     }
 }
+
+struct HomeFilterIndicator: View {
+    let status: TimelineFilterStatus
+    let onOpenFilters: () -> Void
+    let onClear: () -> Void
+    let onResume: () -> Void
+
+    private var title: String {
+        if status.isSuspended {
+            return "Filters Off"
+        }
+        let count = status.matchedPostCount
+        return count == 1 ? "1 filtered" : "\(count) filtered"
+    }
+
+    private var subtitle: String {
+        if status.isSuspended {
+            return "\(status.activeRuleCount) rules paused"
+        }
+        return "\(status.activeRuleCount) active rules"
+    }
+
+    private var controlIcon: String {
+        status.isSuspended ? "arrow.counterclockwise.circle.fill" : "xmark.circle.fill"
+    }
+
+    private var controlLabel: String {
+        status.isSuspended ? "Resume filters" : "Temporarily clear filters"
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Button(action: onOpenFilters) {
+                HStack(spacing: 8) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .font(.system(size: 15, weight: .bold))
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(title)
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                        Text(subtitle)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .foregroundStyle(status.isSuspended ? .secondary : Color.astrenzaAccent)
+                .padding(.leading, 12)
+                .padding(.vertical, 7)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(status.isSuspended ? "Filters are paused" : "\(status.matchedPostCount) filtered posts")
+
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1, height: 24)
+
+            Button(action: status.isSuspended ? onResume : onClear) {
+                Image(systemName: controlIcon)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(status.isSuspended ? Color.astrenzaAccent : .secondary)
+                    .frame(width: 30, height: 34)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(controlLabel)
+        }
+        .padding(.trailing, 7)
+        .astrenzaGlass(tint: Color.white.opacity(0.05), in: Capsule())
+        .shadow(color: Color.black.opacity(0.18), radius: 16, y: 8)
+    }
+}
