@@ -4,15 +4,15 @@ This backlog records Research-derived items that are intentionally deferred from
 
 ## Filter, Mute, Bookmark, and Trust
 
-- Project cached public NIP-51 mute-list items into `NostrFilterRuleSet`.
-  - Current state: NIP-51 list storage/parsing exists, and local filter rules are persisted.
-  - Next step: merge public mute items with local rules inside the account-scoped filter settings surface.
 - Add an active filter indicator with one-tap clear.
   - Current state: materialized posts can be collapsed as `Filtered`.
   - Next step: show a compact indicator only when a temporary timeline filter is active, without changing stored source events.
 - Publish bookmark changes as NIP-51 bookmark sets after outbox publish UX is ready.
-  - Current state: local bookmark storage exists.
+  - Current state: local bookmark storage exists and the row gear menu can write local bookmarks.
   - Next step: bridge local bookmark actions to replaceable `kind:30003` events through the persistent outbox.
+- Publish mute changes as NIP-51 mute lists after signer-backed replaceable list editing is ready.
+  - Current state: cached public NIP-51 mute-list items are projected into `NostrFilterRuleSet`, and local mute rules are applied immediately.
+  - Next step: bridge local mute rule edits to `kind:10000` replaceable events through the persistent outbox.
 
 ## Lists and Timeline Modes
 
@@ -26,7 +26,7 @@ This backlog records Research-derived items that are intentionally deferred from
 ## Moderation and Trust
 
 - Add full report/mute UI wiring for temporary mute expiry, regex validation, and private mute items.
-  - Current state: local rule schema supports expiry and regex matching.
+  - Current state: local rule schema supports expiry and regex matching, and the row gear menu can create author mutes.
   - Next step: settings and action menu surfaces should create/update rules.
 - Add richer relay privacy explanation.
   - Current state: relay state/settings screens exist.

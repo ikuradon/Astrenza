@@ -361,10 +361,38 @@ private struct NostrListSettingsView: View {
     let eventStore: NostrEventStore?
     @State private var summaries: [NostrListSummary] = []
     @State private var itemsByListID: [String: [NostrListItemRecord]] = [:]
+    @State private var localFilterCount = 0
+    @State private var localBookmarkCount = 0
     @State private var loadError: String?
 
     var body: some View {
         SettingsList {
+            SettingsSection(title: "LOCAL STATE") {
+                if accountID == nil || eventStore == nil {
+                    NostrListEmptyRow(
+                        icon: "person.crop.circle.badge.questionmark",
+                        title: "No live account",
+                        subtitle: "Local mute rules and bookmarks are account scoped."
+                    )
+                } else {
+                    NostrLocalStateRow(
+                        icon: "line.3.horizontal.decrease.circle.fill",
+                        title: "Local Filters",
+                        value: localFilterCount,
+                        tint: .orange
+                    )
+                    SettingsDivider()
+                    NostrLocalStateRow(
+                        icon: "bookmark.fill",
+                        title: "Local Bookmarks",
+                        value: localBookmarkCount,
+                        tint: .purple
+                    )
+                }
+            } footer: {
+                "Local rules are applied immediately. Cached NIP-51 public lists are merged into the same timeline filter pass."
+            }
+
             SettingsSection(title: "NIP-51 LISTS") {
                 if accountID == nil || eventStore == nil {
                     NostrListEmptyRow(
@@ -404,6 +432,8 @@ private struct NostrListSettingsView: View {
         guard let accountID, let eventStore else {
             summaries = []
             itemsByListID = [:]
+            localFilterCount = 0
+            localBookmarkCount = 0
             loadError = nil
             return
         }
@@ -416,12 +446,37 @@ private struct NostrListSettingsView: View {
                     (summary.listID, try eventStore.listItems(listID: summary.listID))
                 }
             )
+            localFilterCount = try eventStore.filterRules(accountID: accountID).count
+            localBookmarkCount = try eventStore.localBookmarks(accountID: accountID).count
             loadError = nil
         } catch {
             summaries = []
             itemsByListID = [:]
+            localFilterCount = 0
+            localBookmarkCount = 0
             loadError = error.localizedDescription
         }
+    }
+}
+
+private struct NostrLocalStateRow: View {
+    let icon: String
+    let title: String
+    let value: Int
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(systemName: icon, tint: tint)
+            Text(title)
+                .font(.system(size: 17, weight: .black, design: .rounded))
+            Spacer()
+            Text("\(value)")
+                .font(.system(size: 19, weight: .black, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 58)
     }
 }
 

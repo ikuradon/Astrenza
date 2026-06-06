@@ -230,7 +230,7 @@ git commit -m "Wire timeline menu mute and bookmark actions"
 
 ## Phase 4: Settings Counts and Final Verification
 
-- [ ] **Step 1: Extend settings reload**
+- [x] **Step 1: Extend settings reload**
 
 In `NostrListSettingsView`, add local state:
 
@@ -246,11 +246,11 @@ localFilterCount = try eventStore.filterRules(accountID: accountID).count
 localBookmarkCount = try eventStore.localBookmarks(accountID: accountID).count
 ```
 
-- [ ] **Step 2: Add local state section**
+- [x] **Step 2: Add local state section**
 
 Before `NIP-51 LISTS`, add `LOCAL RULES` section with two `NostrListEmptyRow`-style rows or a compact row showing local filter and bookmark counts.
 
-- [ ] **Step 3: Update backlog**
+- [x] **Step 3: Update backlog**
 
 Update `Documents/Plans/2026-06-06-nostr-mvp-deferred-backlog.md`:
 
@@ -258,7 +258,7 @@ Update `Documents/Plans/2026-06-06-nostr-mvp-deferred-backlog.md`:
 - mark local bookmark action storage as connected from row menu
 - leave active filter indicator and NIP-51 bookmark publish deferred
 
-- [ ] **Step 4: Final verification**
+- [x] **Step 4: Final verification**
 
 Run:
 
@@ -270,7 +270,7 @@ xcodebuild -project Astrenza.xcodeproj -scheme Astrenza -configuration Debug -de
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Astrenza/Sources/AstrenzaApp/Components/Settings/SettingsView.swift Documents/Plans/2026-06-06-nip51-filter-bookmark-ui-execution-plan.md Documents/Plans/2026-06-06-nostr-mvp-deferred-backlog.md
@@ -281,9 +281,9 @@ git commit -m "Show local filter and bookmark state in settings"
 
 ## Completion Checklist
 
-- [ ] NIP-51 public mute `p`/`t`/`word` items become filter rules.
-- [ ] Cached NIP-51 mutes and local filter rules both affect Home TL materialization.
-- [ ] Row gear menu Bookmark writes local bookmark state.
-- [ ] Row gear menu Mute writes local muted-pubkey state and refreshes Home TL.
-- [ ] Settings shows both cached NIP-51 list data and local filter/bookmark counts.
-- [ ] Core and app tests pass.
+- [x] NIP-51 public mute `p`/`t`/`word` items become filter rules.
+- [x] Cached NIP-51 mutes and local filter rules both affect Home TL materialization.
+- [x] Row gear menu Bookmark writes local bookmark state.
+- [x] Row gear menu Mute writes local muted-pubkey state and refreshes Home TL.
+- [x] Settings shows both cached NIP-51 list data and local filter/bookmark counts.
+- [x] Core and app tests pass.
