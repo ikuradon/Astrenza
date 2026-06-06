@@ -49,7 +49,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var hasMoreOlder = true
 
     private let timelineLoader: NostrHomeTimelineLoader
-    private let timelineCache: NostrTimelineCache
     private let eventStore: NostrEventStore?
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
@@ -60,11 +59,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     init(
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
-        timelineCache: NostrTimelineCache = NostrTimelineCache(),
         eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza")
     ) {
         self.timelineLoader = timelineLoader
-        self.timelineCache = timelineCache
         self.eventStore = eventStore
     }
 
@@ -200,7 +197,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard Task.isCancelled == false else { return }
             apply(state)
             materializeEntries()
-            persistSnapshot(account: account)
             persistDatabase(account: account)
             phase = .loaded
         } catch {
@@ -224,7 +220,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard Task.isCancelled == false else { return }
             apply(state)
             materializeEntries()
-            persistSnapshot(account: account)
             persistDatabase(account: account)
             phase = .loaded
         } catch {
@@ -252,7 +247,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
 
             materializeEntries()
-            persistSnapshot(account: account)
             persistDatabase(account: account)
             phase = .loaded
         } catch {
@@ -271,43 +265,15 @@ final class NostrHomeTimelineStore: ObservableObject {
             return
         }
 
-        guard let snapshot = timelineCache.snapshot(accountID: account.pubkey, timelineKey: "home") else {
-            entries = []
-            resolvedRelays = []
-            followedPubkeys = []
-            noteEvents = []
-            metadataEvents = []
-            relayListEvent = nil
-            contactListEvent = nil
-            nip05Resolutions = [:]
-            hasMoreOlder = true
-            return
-        }
-
-        resolvedRelays = snapshot.relays
-        followedPubkeys = snapshot.followedPubkeys
-        noteEvents = snapshot.events
-        metadataEvents = snapshot.metadataEvents
+        entries = []
+        resolvedRelays = []
+        followedPubkeys = []
+        noteEvents = []
+        metadataEvents = []
         relayListEvent = nil
         contactListEvent = nil
-        nip05Resolutions = snapshot.nip05Resolutions
+        nip05Resolutions = [:]
         hasMoreOlder = true
-        materializeEntries()
-        if !entries.isEmpty {
-            phase = .loaded
-        }
-    }
-
-    private func persistSnapshot(account: NostrAccount) {
-        timelineCache.saveSnapshot(
-            accountID: account.pubkey,
-            timelineKey: "home",
-            relays: resolvedRelays,
-            followedPubkeys: followedPubkeys,
-            events: noteEvents,
-            metadataEvents: metadataEvents,
-            nip05Resolutions: nip05Resolutions
-        )
     }
 
     private func persistDatabase(account: NostrAccount) {
@@ -315,7 +281,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         do {
             try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
         } catch {
-            // The UserDefaults snapshot remains the fallback until the DB read path is fully migrated.
+            // Live networking can still populate the timeline if the database write fails.
         }
     }
 

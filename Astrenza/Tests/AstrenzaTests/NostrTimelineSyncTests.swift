@@ -65,32 +65,6 @@ struct NostrTimelineSyncTests {
         #expect(older["limit"] == .int(50))
     }
 
-    @Test("Local timeline cache restores cached events before the network returns")
-    func localTimelineCache() throws {
-        let suiteName = "NostrTimelineSyncTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let accountID = String(repeating: "c", count: 64)
-        let note = signedShapeOnlyEvent(kind: 1, pubkey: String(repeating: "d", count: 64), createdAt: 200, content: "cached")
-        let older = signedShapeOnlyEvent(kind: 1, pubkey: String(repeating: "e", count: 64), createdAt: 100, content: "older")
-        let cache = NostrTimelineCache(defaults: defaults)
-
-        cache.saveSnapshot(
-            accountID: accountID,
-            timelineKey: "home",
-            relays: ["wss://relay.example"],
-            followedPubkeys: [note.pubkey],
-            events: [older, note],
-            metadataEvents: []
-        )
-
-        let snapshot = try #require(cache.snapshot(accountID: accountID, timelineKey: "home"))
-        #expect(snapshot.relays == ["wss://relay.example"])
-        #expect(snapshot.followedPubkeys == [note.pubkey])
-        #expect(snapshot.events.map(\.id) == [note.id, older.id])
-    }
-
     @Test("NIP-77 client messages encode relay frames")
     func nip77ClientFrames() throws {
         let filter = NostrRelayFilter(kinds: [1], authors: [String(repeating: "a", count: 64)], since: 100, limit: 20)
