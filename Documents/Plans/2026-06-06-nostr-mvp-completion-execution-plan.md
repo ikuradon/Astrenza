@@ -132,20 +132,20 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add schema:
+- [x] Add schema:
   - `addressable_heads(kind, pubkey, d_tag, event_id, created_at, updated_at)`
-  - `lists(list_id, account_id, kind, pubkey, d_tag, event_id, title, visibility, updated_at)`
+  - `lists(list_id, account_id, kind, pubkey, d_tag, event_id, title, visibility, private_content, created_at, updated_at)`
   - `list_items(list_id, item_key, item_type, value, relay_hint, visibility, position)`
-- [ ] Update addressable heads for events with kinds `30000...39999`.
-- [ ] Tie-break addressable replacement by newer `created_at`, then deterministic event id ordering.
-- [ ] Parse public NIP-51 tags for:
+- [x] Update addressable heads for events with kinds `30000...39999`.
+- [x] Tie-break addressable replacement by newer `created_at`, then deterministic event id ordering.
+- [x] Parse public NIP-51 tags for:
   - `30000` follow sets
   - `30002` relay sets
   - `30003` bookmark sets
   - `10000` mute list
   - `10007` search relays
-- [ ] Store encrypted private list content raw for now; do not attempt NIP-44 decrypt in this phase.
-- [ ] Expose DB APIs for list summaries and list items.
+- [x] Store encrypted private list content raw for now; do not attempt NIP-44 decrypt in this phase.
+- [x] Expose DB APIs for list summaries and list items.
 - [ ] Wire settings/list UI to DB-backed summaries with empty states when no list event is cached.
 
 **Acceptance tests:**

@@ -197,6 +197,89 @@ struct NostrCorePackageTests {
         #expect(try store.latestReplaceableEvent(pubkey: pubkey, kind: 0)?.id == newer.id)
     }
 
+    @Test("Nostr event store keeps latest addressable head by d tag")
+    func eventStoreAddressableHeads() throws {
+        let store = try NostrEventStore.inMemory()
+        let pubkey = String(repeating: "e", count: 64)
+        let older = nostrEvent(kind: 30_000, pubkey: pubkey, createdAt: 100, tags: [["d", "friends"], ["title", "Old"]])
+        let newer = nostrEvent(kind: 30_000, pubkey: pubkey, createdAt: 200, tags: [["d", "friends"], ["title", "New"]])
+        let other = nostrEvent(kind: 30_000, pubkey: pubkey, createdAt: 300, tags: [["d", "work"], ["title", "Work"]])
+
+        try store.save(events: [newer, older, other])
+
+        #expect(try store.latestAddressableEvent(kind: 30_000, pubkey: pubkey, dTag: "friends")?.id == newer.id)
+        #expect(try store.latestAddressableEvent(kind: 30_000, pubkey: pubkey, dTag: "work")?.id == other.id)
+    }
+
+    @Test("Nostr event store stores public NIP-51 list summaries and items")
+    func eventStoreNIP51PublicLists() throws {
+        let store = try NostrEventStore.inMemory()
+        let pubkey = String(repeating: "e", count: 64)
+        let followed = String(repeating: "f", count: 64)
+        let followSet = nostrEvent(
+            kind: 30_000,
+            pubkey: pubkey,
+            createdAt: 200,
+            content: "encrypted-private-content",
+            tags: [
+                ["d", "friends"],
+                ["title", "Friends"],
+                ["p", followed, "wss://people.example"]
+            ]
+        )
+        let relaySet = nostrEvent(
+            kind: 30_002,
+            pubkey: pubkey,
+            createdAt: 210,
+            tags: [["d", "relays"], ["relay", "wss://relay-set.example"]]
+        )
+        let bookmarkSet = nostrEvent(
+            kind: 30_003,
+            pubkey: pubkey,
+            createdAt: 220,
+            tags: [["d", "bookmarks"], ["e", String(repeating: "b", count: 64)]]
+        )
+
+        try store.save(events: [followSet, relaySet, bookmarkSet])
+        let summaries = try store.listSummaries(accountID: pubkey)
+        let followSummary = try #require(summaries.first { $0.kind == 30_000 })
+        let followItems = try store.listItems(listID: followSummary.listID)
+        let relaySummary = try #require(summaries.first { $0.kind == 30_002 })
+        let bookmarkSummary = try #require(summaries.first { $0.kind == 30_003 })
+
+        #expect(followSummary.dTag == "friends")
+        #expect(followSummary.title == "Friends")
+        #expect(followSummary.visibility == "public+encrypted")
+        #expect(followSummary.privateContent == "encrypted-private-content")
+        #expect(followItems.map(\.itemType) == ["pubkey"])
+        #expect(followItems.map(\.value) == [followed])
+        #expect(followItems.first?.relayHint == "wss://people.example")
+        #expect(try store.listItems(listID: relaySummary.listID).map(\.value) == ["wss://relay-set.example"])
+        #expect(try store.listItems(listID: bookmarkSummary.listID).map(\.itemType) == ["event"])
+    }
+
+    @Test("Nostr event store stores mute bookmark and search relay lists")
+    func eventStoreNIP51StandardLists() throws {
+        let store = try NostrEventStore.inMemory()
+        let pubkey = String(repeating: "e", count: 64)
+        let muted = String(repeating: "a", count: 64)
+        let bookmarked = String(repeating: "b", count: 64)
+        let muteList = nostrEvent(kind: 10_000, pubkey: pubkey, createdAt: 100, tags: [["p", muted], ["t", "spam"], ["word", "spoiler"]])
+        let bookmarks = nostrEvent(kind: 10_003, pubkey: pubkey, createdAt: 110, tags: [["e", bookmarked]])
+        let searchRelays = nostrEvent(kind: 10_007, pubkey: pubkey, createdAt: 120, tags: [["relay", "wss://search.example"]])
+
+        try store.save(events: [muteList, bookmarks, searchRelays])
+        let summaries = try store.listSummaries(accountID: pubkey)
+        let itemsByKind = Dictionary(uniqueKeysWithValues: try summaries.map { summary in
+            (summary.kind, try store.listItems(listID: summary.listID))
+        })
+
+        #expect(Set(summaries.map(\.kind)) == [10_000, 10_003, 10_007])
+        #expect(itemsByKind[10_000]?.map(\.itemType) == ["pubkey", "hashtag", "word"])
+        #expect(itemsByKind[10_003]?.map(\.value) == [bookmarked])
+        #expect(itemsByKind[10_007]?.map(\.value) == ["wss://search.example"])
+    }
+
     @Test("Nostr event store keeps timeline entries in display order")
     func eventStoreTimelineEntries() throws {
         let store = try NostrEventStore.inMemory()

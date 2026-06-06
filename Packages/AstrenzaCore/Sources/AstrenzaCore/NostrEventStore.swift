@@ -269,6 +269,8 @@ public final class NostrEventStore {
                 try upsert(event: event, receivedAt: receivedAt, db: db)
                 try replaceTags(for: event, db: db)
                 try upsertReplaceableHeadIfNeeded(for: event, db: db)
+                try upsertAddressableHeadIfNeeded(for: event, db: db)
+                try upsertListIfNeeded(for: event, accountID: event.pubkey, db: db)
             }
             for event in events where event.kind == 5 {
                 try applyDeletionRequest(event, db: db)
@@ -483,6 +485,39 @@ public final class NostrEventStore {
         }
     }
 
+    public func listSummaries(accountID: String) throws -> [NostrListSummary] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT list_id, account_id, kind, pubkey, d_tag, event_id, title, visibility,
+                       private_content, created_at, updated_at
+                FROM lists
+                WHERE account_id = ?
+                ORDER BY updated_at DESC, kind ASC, title ASC
+                """,
+                arguments: [accountID]
+            )
+            return rows.map(decodeListSummary)
+        }
+    }
+
+    public func listItems(listID: String) throws -> [NostrListItemRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT list_id, item_key, item_type, value, relay_hint, visibility, position
+                FROM list_items
+                WHERE list_id = ?
+                ORDER BY position ASC
+                """,
+                arguments: [listID]
+            )
+            return rows.map(decodeListItem)
+        }
+    }
+
     public func latestReplaceableEvent(
         pubkey: String,
         kind: Int,
@@ -500,6 +535,28 @@ public final class NostrEventStore {
     ) throws -> [NostrEvent] {
         try database.read { db in
             try latestReplaceableEvents(pubkeys: pubkeys, kind: kind, now: now, db: db)
+        }
+    }
+
+    public func latestAddressableEvent(
+        kind: Int,
+        pubkey: String,
+        dTag: String,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> NostrEvent? {
+        try database.read { db in
+            guard let eventID = try String.fetchOne(
+                db,
+                sql: """
+                SELECT h.event_id
+                FROM addressable_heads h
+                JOIN events e ON e.event_id = h.event_id
+                WHERE h.kind = ? AND h.pubkey = ? AND h.d_tag = ?
+                    AND \(Self.visibleEventPredicate(alias: "e"))
+                """,
+                arguments: [kind, pubkey, dTag, now]
+            ) else { return nil }
+            return try fetchEvent(id: eventID, db: db)
         }
     }
 
@@ -1088,6 +1145,48 @@ public final class NostrEventStore {
             try db.create(index: "relay_sync_events_relay", on: "relay_sync_events", columns: ["relay_url", "occurred_at"], ifNotExists: true)
         }
 
+        migrator.registerMigration("addNostrLists") { db in
+            try db.create(table: "addressable_heads", ifNotExists: true) { table in
+                table.column("kind", .integer).notNull()
+                table.column("pubkey", .text).notNull()
+                table.column("d_tag", .text).notNull()
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("created_at", .integer).notNull()
+                table.column("updated_at", .integer).notNull()
+                table.primaryKey(["kind", "pubkey", "d_tag"])
+            }
+            try db.create(index: "addressable_heads_updated_at", on: "addressable_heads", columns: ["updated_at"], ifNotExists: true)
+
+            try db.create(table: "lists", ifNotExists: true) { table in
+                table.column("list_id", .text).primaryKey()
+                table.column("account_id", .text).notNull()
+                table.column("kind", .integer).notNull()
+                table.column("pubkey", .text).notNull()
+                table.column("d_tag", .text).notNull()
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("title", .text)
+                table.column("visibility", .text).notNull()
+                table.column("private_content", .text)
+                table.column("created_at", .integer).notNull()
+                table.column("updated_at", .integer).notNull()
+            }
+            try db.create(index: "lists_account_updated", on: "lists", columns: ["account_id", "updated_at"], ifNotExists: true)
+            try db.create(index: "lists_kind", on: "lists", columns: ["kind"], ifNotExists: true)
+
+            try db.create(table: "list_items", ifNotExists: true) { table in
+                table.column("list_id", .text).notNull().references("lists", column: "list_id", onDelete: .cascade)
+                table.column("item_key", .text).notNull()
+                table.column("item_type", .text).notNull()
+                table.column("value", .text).notNull()
+                table.column("relay_hint", .text)
+                table.column("visibility", .text).notNull()
+                table.column("position", .integer).notNull()
+                table.primaryKey(["list_id", "item_key", "position"])
+            }
+            try db.create(index: "list_items_list_position", on: "list_items", columns: ["list_id", "position"], ifNotExists: true)
+            try db.create(index: "list_items_type_value", on: "list_items", columns: ["item_type", "value"], ifNotExists: true)
+        }
+
         try migrator.migrate(database)
     }
 
@@ -1175,6 +1274,104 @@ public final class NostrEventStore {
                 Int(Date().timeIntervalSince1970)
             ]
         )
+    }
+
+    private func upsertAddressableHeadIfNeeded(for event: NostrEvent, db: Database) throws {
+        guard isAddressable(kind: event.kind) else { return }
+        let dTag = NostrListParser.dTag(from: event)
+
+        try db.execute(
+            sql: """
+            INSERT INTO addressable_heads (kind, pubkey, d_tag, event_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(kind, pubkey, d_tag) DO UPDATE SET
+                event_id = excluded.event_id,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            WHERE excluded.created_at > addressable_heads.created_at
+                OR (excluded.created_at = addressable_heads.created_at AND excluded.event_id < addressable_heads.event_id)
+            """,
+            arguments: [
+                event.kind,
+                event.pubkey,
+                dTag,
+                event.id,
+                event.createdAt,
+                Int(Date().timeIntervalSince1970)
+            ]
+        )
+    }
+
+    private func upsertListIfNeeded(for event: NostrEvent, accountID: String, db: Database) throws {
+        let updatedAt = Int(Date().timeIntervalSince1970)
+        guard let parsed = NostrListParser.parse(event: event, accountID: accountID, updatedAt: updatedAt),
+              try shouldReplaceList(summary: parsed.summary, db: db)
+        else { return }
+
+        try db.execute(
+            sql: """
+            INSERT INTO lists (
+                list_id, account_id, kind, pubkey, d_tag, event_id, title, visibility,
+                private_content, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(list_id) DO UPDATE SET
+                account_id = excluded.account_id,
+                kind = excluded.kind,
+                pubkey = excluded.pubkey,
+                d_tag = excluded.d_tag,
+                event_id = excluded.event_id,
+                title = excluded.title,
+                visibility = excluded.visibility,
+                private_content = excluded.private_content,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            """,
+            arguments: [
+                parsed.summary.listID,
+                parsed.summary.accountID,
+                parsed.summary.kind,
+                parsed.summary.pubkey,
+                parsed.summary.dTag,
+                parsed.summary.eventID,
+                parsed.summary.title,
+                parsed.summary.visibility,
+                parsed.summary.privateContent,
+                parsed.summary.createdAt,
+                parsed.summary.updatedAt
+            ]
+        )
+        try db.execute(sql: "DELETE FROM list_items WHERE list_id = ?", arguments: [parsed.summary.listID])
+        for item in parsed.items {
+            try db.execute(
+                sql: """
+                INSERT INTO list_items (
+                    list_id, item_key, item_type, value, relay_hint, visibility, position
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    item.listID,
+                    item.itemKey,
+                    item.itemType,
+                    item.value,
+                    item.relayHint,
+                    item.visibility,
+                    item.position
+                ]
+            )
+        }
+    }
+
+    private func shouldReplaceList(summary: NostrListSummary, db: Database) throws -> Bool {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: "SELECT event_id, created_at FROM lists WHERE list_id = ?",
+            arguments: [summary.listID]
+        ) else { return true }
+
+        let currentEventID: String = row["event_id"]
+        let currentCreatedAt: Int = row["created_at"]
+        return summary.createdAt > currentCreatedAt
+            || (summary.createdAt == currentCreatedAt && summary.eventID < currentEventID)
     }
 
     private func applyDeletionRequest(_ deletionEvent: NostrEvent, db: Database) throws {
@@ -1482,6 +1679,34 @@ public final class NostrEventStore {
         )
     }
 
+    private func decodeListSummary(_ row: Row) -> NostrListSummary {
+        NostrListSummary(
+            listID: row["list_id"],
+            accountID: row["account_id"],
+            kind: row["kind"],
+            pubkey: row["pubkey"],
+            dTag: row["d_tag"],
+            eventID: row["event_id"],
+            title: row["title"],
+            visibility: row["visibility"],
+            privateContent: row["private_content"],
+            createdAt: row["created_at"],
+            updatedAt: row["updated_at"]
+        )
+    }
+
+    private func decodeListItem(_ row: Row) -> NostrListItemRecord {
+        NostrListItemRecord(
+            listID: row["list_id"],
+            itemKey: row["item_key"],
+            itemType: row["item_type"],
+            value: row["value"],
+            relayHint: row["relay_hint"],
+            visibility: row["visibility"],
+            position: row["position"]
+        )
+    }
+
     private func decodeTimelineEntry(_ row: Row) -> NostrTimelineEntryRecord {
         NostrTimelineEntryRecord(
             accountID: row["account_id"],
@@ -1559,6 +1784,10 @@ public final class NostrEventStore {
 
     private func isReplaceable(kind: Int) -> Bool {
         kind == 0 || kind == 3 || (10_000...19_999).contains(kind)
+    }
+
+    private func isAddressable(kind: Int) -> Bool {
+        (30_000...39_999).contains(kind)
     }
 
     private func expirationTimestamp(from event: NostrEvent) -> Int? {
