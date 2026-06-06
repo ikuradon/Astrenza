@@ -55,6 +55,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var paginationTask: Task<Void, Never>?
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
+    private var relayListEvent: NostrEvent?
+    private var contactListEvent: NostrEvent?
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     init(
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
@@ -191,6 +193,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys = []
             noteEvents = []
             metadataEvents = []
+            relayListEvent = nil
+            contactListEvent = nil
             nip05Resolutions = [:]
             hasMoreOlder = true
             return
@@ -200,6 +204,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         followedPubkeys = snapshot.followedPubkeys
         noteEvents = snapshot.events
         metadataEvents = snapshot.metadataEvents
+        relayListEvent = nil
+        contactListEvent = nil
         nip05Resolutions = snapshot.nip05Resolutions
         hasMoreOlder = true
         materializeEntries()
@@ -244,6 +250,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: followedPubkeys,
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
+            relayListEvent: relayListEvent,
+            contactListEvent: contactListEvent,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: hasMoreOlder
         )
@@ -254,6 +262,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         followedPubkeys = state.followedPubkeys
         noteEvents = state.noteEvents
         metadataEvents = state.metadataEvents
+        relayListEvent = state.relayListEvent
+        contactListEvent = state.contactListEvent
         nip05Resolutions = state.nip05Resolutions
         hasMoreOlder = state.hasMoreOlder
     }

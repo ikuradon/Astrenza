@@ -5,6 +5,8 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
     public let followedPubkeys: [String]
     public let noteEvents: [NostrEvent]
     public let metadataEvents: [NostrEvent]
+    public let relayListEvent: NostrEvent?
+    public let contactListEvent: NostrEvent?
     public let nip05Resolutions: [String: NostrNIP05Resolution]
     public let hasMoreOlder: Bool
 
@@ -13,6 +15,8 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         followedPubkeys: [String],
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
+        relayListEvent: NostrEvent? = nil,
+        contactListEvent: NostrEvent? = nil,
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         hasMoreOlder: Bool = true
     ) {
@@ -20,6 +24,8 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         self.followedPubkeys = followedPubkeys
         self.noteEvents = noteEvents
         self.metadataEvents = metadataEvents
+        self.relayListEvent = relayListEvent
+        self.contactListEvent = contactListEvent
         self.nip05Resolutions = nip05Resolutions
         self.hasMoreOlder = hasMoreOlder
     }
@@ -85,6 +91,8 @@ public struct NostrHomeTimelineLoader: Sendable {
                 followedPubkeys: [],
                 noteEvents: [],
                 metadataEvents: [],
+                relayListEvent: relayListEvent,
+                contactListEvent: contactEvent,
                 nip05Resolutions: [:],
                 hasMoreOlder: true
             )
@@ -110,6 +118,8 @@ public struct NostrHomeTimelineLoader: Sendable {
             followedPubkeys: contacts,
             noteEvents: sortedUnique(homeEvents),
             metadataEvents: sortedUnique(metadataEvents),
+            relayListEvent: relayListEvent,
+            contactListEvent: contactEvent,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: true
         )
@@ -145,6 +155,8 @@ public struct NostrHomeTimelineLoader: Sendable {
             followedPubkeys: current.followedPubkeys,
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
+            relayListEvent: current.relayListEvent,
+            contactListEvent: current.contactListEvent,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: current.hasMoreOlder
         )
@@ -177,6 +189,8 @@ public struct NostrHomeTimelineLoader: Sendable {
                 followedPubkeys: current.followedPubkeys,
                 noteEvents: current.noteEvents,
                 metadataEvents: current.metadataEvents,
+                relayListEvent: current.relayListEvent,
+                contactListEvent: current.contactListEvent,
                 nip05Resolutions: current.nip05Resolutions,
                 hasMoreOlder: false
             )
@@ -197,6 +211,8 @@ public struct NostrHomeTimelineLoader: Sendable {
             followedPubkeys: current.followedPubkeys,
             noteEvents: sortedUnique(current.noteEvents + olderEvents),
             metadataEvents: metadataEvents,
+            relayListEvent: current.relayListEvent,
+            contactListEvent: current.contactListEvent,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: true
         )

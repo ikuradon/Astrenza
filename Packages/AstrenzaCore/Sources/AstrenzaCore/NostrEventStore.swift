@@ -175,7 +175,7 @@ public final class NostrEventStore {
         timelineKey: String = "home",
         savedAt: Int = Int(Date().timeIntervalSince1970)
     ) throws {
-        let events = state.noteEvents + state.metadataEvents
+        let events = state.noteEvents + state.metadataEvents + [state.relayListEvent, state.contactListEvent].compactMap { $0 }
         try save(events: events, receivedAt: savedAt)
         try saveTimelineEntries(state.noteEvents.map { event in
             NostrTimelineEntryRecord(
@@ -217,13 +217,21 @@ public final class NostrEventStore {
             )
 
             let stateMetadata = try timelineStateMetadata(accountID: accountID, timelineKey: timelineKey, db: db)
-            let relays = stateMetadata?.relays ?? syncRelayURLs(accountID: accountID, timelineKey: timelineKey, db: db)
+            let relayListEvent = try latestReplaceableEvent(pubkey: accountID, kind: 10002, db: db)
+            let contactListEvent = try latestReplaceableEvent(pubkey: accountID, kind: 3, db: db)
+            let relayList = NostrRelayList.parse(from: relayListEvent)
+            let contactPubkeys = contactListEvent.map(NostrContactList.pubkeys(from:)) ?? []
+            let relays = relayList.readRelays.isEmpty
+                ? (stateMetadata?.relays ?? syncRelayURLs(accountID: accountID, timelineKey: timelineKey, db: db))
+                : relayList.readRelays
 
             return NostrHomeTimelineState(
                 relays: relays,
-                followedPubkeys: stateMetadata?.followedPubkeys ?? [],
+                followedPubkeys: contactPubkeys.isEmpty ? (stateMetadata?.followedPubkeys ?? []) : contactPubkeys,
                 noteEvents: notes,
                 metadataEvents: metadataEvents,
+                relayListEvent: relayListEvent,
+                contactListEvent: contactListEvent,
                 nip05Resolutions: stateMetadata?.nip05Resolutions ?? [:],
                 hasMoreOlder: stateMetadata?.hasMoreOlder ?? true
             )
@@ -841,11 +849,7 @@ public final class NostrEventStore {
 
         var events: [NostrEvent] = []
         for pubkey in pubkeys {
-            guard let eventID = try String.fetchOne(
-                db,
-                sql: "SELECT event_id FROM replaceable_heads WHERE pubkey = ? AND kind = ?",
-                arguments: [pubkey, kind]
-            ), let event = try fetchEvent(id: eventID, db: db) else {
+            guard let event = try latestReplaceableEvent(pubkey: pubkey, kind: kind, db: db) else {
                 continue
             }
             events.append(event)
@@ -856,6 +860,17 @@ public final class NostrEventStore {
             }
             return lhs.createdAt > rhs.createdAt
         }
+    }
+
+    private func latestReplaceableEvent(pubkey: String, kind: Int, db: Database) throws -> NostrEvent? {
+        guard let eventID = try String.fetchOne(
+            db,
+            sql: "SELECT event_id FROM replaceable_heads WHERE pubkey = ? AND kind = ?",
+            arguments: [pubkey, kind]
+        ) else {
+            return nil
+        }
+        return try fetchEvent(id: eventID, db: db)
     }
 
     private func syncRelayURLs(accountID: String, timelineKey: String, db: Database) -> [String] {

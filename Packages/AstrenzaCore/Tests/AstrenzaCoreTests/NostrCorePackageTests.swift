@@ -313,6 +313,43 @@ struct NostrCorePackageTests {
         #expect(!restored.hasMoreOlder)
     }
 
+    @Test("Nostr event store restores follows and relays from replaceable heads")
+    func eventStoreHomeTimelineReplaceableHeads() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "f", count: 64)
+        let followed = String(repeating: "a", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: followed, createdAt: 200, content: "followed")
+        let relayList = nostrEvent(
+            kind: 10002,
+            pubkey: accountID,
+            createdAt: 150,
+            tags: [["r", "wss://read.example", "read"]]
+        )
+        let contacts = nostrEvent(
+            kind: 3,
+            pubkey: accountID,
+            createdAt: 160,
+            tags: [["p", followed]]
+        )
+        let state = NostrHomeTimelineState(
+            relays: ["wss://stale.example"],
+            followedPubkeys: [],
+            noteEvents: [note],
+            metadataEvents: [],
+            relayListEvent: relayList,
+            contactListEvent: contacts,
+            hasMoreOlder: true
+        )
+
+        try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 300)
+        let restored = try #require(try store.homeTimelineState(accountID: accountID))
+
+        #expect(restored.relays == ["wss://read.example"])
+        #expect(restored.followedPubkeys == [followed])
+        #expect(restored.relayListEvent == relayList)
+        #expect(restored.contactListEvent == contacts)
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)
