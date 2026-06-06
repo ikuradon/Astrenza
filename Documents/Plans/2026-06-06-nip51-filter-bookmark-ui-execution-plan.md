@@ -124,11 +124,11 @@ git commit -m "Project NIP-51 mute lists into filters"
 
 ## Phase 2: Merge Cached NIP-51 Mutes and Add Store Actions
 
-- [ ] **Step 1: Add app test**
+- [x] **Step 1: Add app test**
 
 Add a test to `Astrenza/Tests/AstrenzaTests/TimelineModelTests.swift` that creates a `kind:10000` mute list, uses `NostrFilterRuleSet.publicMuteRules`, passes the rule set to `NostrTimelineMaterializer.posts`, and expects the muted author post to remain present with `.filtered` collapse reason.
 
-- [ ] **Step 2: Implement store helper**
+- [x] **Step 2: Implement store helper**
 
 Update `NostrHomeTimelineStore.filterRuleSet()` so it:
 
@@ -139,7 +139,7 @@ Update `NostrHomeTimelineStore.filterRuleSet()` so it:
 5. appends `NostrFilterRuleSet.publicMuteRules(accountID:items:updatedAt:)`
 6. returns `nil` only when the merged array is empty
 
-- [ ] **Step 3: Add local action methods**
+- [x] **Step 3: Add local action methods**
 
 Add these `@MainActor` methods to `NostrHomeTimelineStore`:
 
@@ -155,7 +155,7 @@ func isBookmarked(_ post: TimelinePost) -> Bool
 
 `isBookmarked(_:)` should read local bookmarks for the account and check the post id.
 
-- [ ] **Step 4: Run app tests**
+- [x] **Step 4: Run app tests**
 
 Run:
 
@@ -166,7 +166,7 @@ xcodebuild -project Astrenza.xcodeproj -scheme Astrenza -configuration Debug -de
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Astrenza/Sources/AstrenzaApp/Nostr/NostrHomeTimelineStore.swift Astrenza/Tests/AstrenzaTests/TimelineModelTests.swift

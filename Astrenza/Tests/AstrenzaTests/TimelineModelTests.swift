@@ -398,6 +398,44 @@ struct TimelineModelTests {
         #expect(post.bodyPresentation.collapseReason == .filtered)
     }
 
+    @Test("Nostr materializer collapses posts muted by cached NIP-51 list items")
+    func nostrMaterializerCollapsesNIP51MutedPosts() throws {
+        let author = String(repeating: "b", count: 64)
+        let note = timelineEvent(
+            idSeed: "nip51-filtered-note",
+            pubkey: author,
+            createdAt: 100,
+            content: "this author is muted by a public NIP-51 list"
+        )
+        let listID = "10000:account:"
+        let items = [
+            NostrListItemRecord(
+                listID: listID,
+                itemKey: "pubkey:\(author)",
+                itemType: "pubkey",
+                value: author,
+                relayHint: nil,
+                visibility: "public",
+                position: 0
+            )
+        ]
+        let filterRules = NostrFilterRuleSet(
+            rules: NostrFilterRuleSet.publicMuteRules(accountID: "account", items: items, updatedAt: 100)
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            filterRules: filterRules,
+            now: 100
+        )
+        let post = try #require(posts.first)
+
+        #expect(post.id == note.id)
+        #expect(post.bodyPresentation.collapseReason == .filtered)
+    }
+
     @Test("Nostr materializer turns kind 6 reposts into attributed timeline posts")
     func nostrMaterializerUsesKind6Reposts() throws {
         let author = String(repeating: "a", count: 64)

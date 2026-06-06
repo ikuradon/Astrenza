@@ -140,6 +140,48 @@ final class NostrHomeTimelineStore: ObservableObject {
         phase = .loaded
     }
 
+    func muteAuthor(of post: TimelinePost) {
+        guard let account, let eventStore else { return }
+        let now = Int(Date().timeIntervalSince1970)
+        let rule = NostrFilterRuleRecord(
+            ruleID: "local:mute-pubkey:\(account.pubkey):\(post.author.pubkey)",
+            accountID: account.pubkey,
+            kind: .mutedPubkey,
+            value: post.author.pubkey,
+            createdAt: now,
+            updatedAt: now
+        )
+
+        do {
+            try eventStore.saveFilterRule(rule)
+            materializeEntries()
+        } catch {
+            phase = .failed("Mute failed: \(error.localizedDescription)")
+        }
+    }
+
+    func bookmark(_ post: TimelinePost) {
+        guard let account, let eventStore else { return }
+        let now = Int(Date().timeIntervalSince1970)
+        let bookmark = NostrLocalBookmarkRecord(
+            accountID: account.pubkey,
+            eventID: post.id,
+            createdAt: now
+        )
+
+        do {
+            try eventStore.saveLocalBookmark(bookmark)
+        } catch {
+            phase = .failed("Bookmark failed: \(error.localizedDescription)")
+        }
+    }
+
+    func isBookmarked(_ post: TimelinePost) -> Bool {
+        guard let account, let eventStore else { return false }
+        return ((try? eventStore.localBookmarks(accountID: account.pubkey)) ?? [])
+            .contains { $0.eventID == post.id }
+    }
+
     func cancel() {
         loadTask?.cancel()
         paginationTask?.cancel()
@@ -369,10 +411,31 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func filterRuleSet() -> NostrFilterRuleSet? {
-        guard let account, let rules = try? eventStore?.filterRules(accountID: account.pubkey), !rules.isEmpty else {
+        guard let account, let eventStore else {
             return nil
         }
+
+        var rules = (try? eventStore.filterRules(accountID: account.pubkey)) ?? []
+        let publicMuteItems = cachedPublicMuteItems(accountID: account.pubkey, eventStore: eventStore)
+        rules.append(
+            contentsOf: NostrFilterRuleSet.publicMuteRules(
+                accountID: account.pubkey,
+                items: publicMuteItems,
+                updatedAt: Int(Date().timeIntervalSince1970)
+            )
+        )
+
+        guard !rules.isEmpty else { return nil }
         return NostrFilterRuleSet(rules: rules)
+    }
+
+    private func cachedPublicMuteItems(accountID: String, eventStore: NostrEventStore) -> [NostrListItemRecord] {
+        guard let summaries = try? eventStore.listSummaries(accountID: accountID) else { return [] }
+        return summaries
+            .filter { $0.kind == 10_000 }
+            .flatMap { summary in
+                (try? eventStore.listItems(listID: summary.listID)) ?? []
+            }
     }
 
     private func mediaAssetsByEventID(for events: [NostrEvent]) -> [String: [NostrMediaAssetRecord]] {

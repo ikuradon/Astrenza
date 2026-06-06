@@ -22,6 +22,24 @@ public struct NostrListItemRecord: Codable, Equatable, Sendable {
     public let relayHint: String?
     public let visibility: String
     public let position: Int
+
+    public init(
+        listID: String,
+        itemKey: String,
+        itemType: String,
+        value: String,
+        relayHint: String?,
+        visibility: String,
+        position: Int
+    ) {
+        self.listID = listID
+        self.itemKey = itemKey
+        self.itemType = itemType
+        self.value = value
+        self.relayHint = relayHint
+        self.visibility = visibility
+        self.position = position
+    }
 }
 
 public struct NostrParsedList: Equatable, Sendable {
