@@ -98,7 +98,7 @@ The remaining phases below intentionally revisit some of those areas where they 
   - empty reason: generic sensitive state
   - non-empty reason: overlay reason text
   - author/header remains visible, body/media/OGP are blurred
-- [ ] Interpret NIP-10 reply markers:
+- [x] Interpret NIP-10 reply markers:
   - root/reply marker tags win when present
   - fallback to positional `e` tags when markers are absent
   - reply marker is not shown for root posts

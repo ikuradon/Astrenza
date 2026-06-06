@@ -186,6 +186,51 @@ struct TimelineModelTests {
         #expect(deletedEntry.id == "deleted-deleted-target")
     }
 
+    @Test("Nostr materializer does not treat root markers as replies")
+    func nostrMaterializerIgnoresRootOnlyReplyMarker() throws {
+        let author = String(repeating: "a", count: 64)
+        let root = timelineEvent(idSeed: "root", pubkey: author, createdAt: 100, content: "root")
+        let note = timelineEvent(
+            idSeed: "root-marker-note",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["e", root.id, "", "root"]],
+            content: "thread root marker only"
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note, root],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first { $0.id == note.id })
+
+        #expect(post.replyContext == nil)
+        #expect(post.replyMention == nil)
+    }
+
+    @Test("Nostr materializer falls back to unmarked e tags for legacy replies")
+    func nostrMaterializerUsesUnmarkedReplyFallback() throws {
+        let author = String(repeating: "a", count: 64)
+        let parent = timelineEvent(idSeed: "legacy-parent", pubkey: author, createdAt: 100, content: "legacy parent")
+        let reply = timelineEvent(
+            idSeed: "legacy-reply",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["e", parent.id]],
+            content: "legacy reply"
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [reply, parent],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first { $0.id == reply.id })
+
+        #expect(post.replyContext?.bodyPreview == "legacy parent")
+    }
+
     @Test("_@domain NIP-05 is displayed as domain only")
     func rootNIP05Display() {
         let author = TimelineAuthor.resolved(

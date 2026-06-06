@@ -375,24 +375,30 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private static func replyParentID(from tags: [NostrStoredEventTag]) -> String? {
         let replyTag = tags.last { $0.name == "e" && $0.marker == "reply" }
-        let fallbackTag = tags.last { $0.name == "e" }
-        return replyTag?.value ?? fallbackTag?.value
+        if let replyTag {
+            return replyTag.value
+        }
+
+        let eTags = tags.filter { $0.name == "e" }
+        let hasMarkedThreadTags = eTags.contains { $0.marker != nil }
+        guard !hasMarkedThreadTags else { return nil }
+        return eTags.last?.value
     }
 
     private static func replyParentID(from tags: [[String]]) -> String? {
         let replyTag = tags.last { tag in
             tag.count >= 4 && tag[0] == "e" && tag[3] == "reply"
         }
-        let fallbackTag = tags.last { tag in
-            tag.count >= 2 && tag[0] == "e"
-        }
         if let replyTag, replyTag.count >= 2 {
             return replyTag[1]
         }
-        if let fallbackTag, fallbackTag.count >= 2 {
-            return fallbackTag[1]
+
+        let eTags = tags.filter { tag in
+            tag.count >= 2 && tag[0] == "e"
         }
-        return nil
+        let hasMarkedThreadTags = eTags.contains { $0.count >= 4 }
+        guard !hasMarkedThreadTags else { return nil }
+        return eTags.last?[1]
     }
 
     private func loaderState() -> NostrHomeTimelineState {
@@ -714,10 +720,16 @@ enum NostrTimelineMaterializer {
         let replyTag = tags.last { tag in
             tag.count >= 4 && tag[0] == "e" && tag[3] == "reply"
         }
-        let fallbackTag = tags.last { tag in
+        if let replyTag, replyTag.count >= 2 {
+            return replyTag[1]
+        }
+
+        let eTags = tags.filter { tag in
             tag.count >= 2 && tag[0] == "e"
         }
-        return replyTag?[1] ?? fallbackTag?[1]
+        let hasMarkedThreadTags = eTags.contains { $0.count >= 4 }
+        guard !hasMarkedThreadTags else { return nil }
+        return eTags.last?[1]
     }
 }
 
