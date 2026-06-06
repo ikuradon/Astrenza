@@ -136,6 +136,58 @@ struct NostrCorePackageTests {
         #expect(cache.cachedData(for: url) == data)
     }
 
+    @Test("Nostr event store persists events and deduplicates by id")
+    func eventStorePersistsEvents() throws {
+        let store = try NostrEventStore.inMemory()
+        let event = nostrEvent(kind: 1, content: "local-first timeline")
+
+        try store.save(events: [event, event], receivedAt: 1_800_000_010)
+
+        #expect(try store.eventCount() == 1)
+        #expect(try store.event(id: event.id) == event)
+        #expect(try store.events(kind: 1, limit: 10).map(\.id) == [event.id])
+    }
+
+    @Test("Nostr event store normalizes event tags")
+    func eventStoreNormalizesTags() throws {
+        let store = try NostrEventStore.inMemory()
+        let rootID = String(repeating: "b", count: 64)
+        let replyID = String(repeating: "c", count: 64)
+        let event = nostrEvent(
+            kind: 1,
+            content: "reply chain",
+            tags: [
+                ["e", rootID, "wss://relay.example", "root"],
+                ["e", replyID, "wss://relay.example", "reply"],
+                ["p", String(repeating: "d", count: 64), "wss://people.example"],
+                ["alt", "screen reader text"]
+            ]
+        )
+
+        try store.save(events: [event])
+        let tags = try store.tags(eventID: event.id)
+
+        #expect(tags.map { $0.name } == ["e", "e", "p", "alt"])
+        #expect(tags[0].value == rootID)
+        #expect(tags[0].relayHint == "wss://relay.example")
+        #expect(tags[0].marker == "root")
+        #expect(tags[1].marker == "reply")
+        #expect(tags[2].relayHint == "wss://people.example")
+        #expect(tags[3].value == "screen reader text")
+    }
+
+    @Test("Nostr event store keeps latest replaceable head")
+    func eventStoreReplaceableHeads() throws {
+        let store = try NostrEventStore.inMemory()
+        let pubkey = String(repeating: "e", count: 64)
+        let older = nostrEvent(kind: 0, pubkey: pubkey, createdAt: 100, content: #"{"name":"old"}"#)
+        let newer = nostrEvent(kind: 0, pubkey: pubkey, createdAt: 200, content: #"{"name":"new"}"#)
+
+        try store.save(events: [newer, older])
+
+        #expect(try store.latestReplaceableEvent(pubkey: pubkey, kind: 0)?.id == newer.id)
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)

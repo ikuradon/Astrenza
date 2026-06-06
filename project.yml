@@ -8,10 +8,13 @@ settings:
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    SWIFT_VERSION: "6.0"
+    SWIFT_VERSION: "6.1"
 packages:
   AstrenzaCore:
     path: Packages/AstrenzaCore
+  GRDB.swift:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 7.11.0
   secp256k1:
     url: https://github.com/jb55/secp256k1.swift
     revision: 40b4b38b3b1c83f7088c76189a742870e0ca06a9
@@ -27,6 +30,8 @@ targets:
     dependencies:
       - package: AstrenzaCore
         product: AstrenzaCore
+      - package: GRDB.swift
+        product: GRDB
       - package: secp256k1
         product: secp256k1
       - package: negentropy-swift
@@ -51,6 +56,8 @@ targets:
       - target: Astrenza
       - package: AstrenzaCore
         product: AstrenzaCore
+      - package: GRDB.swift
+        product: GRDB
       - package: secp256k1
         product: secp256k1
     settings:
