@@ -258,6 +258,35 @@ struct TimelineModelTests {
         #expect(repostedPost.repostedBy?.author.pubkey == reposter)
     }
 
+    @Test("Nostr materializer keeps kind 6 reposts visible when the target event is missing")
+    func nostrMaterializerUsesKind6MissingTargetPlaceholder() throws {
+        let author = String(repeating: "a", count: 64)
+        let reposter = String(repeating: "b", count: 64)
+        let repost = timelineEvent(
+            idSeed: "missing-repost-event",
+            kind: 6,
+            pubkey: reposter,
+            createdAt: 300,
+            tags: [
+                ["e", timelineEventID("missing-repost-target")],
+                ["p", author]
+            ],
+            content: ""
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [repost],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let repostedPost = try #require(posts.first { $0.id == repost.id })
+
+        #expect(repostedPost.body == "Reposted post unavailable")
+        #expect(repostedPost.author.pubkey == author)
+        #expect(repostedPost.repostedBy?.author.pubkey == reposter)
+        #expect(repostedPost.bodyPresentation.timelineLineLimit == 1)
+    }
+
     @Test("_@domain NIP-05 is displayed as domain only")
     func rootNIP05Display() {
         let author = TimelineAuthor.resolved(

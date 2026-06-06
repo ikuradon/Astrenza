@@ -584,10 +584,18 @@ enum NostrTimelineMaterializer {
         events
             .filter { $0.kind == 6 }
             .compactMap { repostEvent in
-                guard let targetID = repostTargetID(from: repostEvent),
-                      let targetEvent = eventsByID[targetID],
+                guard let targetID = repostTargetID(from: repostEvent) else { return nil }
+
+                let attribution = repostAttribution(for: repostEvent, followedPubkeys: followedPubkeys)
+                guard let targetEvent = eventsByID[targetID],
                       targetEvent.kind == 1
-                else { return nil }
+                else {
+                    return missingRepostTarget(
+                        repostEvent: repostEvent,
+                        targetID: targetID,
+                        attribution: attribution
+                    )
+                }
 
                 let targetItem = NostrHomeTimelineMaterializer.items(
                     noteEvents: [targetEvent],
@@ -597,24 +605,6 @@ enum NostrTimelineMaterializer {
                 ).first
                 guard let targetItem else { return nil }
 
-                let repostAuthor = TimelineAuthor.unresolved(pubkey: repostEvent.pubkey)
-                let repostItem = NostrHomeTimelineItem(
-                    id: repostEvent.id,
-                    pubkey: repostEvent.pubkey,
-                    displayName: nil,
-                    nip05: nil,
-                    nip05Status: .absent,
-                    isFollowed: followedPubkeys.contains(repostEvent.pubkey),
-                    body: "",
-                    createdAt: repostEvent.createdAt,
-                    avatarPictureState: .metadataPending,
-                    avatarImageURL: nil
-                )
-                let attribution = TimelineRepostAttribution(
-                    author: repostAuthor,
-                    avatar: avatar(for: repostItem),
-                    timestamp: relativeTimestamp(from: repostEvent.createdAt)
-                )
                 return SortableTimelinePost(
                     id: repostEvent.id,
                     sortTimestamp: repostEvent.createdAt,
@@ -627,6 +617,64 @@ enum NostrTimelineMaterializer {
                     )
                 )
             }
+    }
+
+    private static func repostAttribution(
+        for repostEvent: NostrEvent,
+        followedPubkeys: Set<String>
+    ) -> TimelineRepostAttribution {
+        let repostItem = NostrHomeTimelineItem(
+            id: repostEvent.id,
+            pubkey: repostEvent.pubkey,
+            displayName: nil,
+            nip05: nil,
+            nip05Status: .absent,
+            isFollowed: followedPubkeys.contains(repostEvent.pubkey),
+            body: "",
+            createdAt: repostEvent.createdAt,
+            avatarPictureState: .metadataPending,
+            avatarImageURL: nil
+        )
+        return TimelineRepostAttribution(
+            author: .unresolved(pubkey: repostEvent.pubkey),
+            avatar: avatar(for: repostItem),
+            timestamp: relativeTimestamp(from: repostEvent.createdAt)
+        )
+    }
+
+    private static func missingRepostTarget(
+        repostEvent: NostrEvent,
+        targetID: String,
+        attribution: TimelineRepostAttribution
+    ) -> SortableTimelinePost {
+        let targetPubkey = repostEvent.tags.first { tag in
+            tag.count >= 2 && tag[0] == "p" && tag[1].count == 64
+        }?[1] ?? TimelineAuthor.mockPubkey(for: targetID)
+        let author = TimelineAuthor.unresolved(pubkey: targetPubkey)
+        let avatar = AvatarStyle(
+            primary: .secondary,
+            secondary: .gray,
+            symbolName: "arrow.triangle.2.circlepath",
+            pictureState: .metadataPending,
+            placeholderSeed: targetPubkey
+        )
+        let post = TimelinePost(
+            id: repostEvent.id,
+            author: author,
+            avatar: avatar,
+            body: "Reposted post unavailable",
+            timestamp: relativeTimestamp(from: repostEvent.createdAt),
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil,
+            repostedBy: attribution,
+            bodyPresentation: .collapsed(lineLimit: 1, reason: .longText),
+            actionState: .none
+        )
+        return SortableTimelinePost(id: repostEvent.id, sortTimestamp: repostEvent.createdAt, post: post)
     }
 
     static func avatar(for item: NostrHomeTimelineItem) -> AvatarStyle {

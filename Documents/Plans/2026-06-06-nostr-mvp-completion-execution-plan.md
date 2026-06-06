@@ -102,10 +102,10 @@ The remaining phases below intentionally revisit some of those areas where they 
   - root/reply marker tags win when present
   - fallback to positional `e` tags when markers are absent
   - reply marker is not shown for root posts
-- [ ] Interpret kind:6 repost:
+- [x] Interpret kind:6 repost:
   - show repost attribution from the reposting event
   - [x] use cached target event if available
-  - [ ] otherwise show a compact missing target placeholder
+  - [x] otherwise show a compact missing target placeholder
 - [ ] Interpret quote references from `q` tags, NIP-19 references in content, or quote-like `e` tags where supported by existing parser.
 - [ ] Keep relay hints internal; UI should show post author, original post time, and repost/quote actor time, not relay hints.
 - [ ] Reuse the same row component for Home TL, User Detail, and Post Detail wherever the displayed entity is a timeline post.
