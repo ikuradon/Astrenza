@@ -146,7 +146,7 @@ The remaining phases below intentionally revisit some of those areas where they 
   - `10007` search relays
 - [x] Store encrypted private list content raw for now; do not attempt NIP-44 decrypt in this phase.
 - [x] Expose DB APIs for list summaries and list items.
-- [ ] Wire settings/list UI to DB-backed summaries with empty states when no list event is cached.
+- [x] Wire settings/list UI to DB-backed summaries with empty states when no list event is cached.
 
 **Acceptance tests:**
 - addressable replacement test

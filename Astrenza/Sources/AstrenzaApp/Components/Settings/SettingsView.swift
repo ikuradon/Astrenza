@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 
 struct TimelineSwipeSettings {
@@ -9,6 +10,8 @@ struct TimelineSwipeSettings {
 
 struct SettingsView: View {
     let onClose: () -> Void
+    let accountID: String?
+    let eventStore: NostrEventStore?
     @Binding var swipeSettings: TimelineSwipeSettings
     @State private var isSoundsEnabled = true
     @State private var isHapticsEnabled = true
@@ -27,6 +30,18 @@ struct SettingsView: View {
     @State private var textScale = 0.2
     @State private var usesSystemTextSize = true
 
+    init(
+        onClose: @escaping () -> Void,
+        swipeSettings: Binding<TimelineSwipeSettings>,
+        accountID: String? = nil,
+        eventStore: NostrEventStore? = nil
+    ) {
+        self.onClose = onClose
+        _swipeSettings = swipeSettings
+        self.accountID = accountID
+        self.eventStore = eventStore
+    }
+
     var body: some View {
         NavigationStack {
             SettingsList {
@@ -34,12 +49,16 @@ struct SettingsView: View {
                     SettingsAccountRow(
                         title: "User Alpha",
                         subtitle: "alpha@mock.example",
-                        avatarStyle: AvatarStyle(primary: .black, secondary: .cyan, symbolName: "cat.fill")
+                        avatarStyle: AvatarStyle(primary: .black, secondary: .cyan, symbolName: "cat.fill"),
+                        accountID: accountID,
+                        eventStore: eventStore
                     )
                     SettingsAccountRow(
                         title: "User Beta",
                         subtitle: "beta@mock.example",
-                        avatarStyle: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill")
+                        avatarStyle: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
+                        accountID: nil,
+                        eventStore: nil
                     )
                     SettingsNavigationRow(title: "Add Account", icon: "plus", tint: .green) {
                         OnboardingView()
@@ -337,10 +356,214 @@ private struct EmptySettingsDestination: View {
     }
 }
 
+private struct NostrListSettingsView: View {
+    let accountID: String?
+    let eventStore: NostrEventStore?
+    @State private var summaries: [NostrListSummary] = []
+    @State private var itemsByListID: [String: [NostrListItemRecord]] = [:]
+    @State private var loadError: String?
+
+    var body: some View {
+        SettingsList {
+            SettingsSection(title: "NIP-51 LISTS") {
+                if accountID == nil || eventStore == nil {
+                    NostrListEmptyRow(
+                        icon: "person.crop.circle.badge.questionmark",
+                        title: "No live account",
+                        subtitle: "Log in with npub/NIP-05 to read cached mute, bookmark, relay, and follow-set events."
+                    )
+                } else if let loadError {
+                    NostrListEmptyRow(
+                        icon: "exclamationmark.triangle.fill",
+                        title: "Could not load cached lists",
+                        subtitle: loadError
+                    )
+                } else if summaries.isEmpty {
+                    NostrListEmptyRow(
+                        icon: "tray.fill",
+                        title: "No cached list events",
+                        subtitle: "When kind:10000, 10003, 10007, 30000, 30002, or 30003 events are received, they will appear here."
+                    )
+                } else {
+                    ForEach(summaries, id: \.listID) { summary in
+                        NostrListSummaryRow(
+                            summary: summary,
+                            items: itemsByListID[summary.listID] ?? []
+                        )
+                    }
+                }
+            } footer: {
+                "This is read-only for now. Private encrypted content is cached as an opaque payload until signer-backed decryption is added."
+            }
+        }
+        .settingsNavigation(title: "Muting / Filters")
+        .onAppear(perform: reload)
+    }
+
+    private func reload() {
+        guard let accountID, let eventStore else {
+            summaries = []
+            itemsByListID = [:]
+            loadError = nil
+            return
+        }
+
+        do {
+            let loadedSummaries = try eventStore.listSummaries(accountID: accountID)
+            summaries = loadedSummaries
+            itemsByListID = Dictionary(
+                uniqueKeysWithValues: try loadedSummaries.map { summary in
+                    (summary.listID, try eventStore.listItems(listID: summary.listID))
+                }
+            )
+            loadError = nil
+        } catch {
+            summaries = []
+            itemsByListID = [:]
+            loadError = error.localizedDescription
+        }
+    }
+}
+
+private struct NostrListSummaryRow: View {
+    let summary: NostrListSummary
+    let items: [NostrListItemRecord]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                SettingsIcon(systemName: iconName, tint: tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(displayTitle)
+                            .font(.system(size: 17, weight: .black, design: .rounded))
+                            .lineLimit(1)
+                        Text("kind:\(summary.kind)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(summary.visibility)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Text("\(items.count)")
+                    .font(.system(size: 19, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(items.prefix(5), id: \.rowID) { item in
+                        NostrListItemLine(item: item)
+                    }
+                    if items.count > 5 {
+                        Text("+\(items.count - 5) more")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.leading, 46)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+    }
+
+    private var displayTitle: String {
+        summary.title ?? kindTitle
+    }
+
+    private var kindTitle: String {
+        switch summary.kind {
+        case 10_000: "Mute List"
+        case 10_003: "Bookmarks"
+        case 10_007: "Search Relays"
+        case 30_000: "Follow Set"
+        case 30_002: "Relay Set"
+        case 30_003: "Bookmark Set"
+        default: "List"
+        }
+    }
+
+    private var iconName: String {
+        switch summary.kind {
+        case 10_000: "speaker.slash.fill"
+        case 10_003, 30_003: "bookmark.fill"
+        case 10_007, 30_002: "antenna.radiowaves.left.and.right"
+        case 30_000: "person.2.fill"
+        default: "list.bullet"
+        }
+    }
+
+    private var tint: Color {
+        switch summary.kind {
+        case 10_000: .orange
+        case 10_003, 30_003: .purple
+        case 10_007, 30_002: .green
+        case 30_000: .cyan
+        default: .gray
+        }
+    }
+}
+
+private struct NostrListItemLine: View {
+    let item: NostrListItemRecord
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(item.itemType)
+                .font(.system(size: 11, weight: .black, design: .rounded))
+                .foregroundStyle(Color.astrenzaAccent)
+                .frame(width: 52, alignment: .leading)
+            Text(displayValue)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var displayValue: String {
+        switch item.itemType {
+        case "pubkey", "event", "address":
+            item.value.abbreviatedMiddle
+        default:
+            item.value
+        }
+    }
+}
+
+private struct NostrListEmptyRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            SettingsIcon(systemName: icon, tint: .gray)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 17, weight: .black, design: .rounded))
+                Text(subtitle)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+    }
+}
+
 private struct AccountSettingsView: View {
     let title: String
     let subtitle: String
     let avatarStyle: AvatarStyle
+    let accountID: String?
+    let eventStore: NostrEventStore?
 
     private var abbreviatedNpub: String {
         title.contains("Beta") ? "npub1beta4x2ck8...w6mx" : "npub1astrenza7q3n9...9h2q"
@@ -378,7 +601,7 @@ private struct AccountSettingsView: View {
                     RelaySettingsView()
                 }
                 SettingsNavigationRow(title: "Muting / Filters", icon: "line.3.horizontal.decrease.circle.fill", tint: .orange) {
-                    EmptySettingsDestination(title: "Muting / Filters")
+                    NostrListSettingsView(accountID: accountID, eventStore: eventStore)
                 }
                 SettingsNavigationRow(title: "Backup / Export", icon: "square.and.arrow.up.fill", tint: .gray) {
                     EmptySettingsDestination(title: "Backup / Export")
@@ -536,10 +759,18 @@ private struct SettingsAccountRow: View {
     let title: String
     let subtitle: String
     let avatarStyle: AvatarStyle
+    let accountID: String?
+    let eventStore: NostrEventStore?
 
     var body: some View {
         NavigationLink {
-            AccountSettingsView(title: title, subtitle: subtitle, avatarStyle: avatarStyle)
+            AccountSettingsView(
+                title: title,
+                subtitle: subtitle,
+                avatarStyle: avatarStyle,
+                accountID: accountID,
+                eventStore: eventStore
+            )
         } label: {
             SettingsRowShell(iconView: {
                 AvatarView(style: avatarStyle, size: 36)
@@ -726,6 +957,19 @@ private struct SettingsDivider: View {
         Rectangle()
             .fill(Color.astrenzaSeparator)
             .frame(height: 1)
+    }
+}
+
+private extension NostrListItemRecord {
+    var rowID: String {
+        "\(listID):\(position):\(itemKey)"
+    }
+}
+
+private extension String {
+    var abbreviatedMiddle: String {
+        guard count > 18 else { return self }
+        return "\(prefix(10))...\(suffix(8))"
     }
 }
 

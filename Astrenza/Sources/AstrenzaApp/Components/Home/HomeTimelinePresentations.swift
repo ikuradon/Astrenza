@@ -24,7 +24,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView(onClose: {
                     isSettingsPresented = false
-                }, swipeSettings: $swipeSettings)
+                }, swipeSettings: $swipeSettings, accountID: accountID, eventStore: eventStore)
                 .presentationCornerRadius(26)
             }
             .sheet(isPresented: $isRelayStatusPresented) {
