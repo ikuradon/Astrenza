@@ -6,8 +6,8 @@ struct RelayStatusSheetView: View {
     @StateObject private var store: RelayStatusSheetStore
     @State private var selectedRelayURL: String?
 
-    init(relayURLs: [String] = []) {
-        _store = StateObject(wrappedValue: RelayStatusSheetStore(relayURLs: relayURLs))
+    init(relayURLs: [String] = [], accountID: String? = nil, eventStore: NostrEventStore? = nil) {
+        _store = StateObject(wrappedValue: RelayStatusSheetStore(relayURLs: relayURLs, accountID: accountID, eventStore: eventStore))
         _selectedRelayURL = State(initialValue: relayURLs.first ?? RelayMockStore.relays.first?.url)
     }
 
@@ -76,11 +76,23 @@ private final class RelayStatusSheetStore: ObservableObject {
 
     let isLive: Bool
     private let client: NostrRelayInformationClient
+    private let accountID: String?
+    private let eventStore: NostrEventStore?
 
-    init(relayURLs: [String], client: NostrRelayInformationClient = NostrRelayInformationClient()) {
+    init(
+        relayURLs: [String],
+        accountID: String?,
+        eventStore: NostrEventStore?,
+        client: NostrRelayInformationClient = NostrRelayInformationClient()
+    ) {
         isLive = !relayURLs.isEmpty
         self.client = client
-        relays = relayURLs.isEmpty ? RelayMockStore.relays : relayURLs.map(RelayDescriptor.livePlaceholder(url:))
+        self.accountID = accountID
+        self.eventStore = eventStore
+        let summaries = Self.loadSummaries(accountID: accountID, eventStore: eventStore)
+        relays = relayURLs.isEmpty
+            ? RelayMockStore.relays
+            : relayURLs.map { RelayDescriptor.livePlaceholder(url: $0).applying(summary: summaries[$0]) }
     }
 
     var connectedCount: Int {
@@ -93,23 +105,72 @@ private final class RelayStatusSheetStore: ObservableObject {
 
     func refresh() async {
         guard isLive else { return }
-        await withTaskGroup(of: (String, RelayDescriptor).self) { group in
-            for relay in relays {
-                group.addTask { [client] in
-                    do {
-                        let info = try await client.information(for: relay.url)
-                        return (relay.url, RelayDescriptor.live(url: relay.url, information: info))
-                    } catch {
-                        return (relay.url, RelayDescriptor.liveFailure(url: relay.url, error: error))
-                    }
-                }
+        for relay in relays {
+            let startedAt = Int(Date().timeIntervalSince1970)
+            let descriptor: RelayDescriptor
+            do {
+                let info = try await client.information(for: relay.url)
+                descriptor = RelayDescriptor.live(url: relay.url, information: info)
+                try? eventStore?.saveRelayProfile(NostrRelayProfileRecord(
+                    relayURL: relay.url,
+                    information: info,
+                    healthScore: 1,
+                    lastEOSEAt: nil,
+                    lastConnectedAt: startedAt,
+                    authRequired: info.limitation?.authRequired == true,
+                    paymentRequired: info.limitation?.paymentRequired == true
+                ))
+                recordRelaySyncEvent(
+                    relayURL: relay.url,
+                    kind: .eose,
+                    occurredAt: startedAt,
+                    message: "NIP-11 info fetched"
+                )
+            } catch {
+                descriptor = RelayDescriptor.liveFailure(url: relay.url, error: error)
+                recordRelaySyncEvent(
+                    relayURL: relay.url,
+                    kind: .partialFailure,
+                    occurredAt: startedAt,
+                    message: error.localizedDescription
+                )
             }
 
-            for await (url, descriptor) in group {
-                guard let index = relays.firstIndex(where: { $0.url == url }) else { continue }
-                relays[index] = descriptor
-            }
+            guard let index = relays.firstIndex(where: { $0.url == relay.url }) else { continue }
+            let summary = Self.loadSummaries(accountID: accountID, eventStore: eventStore)[relay.url]
+            relays[index] = descriptor.applying(summary: summary)
         }
+    }
+
+    private func recordRelaySyncEvent(
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        occurredAt: Int,
+        message: String
+    ) {
+        guard let accountID else { return }
+        try? eventStore?.saveRelaySyncEvents([NostrRelaySyncEventRecord(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURL: relayURL,
+            kind: kind,
+            occurredAt: occurredAt,
+            subscriptionID: "astrenza-nip11",
+            eventCount: 0,
+            message: message
+        )])
+    }
+
+    private static func loadSummaries(
+        accountID: String?,
+        eventStore: NostrEventStore?
+    ) -> [String: NostrRelaySyncSummaryRecord] {
+        guard let accountID,
+              let summaries = try? eventStore?.relaySyncSummaries(accountID: accountID, timelineKey: "home")
+        else {
+            return [:]
+        }
+        return Dictionary(uniqueKeysWithValues: summaries.map { ($0.relayURL, $0) })
     }
 }
 
@@ -379,6 +440,40 @@ private struct RelayInfoLine: View {
 }
 
 private extension RelayDescriptor {
+    func applying(summary: NostrRelaySyncSummaryRecord?) -> RelayDescriptor {
+        guard let summary else { return self }
+
+        let errors = summary.timeoutCount + summary.partialFailureCount
+        let status: RelayConnectionStatus
+        if summary.timeoutCount > 0 && summary.lastEventKind == .timeout {
+            status = .offline
+        } else if summary.partialFailureCount > 0 && summary.lastEventKind == .partialFailure {
+            status = .connecting
+        } else {
+            status = self.status == .connecting ? .online : self.status
+        }
+
+        return RelayDescriptor(
+            url: url,
+            displayName: displayName,
+            status: status,
+            usage: usage,
+            source: source,
+            pingMilliseconds: summary.averageEOSELatencyMilliseconds ?? pingMilliseconds,
+            receivedBytes: receivedBytes == "pending" ? "DB history" : receivedBytes,
+            sentBytes: sentBytes,
+            eventCount: summary.totalEventCount > 0 ? "\(summary.totalEventCount)" : eventCount,
+            errorCount: errors,
+            supportedNIPs: supportedNIPs,
+            software: software,
+            version: version,
+            description: description,
+            limitation: limitation,
+            contact: contact,
+            lastMessage: summary.lastMessage
+        )
+    }
+
     static func live(url: String, information: NostrRelayInformationDocument) -> RelayDescriptor {
         let host = URL(string: url)?.host ?? url
         let software = information.software ?? "Unknown relay"
@@ -424,6 +519,28 @@ private extension RelayDescriptor {
             contact: nil,
             lastMessage: "NIP-11 request failed"
         )
+    }
+}
+
+private extension NostrRelaySyncSummaryRecord {
+    var lastMessage: String {
+        switch lastEventKind {
+        case .eose:
+            if let averageEOSELatencyMilliseconds {
+                return "EOSE avg \(averageEOSELatencyMilliseconds) ms"
+            }
+            return "EOSE recorded"
+        case .timeout:
+            return "Timeout recorded"
+        case .partialFailure:
+            return lastPartialFailureReason ?? "Partial failure recorded"
+        case .reconnect:
+            return "Reconnect recorded"
+        case .negentropy:
+            return "NIP-77 sync recorded"
+        case nil:
+            return "No relay history"
+        }
     }
 }
 

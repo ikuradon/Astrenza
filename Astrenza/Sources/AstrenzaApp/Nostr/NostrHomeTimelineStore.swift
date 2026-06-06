@@ -57,6 +57,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var relayListEvent: NostrEvent?
     private var contactListEvent: NostrEvent?
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
+    private var relaySyncEvents: [NostrRelaySyncEventRecord] = []
+
+    var relayStatusEventStore: NostrEventStore? {
+        eventStore
+    }
     init(
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
         eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza")
@@ -273,6 +278,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayListEvent = nil
         contactListEvent = nil
         nip05Resolutions = [:]
+        relaySyncEvents = []
         hasMoreOlder = true
     }
 
@@ -394,7 +400,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             relayListEvent: relayListEvent,
             contactListEvent: contactListEvent,
             nip05Resolutions: nip05Resolutions,
-            hasMoreOlder: hasMoreOlder
+            hasMoreOlder: hasMoreOlder,
+            relaySyncEvents: relaySyncEvents
         )
     }
 
@@ -406,6 +413,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayListEvent = state.relayListEvent
         contactListEvent = state.contactListEvent
         nip05Resolutions = state.nip05Resolutions
+        relaySyncEvents = state.relaySyncEvents
         hasMoreOlder = state.hasMoreOlder
     }
 }

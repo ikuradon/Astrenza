@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 
 struct HomeTimelinePresentationModifier: ViewModifier {
@@ -9,6 +10,8 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var browserDestination: TimelineBrowserDestination?
     @Binding var swipeSettings: TimelineSwipeSettings
     let relayURLs: [String]
+    let accountID: String?
+    let eventStore: NostrEventStore?
 
     func body(content: Content) -> some View {
         content
@@ -25,7 +28,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                 .presentationCornerRadius(26)
             }
             .sheet(isPresented: $isRelayStatusPresented) {
-                RelayStatusSheetView(relayURLs: relayURLs)
+                RelayStatusSheetView(relayURLs: relayURLs, accountID: accountID, eventStore: eventStore)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(26)
@@ -64,7 +67,9 @@ extension View {
         fullscreenMedia: Binding<TimelineMedia?>,
         browserDestination: Binding<TimelineBrowserDestination?>,
         swipeSettings: Binding<TimelineSwipeSettings>,
-        relayURLs: [String]
+        relayURLs: [String],
+        accountID: String?,
+        eventStore: NostrEventStore?
     ) -> some View {
         modifier(
             HomeTimelinePresentationModifier(
@@ -75,7 +80,9 @@ extension View {
                 fullscreenMedia: fullscreenMedia,
                 browserDestination: browserDestination,
                 swipeSettings: swipeSettings,
-                relayURLs: relayURLs
+                relayURLs: relayURLs,
+                accountID: accountID,
+                eventStore: eventStore
             )
         )
     }

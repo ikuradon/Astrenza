@@ -222,6 +222,77 @@ struct NostrCorePackageTests {
         #expect(try store.syncCursor(accountID: "account", timelineKey: "home", relayURL: "wss://relay.example") == cursor)
     }
 
+    @Test("Nostr event store persists relay sync history and updates cursors from relay results")
+    func eventStoreRelaySyncHistory() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = "account"
+        let relayURL = "wss://relay.example"
+        let eoseEvent =
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .eose,
+                occurredAt: 1_000,
+                subscriptionID: "home",
+                eventCount: 4,
+                newestCreatedAt: 900,
+                oldestCreatedAt: 500,
+                latencyMilliseconds: 120,
+                message: "EOSE received"
+            )
+        let events = [
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .timeout,
+                occurredAt: 1_100,
+                subscriptionID: "home-newer",
+                eventCount: 0,
+                latencyMilliseconds: 7_000,
+                message: "timeout"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .partialFailure,
+                occurredAt: 1_200,
+                subscriptionID: "kind0",
+                eventCount: 0,
+                message: "network lost"
+            )
+        ]
+
+        try store.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: [relayURL],
+                followedPubkeys: [accountID],
+                noteEvents: [],
+                metadataEvents: [],
+                relaySyncEvents: [eoseEvent]
+            ),
+            accountID: accountID,
+            savedAt: 1_300
+        )
+        try store.saveRelaySyncEvents(events)
+
+        let history = try store.relaySyncEvents(accountID: accountID, timelineKey: "home", relayURL: relayURL, limit: 10)
+        let summary = try #require(try store.relaySyncSummaries(accountID: accountID, timelineKey: "home").first)
+        let cursor = try #require(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: relayURL))
+
+        #expect(history.map(\.kind).prefix(3) == [.partialFailure, .timeout, .eose])
+        #expect(summary.timeoutCount == 1)
+        #expect(summary.partialFailureCount == 1)
+        #expect(summary.totalEventCount == 4)
+        #expect(summary.averageEOSELatencyMilliseconds == 120)
+        #expect(summary.lastPartialFailureReason == "network lost")
+        #expect(cursor.newestCreatedAt == 900)
+        #expect(cursor.oldestCreatedAt == 500)
+        #expect(cursor.lastEOSEAt == 1_000)
+    }
+
     @Test("Nostr event store persists relay profiles and event sources")
     func eventStoreRelayProfilesAndSources() throws {
         let store = try NostrEventStore.inMemory()
@@ -623,6 +694,8 @@ struct NostrCorePackageTests {
         #expect(state.followedPubkeys == [followed])
         #expect(state.noteEvents.map(\.id) == [note.id])
         #expect(state.metadataEvents.map(\.id) == [metadata.id])
+        #expect(state.relaySyncEvents.map(\.subscriptionID).contains("astrenza-home"))
+        #expect(state.relaySyncEvents.allSatisfy { $0.kind == .eose })
         let calls = await fake.fetchSubscriptionIDs()
         #expect(calls.contains("astrenza-nip65"))
         #expect(calls.contains("astrenza-kind3"))
@@ -664,6 +737,24 @@ struct NostrCorePackageTests {
         let state = try await loader.initialState(account: account)
 
         #expect(state.noteEvents.map(\.id) == [newer.id, older.id])
+    }
+
+    @Test("Home timeline loader records relay timeout results")
+    func homeTimelineLoaderRecordsRelayTimeouts() async throws {
+        let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
+        let fake = FakeRelayClient(
+            eventsBySubscriptionID: [
+                "astrenza-kind3": [nostrEvent(kind: 3, pubkey: account.pubkey, tags: [])]
+            ],
+            failingSubscriptionIDs: ["astrenza-nip65"]
+        )
+        let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+
+        let state = try await loader.initialState(account: account)
+
+        #expect(state.relays == ["wss://bootstrap.example"])
+        #expect(state.relaySyncEvents.contains { $0.subscriptionID == "astrenza-nip65" && $0.kind == .timeout })
+        #expect(state.relaySyncEvents.contains { $0.subscriptionID == "astrenza-kind3" && $0.kind == .eose })
     }
 
     @Test("Home timeline loader falls back to NIP-77 for older notes")
@@ -817,20 +908,26 @@ private enum SHA256Digest {
 private actor FakeRelayClient: NostrRelayFetching {
     private let eventsBySubscriptionID: [String: [NostrEvent]]
     private let missingIDsBySubscriptionID: [String: [String]]
+    private let failingSubscriptionIDs: Set<String>
     private var fetchCalls: [String] = []
     private var missingCalls: [String] = []
     private var latestMissingLocalEventIDs: [String] = []
 
     init(
         eventsBySubscriptionID: [String: [NostrEvent]],
-        missingIDsBySubscriptionID: [String: [String]] = [:]
+        missingIDsBySubscriptionID: [String: [String]] = [:],
+        failingSubscriptionIDs: Set<String> = []
     ) {
         self.eventsBySubscriptionID = eventsBySubscriptionID
         self.missingIDsBySubscriptionID = missingIDsBySubscriptionID
+        self.failingSubscriptionIDs = failingSubscriptionIDs
     }
 
     func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
         fetchCalls.append(request.subscriptionID)
+        if failingSubscriptionIDs.contains(request.subscriptionID) {
+            throw NostrRelayClientError.timeout
+        }
         return eventsBySubscriptionID[request.subscriptionID] ?? []
     }
 

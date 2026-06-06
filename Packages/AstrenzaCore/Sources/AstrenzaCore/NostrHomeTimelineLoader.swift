@@ -9,6 +9,7 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
     public let contactListEvent: NostrEvent?
     public let nip05Resolutions: [String: NostrNIP05Resolution]
     public let hasMoreOlder: Bool
+    public let relaySyncEvents: [NostrRelaySyncEventRecord]
 
     public init(
         relays: [String],
@@ -18,7 +19,8 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         relayListEvent: NostrEvent? = nil,
         contactListEvent: NostrEvent? = nil,
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
-        hasMoreOlder: Bool = true
+        hasMoreOlder: Bool = true,
+        relaySyncEvents: [NostrRelaySyncEventRecord] = []
     ) {
         self.relays = relays
         self.followedPubkeys = followedPubkeys
@@ -28,6 +30,7 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         self.contactListEvent = contactListEvent
         self.nip05Resolutions = nip05Resolutions
         self.hasMoreOlder = hasMoreOlder
+        self.relaySyncEvents = relaySyncEvents
     }
 }
 
@@ -56,7 +59,8 @@ public struct NostrHomeTimelineLoader: Sendable {
     }
 
     public func initialState(account: NostrAccount) async throws -> NostrHomeTimelineState {
-        let relayListEvent = try await latestEvent(
+        var relaySyncEvents: [NostrRelaySyncEventRecord] = []
+        let relayListResult = try await latestEvent(
             relays: bootstrapRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-nip65",
@@ -65,14 +69,17 @@ public struct NostrHomeTimelineLoader: Sendable {
                     "kinds": .ints([10002]),
                     "limit": .int(1)
                 ]]
-            )
+            ),
+            accountID: account.pubkey
         )
+        relaySyncEvents.append(contentsOf: relayListResult.syncEvents)
+        let relayListEvent = relayListResult.event
 
         let relayList = NostrRelayList.parse(from: relayListEvent)
         let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
         let contactRelays = Array((readRelays + bootstrapRelays).uniqued().prefix(10))
 
-        let contactEvent = try await latestEvent(
+        let contactResult = try await latestEvent(
             relays: contactRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-kind3",
@@ -81,8 +88,11 @@ public struct NostrHomeTimelineLoader: Sendable {
                     "kinds": .ints([3]),
                     "limit": .int(1)
                 ]]
-            )
+            ),
+            accountID: account.pubkey
         )
+        relaySyncEvents.append(contentsOf: contactResult.syncEvents)
+        let contactEvent = contactResult.event
         let contacts = Array(NostrContactList.pubkeys(from: contactEvent).prefix(256))
 
         guard !contacts.isEmpty else {
@@ -94,19 +104,25 @@ public struct NostrHomeTimelineLoader: Sendable {
                 relayListEvent: relayListEvent,
                 contactListEvent: contactEvent,
                 nip05Resolutions: [:],
-                hasMoreOlder: true
+                hasMoreOlder: true,
+                relaySyncEvents: relaySyncEvents
             )
         }
 
         let planner = NostrHomeFetchPlanner(authors: Array(contacts.prefix(128)), pageLimit: pageLimit)
-        let homeEvents = try await mergedEvents(
+        let homeResult = try await mergedEvents(
             relays: readRelays,
-            request: planner.initialRequest(subscriptionID: "astrenza-home")
+            request: planner.initialRequest(subscriptionID: "astrenza-home"),
+            accountID: account.pubkey
         )
+        relaySyncEvents.append(contentsOf: homeResult.syncEvents)
+        let homeEvents = homeResult.events
         let metadataEvents = try await metadataEvents(
             for: homeEvents,
             existingMetadataEvents: [],
-            relays: readRelays
+            relays: readRelays,
+            accountID: account.pubkey,
+            relaySyncEvents: &relaySyncEvents
         )
         let nip05Resolutions = await nip05Resolutions(
             metadataEvents: metadataEvents,
@@ -121,7 +137,8 @@ public struct NostrHomeTimelineLoader: Sendable {
             relayListEvent: relayListEvent,
             contactListEvent: contactEvent,
             nip05Resolutions: nip05Resolutions,
-            hasMoreOlder: true
+            hasMoreOlder: true,
+            relaySyncEvents: relaySyncEvents
         )
     }
 
@@ -134,15 +151,21 @@ public struct NostrHomeTimelineLoader: Sendable {
         let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : Array(current.followedPubkeys.prefix(128))
         let newestCreatedAt = current.noteEvents.map(\.createdAt).max() ?? 0
         let planner = NostrHomeFetchPlanner(authors: authors, pageLimit: pageLimit)
-        let freshEvents = try await mergedEvents(
+        var relaySyncEvents: [NostrRelaySyncEventRecord] = []
+        let freshResult = try await mergedEvents(
             relays: relays,
-            request: planner.newerRequest(subscriptionID: "astrenza-home-newer", after: newestCreatedAt)
+            request: planner.newerRequest(subscriptionID: "astrenza-home-newer", after: newestCreatedAt),
+            accountID: account.pubkey
         )
+        relaySyncEvents.append(contentsOf: freshResult.syncEvents)
+        let freshEvents = freshResult.events
         let noteEvents = sortedUnique(current.noteEvents + freshEvents)
         let freshMetadata = try await metadataEvents(
             for: freshEvents,
             existingMetadataEvents: current.metadataEvents,
-            relays: relays
+            relays: relays,
+            accountID: account.pubkey,
+            relaySyncEvents: &relaySyncEvents
         )
         let metadataEvents = sortedUnique(current.metadataEvents + freshMetadata)
         let nip05Resolutions = await nip05Resolutions(
@@ -158,7 +181,8 @@ public struct NostrHomeTimelineLoader: Sendable {
             relayListEvent: current.relayListEvent,
             contactListEvent: current.contactListEvent,
             nip05Resolutions: nip05Resolutions,
-            hasMoreOlder: current.hasMoreOlder
+            hasMoreOlder: current.hasMoreOlder,
+            relaySyncEvents: relaySyncEvents
         )
     }
 
@@ -175,16 +199,22 @@ public struct NostrHomeTimelineLoader: Sendable {
 
         let planner = NostrHomeFetchPlanner(authors: authors, pageLimit: pageLimit)
         let until = max(0, oldestCreatedAt - 1)
-        var olderEvents = try await mergedEvents(
+        var relaySyncEvents: [NostrRelaySyncEventRecord] = []
+        let olderResult = try await mergedEvents(
             relays: relays,
-            request: planner.olderRequest(subscriptionID: "astrenza-home-older", before: oldestCreatedAt)
+            request: planner.olderRequest(subscriptionID: "astrenza-home-older", before: oldestCreatedAt),
+            accountID: account.pubkey
         )
+        relaySyncEvents.append(contentsOf: olderResult.syncEvents)
+        var olderEvents = olderResult.events
         if olderEvents.isEmpty {
             olderEvents = try await negentropyBackfillEvents(
                 relays: relays,
                 authors: authors,
                 until: until,
-                currentNoteEvents: localBackfillEvents ?? current.noteEvents
+                currentNoteEvents: localBackfillEvents ?? current.noteEvents,
+                accountID: account.pubkey,
+                relaySyncEvents: &relaySyncEvents
             )
         }
         guard !olderEvents.isEmpty else {
@@ -196,14 +226,17 @@ public struct NostrHomeTimelineLoader: Sendable {
                 relayListEvent: current.relayListEvent,
                 contactListEvent: current.contactListEvent,
                 nip05Resolutions: current.nip05Resolutions,
-                hasMoreOlder: false
+                hasMoreOlder: false,
+                relaySyncEvents: relaySyncEvents
             )
         }
 
         let olderMetadata = try await metadataEvents(
             for: olderEvents,
             existingMetadataEvents: current.metadataEvents,
-            relays: relays
+            relays: relays,
+            accountID: account.pubkey,
+            relaySyncEvents: &relaySyncEvents
         )
         let metadataEvents = sortedUnique(current.metadataEvents + olderMetadata)
         let nip05Resolutions = await nip05Resolutions(
@@ -218,7 +251,8 @@ public struct NostrHomeTimelineLoader: Sendable {
             relayListEvent: current.relayListEvent,
             contactListEvent: current.contactListEvent,
             nip05Resolutions: nip05Resolutions,
-            hasMoreOlder: true
+            hasMoreOlder: true,
+            relaySyncEvents: relaySyncEvents
         )
     }
 
@@ -254,11 +288,13 @@ public struct NostrHomeTimelineLoader: Sendable {
     private func metadataEvents(
         for noteEvents: [NostrEvent],
         existingMetadataEvents: [NostrEvent],
-        relays: [String]
+        relays: [String],
+        accountID: String,
+        relaySyncEvents: inout [NostrRelaySyncEventRecord]
     ) async throws -> [NostrEvent] {
         let missingAuthors = Array(Set(noteEvents.map(\.pubkey)).subtracting(Set(existingMetadataEvents.map(\.pubkey))))
         guard !missingAuthors.isEmpty else { return [] }
-        return try await mergedEvents(
+        let result = try await mergedEvents(
             relays: relays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-kind0",
@@ -267,15 +303,20 @@ public struct NostrHomeTimelineLoader: Sendable {
                     "kinds": .ints([0]),
                     "limit": .int(min(max(missingAuthors.count, 1), 250))
                 ]]
-            )
+            ),
+            accountID: accountID
         )
+        relaySyncEvents.append(contentsOf: result.syncEvents)
+        return result.events
     }
 
     private func negentropyBackfillEvents(
         relays: [String],
         authors: [String],
         until: Int,
-        currentNoteEvents: [NostrEvent]
+        currentNoteEvents: [NostrEvent],
+        accountID: String,
+        relaySyncEvents: inout [NostrRelaySyncEventRecord]
     ) async throws -> [NostrEvent] {
         let relayClient = relayClient
         let pageLimit = pageLimit
@@ -304,42 +345,98 @@ public struct NostrHomeTimelineLoader: Sendable {
         }
 
         guard !missingIDs.isEmpty else { return [] }
-        return try await mergedEvents(
+        let result = try await mergedEvents(
             relays: relays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-gap-events",
                 filters: [["ids": .strings(Array(missingIDs.prefix(250)))]]
-            )
+            ),
+            accountID: accountID
         )
+        relaySyncEvents.append(contentsOf: result.syncEvents)
+        return result.events
     }
 
-    private func latestEvent(relays: [String], request: NostrRelayRequest) async throws -> NostrEvent? {
-        let events = try await mergedEvents(relays: relays, request: request)
-        return events.max { lhs, rhs in
+    private func latestEvent(
+        relays: [String],
+        request: NostrRelayRequest,
+        accountID: String
+    ) async throws -> (event: NostrEvent?, syncEvents: [NostrRelaySyncEventRecord]) {
+        let result = try await mergedEvents(relays: relays, request: request, accountID: accountID)
+        let event = result.events.max { lhs, rhs in
             if lhs.createdAt == rhs.createdAt {
                 return lhs.id > rhs.id
             }
             return lhs.createdAt < rhs.createdAt
         }
+        return (event, result.syncEvents)
     }
 
-    private func mergedEvents(relays: [String], request: NostrRelayRequest) async throws -> [NostrEvent] {
+    private func mergedEvents(
+        relays: [String],
+        request: NostrRelayRequest,
+        accountID: String
+    ) async throws -> (events: [NostrEvent], syncEvents: [NostrRelaySyncEventRecord]) {
         let relayClient = relayClient
-        return try await withThrowingTaskGroup(of: [NostrEvent].self) { group in
+        return try await withThrowingTaskGroup(of: (String, Result<[NostrEvent], Error>, Int, Int).self) { group in
             for relay in relays {
                 group.addTask {
-                    (try? await relayClient.fetch(relayURL: relay, request: request)) ?? []
+                    let started = Date()
+                    do {
+                        let events = try await relayClient.fetch(relayURL: relay, request: request)
+                        let latency = Int(Date().timeIntervalSince(started) * 1_000)
+                        return (relay, .success(events), Int(started.timeIntervalSince1970), latency)
+                    } catch {
+                        let latency = Int(Date().timeIntervalSince(started) * 1_000)
+                        return (relay, .failure(error), Int(started.timeIntervalSince1970), latency)
+                    }
                 }
             }
 
             var eventsByID: [String: NostrEvent] = [:]
-            for try await relayEvents in group {
-                for event in relayEvents {
-                    eventsByID[event.id] = event
+            var syncEvents: [NostrRelaySyncEventRecord] = []
+            for try await (relay, result, startedAt, latency) in group {
+                switch result {
+                case .success(let relayEvents):
+                    for event in relayEvents {
+                        eventsByID[event.id] = event
+                    }
+                    syncEvents.append(NostrRelaySyncEventRecord(
+                        accountID: accountID,
+                        timelineKey: "home",
+                        relayURL: relay,
+                        kind: .eose,
+                        occurredAt: startedAt + max(0, latency / 1_000),
+                        subscriptionID: request.subscriptionID,
+                        eventCount: relayEvents.count,
+                        newestCreatedAt: relayEvents.map(\.createdAt).max(),
+                        oldestCreatedAt: relayEvents.map(\.createdAt).min(),
+                        latencyMilliseconds: latency,
+                        message: "EOSE received"
+                    ))
+                case .failure(let error):
+                    let kind: NostrRelaySyncEventKind
+                    switch error as? NostrRelayClientError {
+                    case .timeout:
+                        kind = .timeout
+                    default:
+                        kind = .partialFailure
+                    }
+                    syncEvents.append(NostrRelaySyncEventRecord(
+                        accountID: accountID,
+                        timelineKey: "home",
+                        relayURL: relay,
+                        kind: kind,
+                        occurredAt: startedAt + max(0, latency / 1_000),
+                        subscriptionID: request.subscriptionID,
+                        eventCount: 0,
+                        latencyMilliseconds: latency,
+                        message: String(describing: error)
+                    ))
                 }
             }
 
-            return sortedUnique(Array(eventsByID.values))
+            return (sortedUnique(Array(eventsByID.values)), syncEvents)
         }
     }
 

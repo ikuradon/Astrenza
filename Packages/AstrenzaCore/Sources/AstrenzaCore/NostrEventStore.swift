@@ -108,6 +108,91 @@ public struct NostrRelayProfileRecord: Codable, Equatable, Sendable {
     }
 }
 
+public enum NostrRelaySyncEventKind: String, Codable, Equatable, Sendable {
+    case eose
+    case reconnect
+    case timeout
+    case partialFailure
+    case negentropy
+}
+
+public struct NostrRelaySyncEventRecord: Codable, Equatable, Sendable {
+    public let accountID: String
+    public let timelineKey: String
+    public let relayURL: String
+    public let kind: NostrRelaySyncEventKind
+    public let occurredAt: Int
+    public let subscriptionID: String?
+    public let eventCount: Int
+    public let newestCreatedAt: Int?
+    public let oldestCreatedAt: Int?
+    public let latencyMilliseconds: Int?
+    public let message: String?
+
+    public init(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        occurredAt: Int,
+        subscriptionID: String? = nil,
+        eventCount: Int = 0,
+        newestCreatedAt: Int? = nil,
+        oldestCreatedAt: Int? = nil,
+        latencyMilliseconds: Int? = nil,
+        message: String? = nil
+    ) {
+        self.accountID = accountID
+        self.timelineKey = timelineKey
+        self.relayURL = relayURL
+        self.kind = kind
+        self.occurredAt = occurredAt
+        self.subscriptionID = subscriptionID
+        self.eventCount = eventCount
+        self.newestCreatedAt = newestCreatedAt
+        self.oldestCreatedAt = oldestCreatedAt
+        self.latencyMilliseconds = latencyMilliseconds
+        self.message = message
+    }
+}
+
+public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
+    public let relayURL: String
+    public let lastEventKind: NostrRelaySyncEventKind?
+    public let lastEventAt: Int?
+    public let lastEOSEAt: Int?
+    public let reconnectCount: Int
+    public let timeoutCount: Int
+    public let partialFailureCount: Int
+    public let lastPartialFailureReason: String?
+    public let totalEventCount: Int
+    public let averageEOSELatencyMilliseconds: Int?
+
+    public init(
+        relayURL: String,
+        lastEventKind: NostrRelaySyncEventKind?,
+        lastEventAt: Int?,
+        lastEOSEAt: Int?,
+        reconnectCount: Int,
+        timeoutCount: Int,
+        partialFailureCount: Int,
+        lastPartialFailureReason: String?,
+        totalEventCount: Int,
+        averageEOSELatencyMilliseconds: Int?
+    ) {
+        self.relayURL = relayURL
+        self.lastEventKind = lastEventKind
+        self.lastEventAt = lastEventAt
+        self.lastEOSEAt = lastEOSEAt
+        self.reconnectCount = reconnectCount
+        self.timeoutCount = timeoutCount
+        self.partialFailureCount = partialFailureCount
+        self.lastPartialFailureReason = lastPartialFailureReason
+        self.totalEventCount = totalEventCount
+        self.averageEOSELatencyMilliseconds = averageEOSELatencyMilliseconds
+    }
+}
+
 public struct NostrEventSourceRecord: Codable, Equatable, Sendable {
     public let eventID: String
     public let relayURL: String
@@ -201,6 +286,8 @@ public final class NostrEventStore {
                 lastNegentropyAt: nil
             ))
         }
+        try saveRelaySyncEvents(state.relaySyncEvents)
+        try updateSyncCursors(from: state.relaySyncEvents)
 
         try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
     }
@@ -496,19 +583,7 @@ public final class NostrEventStore {
 
     public func syncCursor(accountID: String, timelineKey: String, relayURL: String) throws -> NostrSyncCursorRecord? {
         try database.read { db in
-            guard let row = try Row.fetchOne(
-                db,
-                sql: """
-                SELECT account_id, timeline_key, relay_url, newest_created_at,
-                    oldest_created_at, last_eose_at, last_negentropy_at
-                FROM sync_cursors
-                WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
-                """,
-                arguments: [accountID, timelineKey, relayURL]
-            ) else {
-                return nil
-            }
-            return decodeSyncCursor(row)
+            try syncCursor(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, db: db)
         }
     }
 
@@ -557,6 +632,151 @@ public final class NostrEventStore {
                 return nil
             }
             return try decodeRelayProfile(row)
+        }
+    }
+
+    public func saveRelaySyncEvents(_ events: [NostrRelaySyncEventRecord]) throws {
+        guard !events.isEmpty else { return }
+
+        try database.write { db in
+            for event in events {
+                try db.execute(
+                    sql: """
+                    INSERT INTO relay_sync_events (
+                        account_id, timeline_key, relay_url, event_kind, occurred_at,
+                        subscription_id, event_count, newest_created_at, oldest_created_at,
+                        latency_ms, message
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        event.accountID,
+                        event.timelineKey,
+                        event.relayURL,
+                        event.kind.rawValue,
+                        event.occurredAt,
+                        event.subscriptionID,
+                        event.eventCount,
+                        event.newestCreatedAt,
+                        event.oldestCreatedAt,
+                        event.latencyMilliseconds,
+                        event.message
+                    ]
+                )
+            }
+        }
+    }
+
+    public func relaySyncEvents(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String? = nil,
+        limit: Int = 50
+    ) throws -> [NostrRelaySyncEventRecord] {
+        try database.read { db in
+            var sql = """
+            SELECT account_id, timeline_key, relay_url, event_kind, occurred_at,
+                subscription_id, event_count, newest_created_at, oldest_created_at,
+                latency_ms, message
+            FROM relay_sync_events
+            WHERE account_id = ? AND timeline_key = ?
+            """
+            var arguments: StatementArguments = [accountID, timelineKey]
+            if let relayURL {
+                sql += " AND relay_url = ?"
+                arguments += [relayURL]
+            }
+            sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?"
+            arguments += [limit]
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+            return rows.compactMap(decodeRelaySyncEvent)
+        }
+    }
+
+    public func relaySyncSummaries(accountID: String, timelineKey: String) throws -> [NostrRelaySyncSummaryRecord] {
+        try database.read { db in
+            let relayURLs = try String.fetchAll(
+                db,
+                sql: """
+                SELECT DISTINCT relay_url
+                FROM relay_sync_events
+                WHERE account_id = ? AND timeline_key = ?
+                ORDER BY relay_url ASC
+                """,
+                arguments: [accountID, timelineKey]
+            )
+
+            return try relayURLs.map { relayURL in
+                let lastEvent = try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT account_id, timeline_key, relay_url, event_kind, occurred_at,
+                        subscription_id, event_count, newest_created_at, oldest_created_at,
+                        latency_ms, message
+                    FROM relay_sync_events
+                    WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                    ORDER BY occurred_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    arguments: [accountID, timelineKey, relayURL]
+                ).flatMap(decodeRelaySyncEvent)
+
+                let lastEOSEAt = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT MAX(occurred_at)
+                    FROM relay_sync_events
+                    WHERE account_id = ? AND timeline_key = ? AND relay_url = ? AND event_kind = ?
+                    """,
+                    arguments: [accountID, timelineKey, relayURL, NostrRelaySyncEventKind.eose.rawValue]
+                )
+                let reconnectCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .reconnect, db: db)
+                let timeoutCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .timeout, db: db)
+                let partialFailureCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .partialFailure, db: db)
+                let lastPartialFailureReason = try String.fetchOne(
+                    db,
+                    sql: """
+                    SELECT message
+                    FROM relay_sync_events
+                    WHERE account_id = ? AND timeline_key = ? AND relay_url = ? AND event_kind = ?
+                    ORDER BY occurred_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    arguments: [accountID, timelineKey, relayURL, NostrRelaySyncEventKind.partialFailure.rawValue]
+                )
+                let totalEventCount = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT COALESCE(SUM(event_count), 0)
+                    FROM relay_sync_events
+                    WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                    """,
+                    arguments: [accountID, timelineKey, relayURL]
+                ) ?? 0
+                let averageEOSELatency = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT CAST(AVG(latency_ms) AS INTEGER)
+                    FROM relay_sync_events
+                    WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                        AND event_kind = ? AND latency_ms IS NOT NULL
+                    """,
+                    arguments: [accountID, timelineKey, relayURL, NostrRelaySyncEventKind.eose.rawValue]
+                )
+
+                return NostrRelaySyncSummaryRecord(
+                    relayURL: relayURL,
+                    lastEventKind: lastEvent?.kind,
+                    lastEventAt: lastEvent?.occurredAt,
+                    lastEOSEAt: lastEOSEAt,
+                    reconnectCount: reconnectCount,
+                    timeoutCount: timeoutCount,
+                    partialFailureCount: partialFailureCount,
+                    lastPartialFailureReason: lastPartialFailureReason,
+                    totalEventCount: totalEventCount,
+                    averageEOSELatencyMilliseconds: averageEOSELatency
+                )
+            }
         }
     }
 
@@ -649,6 +869,24 @@ public final class NostrEventStore {
 
             try db.create(index: "relay_profiles_health", on: "relay_profiles", columns: ["health_score"])
             try db.create(index: "relay_profiles_last_eose", on: "relay_profiles", columns: ["last_eose_at"])
+
+            try db.create(table: "relay_sync_events", ifNotExists: true) { table in
+                table.autoIncrementedPrimaryKey("id")
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("relay_url", .text).notNull()
+                table.column("event_kind", .text).notNull()
+                table.column("occurred_at", .integer).notNull()
+                table.column("subscription_id", .text)
+                table.column("event_count", .integer).notNull().defaults(to: 0)
+                table.column("newest_created_at", .integer)
+                table.column("oldest_created_at", .integer)
+                table.column("latency_ms", .integer)
+                table.column("message", .text)
+            }
+
+            try db.create(index: "relay_sync_events_timeline", on: "relay_sync_events", columns: ["account_id", "timeline_key", "occurred_at"])
+            try db.create(index: "relay_sync_events_relay", on: "relay_sync_events", columns: ["relay_url", "occurred_at"])
 
             try db.create(table: "event_sources", ifNotExists: true) { table in
                 table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
@@ -749,6 +987,26 @@ public final class NostrEventStore {
                 table.column("updated_at", .integer).notNull()
                 table.primaryKey(["account_id", "timeline_key"])
             }
+        }
+
+        migrator.registerMigration("addRelaySyncEvents") { db in
+            try db.create(table: "relay_sync_events", ifNotExists: true) { table in
+                table.autoIncrementedPrimaryKey("id")
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("relay_url", .text).notNull()
+                table.column("event_kind", .text).notNull()
+                table.column("occurred_at", .integer).notNull()
+                table.column("subscription_id", .text)
+                table.column("event_count", .integer).notNull().defaults(to: 0)
+                table.column("newest_created_at", .integer)
+                table.column("oldest_created_at", .integer)
+                table.column("latency_ms", .integer)
+                table.column("message", .text)
+            }
+
+            try db.create(index: "relay_sync_events_timeline", on: "relay_sync_events", columns: ["account_id", "timeline_key", "occurred_at"], ifNotExists: true)
+            try db.create(index: "relay_sync_events_relay", on: "relay_sync_events", columns: ["relay_url", "occurred_at"], ifNotExists: true)
         }
 
         try migrator.migrate(database)
@@ -877,6 +1135,51 @@ public final class NostrEventStore {
         }
     }
 
+    private func updateSyncCursors(from events: [NostrRelaySyncEventRecord]) throws {
+        let cursorEvents = events.filter { event in
+            event.kind == .eose || event.kind == .negentropy
+        }
+        guard !cursorEvents.isEmpty else { return }
+
+        try database.write { db in
+            for event in cursorEvents {
+                let current = try syncCursor(
+                    accountID: event.accountID,
+                    timelineKey: event.timelineKey,
+                    relayURL: event.relayURL,
+                    db: db
+                )
+                let newestCreatedAt = [current?.newestCreatedAt, event.newestCreatedAt].compactMap { $0 }.max()
+                let oldestCreatedAt = [current?.oldestCreatedAt, event.oldestCreatedAt].compactMap { $0 }.min()
+                let lastEOSEAt = event.kind == .eose ? event.occurredAt : current?.lastEOSEAt
+                let lastNegentropyAt = event.kind == .negentropy ? event.occurredAt : current?.lastNegentropyAt
+
+                try db.execute(
+                    sql: """
+                    INSERT INTO sync_cursors (
+                        account_id, timeline_key, relay_url, newest_created_at,
+                        oldest_created_at, last_eose_at, last_negentropy_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id, timeline_key, relay_url) DO UPDATE SET
+                        newest_created_at = excluded.newest_created_at,
+                        oldest_created_at = excluded.oldest_created_at,
+                        last_eose_at = excluded.last_eose_at,
+                        last_negentropy_at = excluded.last_negentropy_at
+                    """,
+                    arguments: [
+                        event.accountID,
+                        event.timelineKey,
+                        event.relayURL,
+                        newestCreatedAt,
+                        oldestCreatedAt,
+                        lastEOSEAt,
+                        lastNegentropyAt
+                    ]
+                )
+            }
+        }
+    }
+
     private struct TimelineStateMetadata {
         let relays: [String]
         let followedPubkeys: [String]
@@ -967,6 +1270,45 @@ public final class NostrEventStore {
         )) ?? []
     }
 
+    private func syncCursor(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String,
+        db: Database
+    ) throws -> NostrSyncCursorRecord? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT account_id, timeline_key, relay_url, newest_created_at,
+                oldest_created_at, last_eose_at, last_negentropy_at
+            FROM sync_cursors
+            WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+            """,
+            arguments: [accountID, timelineKey, relayURL]
+        ) else {
+            return nil
+        }
+        return decodeSyncCursor(row)
+    }
+
+    private func relaySyncEventCount(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        db: Database
+    ) throws -> Int {
+        try Int.fetchOne(
+            db,
+            sql: """
+            SELECT COUNT(*)
+            FROM relay_sync_events
+            WHERE account_id = ? AND timeline_key = ? AND relay_url = ? AND event_kind = ?
+            """,
+            arguments: [accountID, timelineKey, relayURL, kind.rawValue]
+        ) ?? 0
+    }
+
     private func fetchEvent(id: String, db: Database) throws -> NostrEvent? {
         guard let row = try Row.fetchOne(
             db,
@@ -1043,6 +1385,25 @@ public final class NostrEventStore {
             lastConnectedAt: row["last_connected_at"],
             authRequired: row["auth_required"],
             paymentRequired: row["payment_required"]
+        )
+    }
+
+    private func decodeRelaySyncEvent(_ row: Row) -> NostrRelaySyncEventRecord? {
+        guard let kind = NostrRelaySyncEventKind(rawValue: row["event_kind"]) else {
+            return nil
+        }
+        return NostrRelaySyncEventRecord(
+            accountID: row["account_id"],
+            timelineKey: row["timeline_key"],
+            relayURL: row["relay_url"],
+            kind: kind,
+            occurredAt: row["occurred_at"],
+            subscriptionID: row["subscription_id"],
+            eventCount: row["event_count"],
+            newestCreatedAt: row["newest_created_at"],
+            oldestCreatedAt: row["oldest_created_at"],
+            latencyMilliseconds: row["latency_ms"],
+            message: row["message"]
         )
     }
 

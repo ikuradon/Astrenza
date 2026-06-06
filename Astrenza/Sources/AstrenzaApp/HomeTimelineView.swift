@@ -173,7 +173,9 @@ struct HomeTimelineView: View {
             fullscreenMedia: $fullscreenMedia,
             browserDestination: $browserDestination,
             swipeSettings: $swipeSettings,
-            relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays
+            relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays,
+            accountID: sessionStore.account?.pubkey,
+            eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore
         )
     }
 }

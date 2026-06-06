@@ -3,6 +3,7 @@ import Foundation
 public enum NostrRelayClientError: Error {
     case invalidRelayURL(String)
     case negentropyRelayError(String)
+    case timeout
 }
 
 public enum NostrRelayMessage: Equatable {
@@ -99,7 +100,7 @@ public struct NostrRelayClient: Sendable {
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                return []
+                throw NostrRelayClientError.timeout
             }
 
             let result = try await group.next() ?? []
@@ -137,7 +138,7 @@ public struct NostrRelayClient: Sendable {
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                return []
+                throw NostrRelayClientError.timeout
             }
 
             let result = try await group.next() ?? []
