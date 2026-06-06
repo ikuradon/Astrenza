@@ -162,7 +162,11 @@ public struct NostrHomeTimelineLoader: Sendable {
         )
     }
 
-    public func olderState(account: NostrAccount, current: NostrHomeTimelineState) async throws -> NostrHomeTimelineState {
+    public func olderState(
+        account: NostrAccount,
+        current: NostrHomeTimelineState,
+        localBackfillEvents: [NostrEvent]? = nil
+    ) async throws -> NostrHomeTimelineState {
         let relays = current.relays.isEmpty ? bootstrapRelays : current.relays
         let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : Array(current.followedPubkeys.prefix(128))
         guard let oldestCreatedAt = current.noteEvents.map(\.createdAt).min() else {
@@ -180,7 +184,7 @@ public struct NostrHomeTimelineLoader: Sendable {
                 relays: relays,
                 authors: authors,
                 until: until,
-                currentNoteEvents: current.noteEvents
+                currentNoteEvents: localBackfillEvents ?? current.noteEvents
             )
         }
         guard !olderEvents.isEmpty else {

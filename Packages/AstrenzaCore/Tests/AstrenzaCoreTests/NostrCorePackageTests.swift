@@ -350,6 +350,19 @@ struct NostrCorePackageTests {
         #expect(restored.contactListEvent == contacts)
     }
 
+    @Test("Nostr event store returns local backfill events for NIP-77")
+    func eventStoreLocalBackfillEvents() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let matching = nostrEvent(kind: 1, pubkey: author, createdAt: 100, content: "matching")
+        let tooNew = nostrEvent(kind: 1, pubkey: author, createdAt: 300, content: "too-new")
+        let otherKind = nostrEvent(kind: 0, pubkey: author, createdAt: 90, content: "{}")
+
+        try store.save(events: [matching, tooNew, otherKind])
+
+        #expect(try store.events(kind: 1, authors: [author], until: 200, limit: 10).map(\.id) == [matching.id])
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)
@@ -579,6 +592,33 @@ struct NostrCorePackageTests {
         #expect(await fake.fetchSubscriptionIDs().contains("astrenza-gap-events"))
     }
 
+    @Test("Home timeline loader uses database local events for NIP-77 backfill")
+    func homeTimelineLoaderUsesLocalBackfillEvents() async throws {
+        let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
+        let followed = String(repeating: "2", count: 64)
+        let currentNote = signedShapeOnlyEvent(kind: 1, pubkey: followed, createdAt: 300, content: "current")
+        let cachedOlder = signedShapeOnlyEvent(kind: 1, pubkey: followed, createdAt: 100, content: "cached")
+        let remoteOlder = signedShapeOnlyEvent(kind: 1, pubkey: followed, createdAt: 90, content: "remote")
+        let fake = FakeRelayClient(
+            eventsBySubscriptionID: [
+                "astrenza-home-older": [],
+                "astrenza-gap-events": [remoteOlder]
+            ],
+            missingIDsBySubscriptionID: ["astrenza-neg-gap": [remoteOlder.id]]
+        )
+        let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+        let current = NostrHomeTimelineState(
+            relays: ["wss://read.example"],
+            followedPubkeys: [followed],
+            noteEvents: [currentNote],
+            metadataEvents: []
+        )
+
+        _ = try await loader.olderState(account: account, current: current, localBackfillEvents: [cachedOlder])
+
+        #expect(await fake.missingLocalEventIDs() == [cachedOlder.id])
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,
@@ -676,6 +716,7 @@ private actor FakeRelayClient: NostrRelayFetching {
     private let missingIDsBySubscriptionID: [String: [String]]
     private var fetchCalls: [String] = []
     private var missingCalls: [String] = []
+    private var latestMissingLocalEventIDs: [String] = []
 
     init(
         eventsBySubscriptionID: [String: [NostrEvent]],
@@ -697,6 +738,7 @@ private actor FakeRelayClient: NostrRelayFetching {
         subscriptionID: String
     ) async throws -> [String] {
         missingCalls.append(subscriptionID)
+        latestMissingLocalEventIDs = localEvents.map(\.id)
         return missingIDsBySubscriptionID[subscriptionID] ?? []
     }
 
@@ -706,5 +748,9 @@ private actor FakeRelayClient: NostrRelayFetching {
 
     func missingSubscriptionIDs() -> [String] {
         missingCalls
+    }
+
+    func missingLocalEventIDs() -> [String] {
+        latestMissingLocalEventIDs
     }
 }

@@ -160,7 +160,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         defer { isLoadingOlder = false }
 
         do {
-            let state = try await timelineLoader.olderState(account: account, current: loaderState())
+            let current = loaderState()
+            let localBackfillEvents = databaseBackfillEvents(account: account, current: current)
+            let state = try await timelineLoader.olderState(
+                account: account,
+                current: current,
+                localBackfillEvents: localBackfillEvents
+            )
             guard Task.isCancelled == false else { return }
             apply(state)
             if !state.hasMoreOlder {
@@ -233,6 +239,22 @@ final class NostrHomeTimelineStore: ObservableObject {
         } catch {
             // The UserDefaults snapshot remains the fallback until the DB read path is fully migrated.
         }
+    }
+
+    private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
+        guard let eventStore,
+              let until = current.noteEvents.map(\.createdAt).min().map({ max(0, $0 - 1) })
+        else {
+            return nil
+        }
+
+        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : Array(current.followedPubkeys.prefix(128))
+        guard let events = try? eventStore.events(kind: 1, authors: authors, until: until, limit: 1_000),
+              !events.isEmpty
+        else {
+            return nil
+        }
+        return events
     }
 
     private func materializeEntries() {

@@ -261,6 +261,33 @@ public final class NostrEventStore {
         }
     }
 
+    public func events(kind: Int, authors: [String], until: Int, limit: Int) throws -> [NostrEvent] {
+        guard !authors.isEmpty else { return [] }
+
+        return try database.read { db in
+            var arguments: StatementArguments = [kind, until]
+            let placeholders = authors.map { _ in "?" }.joined(separator: ", ")
+            for author in authors {
+                arguments += [author]
+            }
+            arguments += [limit]
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
+                FROM events
+                WHERE kind = ? AND created_at <= ? AND deleted_at IS NULL
+                    AND pubkey IN (\(placeholders))
+                ORDER BY created_at DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: arguments
+            )
+            return try rows.map(decodeEvent)
+        }
+    }
+
     public func tags(eventID: String) throws -> [NostrStoredEventTag] {
         try database.read { db in
             let rows = try Row.fetchAll(
