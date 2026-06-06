@@ -188,6 +188,76 @@ struct NostrCorePackageTests {
         #expect(try store.latestReplaceableEvent(pubkey: pubkey, kind: 0)?.id == newer.id)
     }
 
+    @Test("Nostr event store keeps timeline entries in display order")
+    func eventStoreTimelineEntries() throws {
+        let store = try NostrEventStore.inMemory()
+        let older = nostrEvent(kind: 1, createdAt: 100, content: "older")
+        let newer = nostrEvent(kind: 1, createdAt: 200, content: "newer")
+        try store.save(events: [older, newer])
+
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(accountID: "account", timelineKey: "home", eventID: older.id, sortTimestamp: older.createdAt, insertedAt: 300),
+            NostrTimelineEntryRecord(accountID: "account", timelineKey: "home", eventID: newer.id, sortTimestamp: newer.createdAt, insertedAt: 300)
+        ])
+
+        #expect(try store.timelineEntries(accountID: "account", timelineKey: "home", limit: 10).map(\.eventID) == [newer.id, older.id])
+        #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10).map(\.id) == [newer.id, older.id])
+    }
+
+    @Test("Nostr event store persists sync cursors")
+    func eventStoreSyncCursors() throws {
+        let store = try NostrEventStore.inMemory()
+        let cursor = NostrSyncCursorRecord(
+            accountID: "account",
+            timelineKey: "home",
+            relayURL: "wss://relay.example",
+            newestCreatedAt: 300,
+            oldestCreatedAt: 100,
+            lastEOSEAt: 400,
+            lastNegentropyAt: 500
+        )
+
+        try store.saveSyncCursor(cursor)
+
+        #expect(try store.syncCursor(accountID: "account", timelineKey: "home", relayURL: "wss://relay.example") == cursor)
+    }
+
+    @Test("Nostr event store persists relay profiles and event sources")
+    func eventStoreRelayProfilesAndSources() throws {
+        let store = try NostrEventStore.inMemory()
+        let event = nostrEvent(kind: 1, content: "relay indexed")
+        try store.save(events: [event])
+        try store.recordEventSources(eventIDs: [event.id], relayURL: "wss://relay.example", seenAt: 600)
+        try store.saveRelayProfile(NostrRelayProfileRecord(
+            relayURL: "wss://relay.example",
+            information: NostrRelayInformationDocument(
+                name: "Relay Example",
+                description: "test relay",
+                pubkey: nil,
+                contact: nil,
+                supportedNips: [1, 11, 65],
+                software: "strfry",
+                version: "1.0",
+                limitation: NostrRelayLimitation(maxMessageLength: nil, maxSubscriptions: nil, maxLimit: 500, maxSubIDLength: nil, authRequired: true, paymentRequired: false, restrictedWrites: nil)
+            ),
+            healthScore: 0.9,
+            lastEOSEAt: 700,
+            lastConnectedAt: 800,
+            authRequired: true,
+            paymentRequired: false
+        ))
+
+        let sources = try store.eventSources(eventID: event.id)
+        let relayProfile = try store.relayProfile(relayURL: "wss://relay.example")
+        let relay = try #require(relayProfile)
+
+        #expect(sources == [NostrEventSourceRecord(eventID: event.id, relayURL: "wss://relay.example", firstSeenAt: 600, lastSeenAt: 600)])
+        #expect(relay.information?.name == "Relay Example")
+        #expect(relay.information?.supportedNips == [1, 11, 65])
+        #expect(relay.healthScore == 0.9)
+        #expect(relay.authRequired)
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)

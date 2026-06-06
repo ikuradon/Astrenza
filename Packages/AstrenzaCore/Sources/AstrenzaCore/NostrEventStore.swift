@@ -21,6 +21,107 @@ public struct NostrStoredEventTag: Codable, Equatable, Sendable {
     }
 }
 
+public struct NostrTimelineEntryRecord: Codable, Equatable, Sendable {
+    public let accountID: String
+    public let timelineKey: String
+    public let eventID: String
+    public let sortTimestamp: Int
+    public let source: String
+    public let insertedAt: Int
+    public let gapBefore: Bool
+    public let gapAfter: Bool
+
+    public init(
+        accountID: String,
+        timelineKey: String,
+        eventID: String,
+        sortTimestamp: Int,
+        source: String = "relay",
+        insertedAt: Int,
+        gapBefore: Bool = false,
+        gapAfter: Bool = false
+    ) {
+        self.accountID = accountID
+        self.timelineKey = timelineKey
+        self.eventID = eventID
+        self.sortTimestamp = sortTimestamp
+        self.source = source
+        self.insertedAt = insertedAt
+        self.gapBefore = gapBefore
+        self.gapAfter = gapAfter
+    }
+}
+
+public struct NostrSyncCursorRecord: Codable, Equatable, Sendable {
+    public let accountID: String
+    public let timelineKey: String
+    public let relayURL: String
+    public let newestCreatedAt: Int?
+    public let oldestCreatedAt: Int?
+    public let lastEOSEAt: Int?
+    public let lastNegentropyAt: Int?
+
+    public init(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String,
+        newestCreatedAt: Int?,
+        oldestCreatedAt: Int?,
+        lastEOSEAt: Int?,
+        lastNegentropyAt: Int?
+    ) {
+        self.accountID = accountID
+        self.timelineKey = timelineKey
+        self.relayURL = relayURL
+        self.newestCreatedAt = newestCreatedAt
+        self.oldestCreatedAt = oldestCreatedAt
+        self.lastEOSEAt = lastEOSEAt
+        self.lastNegentropyAt = lastNegentropyAt
+    }
+}
+
+public struct NostrRelayProfileRecord: Codable, Equatable, Sendable {
+    public let relayURL: String
+    public let information: NostrRelayInformationDocument?
+    public let healthScore: Double
+    public let lastEOSEAt: Int?
+    public let lastConnectedAt: Int?
+    public let authRequired: Bool
+    public let paymentRequired: Bool
+
+    public init(
+        relayURL: String,
+        information: NostrRelayInformationDocument?,
+        healthScore: Double,
+        lastEOSEAt: Int?,
+        lastConnectedAt: Int?,
+        authRequired: Bool,
+        paymentRequired: Bool
+    ) {
+        self.relayURL = relayURL
+        self.information = information
+        self.healthScore = healthScore
+        self.lastEOSEAt = lastEOSEAt
+        self.lastConnectedAt = lastConnectedAt
+        self.authRequired = authRequired
+        self.paymentRequired = paymentRequired
+    }
+}
+
+public struct NostrEventSourceRecord: Codable, Equatable, Sendable {
+    public let eventID: String
+    public let relayURL: String
+    public let firstSeenAt: Int
+    public let lastSeenAt: Int
+
+    public init(eventID: String, relayURL: String, firstSeenAt: Int, lastSeenAt: Int) {
+        self.eventID = eventID
+        self.relayURL = relayURL
+        self.firstSeenAt = firstSeenAt
+        self.lastSeenAt = lastSeenAt
+    }
+}
+
 public final class NostrEventStore {
     private let database: any DatabaseWriter
     private let encoder = JSONEncoder()
@@ -114,6 +215,201 @@ public final class NostrEventStore {
         }
     }
 
+    public func recordEventSources(eventIDs: [String], relayURL: String, seenAt: Int = Int(Date().timeIntervalSince1970)) throws {
+        guard !eventIDs.isEmpty else { return }
+
+        try database.write { db in
+            for eventID in eventIDs {
+                try db.execute(
+                    sql: """
+                    INSERT INTO event_sources (event_id, relay_url, first_seen_at, last_seen_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(event_id, relay_url) DO UPDATE SET
+                        last_seen_at = excluded.last_seen_at
+                    """,
+                    arguments: [eventID, relayURL, seenAt, seenAt]
+                )
+            }
+        }
+    }
+
+    public func eventSources(eventID: String) throws -> [NostrEventSourceRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT event_id, relay_url, first_seen_at, last_seen_at
+                FROM event_sources
+                WHERE event_id = ?
+                ORDER BY relay_url ASC
+                """,
+                arguments: [eventID]
+            )
+            return rows.map(decodeEventSource)
+        }
+    }
+
+    public func saveTimelineEntries(_ entries: [NostrTimelineEntryRecord]) throws {
+        guard !entries.isEmpty else { return }
+
+        try database.write { db in
+            for entry in entries {
+                try db.execute(
+                    sql: """
+                    INSERT INTO timeline_entries (
+                        account_id, timeline_key, event_id, sort_ts, source,
+                        inserted_at, gap_before, gap_after
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id, timeline_key, event_id) DO UPDATE SET
+                        sort_ts = excluded.sort_ts,
+                        source = excluded.source,
+                        inserted_at = excluded.inserted_at,
+                        gap_before = excluded.gap_before,
+                        gap_after = excluded.gap_after
+                    """,
+                    arguments: [
+                        entry.accountID,
+                        entry.timelineKey,
+                        entry.eventID,
+                        entry.sortTimestamp,
+                        entry.source,
+                        entry.insertedAt,
+                        entry.gapBefore,
+                        entry.gapAfter
+                    ]
+                )
+            }
+        }
+    }
+
+    public func timelineEvents(accountID: String, timelineKey: String, limit: Int) throws -> [NostrEvent] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT e.event_id, e.pubkey, e.created_at, e.kind, e.tags_json, e.content, e.sig
+                FROM timeline_entries te
+                JOIN events e ON e.event_id = te.event_id
+                WHERE te.account_id = ? AND te.timeline_key = ? AND e.deleted_at IS NULL
+                ORDER BY te.sort_ts DESC, te.event_id ASC
+                LIMIT ?
+                """,
+                arguments: [accountID, timelineKey, limit]
+            )
+            return try rows.map(decodeEvent)
+        }
+    }
+
+    public func timelineEntries(accountID: String, timelineKey: String, limit: Int) throws -> [NostrTimelineEntryRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ?
+                ORDER BY sort_ts DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: [accountID, timelineKey, limit]
+            )
+            return rows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func saveSyncCursor(_ cursor: NostrSyncCursorRecord) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO sync_cursors (
+                    account_id, timeline_key, relay_url, newest_created_at,
+                    oldest_created_at, last_eose_at, last_negentropy_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, timeline_key, relay_url) DO UPDATE SET
+                    newest_created_at = excluded.newest_created_at,
+                    oldest_created_at = excluded.oldest_created_at,
+                    last_eose_at = excluded.last_eose_at,
+                    last_negentropy_at = excluded.last_negentropy_at
+                """,
+                arguments: [
+                    cursor.accountID,
+                    cursor.timelineKey,
+                    cursor.relayURL,
+                    cursor.newestCreatedAt,
+                    cursor.oldestCreatedAt,
+                    cursor.lastEOSEAt,
+                    cursor.lastNegentropyAt
+                ]
+            )
+        }
+    }
+
+    public func syncCursor(accountID: String, timelineKey: String, relayURL: String) throws -> NostrSyncCursorRecord? {
+        try database.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, relay_url, newest_created_at,
+                    oldest_created_at, last_eose_at, last_negentropy_at
+                FROM sync_cursors
+                WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                """,
+                arguments: [accountID, timelineKey, relayURL]
+            ) else {
+                return nil
+            }
+            return decodeSyncCursor(row)
+        }
+    }
+
+    public func saveRelayProfile(_ relay: NostrRelayProfileRecord) throws {
+        let informationData = try relay.information.map(encoder.encode)
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO relay_profiles (
+                    relay_url, information_json, health_score, last_eose_at,
+                    last_connected_at, auth_required, payment_required
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(relay_url) DO UPDATE SET
+                    information_json = excluded.information_json,
+                    health_score = excluded.health_score,
+                    last_eose_at = excluded.last_eose_at,
+                    last_connected_at = excluded.last_connected_at,
+                    auth_required = excluded.auth_required,
+                    payment_required = excluded.payment_required
+                """,
+                arguments: [
+                    relay.relayURL,
+                    informationData,
+                    relay.healthScore,
+                    relay.lastEOSEAt,
+                    relay.lastConnectedAt,
+                    relay.authRequired,
+                    relay.paymentRequired
+                ]
+            )
+        }
+    }
+
+    public func relayProfile(relayURL: String) throws -> NostrRelayProfileRecord? {
+        try database.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT relay_url, information_json, health_score, last_eose_at,
+                    last_connected_at, auth_required, payment_required
+                FROM relay_profiles
+                WHERE relay_url = ?
+                """,
+                arguments: [relayURL]
+            ) else {
+                return nil
+            }
+            return try decodeRelayProfile(row)
+        }
+    }
+
     private func migrate() throws {
         var migrator = DatabaseMigrator()
 
@@ -161,6 +457,65 @@ public final class NostrEventStore {
             }
 
             try db.create(index: "replaceable_heads_updated_at", on: "replaceable_heads", columns: ["updated_at"])
+
+            try db.create(table: "timeline_entries", ifNotExists: true) { table in
+                table.autoIncrementedPrimaryKey("id")
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("sort_ts", .integer).notNull()
+                table.column("source", .text).notNull()
+                table.column("inserted_at", .integer).notNull()
+                table.column("gap_before", .boolean).notNull().defaults(to: false)
+                table.column("gap_after", .boolean).notNull().defaults(to: false)
+                table.uniqueKey(["account_id", "timeline_key", "event_id"])
+            }
+
+            try db.create(index: "timeline_entries_account_timeline_sort", on: "timeline_entries", columns: ["account_id", "timeline_key", "sort_ts"])
+            try db.create(index: "timeline_entries_account_timeline_event", on: "timeline_entries", columns: ["account_id", "timeline_key", "event_id"])
+
+            try db.create(table: "sync_cursors", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("relay_url", .text).notNull()
+                table.column("newest_created_at", .integer)
+                table.column("oldest_created_at", .integer)
+                table.column("last_eose_at", .integer)
+                table.column("last_negentropy_at", .integer)
+                table.primaryKey(["account_id", "timeline_key", "relay_url"])
+            }
+
+            try db.create(index: "sync_cursors_timeline", on: "sync_cursors", columns: ["account_id", "timeline_key"])
+
+            try db.create(table: "relay_profiles", ifNotExists: true) { table in
+                table.column("relay_url", .text).primaryKey()
+                table.column("information_json", .blob)
+                table.column("health_score", .double).notNull().defaults(to: 0)
+                table.column("last_eose_at", .integer)
+                table.column("last_connected_at", .integer)
+                table.column("auth_required", .boolean).notNull().defaults(to: false)
+                table.column("payment_required", .boolean).notNull().defaults(to: false)
+            }
+
+            try db.create(index: "relay_profiles_health", on: "relay_profiles", columns: ["health_score"])
+            try db.create(index: "relay_profiles_last_eose", on: "relay_profiles", columns: ["last_eose_at"])
+
+            try db.create(table: "event_sources", ifNotExists: true) { table in
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("relay_url", .text).notNull()
+                table.column("first_seen_at", .integer).notNull()
+                table.column("last_seen_at", .integer).notNull()
+                table.primaryKey(["event_id", "relay_url"])
+            }
+
+            try db.create(index: "event_sources_relay", on: "event_sources", columns: ["relay_url"])
+
+            try db.create(table: "deletion_tombstones", ifNotExists: true) { table in
+                table.column("target_event_id", .text).primaryKey()
+                table.column("deletion_event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("deleted_at", .integer).notNull()
+                table.column("author_pubkey", .text).notNull()
+            }
         }
 
         try migrator.migrate(database)
@@ -290,6 +645,53 @@ public final class NostrEventStore {
             relayHint: row["relay_hint"],
             marker: row["marker"],
             raw: try decoder.decode([String].self, from: rawData)
+        )
+    }
+
+    private func decodeTimelineEntry(_ row: Row) -> NostrTimelineEntryRecord {
+        NostrTimelineEntryRecord(
+            accountID: row["account_id"],
+            timelineKey: row["timeline_key"],
+            eventID: row["event_id"],
+            sortTimestamp: row["sort_ts"],
+            source: row["source"],
+            insertedAt: row["inserted_at"],
+            gapBefore: row["gap_before"],
+            gapAfter: row["gap_after"]
+        )
+    }
+
+    private func decodeSyncCursor(_ row: Row) -> NostrSyncCursorRecord {
+        NostrSyncCursorRecord(
+            accountID: row["account_id"],
+            timelineKey: row["timeline_key"],
+            relayURL: row["relay_url"],
+            newestCreatedAt: row["newest_created_at"],
+            oldestCreatedAt: row["oldest_created_at"],
+            lastEOSEAt: row["last_eose_at"],
+            lastNegentropyAt: row["last_negentropy_at"]
+        )
+    }
+
+    private func decodeRelayProfile(_ row: Row) throws -> NostrRelayProfileRecord {
+        let informationData: Data? = row["information_json"]
+        return NostrRelayProfileRecord(
+            relayURL: row["relay_url"],
+            information: try informationData.map { try decoder.decode(NostrRelayInformationDocument.self, from: $0) },
+            healthScore: row["health_score"],
+            lastEOSEAt: row["last_eose_at"],
+            lastConnectedAt: row["last_connected_at"],
+            authRequired: row["auth_required"],
+            paymentRequired: row["payment_required"]
+        )
+    }
+
+    private func decodeEventSource(_ row: Row) -> NostrEventSourceRecord {
+        NostrEventSourceRecord(
+            eventID: row["event_id"],
+            relayURL: row["relay_url"],
+            firstSeenAt: row["first_seen_at"],
+            lastSeenAt: row["last_seen_at"]
         )
     }
 
