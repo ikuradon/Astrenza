@@ -316,6 +316,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: Set(followedPubkeys),
+            mediaAssetsByEventID: mediaAssetsByEventID(for: noteEvents),
             deletedEntries: deletedEntries
         )
     }
@@ -328,7 +329,17 @@ final class NostrHomeTimelineStore: ObservableObject {
             noteEvents: events,
             metadataEvents: metadata,
             nip05Resolutions: nip05Resolutions,
-            followedPubkeys: Set(followedPubkeys)
+            followedPubkeys: Set(followedPubkeys),
+            mediaAssetsByEventID: mediaAssetsByEventID(for: events)
+        )
+    }
+
+    private func mediaAssetsByEventID(for events: [NostrEvent]) -> [String: [NostrMediaAssetRecord]] {
+        guard let eventStore else { return [:] }
+        return Dictionary(
+            uniqueKeysWithValues: events.map { event in
+                (event.id, (try? eventStore.mediaAssets(eventID: event.id)) ?? [])
+            }
         )
     }
 
@@ -440,6 +451,7 @@ enum NostrTimelineMaterializer {
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>,
+        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
         deletedEntries: [NostrDeletedTimelineEntryRecord] = []
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
@@ -447,7 +459,8 @@ enum NostrTimelineMaterializer {
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
-            followedPubkeys: followedPubkeys
+            followedPubkeys: followedPubkeys,
+            mediaAssetsByEventID: mediaAssetsByEventID
         )
         .filter { !deletedTargetIDs.contains($0.id) }
         .map { ($0.id, $0) })
@@ -482,7 +495,8 @@ enum NostrTimelineMaterializer {
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
-        followedPubkeys: Set<String>
+        followedPubkeys: Set<String>,
+        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:]
     ) -> [TimelinePost] {
         let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
         let directPosts = NostrHomeTimelineMaterializer.items(
@@ -496,7 +510,12 @@ enum NostrTimelineMaterializer {
             return SortableTimelinePost(
                 id: event.id,
                 sortTimestamp: event.createdAt,
-                post: post(for: item, event: event, eventsByID: eventsByID)
+                post: post(
+                    for: item,
+                    event: event,
+                    eventsByID: eventsByID,
+                    mediaAssets: mediaAssetsByEventID[event.id] ?? []
+                )
             )
         }
         let reposts = repostPosts(
@@ -504,7 +523,8 @@ enum NostrTimelineMaterializer {
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: followedPubkeys,
-            eventsByID: eventsByID
+            eventsByID: eventsByID,
+            mediaAssetsByEventID: mediaAssetsByEventID
         )
 
         return (directPosts + reposts)
@@ -525,6 +545,7 @@ enum NostrTimelineMaterializer {
         for item: NostrHomeTimelineItem,
         event: NostrEvent?,
         eventsByID: [String: NostrEvent],
+        mediaAssets: [NostrMediaAssetRecord] = [],
         idOverride: String? = nil,
         repostedBy: TimelineRepostAttribution? = nil
     ) -> TimelinePost {
@@ -555,7 +576,7 @@ enum NostrTimelineMaterializer {
             boostCount: nil,
             favoriteCount: nil,
             isLocked: false,
-            media: media(imageURLs: imageURLs, linkURLs: linkURLs, pubkey: item.pubkey),
+            media: media(assets: mediaAssets, imageURLs: imageURLs, linkURLs: linkURLs, pubkey: item.pubkey),
             context: nil,
             repostedBy: repostedBy,
             quotedPost: event.flatMap { quotedPost(from: $0, eventsByID: eventsByID) },
@@ -579,7 +600,8 @@ enum NostrTimelineMaterializer {
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
         followedPubkeys: Set<String>,
-        eventsByID: [String: NostrEvent]
+        eventsByID: [String: NostrEvent],
+        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]]
     ) -> [SortableTimelinePost] {
         events
             .filter { $0.kind == 6 }
@@ -612,6 +634,7 @@ enum NostrTimelineMaterializer {
                         for: targetItem,
                         event: targetEvent,
                         eventsByID: eventsByID,
+                        mediaAssets: mediaAssetsByEventID[targetEvent.id] ?? [],
                         idOverride: repostEvent.id,
                         repostedBy: attribution
                     )
@@ -733,7 +756,29 @@ enum NostrTimelineMaterializer {
         return [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"].contains { path.hasSuffix($0) }
     }
 
-    private static func media(imageURLs: [URL], linkURLs: [URL], pubkey: String) -> TimelineMedia? {
+    private static func media(
+        assets: [NostrMediaAssetRecord],
+        imageURLs: [URL],
+        linkURLs: [URL],
+        pubkey: String
+    ) -> TimelineMedia? {
+        if !assets.isEmpty {
+            let palette = avatarPalette(for: pubkey)
+            let tiles = assets.prefix(5).compactMap { asset -> MediaTile? in
+                guard let url = URL(string: asset.url) else { return nil }
+                return MediaTile(
+                    title: asset.alt ?? (url.lastPathComponent.isEmpty ? (url.host ?? "media") : url.lastPathComponent),
+                    colors: [palette.primary, palette.secondary],
+                    symbolName: asset.mimeType?.hasPrefix("video/") == true ? "play.rectangle" : "photo",
+                    url: url,
+                    altText: asset.alt
+                )
+            }
+            if !tiles.isEmpty {
+                return .gallery(Array(tiles))
+            }
+        }
+
         if !imageURLs.isEmpty {
             let palette = avatarPalette(for: pubkey)
             let tiles = imageURLs.prefix(5).map { url in

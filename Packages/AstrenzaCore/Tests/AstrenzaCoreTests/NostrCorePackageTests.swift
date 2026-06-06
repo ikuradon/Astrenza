@@ -280,6 +280,57 @@ struct NostrCorePackageTests {
         #expect(itemsByKind[10_007]?.map(\.value) == ["wss://search.example"])
     }
 
+    @Test("Nostr event store persists NIP-92 imeta media assets")
+    func eventStoreNIP92MediaAssets() throws {
+        let store = try NostrEventStore.inMemory()
+        let event = nostrEvent(
+            kind: 1,
+            content: "photo",
+            tags: [
+                [
+                    "imeta",
+                    "url https://cdn.example.test/photo.png",
+                    "m image/png",
+                    "dim 1200x800",
+                    "blurhash LEHV6nWB2yk8pyo0adR*.7kCMdnj",
+                    "alt screen reader description",
+                    "x \(String(repeating: "f", count: 64))"
+                ]
+            ]
+        )
+
+        try store.save(events: [event], receivedAt: 222)
+        let assets = try store.mediaAssets(eventID: event.id)
+        let asset = try #require(assets.first)
+
+        #expect(assets.count == 1)
+        #expect(asset.url == "https://cdn.example.test/photo.png")
+        #expect(asset.mimeType == "image/png")
+        #expect(asset.width == 1200)
+        #expect(asset.height == 800)
+        #expect(asset.blurhash == "LEHV6nWB2yk8pyo0adR*.7kCMdnj")
+        #expect(asset.alt == "screen reader description")
+        #expect(asset.sha256 == String(repeating: "f", count: 64))
+        #expect(asset.status == "unresolved")
+        #expect(asset.createdAt == 222)
+    }
+
+    @Test("Nostr media parser uses content URLs only when imeta is absent")
+    func eventStoreMediaContentFallback() throws {
+        let store = try NostrEventStore.inMemory()
+        let fallback = nostrEvent(kind: 1, content: "image https://cdn.example.test/fallback.jpg link https://example.test/page")
+        let imetaPreferred = nostrEvent(
+            kind: 1,
+            content: "ignored https://cdn.example.test/ignored.jpg",
+            tags: [["imeta", "url https://cdn.example.test/tagged.webp", "m image/webp"]]
+        )
+
+        try store.save(events: [fallback, imetaPreferred])
+
+        #expect(try store.mediaAssets(eventID: fallback.id).map(\.url) == ["https://cdn.example.test/fallback.jpg"])
+        #expect(try store.mediaAssets(eventID: imetaPreferred.id).map(\.url) == ["https://cdn.example.test/tagged.webp"])
+    }
+
     @Test("Nostr event store keeps timeline entries in display order")
     func eventStoreTimelineEntries() throws {
         let store = try NostrEventStore.inMemory()

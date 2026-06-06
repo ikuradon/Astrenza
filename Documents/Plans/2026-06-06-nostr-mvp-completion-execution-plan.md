@@ -173,19 +173,19 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add schema:
+- [x] Add schema:
   - `media_assets(asset_id, event_id, url, mime_type, blurhash, width, height, alt, sha256, status, local_path, created_at)`
-- [ ] Parse NIP-92 `imeta` fields:
+- [x] Parse NIP-92 `imeta` fields:
   - `url`
   - `m`
   - `dim`
   - `blurhash`
   - `alt`
   - `x` / `ox`
-- [ ] Extract direct image/video URLs from content only as fallback when no `imeta` is present.
-- [ ] Materialize `TimelineMedia.gallery` from `media_assets`.
-- [ ] Keep existing 1-5+ media grid behavior and fixed gallery height.
-- [ ] Use `alt` as alt text in the full-screen image viewer; do not treat visible embedded text as alt text.
+- [x] Extract direct image/video URLs from content only as fallback when no `imeta` is present.
+- [x] Materialize `TimelineMedia.gallery` from `media_assets`.
+- [x] Keep existing 1-5+ media grid behavior and fixed gallery height.
+- [x] Use `alt` as alt text in the full-screen image viewer; do not treat visible embedded text as alt text.
 
 **Acceptance tests:**
 - imeta parse test

@@ -779,6 +779,22 @@ struct MediaTile: Identifiable {
     let title: String
     let colors: [Color]
     let symbolName: String
+    let url: URL?
+    let altText: String?
+
+    init(
+        title: String,
+        colors: [Color],
+        symbolName: String,
+        url: URL? = nil,
+        altText: String? = nil
+    ) {
+        self.title = title
+        self.colors = colors
+        self.symbolName = symbolName
+        self.url = url
+        self.altText = altText
+    }
 }
 
 struct LinkPreview {

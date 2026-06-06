@@ -159,6 +159,49 @@ struct TimelineModelTests {
         }
     }
 
+    @Test("Nostr materializer prefers persisted media assets with alt text")
+    func nostrMaterializerUsesPersistedMediaAssets() throws {
+        let author = String(repeating: "a", count: 64)
+        let note = timelineEvent(
+            idSeed: "asset-note",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["imeta", "url https://cdn.example.test/raw.png"]],
+            content: "photo https://cdn.example.test/raw.png"
+        )
+        let asset = NostrMediaAssetRecord(
+            assetID: "\(note.id):imeta:0",
+            eventID: note.id,
+            url: "https://cdn.example.test/alt.png",
+            mimeType: "image/png",
+            blurhash: nil,
+            width: 640,
+            height: 480,
+            alt: "Alt text from imeta",
+            sha256: nil,
+            status: "unresolved",
+            localPath: nil,
+            createdAt: 200
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            mediaAssetsByEventID: [note.id: [asset]]
+        )
+        let post = try #require(posts.first)
+
+        if case .gallery(let tiles) = post.media {
+            #expect(tiles.count == 1)
+            #expect(tiles[0].title == "Alt text from imeta")
+            #expect(tiles[0].altText == "Alt text from imeta")
+            #expect(tiles[0].url?.absoluteString == "https://cdn.example.test/alt.png")
+        } else {
+            Issue.record("Expected gallery media from persisted asset")
+        }
+    }
+
     @Test("Nostr materializer merges deleted timeline entries by sort position")
     func nostrMaterializerMergesDeletedTimelineEntries() throws {
         let author = String(repeating: "a", count: 64)

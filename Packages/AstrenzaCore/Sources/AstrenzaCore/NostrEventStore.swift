@@ -268,6 +268,7 @@ public final class NostrEventStore {
             for event in events {
                 try upsert(event: event, receivedAt: receivedAt, db: db)
                 try replaceTags(for: event, db: db)
+                try replaceMediaAssets(for: event, receivedAt: receivedAt, db: db)
                 try upsertReplaceableHeadIfNeeded(for: event, db: db)
                 try upsertAddressableHeadIfNeeded(for: event, db: db)
                 try upsertListIfNeeded(for: event, accountID: event.pubkey, db: db)
@@ -515,6 +516,23 @@ public final class NostrEventStore {
                 arguments: [listID]
             )
             return rows.map(decodeListItem)
+        }
+    }
+
+    public func mediaAssets(eventID: String) throws -> [NostrMediaAssetRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT asset_id, event_id, url, mime_type, blurhash, width, height,
+                       alt, sha256, status, local_path, created_at
+                FROM media_assets
+                WHERE event_id = ?
+                ORDER BY created_at ASC, asset_id ASC
+                """,
+                arguments: [eventID]
+            )
+            return rows.map(decodeMediaAsset)
         }
     }
 
@@ -1187,6 +1205,26 @@ public final class NostrEventStore {
             try db.create(index: "list_items_type_value", on: "list_items", columns: ["item_type", "value"], ifNotExists: true)
         }
 
+        migrator.registerMigration("addMediaAssets") { db in
+            try db.create(table: "media_assets", ifNotExists: true) { table in
+                table.column("asset_id", .text).primaryKey()
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("url", .text).notNull()
+                table.column("mime_type", .text)
+                table.column("blurhash", .text)
+                table.column("width", .integer)
+                table.column("height", .integer)
+                table.column("alt", .text)
+                table.column("sha256", .text)
+                table.column("status", .text).notNull()
+                table.column("local_path", .text)
+                table.column("created_at", .integer).notNull()
+            }
+            try db.create(index: "media_assets_event", on: "media_assets", columns: ["event_id"], ifNotExists: true)
+            try db.create(index: "media_assets_url", on: "media_assets", columns: ["url"], ifNotExists: true)
+            try db.create(index: "media_assets_status", on: "media_assets", columns: ["status"], ifNotExists: true)
+        }
+
         try migrator.migrate(database)
     }
 
@@ -1247,6 +1285,35 @@ public final class NostrEventStore {
                     relayHint(from: tag),
                     marker(from: tag),
                     rawData
+                ]
+            )
+        }
+    }
+
+    private func replaceMediaAssets(for event: NostrEvent, receivedAt: Int, db: Database) throws {
+        try db.execute(sql: "DELETE FROM media_assets WHERE event_id = ?", arguments: [event.id])
+
+        for asset in NostrMediaParser.mediaAssets(from: event, createdAt: receivedAt) {
+            try db.execute(
+                sql: """
+                INSERT INTO media_assets (
+                    asset_id, event_id, url, mime_type, blurhash, width, height,
+                    alt, sha256, status, local_path, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    asset.assetID,
+                    asset.eventID,
+                    asset.url,
+                    asset.mimeType,
+                    asset.blurhash,
+                    asset.width,
+                    asset.height,
+                    asset.alt,
+                    asset.sha256,
+                    asset.status,
+                    asset.localPath,
+                    asset.createdAt
                 ]
             )
         }
@@ -1704,6 +1771,23 @@ public final class NostrEventStore {
             relayHint: row["relay_hint"],
             visibility: row["visibility"],
             position: row["position"]
+        )
+    }
+
+    private func decodeMediaAsset(_ row: Row) -> NostrMediaAssetRecord {
+        NostrMediaAssetRecord(
+            assetID: row["asset_id"],
+            eventID: row["event_id"],
+            url: row["url"],
+            mimeType: row["mime_type"],
+            blurhash: row["blurhash"],
+            width: row["width"],
+            height: row["height"],
+            alt: row["alt"],
+            sha256: row["sha256"],
+            status: row["status"],
+            localPath: row["local_path"],
+            createdAt: row["created_at"]
         )
     }
 

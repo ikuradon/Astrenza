@@ -222,7 +222,7 @@ private struct TimelineFullscreenMediaChrome: View {
 
     private func mediaInfoPanel(tile: MediaTile) -> some View {
         VStack(spacing: 8) {
-            Text(tile.title)
+            Text(tile.altText ?? tile.title)
                 .font(.system(size: 15, weight: .heavy, design: .rounded))
                 .foregroundStyle(.white.opacity(0.94))
                 .lineLimit(2)
