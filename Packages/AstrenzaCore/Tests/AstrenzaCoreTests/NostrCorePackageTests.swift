@@ -378,6 +378,41 @@ struct NostrCorePackageTests {
         #expect(loaded.siteName == "Example")
     }
 
+    @Test("Nostr outbox persists events and relay destinations")
+    func eventStoreOutboxPersistence() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let event = nostrEvent(kind: 1, pubkey: accountID, createdAt: 300, content: "queued")
+
+        let record = try store.enqueueOutboxEvent(
+            event,
+            accountID: accountID,
+            relayURLs: ["wss://Relay.Example", "wss://relay.example", "wss://other.example"],
+            localID: "local-1",
+            createdAt: 400
+        )
+        let events = try store.outboxEvents(accountID: accountID)
+        let relays = try store.outboxRelays(localID: record.localID)
+
+        #expect(events.map(\.localID) == ["local-1"])
+        #expect(events.first?.event == event)
+        #expect(events.first?.status == NostrOutboxStatus.pending)
+        #expect(relays.map(\.relayURL) == ["wss://other.example", "wss://relay.example"])
+        #expect(relays.allSatisfy { $0.status == NostrOutboxStatus.pending })
+    }
+
+    @Test("Nostr publish destination resolver prioritizes account relays")
+    func publishDestinationResolver() {
+        let relays = NostrPublishDestinationResolver.relayDestinations(
+            accountWriteRelays: ["wss://Write.example", "invalid"],
+            taggedUserReadRelays: ["wss://read.example", "wss://write.example"],
+            fallbackRelays: ["wss://fallback.example"],
+            limit: 3
+        )
+
+        #expect(relays == ["wss://write.example", "wss://read.example", "wss://fallback.example"])
+    }
+
     @Test("Nostr event store keeps timeline entries in display order")
     func eventStoreTimelineEntries() throws {
         let store = try NostrEventStore.inMemory()

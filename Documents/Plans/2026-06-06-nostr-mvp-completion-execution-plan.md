@@ -248,14 +248,14 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add schema:
+- [x] Add schema:
   - `outbox_events(local_id, account_id, event_id, event_json, status, created_at, next_retry_at, last_error)`
   - `outbox_relays(local_id, relay_url, status, last_attempt_at, ok_message)`
 - [ ] Add publisher input models for:
   - new kind:1 post
   - reply with NIP-10 tags
   - deletion request kind:5
-- [ ] Keep signer boundary abstract so local signing, NIP-46, and mock signing can share the same publish queue.
+- [x] Keep signer boundary abstract so local signing, NIP-46, and mock signing can share the same publish queue.
 - [ ] Resolve relay destinations from:
   - account write relays from kind:10002
   - tagged users' cached read relays

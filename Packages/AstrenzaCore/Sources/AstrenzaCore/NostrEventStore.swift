@@ -566,6 +566,106 @@ public final class NostrEventStore {
         }
     }
 
+    @discardableResult
+    public func enqueueOutboxEvent(
+        _ event: NostrEvent,
+        accountID: String,
+        relayURLs: [String],
+        localID: String = UUID().uuidString,
+        createdAt: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> NostrOutboxEventRecord {
+        let eventData = try encoder.encode(event)
+        let relays = NostrPublishDestinationResolver.relayDestinations(
+            accountWriteRelays: relayURLs,
+            taggedUserReadRelays: [],
+            fallbackRelays: []
+        )
+
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO outbox_events (
+                    local_id, account_id, event_id, event_json, status,
+                    created_at, next_retry_at, last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+                ON CONFLICT(local_id) DO UPDATE SET
+                    account_id = excluded.account_id,
+                    event_id = excluded.event_id,
+                    event_json = excluded.event_json,
+                    status = excluded.status,
+                    created_at = excluded.created_at,
+                    next_retry_at = excluded.next_retry_at,
+                    last_error = excluded.last_error
+                """,
+                arguments: [
+                    localID,
+                    accountID,
+                    event.id,
+                    eventData,
+                    NostrOutboxStatus.pending,
+                    createdAt
+                ]
+            )
+
+            try db.execute(sql: "DELETE FROM outbox_relays WHERE local_id = ?", arguments: [localID])
+            for relayURL in relays {
+                try db.execute(
+                    sql: """
+                    INSERT INTO outbox_relays (
+                        local_id, relay_url, status, last_attempt_at, ok_message
+                    ) VALUES (?, ?, ?, NULL, NULL)
+                    """,
+                    arguments: [localID, relayURL, NostrOutboxStatus.pending]
+                )
+            }
+        }
+
+        return NostrOutboxEventRecord(
+            localID: localID,
+            accountID: accountID,
+            eventID: event.id,
+            event: event,
+            status: NostrOutboxStatus.pending,
+            createdAt: createdAt,
+            nextRetryAt: nil,
+            lastError: nil
+        )
+    }
+
+    public func outboxEvents(accountID: String, limit: Int = 100) throws -> [NostrOutboxEventRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT local_id, account_id, event_id, event_json, status,
+                       created_at, next_retry_at, last_error
+                FROM outbox_events
+                WHERE account_id = ?
+                ORDER BY created_at DESC, local_id ASC
+                LIMIT ?
+                """,
+                arguments: [accountID, limit]
+            )
+            return try rows.map(decodeOutboxEvent)
+        }
+    }
+
+    public func outboxRelays(localID: String) throws -> [NostrOutboxRelayRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT local_id, relay_url, status, last_attempt_at, ok_message
+                FROM outbox_relays
+                WHERE local_id = ?
+                ORDER BY relay_url ASC
+                """,
+                arguments: [localID]
+            )
+            return rows.map(decodeOutboxRelay)
+        }
+    }
+
     public func latestReplaceableEvent(
         pubkey: String,
         kind: Int,
@@ -1272,6 +1372,30 @@ public final class NostrEventStore {
             try db.create(index: "link_previews_expires", on: "link_previews", columns: ["expires_at"], ifNotExists: true)
         }
 
+        migrator.registerMigration("addOutbox") { db in
+            try db.create(table: "outbox_events", ifNotExists: true) { table in
+                table.column("local_id", .text).primaryKey()
+                table.column("account_id", .text).notNull()
+                table.column("event_id", .text)
+                table.column("event_json", .blob).notNull()
+                table.column("status", .text).notNull()
+                table.column("created_at", .integer).notNull()
+                table.column("next_retry_at", .integer)
+                table.column("last_error", .text)
+            }
+            try db.create(index: "outbox_events_account_status", on: "outbox_events", columns: ["account_id", "status", "created_at"], ifNotExists: true)
+
+            try db.create(table: "outbox_relays", ifNotExists: true) { table in
+                table.column("local_id", .text).notNull().references("outbox_events", column: "local_id", onDelete: .cascade)
+                table.column("relay_url", .text).notNull()
+                table.column("status", .text).notNull()
+                table.column("last_attempt_at", .integer)
+                table.column("ok_message", .text)
+                table.primaryKey(["local_id", "relay_url"])
+            }
+            try db.create(index: "outbox_relays_status", on: "outbox_relays", columns: ["status"], ifNotExists: true)
+        }
+
         try migrator.migrate(database)
     }
 
@@ -1921,6 +2045,30 @@ public final class NostrEventStore {
             fetchedAt: row["fetched_at"],
             expiresAt: row["expires_at"],
             error: row["error"]
+        )
+    }
+
+    private func decodeOutboxEvent(_ row: Row) throws -> NostrOutboxEventRecord {
+        let eventData: Data = row["event_json"]
+        return NostrOutboxEventRecord(
+            localID: row["local_id"],
+            accountID: row["account_id"],
+            eventID: row["event_id"],
+            event: try decoder.decode(NostrEvent.self, from: eventData),
+            status: row["status"],
+            createdAt: row["created_at"],
+            nextRetryAt: row["next_retry_at"],
+            lastError: row["last_error"]
+        )
+    }
+
+    private func decodeOutboxRelay(_ row: Row) -> NostrOutboxRelayRecord {
+        NostrOutboxRelayRecord(
+            localID: row["local_id"],
+            relayURL: row["relay_url"],
+            status: row["status"],
+            lastAttemptAt: row["last_attempt_at"],
+            okMessage: row["ok_message"]
         )
     }
 
