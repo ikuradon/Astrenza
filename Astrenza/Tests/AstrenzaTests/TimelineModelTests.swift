@@ -231,6 +231,57 @@ struct TimelineModelTests {
         #expect(post.replyContext?.bodyPreview == "legacy parent")
     }
 
+    @Test("Nostr materializer derives quotes from NIP-19 note references in content")
+    func nostrMaterializerUsesNIP19NoteQuoteReferences() throws {
+        let author = String(repeating: "a", count: 64)
+        let quotedID = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2"
+        let quoted = timelineEvent(
+            idSeed: "quoted-by-note",
+            id: quotedID,
+            pubkey: author,
+            createdAt: 100,
+            content: "quoted from note1"
+        )
+        let note = timelineEvent(
+            idSeed: "note-with-note1-quote",
+            pubkey: author,
+            createdAt: 120,
+            content: "nostr:note1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q7k28gn"
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note, quoted],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first { $0.id == note.id })
+
+        #expect(post.quotedPost?.body == "quoted from note1")
+    }
+
+    @Test("Nostr materializer treats NIP-10 mention markers as quote-like event references")
+    func nostrMaterializerUsesMentionMarkerQuoteFallback() throws {
+        let author = String(repeating: "a", count: 64)
+        let quoted = timelineEvent(idSeed: "quoted-by-mention", pubkey: author, createdAt: 100, content: "quoted by mention")
+        let note = timelineEvent(
+            idSeed: "note-with-mention-quote",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["e", quoted.id, "", "mention"]],
+            content: "quote-like mention"
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note, quoted],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first { $0.id == note.id })
+
+        #expect(post.quotedPost?.body == "quoted by mention")
+        #expect(post.replyContext == nil)
+    }
+
     @Test("Nostr materializer turns kind 6 reposts into attributed timeline posts")
     func nostrMaterializerUsesKind6Reposts() throws {
         let author = String(repeating: "a", count: 64)
@@ -642,6 +693,7 @@ struct TimelineModelTests {
 
 private func timelineEvent(
     idSeed: String,
+    id: String? = nil,
     kind: Int = 1,
     pubkey: String,
     createdAt: Int,
@@ -649,7 +701,7 @@ private func timelineEvent(
     content: String
 ) -> NostrEvent {
     NostrEvent(
-        id: timelineEventID(idSeed),
+        id: id ?? timelineEventID(idSeed),
         pubkey: pubkey,
         createdAt: createdAt,
         kind: kind,

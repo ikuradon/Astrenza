@@ -139,16 +139,20 @@ public enum NostrNIP19Error: Error, Equatable {
 
 public enum NostrNIP19 {
     public static func publicKeyHex(from input: String) throws -> String {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = trimmed.hasPrefix("nostr:") ? String(trimmed.dropFirst("nostr:".count)) : trimmed
-        let lowered = value.lowercased()
+        try hexPayload(from: input, prefix: "npub")
+    }
 
+    public static func eventIDHex(from input: String) throws -> String {
+        try hexPayload(from: input, prefix: "note")
+    }
+
+    private static func hexPayload(from input: String, prefix: String) throws -> String {
+        let lowered = normalizedInput(input)
         if NostrHex.isLowercaseHex(lowered, byteCount: 32) {
             return lowered
         }
-
         let decoded = try Bech32.decode(lowered)
-        guard decoded.hrp == "npub" else {
+        guard decoded.hrp == prefix else {
             throw NostrNIP19Error.unsupportedPrefix(decoded.hrp)
         }
         let bytes = try Bech32.convertBits(decoded.data, from: 5, to: 8, pad: false)
@@ -156,6 +160,12 @@ public enum NostrNIP19 {
             throw NostrNIP19Error.invalidPayloadLength(bytes.count)
         }
         return NostrHex.hexString(bytes)
+    }
+
+    private static func normalizedInput(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = trimmed.hasPrefix("nostr:") ? String(trimmed.dropFirst("nostr:".count)) : trimmed
+        return value.lowercased()
     }
 }
 

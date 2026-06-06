@@ -797,7 +797,7 @@ enum NostrTimelineMaterializer {
     }
 
     private static func quotedPost(from event: NostrEvent, eventsByID: [String: NostrEvent]) -> QuotedTimelinePost? {
-        guard let quotedID = event.tags.last(where: { $0.first == "q" && $0.count >= 2 })?[1] else { return nil }
+        guard let quotedID = quotedPostID(from: event) else { return nil }
         if let quoted = eventsByID[quotedID] {
             let item = NostrHomeTimelineItem(
                 id: quoted.id,
@@ -827,6 +827,34 @@ enum NostrTimelineMaterializer {
             timestamp: "",
             isAvailable: false
         )
+    }
+
+    private static func quotedPostID(from event: NostrEvent) -> String? {
+        if let quotedTagID = event.tags.last(where: { $0.first == "q" && $0.count >= 2 })?[1] {
+            return quotedTagID
+        }
+        if let contentReference = nip19EventReference(in: event.content) {
+            return contentReference
+        }
+        return quoteLikeEventID(from: event.tags)
+    }
+
+    private static func nip19EventReference(in content: String) -> String? {
+        content
+            .split(whereSeparator: \.isWhitespace)
+            .lazy
+            .compactMap { token -> String? in
+                let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}>\n"))
+                guard trimmed.hasPrefix("note1") || trimmed.hasPrefix("nostr:note1") else { return nil }
+                return try? NostrNIP19.eventIDHex(from: trimmed)
+            }
+            .first
+    }
+
+    private static func quoteLikeEventID(from tags: [[String]]) -> String? {
+        tags.last { tag in
+            tag.count >= 4 && tag[0] == "e" && tag[3] == "mention"
+        }?[1]
     }
 
     private static func repostTargetID(from event: NostrEvent) -> String? {
