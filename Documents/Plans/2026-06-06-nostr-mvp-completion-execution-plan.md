@@ -417,13 +417,19 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Re-run store recreation tests after all migrations.
-- [ ] Re-run 10,000 timeline restore performance test.
-- [ ] Re-run gap anchor preservation test after materializer changes.
-- [ ] Run a local mock route for Maestro UI tests.
-- [ ] Confirm mock route remains separate from real relay route.
-- [ ] Confirm `Documents/Research`-derived TODOs are either implemented or explicitly deferred in a backlog file.
-- [ ] Commit final cleanup if needed.
+- [x] Re-run store recreation tests after all migrations.
+  - Verified by `Nostr event store restores home state after store recreation`.
+- [x] Re-run 10,000 timeline restore performance test.
+  - Verified by `Timeline viewport resolver handles persisted large timelines by snapshot offset`.
+- [x] Re-run gap anchor preservation test after materializer changes.
+  - Verified by `Timeline gap upward fill keeps lower anchor visually fixed` and `Timeline gap downward fill keeps upper anchor visually fixed`.
+- [x] Run a local mock route for Maestro UI tests.
+  - Verified by `Launch mode can route Maestro to the mock timeline`.
+- [x] Confirm mock route remains separate from real relay route.
+  - Verified by mock launch mode test plus `Live npub can resolve follows and signed home notes from relays`.
+- [x] Confirm `Documents/Research`-derived TODOs are either implemented or explicitly deferred in a backlog file.
+  - Deferred items are tracked in `Documents/Plans/2026-06-06-nostr-mvp-deferred-backlog.md`.
+- [x] Commit final cleanup if needed.
 
 **Commit:**
 `Harden Nostr MVP persistence and relay flows`
