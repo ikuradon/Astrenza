@@ -1,15 +1,18 @@
+import AstrenzaCore
 import SwiftUI
 
 struct RelayStatusSheetView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedRelay: RelayDescriptor? = RelayMockStore.relays.first
+    @StateObject private var store: RelayStatusSheetStore
+    @State private var selectedRelayURL: String?
 
-    private var connectedCount: Int {
-        RelayMockStore.connectedCount
+    init(relayURLs: [String] = []) {
+        _store = StateObject(wrappedValue: RelayStatusSheetStore(relayURLs: relayURLs))
+        _selectedRelayURL = State(initialValue: relayURLs.first ?? RelayMockStore.relays.first?.url)
     }
 
-    private var plannedCount: Int {
-        RelayMockStore.plannedCount
+    private var selectedRelay: RelayDescriptor? {
+        store.relays.first { $0.url == selectedRelayURL } ?? store.relays.first
     }
 
     var body: some View {
@@ -17,12 +20,12 @@ struct RelayStatusSheetView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     RelayStatusSummaryCard(
-                        connected: connectedCount,
-                        planned: plannedCount,
-                        relays: RelayMockStore.relays
+                        connected: store.connectedCount,
+                        planned: store.plannedCount,
+                        relays: store.relays
                     )
 
-                    RelayConnectionLogCard(relays: RelayMockStore.relays)
+                    RelayConnectionLogCard(relays: store.relays, isLive: store.isLive)
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("RELAYS")
@@ -30,13 +33,13 @@ struct RelayStatusSheetView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 2)
 
-                        ForEach(RelayMockStore.relays) { relay in
+                        ForEach(store.relays) { relay in
                             Button {
                                 withAnimation(.snappy(duration: 0.22)) {
-                                    selectedRelay = relay
+                                    selectedRelayURL = relay.url
                                 }
                             } label: {
-                                RelayStatusRow(relay: relay, isSelected: relay.id == selectedRelay?.id)
+                                RelayStatusRow(relay: relay, isSelected: relay.url == selectedRelay?.url)
                             }
                             .buttonStyle(.plain)
                         }
@@ -61,6 +64,52 @@ struct RelayStatusSheetView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .task {
+            await store.refresh()
+        }
+    }
+}
+
+@MainActor
+private final class RelayStatusSheetStore: ObservableObject {
+    @Published private(set) var relays: [RelayDescriptor]
+
+    let isLive: Bool
+    private let client: NostrRelayInformationClient
+
+    init(relayURLs: [String], client: NostrRelayInformationClient = NostrRelayInformationClient()) {
+        isLive = !relayURLs.isEmpty
+        self.client = client
+        relays = relayURLs.isEmpty ? RelayMockStore.relays : relayURLs.map(RelayDescriptor.livePlaceholder(url:))
+    }
+
+    var connectedCount: Int {
+        relays.filter { $0.status == .online || $0.status == .authRequired }.count
+    }
+
+    var plannedCount: Int {
+        relays.count
+    }
+
+    func refresh() async {
+        guard isLive else { return }
+        await withTaskGroup(of: (String, RelayDescriptor).self) { group in
+            for relay in relays {
+                group.addTask { [client] in
+                    do {
+                        let info = try await client.information(for: relay.url)
+                        return (relay.url, RelayDescriptor.live(url: relay.url, information: info))
+                    } catch {
+                        return (relay.url, RelayDescriptor.liveFailure(url: relay.url, error: error))
+                    }
+                }
+            }
+
+            for await (url, descriptor) in group {
+                guard let index = relays.firstIndex(where: { $0.url == url }) else { continue }
+                relays[index] = descriptor
+            }
+        }
     }
 }
 
@@ -138,6 +187,7 @@ private struct RelayCountPill: View {
 
 private struct RelayConnectionLogCard: View {
     let relays: [RelayDescriptor]
+    let isLive: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -145,7 +195,7 @@ private struct RelayConnectionLogCard: View {
                 Label("Recent Activity", systemImage: "waveform.path.ecg")
                     .font(.system(size: 16, weight: .black, design: .rounded))
                 Spacer()
-                Text("mock live")
+                Text(isLive ? "NIP-11 live" : "mock live")
                     .font(.system(size: 12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -326,4 +376,65 @@ private struct RelayInfoLine: View {
 
 #Preview {
     RelayStatusSheetView()
+}
+
+private extension RelayDescriptor {
+    static func live(url: String, information: NostrRelayInformationDocument) -> RelayDescriptor {
+        let host = URL(string: url)?.host ?? url
+        let software = information.software ?? "Unknown relay"
+        let limitation = information.limitation?.summary ?? "No published limits"
+        return RelayDescriptor(
+            url: url,
+            displayName: information.name ?? host,
+            status: information.limitation?.authRequired == true ? .authRequired : .online,
+            usage: [.read],
+            source: .nip65,
+            pingMilliseconds: nil,
+            receivedBytes: "live",
+            sentBytes: "live",
+            eventCount: information.supportedNips.isEmpty ? "N/A" : "\(information.supportedNips.count) NIPs",
+            errorCount: 0,
+            supportedNIPs: information.supportedNips,
+            software: software,
+            version: information.version,
+            description: information.description ?? "This relay publishes a NIP-11 information document.",
+            limitation: limitation,
+            contact: information.contact,
+            lastMessage: "NIP-11 info fetched"
+        )
+    }
+
+    static func liveFailure(url: String, error: Error) -> RelayDescriptor {
+        RelayDescriptor(
+            url: url,
+            displayName: URL(string: url)?.host ?? url,
+            status: .offline,
+            usage: [.read],
+            source: .nip65,
+            pingMilliseconds: nil,
+            receivedBytes: "0 B",
+            sentBytes: "0 B",
+            eventCount: "N/A",
+            errorCount: 1,
+            supportedNIPs: [],
+            software: "Unavailable",
+            version: nil,
+            description: "Relay information could not be fetched: \(error.localizedDescription)",
+            limitation: "Unknown",
+            contact: nil,
+            lastMessage: "NIP-11 request failed"
+        )
+    }
+}
+
+private extension NostrRelayLimitation {
+    var summary: String {
+        var parts: [String] = []
+        if authRequired == true { parts.append("AUTH required") }
+        if paymentRequired == true { parts.append("Payment required") }
+        if restrictedWrites == true { parts.append("Restricted writes") }
+        if let maxLimit { parts.append("max limit \(maxLimit)") }
+        if let maxMessageLength { parts.append("max message \(maxMessageLength) bytes") }
+        return parts.isEmpty ? "No published limits" : parts.joined(separator: ", ")
+    }
 }

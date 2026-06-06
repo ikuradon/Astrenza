@@ -5,6 +5,7 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
     public let followedPubkeys: [String]
     public let noteEvents: [NostrEvent]
     public let metadataEvents: [NostrEvent]
+    public let nip05Resolutions: [String: NostrNIP05Resolution]
     public let hasMoreOlder: Bool
 
     public init(
@@ -12,23 +13,27 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         followedPubkeys: [String],
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         hasMoreOlder: Bool = true
     ) {
         self.relays = relays
         self.followedPubkeys = followedPubkeys
         self.noteEvents = noteEvents
         self.metadataEvents = metadataEvents
+        self.nip05Resolutions = nip05Resolutions
         self.hasMoreOlder = hasMoreOlder
     }
 }
 
 public struct NostrHomeTimelineLoader: Sendable {
     public let relayClient: any NostrRelayFetching
+    public let nip05Resolver: any NostrNIP05Resolving
     public let bootstrapRelays: [String]
     public let pageLimit: Int
 
     public init(
         relayClient: any NostrRelayFetching = NostrRelayClient(),
+        nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver(),
         bootstrapRelays: [String] = [
             "wss://relay.damus.io",
             "wss://nos.lol",
@@ -39,6 +44,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         pageLimit: Int = 100
     ) {
         self.relayClient = relayClient
+        self.nip05Resolver = nip05Resolver
         self.bootstrapRelays = bootstrapRelays
         self.pageLimit = max(1, min(pageLimit, 250))
     }
@@ -79,6 +85,7 @@ public struct NostrHomeTimelineLoader: Sendable {
                 followedPubkeys: [],
                 noteEvents: [],
                 metadataEvents: [],
+                nip05Resolutions: [:],
                 hasMoreOlder: true
             )
         }
@@ -93,12 +100,17 @@ public struct NostrHomeTimelineLoader: Sendable {
             existingMetadataEvents: [],
             relays: readRelays
         )
+        let nip05Resolutions = await nip05Resolutions(
+            metadataEvents: metadataEvents,
+            existingResolutions: [:]
+        )
 
         return NostrHomeTimelineState(
             relays: readRelays,
             followedPubkeys: contacts,
             noteEvents: sortedUnique(homeEvents),
             metadataEvents: sortedUnique(metadataEvents),
+            nip05Resolutions: nip05Resolutions,
             hasMoreOlder: true
         )
     }
@@ -122,12 +134,18 @@ public struct NostrHomeTimelineLoader: Sendable {
             existingMetadataEvents: current.metadataEvents,
             relays: relays
         )
+        let metadataEvents = sortedUnique(current.metadataEvents + freshMetadata)
+        let nip05Resolutions = await nip05Resolutions(
+            metadataEvents: metadataEvents,
+            existingResolutions: current.nip05Resolutions
+        )
 
         return NostrHomeTimelineState(
             relays: relays,
             followedPubkeys: current.followedPubkeys,
             noteEvents: noteEvents,
-            metadataEvents: sortedUnique(current.metadataEvents + freshMetadata),
+            metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions,
             hasMoreOlder: current.hasMoreOlder
         )
     }
@@ -159,6 +177,7 @@ public struct NostrHomeTimelineLoader: Sendable {
                 followedPubkeys: current.followedPubkeys,
                 noteEvents: current.noteEvents,
                 metadataEvents: current.metadataEvents,
+                nip05Resolutions: current.nip05Resolutions,
                 hasMoreOlder: false
             )
         }
@@ -168,13 +187,48 @@ public struct NostrHomeTimelineLoader: Sendable {
             existingMetadataEvents: current.metadataEvents,
             relays: relays
         )
+        let metadataEvents = sortedUnique(current.metadataEvents + olderMetadata)
+        let nip05Resolutions = await nip05Resolutions(
+            metadataEvents: metadataEvents,
+            existingResolutions: current.nip05Resolutions
+        )
         return NostrHomeTimelineState(
             relays: relays,
             followedPubkeys: current.followedPubkeys,
             noteEvents: sortedUnique(current.noteEvents + olderEvents),
-            metadataEvents: sortedUnique(current.metadataEvents + olderMetadata),
+            metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions,
             hasMoreOlder: true
         )
+    }
+
+    private func nip05Resolutions(
+        metadataEvents: [NostrEvent],
+        existingResolutions: [String: NostrNIP05Resolution]
+    ) async -> [String: NostrNIP05Resolution] {
+        let metadataByPubkey = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)
+        let missing = metadataByPubkey.filter { pubkey, metadata in
+            guard let identifier = metadata.nip05, !identifier.isEmpty else { return false }
+            return existingResolutions[pubkey]?.identifier != identifier
+        }
+        guard !missing.isEmpty else { return existingResolutions }
+
+        let resolver = nip05Resolver
+        var resolutions = existingResolutions
+        await withTaskGroup(of: (String, NostrNIP05Resolution).self) { group in
+            for (pubkey, metadata) in missing {
+                guard let identifier = metadata.nip05 else { continue }
+                group.addTask {
+                    let resolution = await resolver.resolve(identifier: identifier, expectedPubkey: pubkey)
+                    return (pubkey, resolution)
+                }
+            }
+
+            for await (pubkey, resolution) in group {
+                resolutions[pubkey] = resolution
+            }
+        }
+        return resolutions
     }
 
     private func metadataEvents(

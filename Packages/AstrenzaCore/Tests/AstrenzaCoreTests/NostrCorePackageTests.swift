@@ -71,6 +71,57 @@ struct NostrCorePackageTests {
         #expect(account.readOnly)
     }
 
+    @Test("NIP-05 resolver verifies pubkey and reuses cache")
+    func nip05ResolverVerifiesAndCaches() async throws {
+        let pubkey = String(repeating: "b", count: 64)
+        let cache = NostrNIP05Cache(defaults: nil)
+        let callCount = LockedCounter()
+        let resolver = NostrNIP05Resolver(cache: cache) { request in
+            await callCount.increment()
+            #expect(request.url?.absoluteString == "https://example.test/.well-known/nostr.json?name=alice")
+            let data = Data(#"{"names":{"alice":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"relays":{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":["wss://relay.example"]}}"#.utf8)
+            return (data, httpResponse(url: request.url, statusCode: 200))
+        }
+
+        let first = await resolver.resolve(identifier: "alice@example.test", expectedPubkey: pubkey)
+        let second = await resolver.resolve(identifier: "alice@example.test", expectedPubkey: pubkey)
+
+        #expect(first.status == .verified)
+        #expect(first.pubkey == pubkey)
+        #expect(first.relays == ["wss://relay.example"])
+        #expect(second == first)
+        #expect(await callCount.value == 1)
+    }
+
+    @Test("NIP-05 resolver marks mismatched pubkey invalid")
+    func nip05ResolverMismatch() async throws {
+        let resolver = NostrNIP05Resolver(cache: NostrNIP05Cache(defaults: nil)) { request in
+            let data = Data(#"{"names":{"alice":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}"#.utf8)
+            return (data, httpResponse(url: request.url, statusCode: 200))
+        }
+
+        let resolution = await resolver.resolve(identifier: "alice@example.test", expectedPubkey: String(repeating: "b", count: 64))
+
+        #expect(resolution.status == .invalid)
+    }
+
+    @Test("NIP-11 relay information client requests HTTP info document")
+    func relayInformationClient() async throws {
+        let client = NostrRelayInformationClient(cache: NostrRelayInformationCache(defaults: nil)) { request in
+            #expect(request.url?.absoluteString == "https://relay.example/")
+            #expect(request.value(forHTTPHeaderField: "Accept") == "application/nostr+json")
+            let data = Data(#"{"name":"Relay Example","description":"public relay","supported_nips":[1,11,65],"software":"strfry","version":"1.0","limitation":{"auth_required":true,"max_limit":500}}"#.utf8)
+            return (data, httpResponse(url: request.url, statusCode: 200))
+        }
+
+        let info = try await client.information(for: "wss://relay.example")
+
+        #expect(info.name == "Relay Example")
+        #expect(info.supportedNips == [1, 11, 65])
+        #expect(info.limitation?.authRequired == true)
+        #expect(info.limitation?.maxLimit == 500)
+    }
+
     @Test("Remote data cache stores and reads response data by URL")
     func remoteDataCacheStoresData() throws {
         let urlCache = URLCache(memoryCapacity: 1024 * 1024, diskCapacity: 0, diskPath: nil)
@@ -104,10 +155,37 @@ struct NostrCorePackageTests {
         #expect(item.id == note.id)
         #expect(item.displayName == "Reader")
         #expect(item.nip05 == "reader@example.com")
+        #expect(item.nip05Status == .unchecked)
         #expect(item.isFollowed)
         #expect(item.body == "hello nostr")
         #expect(item.avatarPictureState == .resolved)
         #expect(item.avatarImageURL?.absoluteString == "https://cdn.example.test/avatar.png")
+    }
+
+    @Test("Home materializer applies NIP-05 verification status")
+    func homeTimelineMaterializerNIP05Status() throws {
+        let pubkey = String(repeating: "d", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: pubkey, content: "verified identity")
+        let metadata = nostrEvent(
+            kind: 0,
+            pubkey: pubkey,
+            content: #"{"display_name":"Reader","nip05":"reader@example.com"}"#
+        )
+        let resolution = NostrNIP05Resolution(
+            identifier: "reader@example.com",
+            pubkey: pubkey,
+            relays: [],
+            status: .verified
+        )
+
+        let item = try #require(NostrHomeTimelineMaterializer.items(
+            noteEvents: [note],
+            metadataEvents: [metadata],
+            followedPubkeys: [pubkey],
+            nip05Resolutions: [pubkey: resolution]
+        ).first)
+
+        #expect(item.nip05Status == .verified)
     }
 
     @Test("Home materializer marks invalid picture URL as missing")
@@ -358,6 +436,18 @@ struct NostrCorePackageTests {
             sig: NostrHex.hexString(Array(signature.rawRepresentation))
         )
     }
+}
+
+private actor LockedCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+
+private func httpResponse(url: URL?, statusCode: Int) -> HTTPURLResponse {
+    HTTPURLResponse(url: url ?? URL(string: "https://example.test")!, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
 }
 
 private enum SHA256Digest {

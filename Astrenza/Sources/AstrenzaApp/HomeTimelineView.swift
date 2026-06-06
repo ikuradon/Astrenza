@@ -172,7 +172,8 @@ struct HomeTimelineView: View {
             composeSheetMode: $composeSheetMode,
             fullscreenMedia: $fullscreenMedia,
             browserDestination: $browserDestination,
-            swipeSettings: $swipeSettings
+            swipeSettings: $swipeSettings,
+            relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays
         )
     }
 }

@@ -8,10 +8,10 @@ public enum NostrLoginError: Error, Equatable {
 }
 
 public struct NostrLoginResolver: Sendable {
-    public var urlSession: URLSession
+    public var nip05Resolver: any NostrNIP05Resolving
 
-    public init(urlSession: URLSession = .shared) {
-        self.urlSession = urlSession
+    public init(nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver()) {
+        self.nip05Resolver = nip05Resolver
     }
 
     public func resolve(_ input: String) async throws -> NostrAccount {
@@ -21,8 +21,17 @@ public struct NostrLoginResolver: Sendable {
         }
 
         if isLikelyNIP05(trimmed) {
-            let resolved = try await resolveNIP05(trimmed)
-            return NostrAccount(pubkey: resolved.pubkey, displayIdentifier: resolved.identifier, readOnly: true)
+            guard NostrNIP05Address.parse(trimmed) != nil else {
+                throw NostrLoginError.invalidNIP05
+            }
+            let resolved = await nip05Resolver.resolve(identifier: trimmed, expectedPubkey: nil)
+            guard let pubkey = resolved.pubkey,
+                  NostrHex.isLowercaseHex(pubkey, byteCount: 32),
+                  resolved.status == .verified
+            else {
+                throw NostrLoginError.nip05NotFound
+            }
+            return NostrAccount(pubkey: pubkey, displayIdentifier: resolved.identifier, readOnly: true)
         }
 
         do {
@@ -37,50 +46,4 @@ public struct NostrLoginResolver: Sendable {
         input.contains("@") && !input.hasPrefix("npub1") && !input.hasPrefix("nostr:")
     }
 
-    private func resolveNIP05(_ input: String) async throws -> NIP05Resolution {
-        let parts = input.split(separator: "@", maxSplits: 1).map(String.init)
-        guard parts.count == 2,
-              !parts[0].isEmpty,
-              !parts[1].isEmpty,
-              parts[1].contains(".")
-        else {
-            throw NostrLoginError.invalidNIP05
-        }
-
-        let name = parts[0]
-        let domain = parts[1]
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = domain
-        components.path = "/.well-known/nostr.json"
-        components.queryItems = [URLQueryItem(name: "name", value: name)]
-        guard let url = components.url else {
-            throw NostrLoginError.invalidNIP05
-        }
-
-        let (data, response) = try await urlSession.data(from: url)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode)
-        else {
-            throw NostrLoginError.nip05NotFound
-        }
-
-        let document = try JSONDecoder().decode(NIP05Document.self, from: data)
-        guard let pubkey = document.names[name]?.lowercased(),
-              NostrHex.isLowercaseHex(pubkey, byteCount: 32)
-        else {
-            throw NostrLoginError.nip05NotFound
-        }
-
-        return NIP05Resolution(pubkey: pubkey, identifier: input)
-    }
-}
-
-private struct NIP05Document: Decodable {
-    let names: [String: String]
-}
-
-private struct NIP05Resolution {
-    let pubkey: String
-    let identifier: String
 }

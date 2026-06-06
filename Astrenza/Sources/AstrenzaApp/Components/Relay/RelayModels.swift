@@ -174,6 +174,28 @@ struct RelayDescriptor: Identifiable, Equatable {
             .replacingOccurrences(of: "wss://", with: "")
             .replacingOccurrences(of: "ws://", with: "")
     }
+
+    static func livePlaceholder(url: String) -> RelayDescriptor {
+        RelayDescriptor(
+            url: url,
+            displayName: URL(string: url)?.host ?? url,
+            status: .connecting,
+            usage: [.read],
+            source: .nip65,
+            pingMilliseconds: nil,
+            receivedBytes: "pending",
+            sentBytes: "pending",
+            eventCount: "pending",
+            errorCount: 0,
+            supportedNIPs: [],
+            software: "Loading",
+            version: nil,
+            description: "Fetching relay information document via NIP-11.",
+            limitation: "Loading",
+            contact: nil,
+            lastMessage: "NIP-11 request in flight"
+        )
+    }
 }
 
 enum RelayConnectionStatus: String {

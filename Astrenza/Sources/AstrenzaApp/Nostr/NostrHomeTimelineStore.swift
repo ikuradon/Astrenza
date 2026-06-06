@@ -54,6 +54,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var paginationTask: Task<Void, Never>?
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
+    private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     init(
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
         timelineCache: NostrTimelineCache = NostrTimelineCache()
@@ -175,6 +176,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys = []
             noteEvents = []
             metadataEvents = []
+            nip05Resolutions = [:]
             hasMoreOlder = true
             return
         }
@@ -183,6 +185,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         followedPubkeys = snapshot.followedPubkeys
         noteEvents = snapshot.events
         metadataEvents = snapshot.metadataEvents
+        nip05Resolutions = snapshot.nip05Resolutions
         hasMoreOlder = true
         materializeEntries()
         if !entries.isEmpty {
@@ -197,7 +200,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             relays: resolvedRelays,
             followedPubkeys: followedPubkeys,
             events: noteEvents,
-            metadataEvents: metadataEvents
+            metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions
         )
     }
 
@@ -205,6 +209,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         entries = NostrTimelineMaterializer.entries(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions,
             followedPubkeys: Set(followedPubkeys)
         )
     }
@@ -215,6 +220,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: followedPubkeys,
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions,
             hasMoreOlder: hasMoreOlder
         )
     }
@@ -224,6 +230,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         followedPubkeys = state.followedPubkeys
         noteEvents = state.noteEvents
         metadataEvents = state.metadataEvents
+        nip05Resolutions = state.nip05Resolutions
         hasMoreOlder = state.hasMoreOlder
     }
 }
@@ -232,12 +239,14 @@ enum NostrTimelineMaterializer {
     static func entries(
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>
     ) -> [TimelineFeedEntry] {
         NostrHomeTimelineMaterializer.items(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
-            followedPubkeys: followedPubkeys
+            followedPubkeys: followedPubkeys,
+            nip05Resolutions: nip05Resolutions
         )
         .map { TimelineFeedEntry.post(post(for: $0)) }
     }
@@ -248,7 +257,7 @@ enum NostrTimelineMaterializer {
             author = .resolved(
                 displayName: displayName,
                 nip05: item.nip05,
-                nip05Status: item.nip05 == nil ? .absent : .unchecked,
+                nip05Status: NIP05Status(item.nip05Status),
                 pubkey: item.pubkey,
                 isFollowed: item.isFollowed
             )
@@ -302,5 +311,20 @@ enum NostrTimelineMaterializer {
             return "\(delta / 3_600)h"
         }
         return "\(delta / 86_400)d"
+    }
+}
+
+private extension NIP05Status {
+    init(_ coreStatus: NostrNIP05Status) {
+        switch coreStatus {
+        case .absent:
+            self = .absent
+        case .unchecked:
+            self = .unchecked
+        case .verified:
+            self = .valid
+        case .invalid, .failed:
+            self = .invalid
+        }
     }
 }

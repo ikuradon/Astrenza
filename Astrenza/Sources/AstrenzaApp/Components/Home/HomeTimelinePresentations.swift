@@ -8,6 +8,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var fullscreenMedia: TimelineMedia?
     @Binding var browserDestination: TimelineBrowserDestination?
     @Binding var swipeSettings: TimelineSwipeSettings
+    let relayURLs: [String]
 
     func body(content: Content) -> some View {
         content
@@ -24,7 +25,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                 .presentationCornerRadius(26)
             }
             .sheet(isPresented: $isRelayStatusPresented) {
-                RelayStatusSheetView()
+                RelayStatusSheetView(relayURLs: relayURLs)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(26)
@@ -62,7 +63,8 @@ extension View {
         composeSheetMode: Binding<ComposeSheetMode>,
         fullscreenMedia: Binding<TimelineMedia?>,
         browserDestination: Binding<TimelineBrowserDestination?>,
-        swipeSettings: Binding<TimelineSwipeSettings>
+        swipeSettings: Binding<TimelineSwipeSettings>,
+        relayURLs: [String]
     ) -> some View {
         modifier(
             HomeTimelinePresentationModifier(
@@ -72,7 +74,8 @@ extension View {
                 composeSheetMode: composeSheetMode,
                 fullscreenMedia: fullscreenMedia,
                 browserDestination: browserDestination,
-                swipeSettings: swipeSettings
+                swipeSettings: swipeSettings,
+                relayURLs: relayURLs
             )
         )
     }

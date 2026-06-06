@@ -5,6 +5,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
     public let pubkey: String
     public let displayName: String?
     public let nip05: String?
+    public let nip05Status: NostrNIP05Status
     public let isFollowed: Bool
     public let body: String
     public let createdAt: Int
@@ -16,6 +17,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
         pubkey: String,
         displayName: String?,
         nip05: String?,
+        nip05Status: NostrNIP05Status,
         isFollowed: Bool,
         body: String,
         createdAt: Int,
@@ -26,6 +28,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
         self.pubkey = pubkey
         self.displayName = displayName
         self.nip05 = nip05
+        self.nip05Status = nip05Status
         self.isFollowed = isFollowed
         self.body = body
         self.createdAt = createdAt
@@ -44,7 +47,8 @@ public enum NostrHomeTimelineMaterializer {
     public static func items(
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
-        followedPubkeys: Set<String>
+        followedPubkeys: Set<String>,
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     ) -> [NostrHomeTimelineItem] {
         let metadataByPubkey = latestMetadataByPubkey(metadataEvents)
         return noteEvents
@@ -53,6 +57,7 @@ public enum NostrHomeTimelineMaterializer {
                 item(
                     for: event,
                     metadata: metadataByPubkey[event.pubkey],
+                    nip05Resolution: nip05Resolutions[event.pubkey],
                     isFollowed: followedPubkeys.contains(event.pubkey)
                 )
             }
@@ -83,6 +88,7 @@ public enum NostrHomeTimelineMaterializer {
     private static func item(
         for event: NostrEvent,
         metadata: NostrProfileMetadata?,
+        nip05Resolution: NostrNIP05Resolution?,
         isFollowed: Bool
     ) -> NostrHomeTimelineItem {
         let pictureURL = metadata?.pictureURL
@@ -100,11 +106,21 @@ public enum NostrHomeTimelineMaterializer {
             pubkey: event.pubkey,
             displayName: metadata?.bestName,
             nip05: metadata?.nip05,
+            nip05Status: nip05Status(metadata: metadata, resolution: nip05Resolution),
             isFollowed: isFollowed,
             body: event.content,
             createdAt: event.createdAt,
             avatarPictureState: pictureState,
             avatarImageURL: pictureURL
         )
+    }
+
+    private static func nip05Status(
+        metadata: NostrProfileMetadata?,
+        resolution: NostrNIP05Resolution?
+    ) -> NostrNIP05Status {
+        guard let identifier = metadata?.nip05, !identifier.isEmpty else { return .absent }
+        guard let resolution, resolution.identifier == identifier else { return .unchecked }
+        return resolution.status
     }
 }

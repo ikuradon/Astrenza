@@ -43,12 +43,20 @@ public struct NostrTimelineSnapshot: Codable, Equatable {
     public let followedPubkeys: [String]
     public let events: [NostrEvent]
     public let metadataEvents: [NostrEvent]
+    public let nip05Resolutions: [String: NostrNIP05Resolution]
 
-    public init(relays: [String], followedPubkeys: [String], events: [NostrEvent], metadataEvents: [NostrEvent]) {
+    public init(
+        relays: [String],
+        followedPubkeys: [String],
+        events: [NostrEvent],
+        metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:]
+    ) {
         self.relays = relays
         self.followedPubkeys = followedPubkeys
         self.events = events
         self.metadataEvents = metadataEvents
+        self.nip05Resolutions = nip05Resolutions
     }
 }
 
@@ -72,13 +80,15 @@ public final class NostrTimelineCache {
         relays: [String],
         followedPubkeys: [String],
         events: [NostrEvent],
-        metadataEvents: [NostrEvent]
+        metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     ) {
         let snapshot = NostrTimelineSnapshot(
             relays: relays,
             followedPubkeys: followedPubkeys,
             events: sortedUnique(events),
-            metadataEvents: sortedUnique(metadataEvents)
+            metadataEvents: sortedUnique(metadataEvents),
+            nip05Resolutions: nip05Resolutions
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         defaults.set(data, forKey: key(accountID: accountID, timelineKey: timelineKey))
