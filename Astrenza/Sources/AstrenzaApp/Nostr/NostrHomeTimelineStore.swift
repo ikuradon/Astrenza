@@ -425,13 +425,13 @@ enum NostrTimelineMaterializer {
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>
     ) -> [TimelineFeedEntry] {
-        NostrHomeTimelineMaterializer.items(
+        posts(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
-            followedPubkeys: followedPubkeys,
-            nip05Resolutions: nip05Resolutions
+            nip05Resolutions: nip05Resolutions,
+            followedPubkeys: followedPubkeys
         )
-        .map { TimelineFeedEntry.post(post(for: $0)) }
+        .map(TimelineFeedEntry.post)
     }
 
     static func posts(
@@ -440,16 +440,28 @@ enum NostrTimelineMaterializer {
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>
     ) -> [TimelinePost] {
-        NostrHomeTimelineMaterializer.items(
+        let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
+        return NostrHomeTimelineMaterializer.items(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
             followedPubkeys: followedPubkeys,
             nip05Resolutions: nip05Resolutions
         )
-        .map(post(for:))
+        .compactMap { item in
+            guard let event = eventsByID[item.id] else { return post(for: item) }
+            return post(for: item, event: event, eventsByID: eventsByID)
+        }
     }
 
     static func post(for item: NostrHomeTimelineItem) -> TimelinePost {
+        post(for: item, event: nil, eventsByID: [:])
+    }
+
+    private static func post(
+        for item: NostrHomeTimelineItem,
+        event: NostrEvent?,
+        eventsByID: [String: NostrEvent]
+    ) -> TimelinePost {
         let author: TimelineAuthor
         if let displayName = item.displayName {
             author = .resolved(
@@ -462,6 +474,10 @@ enum NostrTimelineMaterializer {
         } else {
             author = .unresolved(pubkey: item.pubkey)
         }
+        let urls = event.map(urls(from:)) ?? []
+        let imageURLs = urls.filter(isImageURL)
+        let linkURLs = urls.filter { !isImageURL($0) }
+        let contentWarning = event.flatMap(contentWarning(from:))
 
         return TimelinePost(
             id: item.id,
@@ -473,8 +489,14 @@ enum NostrTimelineMaterializer {
             boostCount: nil,
             favoriteCount: nil,
             isLocked: false,
-            media: nil,
+            media: media(imageURLs: imageURLs, linkURLs: linkURLs, pubkey: item.pubkey),
             context: nil,
+            quotedPost: event.flatMap { quotedPost(from: $0, eventsByID: eventsByID) },
+            replyContext: event.flatMap { replyContext(from: $0, eventsByID: eventsByID, fallbackAuthor: author) },
+            replyMention: event.flatMap { replyMention(from: $0, author: author) },
+            contentWarning: contentWarning,
+            bodyPresentation: bodyPresentation(body: item.body, linkURLs: linkURLs, isFollowed: item.isFollowed),
+            linkSummary: linkSummary(from: linkURLs),
             actionState: .none
         )
     }
@@ -509,6 +531,155 @@ enum NostrTimelineMaterializer {
             return "\(delta / 3_600)h"
         }
         return "\(delta / 86_400)d"
+    }
+
+    private static func urls(from event: NostrEvent) -> [URL] {
+        let contentURLs = event.content
+            .split(whereSeparator: \.isWhitespace)
+            .compactMap { token -> URL? in
+                let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}>\n"))
+                guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else { return nil }
+                return URL(string: trimmed)
+            }
+        let imetaURLs = event.tags.compactMap { tag -> URL? in
+            guard tag.first == "imeta" else { return nil }
+            for item in tag.dropFirst() where item.hasPrefix("url ") {
+                return URL(string: String(item.dropFirst(4)))
+            }
+            return nil
+        }
+        var seen = Set<String>()
+        return (contentURLs + imetaURLs).filter { seen.insert($0.absoluteString).inserted }
+    }
+
+    private static func isImageURL(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"].contains { path.hasSuffix($0) }
+    }
+
+    private static func media(imageURLs: [URL], linkURLs: [URL], pubkey: String) -> TimelineMedia? {
+        if !imageURLs.isEmpty {
+            let palette = avatarPalette(for: pubkey)
+            let tiles = imageURLs.prefix(5).map { url in
+                MediaTile(
+                    title: url.lastPathComponent.isEmpty ? (url.host ?? "media") : url.lastPathComponent,
+                    colors: [palette.primary, palette.secondary],
+                    symbolName: "photo"
+                )
+            }
+            return .gallery(Array(tiles))
+        }
+
+        guard let link = linkURLs.first else { return nil }
+        return .unresolvedLink(UnresolvedLinkPreview(host: link.host ?? link.absoluteString, url: link.absoluteString))
+    }
+
+    private static func contentWarning(from event: NostrEvent) -> TimelineContentWarning? {
+        guard let tag = event.tags.first(where: { $0.first == "content-warning" }) else { return nil }
+        return TimelineContentWarning(reason: tag.dropFirst().first)
+    }
+
+    private static func replyContext(
+        from event: NostrEvent,
+        eventsByID: [String: NostrEvent],
+        fallbackAuthor: TimelineAuthor
+    ) -> TimelineReplyContext? {
+        guard let parentID = replyParentID(from: event.tags),
+              let parent = eventsByID[parentID]
+        else { return nil }
+
+        let parentItem = NostrHomeTimelineItem(
+            id: parent.id,
+            pubkey: parent.pubkey,
+            displayName: nil,
+            nip05: nil,
+            nip05Status: .absent,
+            isFollowed: true,
+            body: parent.content,
+            createdAt: parent.createdAt,
+            avatarPictureState: .metadataPending,
+            avatarImageURL: nil
+        )
+        let parentAuthor = parent.pubkey == event.pubkey ? fallbackAuthor : TimelineAuthor.unresolved(pubkey: parent.pubkey)
+        return TimelineReplyContext(
+            author: parentAuthor,
+            avatar: avatar(for: parentItem),
+            timestamp: relativeTimestamp(from: parent.createdAt),
+            bodyPreview: parent.content,
+            isSelfReply: parent.pubkey == event.pubkey
+        )
+    }
+
+    private static func replyMention(from event: NostrEvent, author: TimelineAuthor) -> TimelineReplyMention? {
+        guard replyParentID(from: event.tags) != nil,
+              let pubkey = event.tags.first(where: { $0.first == "p" && $0.count >= 2 })?[1],
+              pubkey != event.pubkey
+        else { return nil }
+
+        let display = "@\(pubkey.prefix(10))"
+        return TimelineReplyMention(text: String(display), isExternal: pubkey != author.pubkey)
+    }
+
+    private static func quotedPost(from event: NostrEvent, eventsByID: [String: NostrEvent]) -> QuotedTimelinePost? {
+        guard let quotedID = event.tags.last(where: { $0.first == "q" && $0.count >= 2 })?[1] else { return nil }
+        if let quoted = eventsByID[quotedID] {
+            let item = NostrHomeTimelineItem(
+                id: quoted.id,
+                pubkey: quoted.pubkey,
+                displayName: nil,
+                nip05: nil,
+                nip05Status: .absent,
+                isFollowed: true,
+                body: quoted.content,
+                createdAt: quoted.createdAt,
+                avatarPictureState: .metadataPending,
+                avatarImageURL: nil
+            )
+            return QuotedTimelinePost(
+                author: TimelineAuthor.unresolved(pubkey: quoted.pubkey),
+                avatar: avatar(for: item),
+                body: quoted.content,
+                timestamp: relativeTimestamp(from: quoted.createdAt),
+                isAvailable: true
+            )
+        }
+
+        return QuotedTimelinePost(
+            author: TimelineAuthor.unresolved(pubkey: quotedID),
+            avatar: AvatarStyle(primary: .secondary, secondary: .gray, symbolName: "quote.bubble.fill", pictureState: .metadataPending, placeholderSeed: quotedID),
+            body: "Quoted note is not cached yet.",
+            timestamp: "",
+            isAvailable: false
+        )
+    }
+
+    private static func bodyPresentation(body: String, linkURLs: [URL], isFollowed: Bool) -> TimelineBodyPresentation {
+        if !isFollowed && !linkURLs.isEmpty {
+            return .collapsed(lineLimit: 3, reason: .lowTrustLinks)
+        }
+        if linkURLs.count >= 5 {
+            return .collapsed(lineLimit: 4, reason: .linkHeavy)
+        }
+        if body.count > 1_000 {
+            return .collapsed(lineLimit: 8, reason: .longText)
+        }
+        return .standard
+    }
+
+    private static func linkSummary(from linkURLs: [URL]) -> TimelineLinkSummary? {
+        guard !linkURLs.isEmpty else { return nil }
+        let hosts = Array(Set(linkURLs.compactMap(\.host))).sorted()
+        return TimelineLinkSummary(totalCount: linkURLs.count, visibleHosts: hosts, unresolvedCount: linkURLs.count)
+    }
+
+    private static func replyParentID(from tags: [[String]]) -> String? {
+        let replyTag = tags.last { tag in
+            tag.count >= 4 && tag[0] == "e" && tag[3] == "reply"
+        }
+        let fallbackTag = tags.last { tag in
+            tag.count >= 2 && tag[0] == "e"
+        }
+        return replyTag?[1] ?? fallbackTag?[1]
     }
 }
 

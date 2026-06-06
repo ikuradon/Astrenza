@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import AstrenzaCore
 import Testing
 @testable import Astrenza
 
@@ -106,6 +107,56 @@ struct TimelineModelTests {
 
         #expect(externalRepost.shouldObscureExternalAttachments)
         #expect(plainExternalPost.shouldObscureExternalAttachments == false)
+    }
+
+    @Test("Nostr materializer derives media links warnings replies and quotes from event tags")
+    func nostrMaterializerUsesEventTags() throws {
+        let author = String(repeating: "a", count: 64)
+        let parentAuthor = String(repeating: "b", count: 64)
+        let parent = timelineEvent(
+            idSeed: "parent",
+            pubkey: parentAuthor,
+            createdAt: 100,
+            content: "parent body"
+        )
+        let quoted = timelineEvent(
+            idSeed: "quoted",
+            pubkey: parentAuthor,
+            createdAt: 110,
+            content: "quoted body"
+        )
+        let note = timelineEvent(
+            idSeed: "note",
+            pubkey: author,
+            createdAt: 120,
+            tags: [
+                ["e", parent.id, "", "reply"],
+                ["p", parentAuthor],
+                ["q", quoted.id],
+                ["content-warning", "spoiler"],
+                ["imeta", "url https://cdn.example.test/pic.png"]
+            ],
+            content: "reply with https://example.test/story and https://cdn.example.test/pic.png"
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note, parent, quoted],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first { $0.id == note.id })
+
+        #expect(post.contentWarning?.displayReason == "spoiler")
+        #expect(post.replyContext?.bodyPreview == "parent body")
+        #expect(post.replyMention?.isExternal == true)
+        #expect(post.quotedPost?.body == "quoted body")
+        #expect(post.linkSummary?.totalCount == 1)
+        if case .gallery(let tiles) = post.media {
+            #expect(tiles.count == 1)
+            #expect(tiles[0].title == "pic.png")
+        } else {
+            Issue.record("Expected gallery media from image URL")
+        }
     }
 
     @Test("_@domain NIP-05 is displayed as domain only")
@@ -459,4 +510,27 @@ struct TimelineModelTests {
         #expect(store.viewportState(accountID: "account-a", timelineKey: "lists") == nil)
         defaults.removePersistentDomain(forName: suiteName)
     }
+}
+
+private func timelineEvent(
+    idSeed: String,
+    pubkey: String,
+    createdAt: Int,
+    tags: [[String]] = [],
+    content: String
+) -> NostrEvent {
+    NostrEvent(
+        id: timelineEventID(idSeed),
+        pubkey: pubkey,
+        createdAt: createdAt,
+        kind: 1,
+        tags: tags,
+        content: content,
+        sig: String(repeating: "0", count: 128)
+    )
+}
+
+private func timelineEventID(_ seed: String) -> String {
+    let hex = seed.utf8.map { String(format: "%02x", $0) }.joined()
+    return String((hex + String(repeating: "0", count: 64)).prefix(64))
 }
