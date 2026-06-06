@@ -212,15 +212,15 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add schema:
+- [x] Add schema:
   - `link_previews(url, normalized_url, status, title, summary, site_name, image_url, fetched_at, expires_at, error)`
-- [ ] Extract URLs from event content and store unresolved preview requests.
-- [ ] Materializer maps:
+- [x] Extract URLs from event content and store unresolved preview requests.
+- [x] Materializer maps:
   - cached resolved preview -> existing OGP card
   - missing/failed preview -> unresolved/tap-to-inspect card
   - low-trust or unknown author media/OGP -> blurred inspect-first card
-- [ ] Ensure `tap to inspect` reveals before opening In-App Browser.
-- [ ] Ensure In-App Browser state cannot consume taps behind it.
+- [x] Ensure `tap to inspect` reveals before opening In-App Browser.
+- [x] Ensure In-App Browser state cannot consume taps behind it.
 
 **Acceptance tests:**
 - URL normalization test

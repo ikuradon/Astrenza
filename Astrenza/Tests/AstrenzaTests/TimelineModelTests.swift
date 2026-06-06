@@ -202,6 +202,46 @@ struct TimelineModelTests {
         }
     }
 
+    @Test("Nostr materializer maps resolved cached link previews to OGP cards")
+    func nostrMaterializerUsesCachedLinkPreview() throws {
+        let author = String(repeating: "a", count: 64)
+        let note = timelineEvent(
+            idSeed: "link-note",
+            pubkey: author,
+            createdAt: 120,
+            content: "read https://example.test/article"
+        )
+        let url = try #require(URL(string: "https://example.test/article"))
+        let preview = NostrLinkPreviewRecord(
+            url: url.absoluteString,
+            normalizedURL: NostrLinkParser.normalizedURLString(url),
+            status: "resolved",
+            title: "Cached Article",
+            summary: "OGP summary",
+            siteName: "Example",
+            imageURL: nil,
+            fetchedAt: 100,
+            expiresAt: 200,
+            error: nil
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            linkPreviewsByNormalizedURL: [preview.normalizedURL: preview]
+        )
+        let post = try #require(posts.first)
+
+        if case .linkPreview(let card) = post.media {
+            #expect(card.title == "Cached Article")
+            #expect(card.subtitle == "OGP summary")
+            #expect(card.host == "Example")
+        } else {
+            Issue.record("Expected resolved link preview media")
+        }
+    }
+
     @Test("Nostr materializer merges deleted timeline entries by sort position")
     func nostrMaterializerMergesDeletedTimelineEntries() throws {
         let author = String(repeating: "a", count: 64)

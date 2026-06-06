@@ -317,6 +317,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: noteEvents),
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: noteEvents),
             deletedEntries: deletedEntries
         )
     }
@@ -330,7 +331,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents: metadata,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: Set(followedPubkeys),
-            mediaAssetsByEventID: mediaAssetsByEventID(for: events)
+            mediaAssetsByEventID: mediaAssetsByEventID(for: events),
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events)
         )
     }
 
@@ -341,6 +343,12 @@ final class NostrHomeTimelineStore: ObservableObject {
                 (event.id, (try? eventStore.mediaAssets(eventID: event.id)) ?? [])
             }
         )
+    }
+
+    private func linkPreviewsByNormalizedURL(for events: [NostrEvent]) -> [String: NostrLinkPreviewRecord] {
+        guard let eventStore else { return [:] }
+        let urls = events.flatMap { NostrLinkParser.webURLs(in: $0.content) }
+        return (try? eventStore.linkPreviews(urls: urls)) ?? [:]
     }
 
     private func materializedAuthor(pubkey: String, metadataEvent: NostrEvent?) -> TimelineAuthor {
@@ -452,6 +460,7 @@ enum NostrTimelineMaterializer {
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>,
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         deletedEntries: [NostrDeletedTimelineEntryRecord] = []
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
@@ -460,7 +469,8 @@ enum NostrTimelineMaterializer {
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: followedPubkeys,
-            mediaAssetsByEventID: mediaAssetsByEventID
+            mediaAssetsByEventID: mediaAssetsByEventID,
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
         )
         .filter { !deletedTargetIDs.contains($0.id) }
         .map { ($0.id, $0) })
@@ -496,7 +506,8 @@ enum NostrTimelineMaterializer {
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>,
-        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:]
+        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:]
     ) -> [TimelinePost] {
         let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
         let directPosts = NostrHomeTimelineMaterializer.items(
@@ -514,7 +525,8 @@ enum NostrTimelineMaterializer {
                     for: item,
                     event: event,
                     eventsByID: eventsByID,
-                    mediaAssets: mediaAssetsByEventID[event.id] ?? []
+                    mediaAssets: mediaAssetsByEventID[event.id] ?? [],
+                    linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
                 )
             )
         }
@@ -524,7 +536,8 @@ enum NostrTimelineMaterializer {
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: followedPubkeys,
             eventsByID: eventsByID,
-            mediaAssetsByEventID: mediaAssetsByEventID
+            mediaAssetsByEventID: mediaAssetsByEventID,
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
         )
 
         return (directPosts + reposts)
@@ -546,6 +559,7 @@ enum NostrTimelineMaterializer {
         event: NostrEvent?,
         eventsByID: [String: NostrEvent],
         mediaAssets: [NostrMediaAssetRecord] = [],
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         idOverride: String? = nil,
         repostedBy: TimelineRepostAttribution? = nil
     ) -> TimelinePost {
@@ -576,7 +590,13 @@ enum NostrTimelineMaterializer {
             boostCount: nil,
             favoriteCount: nil,
             isLocked: false,
-            media: media(assets: mediaAssets, imageURLs: imageURLs, linkURLs: linkURLs, pubkey: item.pubkey),
+            media: media(
+                assets: mediaAssets,
+                imageURLs: imageURLs,
+                linkURLs: linkURLs,
+                linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
+                pubkey: item.pubkey
+            ),
             context: nil,
             repostedBy: repostedBy,
             quotedPost: event.flatMap { quotedPost(from: $0, eventsByID: eventsByID) },
@@ -601,7 +621,8 @@ enum NostrTimelineMaterializer {
         nip05Resolutions: [String: NostrNIP05Resolution],
         followedPubkeys: Set<String>,
         eventsByID: [String: NostrEvent],
-        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]]
+        mediaAssetsByEventID: [String: [NostrMediaAssetRecord]],
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord]
     ) -> [SortableTimelinePost] {
         events
             .filter { $0.kind == 6 }
@@ -635,6 +656,7 @@ enum NostrTimelineMaterializer {
                         event: targetEvent,
                         eventsByID: eventsByID,
                         mediaAssets: mediaAssetsByEventID[targetEvent.id] ?? [],
+                        linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
                         idOverride: repostEvent.id,
                         repostedBy: attribution
                     )
@@ -760,6 +782,7 @@ enum NostrTimelineMaterializer {
         assets: [NostrMediaAssetRecord],
         imageURLs: [URL],
         linkURLs: [URL],
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord],
         pubkey: String
     ) -> TimelineMedia? {
         if !assets.isEmpty {
@@ -792,6 +815,17 @@ enum NostrTimelineMaterializer {
         }
 
         guard let link = linkURLs.first else { return nil }
+        let normalizedURL = NostrLinkParser.normalizedURLString(link)
+        if let preview = linkPreviewsByNormalizedURL[normalizedURL],
+           preview.status == "resolved",
+           let title = preview.title {
+            return .linkPreview(LinkPreview(
+                title: title,
+                subtitle: preview.summary ?? preview.siteName ?? normalizedURL,
+                host: preview.siteName ?? link.host ?? link.absoluteString,
+                url: preview.url
+            ))
+        }
         return .unresolvedLink(UnresolvedLinkPreview(host: link.host ?? link.absoluteString, url: link.absoluteString))
     }
 

@@ -269,6 +269,7 @@ public final class NostrEventStore {
                 try upsert(event: event, receivedAt: receivedAt, db: db)
                 try replaceTags(for: event, db: db)
                 try replaceMediaAssets(for: event, receivedAt: receivedAt, db: db)
+                try upsertLinkPreviewRequests(for: event, db: db)
                 try upsertReplaceableHeadIfNeeded(for: event, db: db)
                 try upsertAddressableHeadIfNeeded(for: event, db: db)
                 try upsertListIfNeeded(for: event, accountID: event.pubkey, db: db)
@@ -533,6 +534,35 @@ public final class NostrEventStore {
                 arguments: [eventID]
             )
             return rows.map(decodeMediaAsset)
+        }
+    }
+
+    public func linkPreviews(urls: [URL]) throws -> [String: NostrLinkPreviewRecord] {
+        let normalizedURLs = urls.map(NostrLinkParser.normalizedURLString)
+        guard !normalizedURLs.isEmpty else { return [:] }
+
+        return try database.read { db in
+            let placeholders = Array(repeating: "?", count: normalizedURLs.count).joined(separator: ", ")
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT url, normalized_url, status, title, summary, site_name,
+                       image_url, fetched_at, expires_at, error
+                FROM link_previews
+                WHERE normalized_url IN (\(placeholders))
+                """,
+                arguments: StatementArguments(normalizedURLs)
+            )
+            return Dictionary(uniqueKeysWithValues: rows.map { row in
+                let preview = decodeLinkPreview(row)
+                return (preview.normalizedURL, preview)
+            })
+        }
+    }
+
+    public func saveLinkPreview(_ preview: NostrLinkPreviewRecord) throws {
+        try database.write { db in
+            try upsertLinkPreview(preview, db: db)
         }
     }
 
@@ -1225,6 +1255,23 @@ public final class NostrEventStore {
             try db.create(index: "media_assets_status", on: "media_assets", columns: ["status"], ifNotExists: true)
         }
 
+        migrator.registerMigration("addLinkPreviews") { db in
+            try db.create(table: "link_previews", ifNotExists: true) { table in
+                table.column("url", .text).notNull()
+                table.column("normalized_url", .text).primaryKey()
+                table.column("status", .text).notNull()
+                table.column("title", .text)
+                table.column("summary", .text)
+                table.column("site_name", .text)
+                table.column("image_url", .text)
+                table.column("fetched_at", .integer)
+                table.column("expires_at", .integer)
+                table.column("error", .text)
+            }
+            try db.create(index: "link_previews_status", on: "link_previews", columns: ["status"], ifNotExists: true)
+            try db.create(index: "link_previews_expires", on: "link_previews", columns: ["expires_at"], ifNotExists: true)
+        }
+
         try migrator.migrate(database)
     }
 
@@ -1317,6 +1364,77 @@ public final class NostrEventStore {
                 ]
             )
         }
+    }
+
+    private func upsertLinkPreviewRequests(for event: NostrEvent, db: Database) throws {
+        for url in NostrLinkParser.webURLs(in: event.content) where !NostrMediaParser.isDirectMediaURL(url) {
+            let preview = NostrLinkPreviewRecord(
+                url: url.absoluteString,
+                normalizedURL: NostrLinkParser.normalizedURLString(url),
+                status: "unresolved",
+                title: nil,
+                summary: nil,
+                siteName: nil,
+                imageURL: nil,
+                fetchedAt: nil,
+                expiresAt: nil,
+                error: nil
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO link_previews (
+                    url, normalized_url, status, title, summary, site_name,
+                    image_url, fetched_at, expires_at, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(normalized_url) DO NOTHING
+                """,
+                arguments: [
+                    preview.url,
+                    preview.normalizedURL,
+                    preview.status,
+                    preview.title,
+                    preview.summary,
+                    preview.siteName,
+                    preview.imageURL,
+                    preview.fetchedAt,
+                    preview.expiresAt,
+                    preview.error
+                ]
+            )
+        }
+    }
+
+    private func upsertLinkPreview(_ preview: NostrLinkPreviewRecord, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO link_previews (
+                url, normalized_url, status, title, summary, site_name,
+                image_url, fetched_at, expires_at, error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(normalized_url) DO UPDATE SET
+                url = excluded.url,
+                status = excluded.status,
+                title = excluded.title,
+                summary = excluded.summary,
+                site_name = excluded.site_name,
+                image_url = excluded.image_url,
+                fetched_at = excluded.fetched_at,
+                expires_at = excluded.expires_at,
+                error = excluded.error
+            """,
+            arguments: [
+                preview.url,
+                preview.normalizedURL,
+                preview.status,
+                preview.title,
+                preview.summary,
+                preview.siteName,
+                preview.imageURL,
+                preview.fetchedAt,
+                preview.expiresAt,
+                preview.error
+            ]
+        )
     }
 
     private func upsertReplaceableHeadIfNeeded(for event: NostrEvent, db: Database) throws {
@@ -1788,6 +1906,21 @@ public final class NostrEventStore {
             status: row["status"],
             localPath: row["local_path"],
             createdAt: row["created_at"]
+        )
+    }
+
+    private func decodeLinkPreview(_ row: Row) -> NostrLinkPreviewRecord {
+        NostrLinkPreviewRecord(
+            url: row["url"],
+            normalizedURL: row["normalized_url"],
+            status: row["status"],
+            title: row["title"],
+            summary: row["summary"],
+            siteName: row["site_name"],
+            imageURL: row["image_url"],
+            fetchedAt: row["fetched_at"],
+            expiresAt: row["expires_at"],
+            error: row["error"]
         )
     }
 

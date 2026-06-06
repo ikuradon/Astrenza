@@ -331,6 +331,53 @@ struct NostrCorePackageTests {
         #expect(try store.mediaAssets(eventID: imetaPreferred.id).map(\.url) == ["https://cdn.example.test/tagged.webp"])
     }
 
+    @Test("Nostr event store records unresolved link preview requests")
+    func eventStoreLinkPreviewRequests() throws {
+        let store = try NostrEventStore.inMemory()
+        let event = nostrEvent(
+            kind: 1,
+            content: "read https://Example.TEST/page#section and image https://cdn.example.test/photo.png"
+        )
+
+        try store.save(events: [event])
+        let previews = try store.linkPreviews(urls: [
+            try #require(URL(string: "https://example.test/page")),
+            try #require(URL(string: "https://cdn.example.test/photo.png"))
+        ])
+        let preview = try #require(previews["https://example.test/page"])
+
+        #expect(previews.count == 1)
+        #expect(preview.url == "https://Example.TEST/page#section")
+        #expect(preview.status == "unresolved")
+        #expect(preview.title == nil)
+    }
+
+    @Test("Nostr link preview cache can store resolved metadata")
+    func eventStoreResolvedLinkPreview() throws {
+        let store = try NostrEventStore.inMemory()
+        let url = try #require(URL(string: "https://example.test/article?b=1"))
+        let preview = NostrLinkPreviewRecord(
+            url: url.absoluteString,
+            normalizedURL: NostrLinkParser.normalizedURLString(url),
+            status: "resolved",
+            title: "Article",
+            summary: "Cached summary",
+            siteName: "Example",
+            imageURL: "https://example.test/og.png",
+            fetchedAt: 100,
+            expiresAt: 200,
+            error: nil
+        )
+
+        try store.saveLinkPreview(preview)
+        let loaded = try #require(store.linkPreviews(urls: [url]).values.first)
+
+        #expect(loaded.status == "resolved")
+        #expect(loaded.title == "Article")
+        #expect(loaded.summary == "Cached summary")
+        #expect(loaded.siteName == "Example")
+    }
+
     @Test("Nostr event store keeps timeline entries in display order")
     func eventStoreTimelineEntries() throws {
         let store = try NostrEventStore.inMemory()
