@@ -423,6 +423,45 @@ struct NostrCorePackageTests {
         #expect(relays.allSatisfy { $0.status == NostrOutboxStatus.pending })
     }
 
+    @Test("Nostr outbox aggregates relay OK results")
+    func eventStoreOutboxRelayResultAggregation() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let event = nostrEvent(kind: 1, pubkey: accountID, createdAt: 300, content: "queued")
+
+        let record = try store.enqueueOutboxEvent(
+            event,
+            accountID: accountID,
+            relayURLs: ["wss://one.example", "wss://two.example"],
+            localID: "local-ok",
+            createdAt: 400
+        )
+
+        try store.recordOutboxRelayResult(
+            localID: record.localID,
+            relayURL: "wss://one.example",
+            accepted: true,
+            message: "saved",
+            attemptedAt: 410
+        )
+        #expect(try store.outboxEvents(accountID: accountID).first?.status == NostrOutboxStatus.pending)
+
+        try store.recordOutboxRelayResult(
+            localID: record.localID,
+            relayURL: "wss://two.example",
+            accepted: false,
+            message: "blocked",
+            attemptedAt: 411
+        )
+        let partial = try #require(store.outboxEvents(accountID: accountID).first)
+        let relays = try store.outboxRelays(localID: record.localID)
+
+        #expect(partial.status == NostrOutboxStatus.partial)
+        #expect(partial.lastError == "blocked")
+        #expect(relays.first { $0.relayURL == "wss://one.example" }?.status == NostrOutboxStatus.published)
+        #expect(relays.first { $0.relayURL == "wss://two.example" }?.status == NostrOutboxStatus.failed)
+    }
+
     @Test("Nostr publish destination resolver prioritizes account relays")
     func publishDestinationResolver() {
         let relays = NostrPublishDestinationResolver.relayDestinations(

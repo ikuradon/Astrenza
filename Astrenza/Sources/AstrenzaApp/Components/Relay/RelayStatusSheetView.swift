@@ -25,6 +25,8 @@ struct RelayStatusSheetView: View {
                         relays: store.relays
                     )
 
+                    OutboxStatusCard(summary: store.outboxSummary)
+
                     RelayConnectionLogCard(relays: store.relays, isLive: store.isLive)
 
                     VStack(alignment: .leading, spacing: 10) {
@@ -73,6 +75,7 @@ struct RelayStatusSheetView: View {
 @MainActor
 private final class RelayStatusSheetStore: ObservableObject {
     @Published private(set) var relays: [RelayDescriptor]
+    @Published private(set) var outboxSummary: OutboxStatusSummary
 
     let isLive: Bool
     private let client: NostrRelayInformationClient
@@ -93,6 +96,7 @@ private final class RelayStatusSheetStore: ObservableObject {
         relays = relayURLs.isEmpty
             ? RelayMockStore.relays
             : relayURLs.map { RelayDescriptor.livePlaceholder(url: $0).applying(summary: summaries[$0]) }
+        outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
     }
 
     var connectedCount: Int {
@@ -105,6 +109,7 @@ private final class RelayStatusSheetStore: ObservableObject {
 
     func refresh() async {
         guard isLive else { return }
+        outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
         for relay in relays {
             let startedAt = Int(Date().timeIntervalSince1970)
             let descriptor: RelayDescriptor
@@ -171,6 +176,83 @@ private final class RelayStatusSheetStore: ObservableObject {
             return [:]
         }
         return Dictionary(uniqueKeysWithValues: summaries.map { ($0.relayURL, $0) })
+    }
+
+    private static func loadOutboxSummary(
+        accountID: String?,
+        eventStore: NostrEventStore?
+    ) -> OutboxStatusSummary {
+        guard let accountID,
+              let records = try? eventStore?.outboxEvents(accountID: accountID, limit: 50)
+        else {
+            return .empty
+        }
+        return OutboxStatusSummary(records: records)
+    }
+}
+
+private struct OutboxStatusSummary: Equatable {
+    let pending: Int
+    let publishing: Int
+    let partial: Int
+    let failed: Int
+    let published: Int
+    let recentStatuses: [String]
+
+    static let empty = OutboxStatusSummary(
+        pending: 0,
+        publishing: 0,
+        partial: 0,
+        failed: 0,
+        published: 0,
+        recentStatuses: []
+    )
+
+    init(records: [NostrOutboxEventRecord]) {
+        pending = records.filter { $0.status == NostrOutboxStatus.pending }.count
+        publishing = records.filter { $0.status == NostrOutboxStatus.publishing }.count
+        partial = records.filter { $0.status == NostrOutboxStatus.partial }.count
+        failed = records.filter { $0.status == NostrOutboxStatus.failed }.count
+        published = records.filter { $0.status == NostrOutboxStatus.published }.count
+        recentStatuses = records.prefix(3).map(\.status)
+    }
+
+    private init(
+        pending: Int,
+        publishing: Int,
+        partial: Int,
+        failed: Int,
+        published: Int,
+        recentStatuses: [String]
+    ) {
+        self.pending = pending
+        self.publishing = publishing
+        self.partial = partial
+        self.failed = failed
+        self.published = published
+        self.recentStatuses = recentStatuses
+    }
+
+    var activeCount: Int {
+        pending + publishing + partial + failed
+    }
+
+    var title: String {
+        activeCount == 0 ? "No queued publishes" : "\(activeCount) publish updates"
+    }
+
+    var detail: String {
+        if activeCount == 0 {
+            return "Posts can render while relay publish results continue in the background."
+        }
+        return [
+            pending > 0 ? "\(pending) pending" : nil,
+            publishing > 0 ? "\(publishing) publishing" : nil,
+            partial > 0 ? "\(partial) partial" : nil,
+            failed > 0 ? "\(failed) failed" : nil
+        ]
+        .compactMap { $0 }
+        .joined(separator: " / ")
     }
 }
 
@@ -279,6 +361,62 @@ private struct RelayConnectionLogCard: View {
         }
         .padding(16)
         .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+private struct OutboxStatusCard: View {
+    let summary: OutboxStatusSummary
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: summary.activeCount == 0 ? "tray" : "paperplane.circle.fill")
+                .font(.system(size: 24, weight: .black))
+                .foregroundStyle(summary.failed > 0 ? .red : Color.astrenzaAccent)
+                .frame(width: 48, height: 48)
+                .background(Color.white.opacity(0.08), in: Circle())
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(summary.title)
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                Text(summary.detail)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            if summary.activeCount > 0 {
+                HStack(spacing: -5) {
+                    ForEach(Array(summary.recentStatuses.enumerated()), id: \.offset) { _, status in
+                        Circle()
+                            .fill(tint(for: status))
+                            .frame(width: 12, height: 12)
+                            .overlay {
+                                Circle().stroke(Color.astrenzaBackground, lineWidth: 2)
+                            }
+                    }
+                }
+                .accessibilityHidden(true)
+            }
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func tint(for status: String) -> Color {
+        switch status {
+        case NostrOutboxStatus.published:
+            .green
+        case NostrOutboxStatus.partial:
+            .yellow
+        case NostrOutboxStatus.failed:
+            .red
+        case NostrOutboxStatus.publishing:
+            .cyan
+        default:
+            .astrenzaAccent
+        }
     }
 }
 

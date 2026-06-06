@@ -666,6 +666,53 @@ public final class NostrEventStore {
         }
     }
 
+    public func recordOutboxRelayResult(
+        localID: String,
+        relayURL: String,
+        accepted: Bool,
+        message: String?,
+        attemptedAt: Int = Int(Date().timeIntervalSince1970)
+    ) throws {
+        try database.write { db in
+            let status = accepted ? NostrOutboxStatus.published : NostrOutboxStatus.failed
+            try db.execute(
+                sql: """
+                UPDATE outbox_relays
+                SET status = ?, last_attempt_at = ?, ok_message = ?
+                WHERE local_id = ? AND relay_url = ?
+                """,
+                arguments: [status, attemptedAt, message, localID, relayURL]
+            )
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT status, ok_message
+                FROM outbox_relays
+                WHERE local_id = ?
+                """,
+                arguments: [localID]
+            )
+            let statuses = rows.map { String($0["status"]) }
+            let aggregate = aggregateOutboxStatus(relayStatuses: statuses)
+            let lastError = rows
+                .compactMap { row -> String? in
+                    guard String(row["status"]) == NostrOutboxStatus.failed else { return nil }
+                    return row["ok_message"]
+                }
+                .last
+
+            try db.execute(
+                sql: """
+                UPDATE outbox_events
+                SET status = ?, last_error = ?
+                WHERE local_id = ?
+                """,
+                arguments: [aggregate, lastError, localID]
+            )
+        }
+    }
+
     public func latestReplaceableEvent(
         pubkey: String,
         kind: Int,
@@ -2070,6 +2117,26 @@ public final class NostrEventStore {
             lastAttemptAt: row["last_attempt_at"],
             okMessage: row["ok_message"]
         )
+    }
+
+    private func aggregateOutboxStatus(relayStatuses: [String]) -> String {
+        guard !relayStatuses.isEmpty else { return NostrOutboxStatus.failed }
+        let publishedCount = relayStatuses.filter { $0 == NostrOutboxStatus.published }.count
+        let failedCount = relayStatuses.filter { $0 == NostrOutboxStatus.failed }.count
+
+        if publishedCount == relayStatuses.count {
+            return NostrOutboxStatus.published
+        }
+        if failedCount == relayStatuses.count {
+            return NostrOutboxStatus.failed
+        }
+        if publishedCount > 0 && failedCount > 0 {
+            return NostrOutboxStatus.partial
+        }
+        if relayStatuses.contains(NostrOutboxStatus.publishing) {
+            return NostrOutboxStatus.publishing
+        }
+        return NostrOutboxStatus.pending
     }
 
     private func decodeTimelineEntry(_ row: Row) -> NostrTimelineEntryRecord {

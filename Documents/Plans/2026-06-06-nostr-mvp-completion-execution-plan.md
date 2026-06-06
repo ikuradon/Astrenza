@@ -261,8 +261,8 @@ The remaining phases below intentionally revisit some of those areas where they 
   - tagged users' cached read relays
   - settings fallback relays
 - [x] Compose Post button inserts outbox row and optimistic event row.
-- [ ] Relay `OK` results update per-relay status and aggregate outbox status.
-- [ ] UI exposes pending/partial/failed state without blocking timeline rendering.
+- [x] Relay `OK` results update per-relay status and aggregate outbox status.
+- [x] UI exposes pending/partial/failed state without blocking timeline rendering.
 
 **Acceptance tests:**
 - outbox persistence test across store recreation
