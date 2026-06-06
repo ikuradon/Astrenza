@@ -226,6 +226,7 @@ private extension HomeTimelineView {
                 },
                 onOpenMedia: openMedia,
                 onOpenURL: openURL,
+                onPostActionChoice: handlePostActionChoice,
                 onRefresh: refreshVisibleTimeline,
                 onLoadOlderPost: loadOlderVisibleTimeline
             ) { offset in
@@ -508,6 +509,19 @@ private extension HomeTimelineView {
     func loadOlderVisibleTimeline(_ postID: TimelinePost.ID) {
         guard sessionStore.account != nil, selectedTimeline == .home else { return }
         liveTimelineStore.loadOlder()
+    }
+
+    func handlePostActionChoice(_ post: TimelinePost, choice: PostActionChoice) {
+        guard sessionStore.account != nil else { return }
+
+        switch choice {
+        case .mute:
+            liveTimelineStore.muteAuthor(of: post)
+        case .bookmark:
+            liveTimelineStore.bookmark(post)
+        case .report, .translate, .copyLink, .shareLink, .viewDetails:
+            break
+        }
     }
 
     func submitCompose(_ request: ComposeSubmitRequest) async -> Bool {

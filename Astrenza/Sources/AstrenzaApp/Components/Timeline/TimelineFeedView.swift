@@ -14,6 +14,7 @@ struct TimelineFeedView: View {
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
+    let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
     let onRefresh: (() async -> Void)?
     let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
     let onScrollOffsetChanged: (CGFloat) -> Void
@@ -53,6 +54,7 @@ struct TimelineFeedView: View {
         onReplyPost: @escaping (TimelinePost) -> Void,
         onOpenMedia: @escaping (TimelineMedia) -> Void,
         onOpenURL: @escaping (URL) -> Void,
+        onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
@@ -73,6 +75,7 @@ struct TimelineFeedView: View {
             onReplyPost: onReplyPost,
             onOpenMedia: onOpenMedia,
             onOpenURL: onOpenURL,
+            onPostActionChoice: onPostActionChoice,
             onRefresh: onRefresh,
             onLoadOlderPost: onLoadOlderPost,
             onScrollOffsetChanged: onScrollOffsetChanged,
@@ -95,6 +98,7 @@ struct TimelineFeedView: View {
         onReplyPost: @escaping (TimelinePost) -> Void,
         onOpenMedia: @escaping (TimelineMedia) -> Void,
         onOpenURL: @escaping (URL) -> Void,
+        onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
@@ -114,6 +118,7 @@ struct TimelineFeedView: View {
         self.onReplyPost = onReplyPost
         self.onOpenMedia = onOpenMedia
         self.onOpenURL = onOpenURL
+        self.onPostActionChoice = onPostActionChoice
         self.onRefresh = onRefresh
         self.onLoadOlderPost = onLoadOlderPost
         self.onScrollOffsetChanged = onScrollOffsetChanged
@@ -555,7 +560,15 @@ private extension TimelineFeedView {
 
             closeFloatingPostMenus()
             onOpenPost(post)
-        case .report, .mute, .translate, .bookmark, .copyLink, .shareLink:
+        case .mute, .bookmark:
+            guard let post = posts.first(where: { $0.id == postID }) else {
+                closeFloatingPostMenus()
+                return
+            }
+
+            closeFloatingPostMenus()
+            onPostActionChoice(post, choice)
+        case .report, .translate, .copyLink, .shareLink:
             closeFloatingPostMenus()
         }
     }

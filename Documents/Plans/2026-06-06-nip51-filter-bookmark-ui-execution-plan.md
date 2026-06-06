@@ -177,7 +177,7 @@ git commit -m "Merge cached NIP-51 mutes into home filters"
 
 ## Phase 3: Wire Row Menu Actions
 
-- [ ] **Step 1: Extend `TimelineFeedView` callbacks**
+- [x] **Step 1: Extend `TimelineFeedView` callbacks**
 
 Add:
 
@@ -187,11 +187,11 @@ let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
 
 to both initializers, with a default `{ _, _ in }` for the post-array convenience initializer if needed.
 
-- [ ] **Step 2: Route menu choice**
+- [x] **Step 2: Route menu choice**
 
 In `handlePostActionChoice(_:postID:)`, for `.mute` and `.bookmark`, find the post by id, close menus, and call `onPostActionChoice(post, choice)`.
 
-- [ ] **Step 3: Wire Home and Profile timelines**
+- [x] **Step 3: Wire Home and Profile timelines**
 
 In `HomeTimelineView`, pass callbacks:
 
@@ -201,7 +201,7 @@ onPostActionChoice: handlePostActionChoice
 
 for Home TL, and a matching callback for profile/detail timeline contexts that at least supports bookmark and mute through `liveTimelineStore`.
 
-- [ ] **Step 4: Add minimal behavior methods**
+- [x] **Step 4: Add minimal behavior methods**
 
 Add to `HomeTimelineView`:
 
@@ -215,7 +215,7 @@ Switch:
 - `.viewDetails`: existing open behavior remains in `TimelineFeedView`
 - others remain no-op for now
 
-- [ ] **Step 5: Run app tests and commit**
+- [x] **Step 5: Run app tests and commit**
 
 Run the same `xcodegen generate` and `xcodebuild ... test` command from Phase 2.
 
