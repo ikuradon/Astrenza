@@ -413,6 +413,69 @@ struct NostrCorePackageTests {
         #expect(relays == ["wss://write.example", "wss://read.example", "wss://fallback.example"])
     }
 
+    @Test("Nostr publish inputs build post reply and deletion events")
+    func publishInputEventBuilders() {
+        let pubkey = String(repeating: "a", count: 64)
+        let root = NostrReplyReference(
+            eventID: String(repeating: "b", count: 64),
+            relayHint: "wss://root.example",
+            pubkey: String(repeating: "c", count: 64)
+        )
+        let parent = NostrReplyReference(
+            eventID: String(repeating: "d", count: 64),
+            relayHint: "wss://parent.example",
+            pubkey: String(repeating: "e", count: 64)
+        )
+
+        let post = NostrPublishInput.post(content: "hello", tags: [["t", "nostr"]])
+            .unsignedEvent(pubkey: pubkey, createdAt: 10)
+        let reply = NostrPublishInput.reply(content: "reply", root: root, parent: parent)
+            .unsignedEvent(pubkey: pubkey, createdAt: 11)
+        let deletion = NostrPublishInput.delete(eventIDs: [root.eventID], reason: "mistake")
+            .unsignedEvent(pubkey: pubkey, createdAt: 12)
+
+        #expect(post.kind == 1)
+        #expect(post.tags == [["t", "nostr"]])
+        #expect(reply.tags == [
+            ["e", root.eventID, "wss://root.example", "root"],
+            ["e", parent.eventID, "wss://parent.example", "reply"],
+            ["p", parent.pubkey!]
+        ])
+        #expect(deletion.kind == 5)
+        #expect(deletion.tags == [["e", root.eventID]])
+        #expect(deletion.content == "mistake")
+    }
+
+    @Test("Nostr publisher signs and enqueues outbox records")
+    func publisherSignsAndEnqueuesOutboxRecord() async throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let signer = FakeNostrSigner()
+        let publisher = NostrPublisher(
+            store: store,
+            signer: signer,
+            clock: { 500 },
+            localID: { "publish-local-1" }
+        )
+
+        let record = try await publisher.enqueue(
+            .post(content: "queued post"),
+            accountID: accountID,
+            relayURLs: ["wss://write.example"],
+            taggedUserReadRelays: ["wss://read.example"],
+            fallbackRelays: ["wss://fallback.example"]
+        )
+        let events = try store.outboxEvents(accountID: accountID)
+        let relays = try store.outboxRelays(localID: record.localID)
+
+        #expect(record.localID == "publish-local-1")
+        #expect(record.event.kind == 1)
+        #expect(record.event.content == "queued post")
+        #expect(events.first?.event.id == record.event.id)
+        #expect(await signer.signedEvents().first?.content == "queued post")
+        #expect(relays.map(\.relayURL) == ["wss://fallback.example", "wss://read.example", "wss://write.example"])
+    }
+
     @Test("Nostr event store keeps timeline entries in display order")
     func eventStoreTimelineEntries() throws {
         let store = try NostrEventStore.inMemory()
@@ -1193,6 +1256,28 @@ private actor LockedCounter {
 
     func increment() {
         value += 1
+    }
+}
+
+private actor FakeNostrSigner: NostrEventSigning {
+    private var events: [NostrEvent] = []
+
+    func sign(_ unsignedEvent: NostrUnsignedEvent) async throws -> NostrEvent {
+        let event = NostrEvent(
+            id: unsignedEvent.eventID,
+            pubkey: unsignedEvent.pubkey,
+            createdAt: unsignedEvent.createdAt,
+            kind: unsignedEvent.kind,
+            tags: unsignedEvent.tags,
+            content: unsignedEvent.content,
+            sig: String(repeating: "1", count: 128)
+        )
+        events.append(event)
+        return event
+    }
+
+    func signedEvents() -> [NostrEvent] {
+        events
     }
 }
 
