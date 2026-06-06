@@ -107,8 +107,8 @@ The remaining phases below intentionally revisit some of those areas where they 
   - [x] use cached target event if available
   - [x] otherwise show a compact missing target placeholder
 - [x] Interpret quote references from `q` tags, NIP-19 references in content, or quote-like `e` tags where supported by existing parser.
-- [ ] Keep relay hints internal; UI should show post author, original post time, and repost/quote actor time, not relay hints.
-- [ ] Reuse the same row component for Home TL, User Detail, and Post Detail wherever the displayed entity is a timeline post.
+- [x] Keep relay hints internal; UI should show post author, original post time, and repost/quote actor time, not relay hints.
+- [x] Reuse the same row component for Home TL, User Detail, and Post Detail wherever the displayed entity is a timeline post.
 
 **Acceptance tests:**
 - timeline model tests for reply root, self-reply, non-self reply mention color state, repost attribution, quote placeholder, deleted row, and content warning blur state
