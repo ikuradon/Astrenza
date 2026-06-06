@@ -590,6 +590,122 @@ struct TimelineModelTests {
         #expect(store.filterStatus.hiddenMatchCount == 1)
     }
 
+    @Test("Nostr materializer applies list scoped filters only to list timelines")
+    func nostrMaterializerAppliesListScopedFiltersOnlyToLists() throws {
+        let author = String(repeating: "c", count: 64)
+        let note = timelineEvent(
+            idSeed: "list-filter-note",
+            pubkey: author,
+            createdAt: 100,
+            content: "quiet list text"
+        )
+        let filterRules = NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(
+                ruleID: "list-rule",
+                accountID: "account",
+                kind: .keyword,
+                value: "quiet",
+                scopes: [.lists],
+                createdAt: 1,
+                updatedAt: 1
+            )
+        ])
+
+        let homePosts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            filterRules: filterRules,
+            timeline: .home,
+            now: 100
+        )
+        let listPosts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            filterRules: filterRules,
+            timeline: .lists,
+            now: 100
+        )
+
+        #expect(homePosts.first?.bodyPresentation.collapseReason == nil)
+        #expect(listPosts.first?.bodyPresentation.collapseReason == .filtered)
+    }
+
+    @Test("Home timeline store builds Lists entries from cached NIP-51 follow and bookmark sets")
+    @MainActor
+    func homeTimelineStoreBuildsListsEntriesFromCachedNIP51Sets() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "d", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followedAuthor = String(repeating: "e", count: 64)
+        let followedNote = timelineEvent(
+            idSeed: "list-followed-note",
+            pubkey: followedAuthor,
+            createdAt: 300,
+            content: "follow-set cached note"
+        )
+        let bookmarkedNote = timelineEvent(
+            idSeed: "list-bookmarked-note",
+            pubkey: account.pubkey,
+            createdAt: 200,
+            content: "bookmark-set cached note"
+        )
+        let unrelated = timelineEvent(
+            idSeed: "list-unrelated-note",
+            pubkey: String(repeating: "f", count: 64),
+            createdAt: 400,
+            content: "not in a cached list"
+        )
+        let followSet = timelineEvent(
+            idSeed: "follow-set",
+            kind: 30_000,
+            pubkey: account.pubkey,
+            createdAt: 500,
+            tags: [
+                ["d", "friends"],
+                ["title", "Friends"],
+                ["p", followedAuthor]
+            ],
+            content: ""
+        )
+        let bookmarkSet = timelineEvent(
+            idSeed: "bookmark-set",
+            kind: 30_003,
+            pubkey: account.pubkey,
+            createdAt: 450,
+            tags: [
+                ["d", "reads"],
+                ["title", "Reads"],
+                ["e", bookmarkedNote.id]
+            ],
+            content: ""
+        )
+
+        try eventStore.save(events: [followedNote, bookmarkedNote, unrelated, followSet, bookmarkSet])
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [account.pubkey],
+                noteEvents: [unrelated],
+                metadataEvents: [],
+                hasMoreOlder: false
+            ),
+            accountID: account.pubkey
+        )
+
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.start(account: account)
+
+        #expect(store.listEntries().compactMap(\.post).map(\.id) == [
+            followedNote.id,
+            bookmarkedNote.id
+        ])
+    }
+
     @Test("Nostr materializer turns kind 6 reposts into attributed timeline posts")
     func nostrMaterializerUsesKind6Reposts() throws {
         let author = String(repeating: "a", count: 64)

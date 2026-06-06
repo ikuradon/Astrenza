@@ -53,13 +53,14 @@ public enum NostrHomeTimelineMaterializer {
         followedPubkeys: Set<String>,
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         filterRules: NostrFilterRuleSet? = nil,
+        timeline: NostrFilterTimelineScope = .home,
         now: Int = Int(Date().timeIntervalSince1970)
     ) -> [NostrHomeTimelineItem] {
         let metadataByPubkey = latestMetadataByPubkey(metadataEvents)
         return noteEvents
             .filter { $0.kind == 1 && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .compactMap { event in
-                let filterMatch = filterRules?.matchDetail(event: event, timeline: .home, now: now)
+                let filterMatch = filterRules?.matchDetail(event: event, timeline: timeline, now: now)
                 if filterMatch?.rule.presentation == .hide {
                     return nil
                 }

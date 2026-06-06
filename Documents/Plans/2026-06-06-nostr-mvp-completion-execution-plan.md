@@ -147,6 +147,8 @@ The remaining phases below intentionally revisit some of those areas where they 
 - [x] Store encrypted private list content raw for now; do not attempt NIP-44 decrypt in this phase.
 - [x] Expose DB APIs for list summaries and list items.
 - [x] Wire settings/list UI to DB-backed summaries with empty states when no list event is cached.
+- [x] Wire the Home `Lists` tab to aggregate cached NIP-51 follow sets and bookmark sets.
+  - Individual list selection, private list decryption, and NIP-51 publish flows remain deferred.
 
 **Acceptance tests:**
 - addressable replacement test

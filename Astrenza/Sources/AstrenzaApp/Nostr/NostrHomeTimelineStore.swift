@@ -199,6 +199,24 @@ final class NostrHomeTimelineStore: ObservableObject {
             .contains { $0.eventID == post.id }
     }
 
+    func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
+        guard let account, let eventStore else { return [] }
+        let listEvents = cachedListTimelineEvents(accountID: account.pubkey, eventStore: eventStore, limit: limit)
+        guard !listEvents.isEmpty else { return [] }
+        let pubkeys = Set(listEvents.map(\.pubkey))
+        let metadata = (try? eventStore.latestReplaceableEvents(pubkeys: pubkeys, kind: 0)) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
+        return NostrTimelineMaterializer.entries(
+            noteEvents: listEvents,
+            metadataEvents: metadata,
+            nip05Resolutions: nip05Resolutions,
+            followedPubkeys: Set(followedPubkeys),
+            mediaAssetsByEventID: mediaAssetsByEventID(for: listEvents),
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: listEvents),
+            filterRules: listFilterRuleSet(),
+            timeline: .lists
+        )
+    }
+
     func suspendTimelineFilters() {
         guard !areTimelineFiltersSuspended else { return }
         areTimelineFiltersSuspended = true
@@ -451,6 +469,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         return NostrFilterRuleSet(rules: rules)
     }
 
+    private func listFilterRuleSet() -> NostrFilterRuleSet? {
+        guard let account, let eventStore else { return nil }
+        let rules = ((try? eventStore.filterRules(accountID: account.pubkey)) ?? [])
+            .filter { $0.applies(to: .lists) }
+        guard !rules.isEmpty else { return nil }
+        return NostrFilterRuleSet(rules: rules)
+    }
+
     private func homeFilterRules() -> [NostrFilterRuleRecord] {
         guard let account, let eventStore else {
             return []
@@ -501,6 +527,51 @@ final class NostrHomeTimelineStore: ObservableObject {
             .flatMap { summary in
                 (try? eventStore.listItems(listID: summary.listID)) ?? []
             }
+    }
+
+    private func cachedListTimelineEvents(
+        accountID: String,
+        eventStore: NostrEventStore,
+        limit: Int
+    ) -> [NostrEvent] {
+        guard let summaries = try? eventStore.listSummaries(accountID: accountID) else { return [] }
+        var eventsByID: [String: NostrEvent] = [:]
+        var remaining = max(0, limit)
+        guard remaining > 0 else { return [] }
+
+        for summary in summaries where remaining > 0 {
+            let items = (try? eventStore.listItems(listID: summary.listID)) ?? []
+            switch summary.kind {
+            case 30_000:
+                let authors = items
+                    .filter { $0.itemType == "pubkey" }
+                    .map(\.value)
+                let events = (try? eventStore.events(kind: 1, authors: authors, limit: remaining)) ?? []
+                for event in events where eventsByID[event.id] == nil {
+                    eventsByID[event.id] = event
+                    remaining -= 1
+                    if remaining <= 0 { break }
+                }
+            case 10_003, 30_003:
+                for item in items where item.itemType == "event" && remaining > 0 {
+                    guard let event = try? eventStore.event(id: item.value),
+                          event.kind == 1,
+                          eventsByID[event.id] == nil
+                    else { continue }
+                    eventsByID[event.id] = event
+                    remaining -= 1
+                }
+            default:
+                break
+            }
+        }
+
+        return eventsByID.values.sorted { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id < rhs.id
+            }
+            return lhs.createdAt > rhs.createdAt
+        }
     }
 
     private func mediaAssetsByEventID(for events: [NostrEvent]) -> [String: [NostrMediaAssetRecord]] {
@@ -629,7 +700,8 @@ enum NostrTimelineMaterializer {
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         filterRules: NostrFilterRuleSet? = nil,
-        deletedEntries: [NostrDeletedTimelineEntryRecord] = []
+        deletedEntries: [NostrDeletedTimelineEntryRecord] = [],
+        timeline: NostrFilterTimelineScope = .home
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
         let postsByID = Dictionary(uniqueKeysWithValues: posts(
@@ -639,7 +711,8 @@ enum NostrTimelineMaterializer {
             followedPubkeys: followedPubkeys,
             mediaAssetsByEventID: mediaAssetsByEventID,
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
-            filterRules: filterRules
+            filterRules: filterRules,
+            timeline: timeline
         )
         .filter { !deletedTargetIDs.contains($0.id) }
         .map { ($0.id, $0) })
@@ -678,6 +751,7 @@ enum NostrTimelineMaterializer {
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         filterRules: NostrFilterRuleSet? = nil,
+        timeline: NostrFilterTimelineScope = .home,
         now: Int = Int(Date().timeIntervalSince1970)
     ) -> [TimelinePost] {
         let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
@@ -687,6 +761,7 @@ enum NostrTimelineMaterializer {
             followedPubkeys: followedPubkeys,
             nip05Resolutions: nip05Resolutions,
             filterRules: filterRules,
+            timeline: timeline,
             now: now
         )
         .compactMap { item -> SortableTimelinePost? in

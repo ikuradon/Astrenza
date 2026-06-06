@@ -80,8 +80,11 @@ struct HomeTimelineView: View {
         switch selectedTimeline {
         case .home:
             return liveTimelineStore.entries
-        case .relays, .lists:
+        case .relays:
             return MockTimelineData.entries(for: selectedTimeline)
+        case .lists:
+            let listEntries = liveTimelineStore.listEntries()
+            return listEntries.isEmpty ? MockTimelineData.entries(for: selectedTimeline) : listEntries
         }
     }
 
