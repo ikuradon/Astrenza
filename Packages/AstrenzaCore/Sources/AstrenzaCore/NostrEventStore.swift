@@ -1141,17 +1141,20 @@ public final class NostrEventStore {
 
     public func saveFilterRule(_ rule: NostrFilterRuleRecord) throws {
         try database.write { db in
+            let scopesData = try encoder.encode(rule.scopes.map(\.rawValue).sorted())
             try db.execute(
                 sql: """
                 INSERT INTO filter_rules (
-                    rule_id, account_id, rule_kind, value, expires_at, is_enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    rule_id, account_id, rule_kind, value, expires_at, is_enabled, presentation, scopes_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(rule_id) DO UPDATE SET
                     account_id = excluded.account_id,
                     rule_kind = excluded.rule_kind,
                     value = excluded.value,
                     expires_at = excluded.expires_at,
                     is_enabled = excluded.is_enabled,
+                    presentation = excluded.presentation,
+                    scopes_json = excluded.scopes_json,
                     updated_at = excluded.updated_at
                 """,
                 arguments: [
@@ -1161,6 +1164,8 @@ public final class NostrEventStore {
                     rule.value,
                     rule.expiresAt,
                     rule.isEnabled,
+                    rule.presentation.rawValue,
+                    scopesData,
                     rule.createdAt,
                     rule.updatedAt
                 ]
@@ -1173,7 +1178,7 @@ public final class NostrEventStore {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT rule_id, account_id, rule_kind, value, expires_at, is_enabled, created_at, updated_at
+                SELECT rule_id, account_id, rule_kind, value, expires_at, is_enabled, presentation, scopes_json, created_at, updated_at
                 FROM filter_rules
                 WHERE account_id = ?
                 ORDER BY updated_at DESC, rule_id DESC
@@ -1182,6 +1187,18 @@ public final class NostrEventStore {
             )
             return rows.compactMap(decodeFilterRule)
         }
+    }
+
+    public func filterRuleMatchingCount(
+        accountID: String,
+        rule: NostrFilterRuleRecord,
+        timeline: NostrFilterTimelineScope,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> Int {
+        guard rule.accountID == accountID else { return 0 }
+        let events = try events(kind: 1, limit: 10_000, now: now)
+        let ruleSet = NostrFilterRuleSet(rules: [rule])
+        return ruleSet.matchingCount(events: events, timeline: timeline, now: now)
     }
 
     public func deleteFilterRule(accountID: String, ruleID: String) throws {
@@ -1674,6 +1691,13 @@ public final class NostrEventStore {
                 table.primaryKey(["account_id", "event_id"])
             }
             try db.create(index: "local_bookmarks_account", on: "local_bookmarks", columns: ["account_id", "created_at"], ifNotExists: true)
+        }
+
+        migrator.registerMigration("addFilterRulePresentationAndScopes") { db in
+            try db.alter(table: "filter_rules") { table in
+                table.add(column: "presentation", .text).notNull().defaults(to: NostrFilterRulePresentation.maskWithWarning.rawValue)
+                table.add(column: "scopes_json", .blob)
+            }
         }
 
         migrator.registerMigration("addNostrLists") { db in
@@ -2626,6 +2650,8 @@ public final class NostrEventStore {
 
     private func decodeFilterRule(_ row: Row) -> NostrFilterRuleRecord? {
         guard let kind = NostrFilterRuleKind(rawValue: row["rule_kind"]) else { return nil }
+        let presentation = NostrFilterRulePresentation(rawValue: row["presentation"] ?? "") ?? .maskWithWarning
+        let scopes = decodeFilterRuleScopes(row["scopes_json"])
         return NostrFilterRuleRecord(
             ruleID: row["rule_id"],
             accountID: row["account_id"],
@@ -2633,9 +2659,21 @@ public final class NostrEventStore {
             value: row["value"],
             expiresAt: row["expires_at"],
             isEnabled: row["is_enabled"],
+            presentation: presentation,
+            scopes: scopes,
             createdAt: row["created_at"],
             updatedAt: row["updated_at"]
         )
+    }
+
+    private func decodeFilterRuleScopes(_ data: Data?) -> Set<NostrFilterTimelineScope> {
+        guard let data,
+              let rawValues = try? decoder.decode([String].self, from: data)
+        else {
+            return [.home, .lists, .publicTimelines]
+        }
+        let scopes = Set(rawValues.compactMap(NostrFilterTimelineScope.init(rawValue:)))
+        return scopes.isEmpty ? [.home, .lists, .publicTimelines] : scopes
     }
 
     private func decodeLocalBookmark(_ row: Row) -> NostrLocalBookmarkRecord {

@@ -62,7 +62,7 @@ struct FilterEditorSheet: View {
                 Button {
                     draft.selectedUser = candidate
                     draft.value = candidate.id
-                    draft.matchingCount = 2
+                    draft.matchingCount = 0
                 } label: {
                     FilterCandidateUserRow(candidate: candidate)
                 }

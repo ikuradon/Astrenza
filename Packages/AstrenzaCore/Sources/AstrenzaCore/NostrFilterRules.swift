@@ -9,6 +9,19 @@ public enum NostrFilterRuleKind: String, Codable, Equatable, Sendable {
     case relayMute
 }
 
+public enum NostrFilterRulePresentation: String, Codable, Equatable, Sendable {
+    case maskWithWarning
+    case hide
+}
+
+public enum NostrFilterTimelineScope: String, Codable, CaseIterable, Equatable, Sendable {
+    case home
+    case mentions
+    case threads
+    case lists
+    case publicTimelines
+}
+
 public struct NostrFilterRuleRecord: Codable, Equatable, Sendable {
     public let ruleID: String
     public let accountID: String
@@ -16,6 +29,8 @@ public struct NostrFilterRuleRecord: Codable, Equatable, Sendable {
     public let value: String
     public let expiresAt: Int?
     public let isEnabled: Bool
+    public let presentation: NostrFilterRulePresentation
+    public let scopes: Set<NostrFilterTimelineScope>
     public let createdAt: Int
     public let updatedAt: Int
 
@@ -26,6 +41,8 @@ public struct NostrFilterRuleRecord: Codable, Equatable, Sendable {
         value: String,
         expiresAt: Int? = nil,
         isEnabled: Bool = true,
+        presentation: NostrFilterRulePresentation = .maskWithWarning,
+        scopes: Set<NostrFilterTimelineScope> = [.home, .lists, .publicTimelines],
         createdAt: Int,
         updatedAt: Int
     ) {
@@ -35,8 +52,14 @@ public struct NostrFilterRuleRecord: Codable, Equatable, Sendable {
         self.value = value
         self.expiresAt = expiresAt
         self.isEnabled = isEnabled
+        self.presentation = presentation
+        self.scopes = scopes
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public func applies(to timeline: NostrFilterTimelineScope) -> Bool {
+        scopes.contains(timeline)
     }
 }
 
@@ -46,6 +69,7 @@ public enum NostrFilterMatchReason: Equatable, Sendable {
     case keyword(String)
     case regex(String)
     case mutedKind(Int)
+    case relayMute(String)
 }
 
 public struct NostrFilterRuleSet: Equatable, Sendable {
@@ -73,29 +97,69 @@ public struct NostrFilterRuleSet: Equatable, Sendable {
         }
     }
 
-    public func match(event: NostrEvent, now: Int) -> NostrFilterMatchReason? {
-        for rule in activeRules(now: now) {
-            switch rule.kind {
-            case .mutedPubkey where event.pubkey == rule.value:
-                return .mutedPubkey(rule.value)
-            case .mutedHashtag where event.hashtagValues.contains(rule.value.lowercased()):
-                return .mutedHashtag(rule.value)
-            case .keyword where event.content.localizedCaseInsensitiveContains(rule.value):
-                return .keyword(rule.value)
-            case .regex where matchesRegex(rule.value, content: event.content):
-                return .regex(rule.value)
-            case .mutedKind where Int(rule.value) == event.kind:
-                return .mutedKind(event.kind)
-            default:
-                continue
-            }
+    public func match(
+        event: NostrEvent,
+        timeline: NostrFilterTimelineScope = .home,
+        now: Int
+    ) -> NostrFilterMatchReason? {
+        matchingRule(for: event, timeline: timeline, now: now).map { matchReason(rule: $0, event: event) }
+    }
+
+    public func matchingRule(
+        for event: NostrEvent,
+        timeline: NostrFilterTimelineScope = .home,
+        now: Int
+    ) -> NostrFilterRuleRecord? {
+        activeRules(now: now).first { rule in
+            rule.applies(to: timeline) && matches(rule: rule, event: event)
         }
-        return nil
+    }
+
+    public func matchingCount(
+        events: [NostrEvent],
+        timeline: NostrFilterTimelineScope = .home,
+        now: Int
+    ) -> Int {
+        events.filter { matchingRule(for: $0, timeline: timeline, now: now) != nil }.count
     }
 
     private func activeRules(now: Int) -> [NostrFilterRuleRecord] {
         rules.filter { rule in
             rule.isEnabled && rule.expiresAt.map { $0 > now } != false
+        }
+    }
+
+    private func matches(rule: NostrFilterRuleRecord, event: NostrEvent) -> Bool {
+        switch rule.kind {
+        case .mutedPubkey:
+            event.pubkey == rule.value
+        case .mutedHashtag:
+            event.hashtagValues.contains(rule.value.lowercased())
+        case .keyword:
+            event.content.localizedCaseInsensitiveContains(rule.value)
+        case .regex:
+            matchesRegex(rule.value, content: event.content)
+        case .mutedKind:
+            Int(rule.value) == event.kind
+        case .relayMute:
+            false
+        }
+    }
+
+    private func matchReason(rule: NostrFilterRuleRecord, event: NostrEvent) -> NostrFilterMatchReason {
+        switch rule.kind {
+        case .mutedPubkey:
+            .mutedPubkey(rule.value)
+        case .mutedHashtag:
+            .mutedHashtag(rule.value)
+        case .keyword:
+            .keyword(rule.value)
+        case .regex:
+            .regex(rule.value)
+        case .mutedKind:
+            .mutedKind(event.kind)
+        case .relayMute:
+            .relayMute(rule.value)
         }
     }
 

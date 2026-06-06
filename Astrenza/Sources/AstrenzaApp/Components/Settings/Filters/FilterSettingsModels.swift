@@ -27,6 +27,31 @@ enum FilterApplicationScope: String, CaseIterable, Identifiable {
     case publicTimelines = "Public Timelines"
 
     var id: String { rawValue }
+
+    var coreScope: NostrFilterTimelineScope {
+        switch self {
+        case .home: .home
+        case .mentions: .mentions
+        case .threads: .threads
+        case .lists: .lists
+        case .publicTimelines: .publicTimelines
+        }
+    }
+
+    init(coreScope: NostrFilterTimelineScope) {
+        switch coreScope {
+        case .home:
+            self = .home
+        case .mentions:
+            self = .mentions
+        case .threads:
+            self = .threads
+        case .lists:
+            self = .lists
+        case .publicTimelines:
+            self = .publicTimelines
+        }
+    }
 }
 
 struct FilterCandidateUser: Identifiable {
@@ -114,20 +139,25 @@ struct FilterEditorDraft: Identifiable {
         )
     }
 
-    static func potentialSpam(accountID: String, existing: NostrFilterRuleRecord?) -> FilterEditorDraft {
+    static func potentialSpam(
+        accountID: String,
+        existing: NostrFilterRuleRecord?,
+        matchingCount: Int = 0,
+        totalCount: Int = 0
+    ) -> FilterEditorDraft {
         FilterEditorDraft(
             kind: .potentialSpam,
             value: potentialSpamPattern,
             isEnabled: existing?.isEnabled ?? false,
-            masksWithWarning: true,
-            selectedScopes: [.home],
+            masksWithWarning: existing?.presentation != .hide,
+            selectedScopes: existing.map(scopeSet(from:)) ?? [.home],
             selectedUser: nil,
-            matchingCount: 0,
-            totalCount: 4_001
+            matchingCount: matchingCount,
+            totalCount: totalCount
         )
     }
 
-    static func existing(rule: NostrFilterRuleRecord) -> FilterEditorDraft {
+    static func existing(rule: NostrFilterRuleRecord, matchingCount: Int = 0, totalCount: Int = 0) -> FilterEditorDraft {
         switch rule.kind {
         case .mutedPubkey:
             let candidate = FilterCandidateUser(
@@ -141,36 +171,41 @@ struct FilterEditorDraft: Identifiable {
                 kind: .user,
                 value: rule.value,
                 isEnabled: rule.isEnabled,
-                masksWithWarning: false,
-                selectedScopes: [.home],
+                masksWithWarning: rule.presentation != .hide,
+                selectedScopes: scopeSet(from: rule),
                 selectedUser: candidate,
-                matchingCount: 2,
-                totalCount: 3_944
+                matchingCount: matchingCount,
+                totalCount: totalCount
             )
         case .keyword:
             return FilterEditorDraft(
                 kind: .keyword,
                 value: rule.value,
                 isEnabled: rule.isEnabled,
-                masksWithWarning: false,
-                selectedScopes: [.home, .lists, .publicTimelines],
+                masksWithWarning: rule.presentation != .hide,
+                selectedScopes: scopeSet(from: rule),
                 selectedUser: nil,
-                matchingCount: 0,
-                totalCount: 3_944
+                matchingCount: matchingCount,
+                totalCount: totalCount
             )
         case .mutedHashtag:
             return FilterEditorDraft(
                 kind: .hashtag,
                 value: rule.value,
                 isEnabled: rule.isEnabled,
-                masksWithWarning: false,
-                selectedScopes: [.home, .lists, .publicTimelines],
+                masksWithWarning: rule.presentation != .hide,
+                selectedScopes: scopeSet(from: rule),
                 selectedUser: nil,
-                matchingCount: 0,
-                totalCount: 3_944
+                matchingCount: matchingCount,
+                totalCount: totalCount
             )
         default:
-            return potentialSpam(accountID: rule.accountID, existing: rule)
+            return potentialSpam(
+                accountID: rule.accountID,
+                existing: rule,
+                matchingCount: matchingCount,
+                totalCount: totalCount
+            )
         }
     }
 
@@ -228,9 +263,16 @@ struct FilterEditorDraft: Identifiable {
             kind: ruleKind,
             value: ruleValue,
             isEnabled: isEnabled,
+            presentation: masksWithWarning ? .maskWithWarning : .hide,
+            scopes: Set(selectedScopes.map(\.coreScope)),
             createdAt: now,
             updatedAt: now
         )
+    }
+
+    private static func scopeSet(from rule: NostrFilterRuleRecord) -> Set<FilterApplicationScope> {
+        let scopes = Set(rule.scopes.map(FilterApplicationScope.init(coreScope:)))
+        return scopes.isEmpty ? [.home] : scopes
     }
 }
 

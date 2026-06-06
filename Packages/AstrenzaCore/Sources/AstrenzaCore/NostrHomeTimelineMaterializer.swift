@@ -64,7 +64,7 @@ public enum NostrHomeTimelineMaterializer {
                     metadata: metadataByPubkey[event.pubkey],
                     nip05Resolution: nip05Resolutions[event.pubkey],
                     isFollowed: followedPubkeys.contains(event.pubkey),
-                    filterMatch: filterRules?.match(event: event, now: now)
+                    filterMatch: filterRules?.match(event: event, timeline: .home, now: now)
                 )
             }
     }

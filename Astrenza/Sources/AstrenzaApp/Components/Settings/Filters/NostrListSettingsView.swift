@@ -27,7 +27,7 @@ struct NostrListSettingsView: View {
                             rule: rule,
                             icon: "person.crop.circle.fill",
                             isEditing: isEditingFilters,
-                            onEdit: { editorDraft = .existing(rule: rule) },
+                            onEdit: { editorDraft = draft(for: rule) },
                             onDelete: { delete(rule) }
                         )
                     }
@@ -35,7 +35,7 @@ struct NostrListSettingsView: View {
                         SettingsDivider()
                     }
                     FilterAddButton(title: "Add User") {
-                        editorDraft = .newUser(accountID: accountID ?? "")
+                        editorDraft = newDraft(.newUser(accountID: accountID ?? ""))
                     }
                 }
             }
@@ -46,7 +46,7 @@ struct NostrListSettingsView: View {
                         rule: rule,
                         icon: "text.quote",
                         isEditing: isEditingFilters,
-                        onEdit: { editorDraft = .existing(rule: rule) },
+                        onEdit: { editorDraft = draft(for: rule) },
                         onDelete: { delete(rule) }
                     )
                 }
@@ -54,7 +54,7 @@ struct NostrListSettingsView: View {
                     SettingsDivider()
                 }
                 FilterAddButton(title: "Add Keyword") {
-                    editorDraft = .newKeyword(accountID: accountID ?? "")
+                    editorDraft = newDraft(.newKeyword(accountID: accountID ?? ""))
                 }
             }
 
@@ -64,7 +64,7 @@ struct NostrListSettingsView: View {
                         rule: rule,
                         icon: "number",
                         isEditing: isEditingFilters,
-                        onEdit: { editorDraft = .existing(rule: rule) },
+                        onEdit: { editorDraft = draft(for: rule) },
                         onDelete: { delete(rule) }
                     )
                 }
@@ -72,13 +72,13 @@ struct NostrListSettingsView: View {
                     SettingsDivider()
                 }
                 FilterAddButton(title: "Add Hashtag") {
-                    editorDraft = .newHashtag(accountID: accountID ?? "")
+                    editorDraft = newDraft(.newHashtag(accountID: accountID ?? ""))
                 }
             }
 
             SettingsSection(title: "CUSTOM") {
                 Button {
-                    editorDraft = .potentialSpam(accountID: accountID ?? "", existing: potentialSpamRule)
+                    editorDraft = potentialSpamDraft()
                 } label: {
                     HStack {
                         Text("Potential Spam")
@@ -198,6 +198,44 @@ struct NostrListSettingsView: View {
 
     private var potentialSpamRule: NostrFilterRuleRecord? {
         localRules.first { $0.ruleID.hasPrefix(FilterEditorDraft.potentialSpamRuleIDPrefix) }
+    }
+
+    private func draft(for rule: NostrFilterRuleRecord) -> FilterEditorDraft {
+        FilterEditorDraft.existing(
+            rule: rule,
+            matchingCount: matchingCount(for: rule),
+            totalCount: totalCachedPostCount()
+        )
+    }
+
+    private func potentialSpamDraft() -> FilterEditorDraft {
+        let draft = FilterEditorDraft.potentialSpam(
+            accountID: accountID ?? "",
+            existing: potentialSpamRule,
+            matchingCount: potentialSpamRule.map(matchingCount(for:)) ?? 0,
+            totalCount: totalCachedPostCount()
+        )
+        return draft
+    }
+
+    private func newDraft(_ draft: FilterEditorDraft) -> FilterEditorDraft {
+        var draft = draft
+        draft.totalCount = totalCachedPostCount()
+        return draft
+    }
+
+    private func matchingCount(for rule: NostrFilterRuleRecord) -> Int {
+        guard let accountID, let eventStore else { return 0 }
+        return (try? eventStore.filterRuleMatchingCount(
+            accountID: accountID,
+            rule: rule,
+            timeline: .home
+        )) ?? 0
+    }
+
+    private func totalCachedPostCount() -> Int {
+        guard let eventStore else { return 0 }
+        return ((try? eventStore.events(kind: 1, limit: 10_000).count) ?? 0)
     }
 
     private func saveFilterDraft(_ draft: FilterEditorDraft) {

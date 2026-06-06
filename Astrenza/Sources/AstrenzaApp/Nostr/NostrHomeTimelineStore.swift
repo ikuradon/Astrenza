@@ -415,7 +415,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             return nil
         }
 
-        var rules = (try? eventStore.filterRules(accountID: account.pubkey)) ?? []
+        var rules = ((try? eventStore.filterRules(accountID: account.pubkey)) ?? [])
+            .filter { $0.applies(to: .home) }
         let publicMuteItems = cachedPublicMuteItems(accountID: account.pubkey, eventStore: eventStore)
         rules.append(
             contentsOf: NostrFilterRuleSet.publicMuteRules(
