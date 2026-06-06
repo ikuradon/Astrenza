@@ -365,6 +365,39 @@ struct TimelineModelTests {
         #expect(post.replyContext == nil)
     }
 
+    @Test("Nostr materializer collapses locally filtered posts without deleting them")
+    func nostrMaterializerCollapsesFilteredPosts() throws {
+        let author = String(repeating: "a", count: 64)
+        let note = timelineEvent(
+            idSeed: "filtered-note",
+            pubkey: author,
+            createdAt: 100,
+            content: "this contains noisy text"
+        )
+        let filterRules = NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(
+                ruleID: "rule",
+                accountID: "account",
+                kind: .keyword,
+                value: "noisy",
+                createdAt: 1,
+                updatedAt: 1
+            )
+        ])
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            filterRules: filterRules,
+            now: 100
+        )
+        let post = try #require(posts.first)
+
+        #expect(post.id == note.id)
+        #expect(post.bodyPresentation.collapseReason == .filtered)
+    }
+
     @Test("Nostr materializer turns kind 6 reposts into attributed timeline posts")
     func nostrMaterializerUsesKind6Reposts() throws {
         let author = String(repeating: "a", count: 64)

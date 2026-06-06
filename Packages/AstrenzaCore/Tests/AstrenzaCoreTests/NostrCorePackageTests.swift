@@ -878,6 +878,52 @@ struct NostrCorePackageTests {
         #expect(try store.drafts(accountID: "account-b") == [second])
     }
 
+    @Test("Nostr filter rules match pubkey hashtag keyword regex and kind")
+    func filterRulesMatchEvents() throws {
+        let pubkey = String(repeating: "b", count: 64)
+        let event = nostrEvent(
+            kind: 1,
+            pubkey: pubkey,
+            content: "hello filtered timeline",
+            tags: [["t", "Nostr"]]
+        )
+        let rules = NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(ruleID: "expired", accountID: "account", kind: .keyword, value: "hello", expiresAt: 10, createdAt: 1, updatedAt: 1),
+            NostrFilterRuleRecord(ruleID: "pubkey", accountID: "account", kind: .mutedPubkey, value: pubkey, createdAt: 2, updatedAt: 2)
+        ])
+
+        #expect(rules.match(event: event, now: 20) == .mutedPubkey(pubkey))
+        #expect(NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(ruleID: "tag", accountID: "account", kind: .mutedHashtag, value: "nostr", createdAt: 1, updatedAt: 1)
+        ]).match(event: event, now: 20) == .mutedHashtag("nostr"))
+        #expect(NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(ruleID: "keyword", accountID: "account", kind: .keyword, value: "FILTERED", createdAt: 1, updatedAt: 1)
+        ]).match(event: event, now: 20) == .keyword("FILTERED"))
+        #expect(NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(ruleID: "regex", accountID: "account", kind: .regex, value: "filter[a-z]+", createdAt: 1, updatedAt: 1)
+        ]).match(event: event, now: 20) == .regex("filter[a-z]+"))
+        #expect(NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(ruleID: "kind", accountID: "account", kind: .mutedKind, value: "1", createdAt: 1, updatedAt: 1)
+        ]).match(event: event, now: 20) == .mutedKind(1))
+    }
+
+    @Test("Nostr event store persists filter rules and local bookmarks")
+    func eventStoreFilterRulesAndBookmarks() throws {
+        let store = try NostrEventStore.inMemory()
+        let rule = NostrFilterRuleRecord(ruleID: "rule-1", accountID: "account", kind: .keyword, value: "noise", createdAt: 100, updatedAt: 100)
+        let bookmark = NostrLocalBookmarkRecord(accountID: "account", eventID: "event-1", createdAt: 200)
+
+        try store.saveFilterRule(rule)
+        try store.saveLocalBookmark(bookmark)
+
+        #expect(try store.filterRules(accountID: "account") == [rule])
+        #expect(try store.filterRules(accountID: "other").isEmpty)
+        #expect(try store.localBookmarks(accountID: "account") == [bookmark])
+
+        try store.deleteLocalBookmark(accountID: "account", eventID: "event-1")
+        #expect(try store.localBookmarks(accountID: "account").isEmpty)
+    }
+
     @Test("Nostr event store persists relay profiles and event sources")
     func eventStoreRelayProfilesAndSources() throws {
         let store = try NostrEventStore.inMemory()

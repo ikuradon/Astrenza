@@ -11,6 +11,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
     public let createdAt: Int
     public let avatarPictureState: NostrAvatarPictureState
     public let avatarImageURL: URL?
+    public let filterMatch: NostrFilterMatchReason?
 
     public init(
         id: String,
@@ -22,7 +23,8 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
         body: String,
         createdAt: Int,
         avatarPictureState: NostrAvatarPictureState,
-        avatarImageURL: URL?
+        avatarImageURL: URL?,
+        filterMatch: NostrFilterMatchReason? = nil
     ) {
         self.id = id
         self.pubkey = pubkey
@@ -34,6 +36,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.avatarPictureState = avatarPictureState
         self.avatarImageURL = avatarImageURL
+        self.filterMatch = filterMatch
     }
 }
 
@@ -48,7 +51,9 @@ public enum NostrHomeTimelineMaterializer {
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
         followedPubkeys: Set<String>,
-        nip05Resolutions: [String: NostrNIP05Resolution] = [:]
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        filterRules: NostrFilterRuleSet? = nil,
+        now: Int = Int(Date().timeIntervalSince1970)
     ) -> [NostrHomeTimelineItem] {
         let metadataByPubkey = latestMetadataByPubkey(metadataEvents)
         return noteEvents
@@ -58,7 +63,8 @@ public enum NostrHomeTimelineMaterializer {
                     for: event,
                     metadata: metadataByPubkey[event.pubkey],
                     nip05Resolution: nip05Resolutions[event.pubkey],
-                    isFollowed: followedPubkeys.contains(event.pubkey)
+                    isFollowed: followedPubkeys.contains(event.pubkey),
+                    filterMatch: filterRules?.match(event: event, now: now)
                 )
             }
     }
@@ -89,7 +95,8 @@ public enum NostrHomeTimelineMaterializer {
         for event: NostrEvent,
         metadata: NostrProfileMetadata?,
         nip05Resolution: NostrNIP05Resolution?,
-        isFollowed: Bool
+        isFollowed: Bool,
+        filterMatch: NostrFilterMatchReason?
     ) -> NostrHomeTimelineItem {
         let pictureURL = metadata?.pictureURL
         let pictureState: NostrAvatarPictureState
@@ -111,7 +118,8 @@ public enum NostrHomeTimelineMaterializer {
             body: event.content,
             createdAt: event.createdAt,
             avatarPictureState: pictureState,
-            avatarImageURL: pictureURL
+            avatarImageURL: pictureURL,
+            filterMatch: filterMatch
         )
     }
 

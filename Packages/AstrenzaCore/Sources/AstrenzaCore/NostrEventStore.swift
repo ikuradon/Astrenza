@@ -147,6 +147,18 @@ public struct NostrRelayPreferenceRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct NostrLocalBookmarkRecord: Codable, Equatable, Sendable {
+    public let accountID: String
+    public let eventID: String
+    public let createdAt: Int
+
+    public init(accountID: String, eventID: String, createdAt: Int) {
+        self.accountID = accountID
+        self.eventID = eventID
+        self.createdAt = createdAt
+    }
+}
+
 public enum NostrRelaySyncEventKind: String, Codable, Equatable, Sendable {
     case connected
     case eose
@@ -1127,6 +1139,93 @@ public final class NostrEventStore {
         }
     }
 
+    public func saveFilterRule(_ rule: NostrFilterRuleRecord) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO filter_rules (
+                    rule_id, account_id, rule_kind, value, expires_at, is_enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                    account_id = excluded.account_id,
+                    rule_kind = excluded.rule_kind,
+                    value = excluded.value,
+                    expires_at = excluded.expires_at,
+                    is_enabled = excluded.is_enabled,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    rule.ruleID,
+                    rule.accountID,
+                    rule.kind.rawValue,
+                    rule.value,
+                    rule.expiresAt,
+                    rule.isEnabled,
+                    rule.createdAt,
+                    rule.updatedAt
+                ]
+            )
+        }
+    }
+
+    public func filterRules(accountID: String) throws -> [NostrFilterRuleRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT rule_id, account_id, rule_kind, value, expires_at, is_enabled, created_at, updated_at
+                FROM filter_rules
+                WHERE account_id = ?
+                ORDER BY updated_at DESC, rule_id DESC
+                """,
+                arguments: [accountID]
+            )
+            return rows.compactMap(decodeFilterRule)
+        }
+    }
+
+    public func saveLocalBookmark(_ bookmark: NostrLocalBookmarkRecord) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO local_bookmarks (account_id, event_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(account_id, event_id) DO UPDATE SET
+                    created_at = excluded.created_at
+                """,
+                arguments: [bookmark.accountID, bookmark.eventID, bookmark.createdAt]
+            )
+        }
+    }
+
+    public func localBookmarks(accountID: String) throws -> [NostrLocalBookmarkRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, event_id, created_at
+                FROM local_bookmarks
+                WHERE account_id = ?
+                ORDER BY created_at DESC, event_id DESC
+                """,
+                arguments: [accountID]
+            )
+            return rows.map(decodeLocalBookmark)
+        }
+    }
+
+    public func deleteLocalBookmark(accountID: String, eventID: String) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                DELETE FROM local_bookmarks
+                WHERE account_id = ? AND event_id = ?
+                """,
+                arguments: [accountID, eventID]
+            )
+        }
+    }
+
     public func saveRelaySyncEvents(_ events: [NostrRelaySyncEventRecord]) throws {
         guard !events.isEmpty else { return }
 
@@ -1541,6 +1640,28 @@ public final class NostrEventStore {
             }
 
             try db.create(index: "drafts_account_updated", on: "drafts", columns: ["account_id", "updated_at"], ifNotExists: true)
+        }
+
+        migrator.registerMigration("addLocalFiltersAndBookmarks") { db in
+            try db.create(table: "filter_rules", ifNotExists: true) { table in
+                table.column("rule_id", .text).primaryKey()
+                table.column("account_id", .text).notNull()
+                table.column("rule_kind", .text).notNull()
+                table.column("value", .text).notNull()
+                table.column("expires_at", .integer)
+                table.column("is_enabled", .boolean).notNull().defaults(to: true)
+                table.column("created_at", .integer).notNull()
+                table.column("updated_at", .integer).notNull()
+            }
+            try db.create(index: "filter_rules_account", on: "filter_rules", columns: ["account_id", "updated_at"], ifNotExists: true)
+
+            try db.create(table: "local_bookmarks", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("event_id", .text).notNull()
+                table.column("created_at", .integer).notNull()
+                table.primaryKey(["account_id", "event_id"])
+            }
+            try db.create(index: "local_bookmarks_account", on: "local_bookmarks", columns: ["account_id", "created_at"], ifNotExists: true)
         }
 
         migrator.registerMigration("addNostrLists") { db in
@@ -2488,6 +2609,28 @@ public final class NostrEventStore {
             contentWarning: row["content_warning"],
             media: try decoder.decode([NostrDraftMediaReference].self, from: mediaData),
             updatedAt: row["updated_at"]
+        )
+    }
+
+    private func decodeFilterRule(_ row: Row) -> NostrFilterRuleRecord? {
+        guard let kind = NostrFilterRuleKind(rawValue: row["rule_kind"]) else { return nil }
+        return NostrFilterRuleRecord(
+            ruleID: row["rule_id"],
+            accountID: row["account_id"],
+            kind: kind,
+            value: row["value"],
+            expiresAt: row["expires_at"],
+            isEnabled: row["is_enabled"],
+            createdAt: row["created_at"],
+            updatedAt: row["updated_at"]
+        )
+    }
+
+    private func decodeLocalBookmark(_ row: Row) -> NostrLocalBookmarkRecord {
+        NostrLocalBookmarkRecord(
+            accountID: row["account_id"],
+            eventID: row["event_id"],
+            createdAt: row["created_at"]
         )
     }
 

@@ -132,7 +132,7 @@ struct TimelinePostRow: View {
                     TimelineBodySummaryPill(
                         systemName: collapseReason.systemName,
                         text: collapseReason.label,
-                        prominence: collapseReason == .lowTrustLinks ? .warning : .normal
+                        prominence: collapseReason == .lowTrustLinks || collapseReason == .filtered ? .warning : .normal
                     )
                 }
 

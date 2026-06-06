@@ -371,6 +371,7 @@ enum TimelineBodyCollapseReason: Equatable {
     case longText
     case linkHeavy
     case lowTrustLinks
+    case filtered
 
     var label: String {
         switch self {
@@ -380,6 +381,8 @@ enum TimelineBodyCollapseReason: Equatable {
             "Link-heavy post"
         case .lowTrustLinks:
             "Tap to inspect"
+        case .filtered:
+            "Filtered"
         }
     }
 
@@ -391,6 +394,8 @@ enum TimelineBodyCollapseReason: Equatable {
             "link"
         case .lowTrustLinks:
             "eye.slash"
+        case .filtered:
+            "line.3.horizontal.decrease.circle"
         }
     }
 }

@@ -381,7 +381,7 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add local filter rules model for:
+- [x] Add local filter rules model for:
   - muted pubkey
   - muted hashtag
   - keyword
@@ -390,18 +390,20 @@ The remaining phases below intentionally revisit some of those areas where they 
   - relay mute
   - temporary mute expiry
 - [ ] Merge local rules with public NIP-51 mute list when cached.
-- [ ] Apply filters in materializer as collapsed/hidden states, not by deleting source events.
+  - Deferred: NIP-51 list storage exists, but list-to-filter projection should be added with the filter settings UI.
+- [x] Apply filters in materializer as collapsed/hidden states, not by deleting source events.
 - [ ] Add active filter indicator with one-tap clear.
-- [ ] Add trust handling for media/OGP:
+  - Deferred: needs visible filter settings/surface work, not only materializer state.
+- [x] Add trust handling for media/OGP:
   - followed users show normally
   - non-followed users in reply/repost/quote context blur media/OGP until reveal
   - sensitive state still takes precedence over trust reveal
-- [ ] Add bookmark action storage for local bookmark first, then NIP-51 publish after outbox is available.
+- [x] Add bookmark action storage for local bookmark first, then NIP-51 publish after outbox is available.
 
 **Acceptance tests:**
 - mute pubkey/hashtag/keyword/regex tests
 - trust blur tests
-- filter indicator state tests
+- filter indicator state tests deferred with UI indicator work
 - bookmark local persistence test
 
 **Commit:**

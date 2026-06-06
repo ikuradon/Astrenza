@@ -348,6 +348,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: noteEvents),
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: noteEvents),
+            filterRules: filterRuleSet(),
             deletedEntries: deletedEntries
         )
     }
@@ -362,8 +363,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: events),
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events)
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events),
+            filterRules: filterRuleSet()
         )
+    }
+
+    private func filterRuleSet() -> NostrFilterRuleSet? {
+        guard let account, let rules = try? eventStore?.filterRules(accountID: account.pubkey), !rules.isEmpty else {
+            return nil
+        }
+        return NostrFilterRuleSet(rules: rules)
     }
 
     private func mediaAssetsByEventID(for events: [NostrEvent]) -> [String: [NostrMediaAssetRecord]] {
@@ -491,6 +500,7 @@ enum NostrTimelineMaterializer {
         followedPubkeys: Set<String>,
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
+        filterRules: NostrFilterRuleSet? = nil,
         deletedEntries: [NostrDeletedTimelineEntryRecord] = []
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
@@ -500,7 +510,8 @@ enum NostrTimelineMaterializer {
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: followedPubkeys,
             mediaAssetsByEventID: mediaAssetsByEventID,
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
+            filterRules: filterRules
         )
         .filter { !deletedTargetIDs.contains($0.id) }
         .map { ($0.id, $0) })
@@ -537,14 +548,18 @@ enum NostrTimelineMaterializer {
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>,
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
-        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:]
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
+        filterRules: NostrFilterRuleSet? = nil,
+        now: Int = Int(Date().timeIntervalSince1970)
     ) -> [TimelinePost] {
         let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
         let directPosts = NostrHomeTimelineMaterializer.items(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
             followedPubkeys: followedPubkeys,
-            nip05Resolutions: nip05Resolutions
+            nip05Resolutions: nip05Resolutions,
+            filterRules: filterRules,
+            now: now
         )
         .compactMap { item -> SortableTimelinePost? in
             guard let event = eventsByID[item.id] else { return nil }
@@ -633,7 +648,12 @@ enum NostrTimelineMaterializer {
             replyContext: event.flatMap { replyContext(from: $0, eventsByID: eventsByID, fallbackAuthor: author) },
             replyMention: event.flatMap { replyMention(from: $0, author: author) },
             contentWarning: contentWarning,
-            bodyPresentation: bodyPresentation(body: item.body, linkURLs: linkURLs, isFollowed: item.isFollowed),
+            bodyPresentation: bodyPresentation(
+                body: item.body,
+                linkURLs: linkURLs,
+                isFollowed: item.isFollowed,
+                filterMatch: item.filterMatch
+            ),
             linkSummary: linkSummary(from: linkURLs),
             actionState: .none
         )
@@ -972,7 +992,15 @@ enum NostrTimelineMaterializer {
         }?[1]
     }
 
-    private static func bodyPresentation(body: String, linkURLs: [URL], isFollowed: Bool) -> TimelineBodyPresentation {
+    private static func bodyPresentation(
+        body: String,
+        linkURLs: [URL],
+        isFollowed: Bool,
+        filterMatch: NostrFilterMatchReason? = nil
+    ) -> TimelineBodyPresentation {
+        if filterMatch != nil {
+            return .collapsed(lineLimit: 2, reason: .filtered)
+        }
         if !isFollowed && !linkURLs.isEmpty {
             return .collapsed(lineLimit: 3, reason: .lowTrustLinks)
         }
