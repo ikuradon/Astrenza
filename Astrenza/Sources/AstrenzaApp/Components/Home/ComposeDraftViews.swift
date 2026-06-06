@@ -1,9 +1,36 @@
+import AstrenzaCore
 import SwiftUI
 
 struct ComposeDraft: Identifiable, Equatable {
     let id: String
     let text: String
+    let contentWarning: String?
     let mediaCount: Int
+    let mediaReferences: [NostrDraftMediaReference]
+
+    init(
+        id: String,
+        text: String,
+        contentWarning: String? = nil,
+        mediaCount: Int,
+        mediaReferences: [NostrDraftMediaReference] = []
+    ) {
+        self.id = id
+        self.text = text
+        self.contentWarning = contentWarning
+        self.mediaCount = mediaCount
+        self.mediaReferences = mediaReferences
+    }
+
+    init(record: NostrDraftRecord) {
+        self.init(
+            id: record.draftID,
+            text: record.text,
+            contentWarning: record.contentWarning,
+            mediaCount: record.media.count,
+            mediaReferences: record.media
+        )
+    }
 }
 
 struct ComposeSettingsMenu: View {

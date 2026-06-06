@@ -1,3 +1,4 @@
+import AstrenzaCore
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -8,6 +9,8 @@ struct ComposeSheetView: View {
     let mode: ComposeSheetMode
     let isSubmitAvailable: Bool
     let onSubmit: ((ComposeSubmitRequest) async -> Bool)?
+    let accountID: String?
+    let eventStore: NostrEventStore?
     @State private var text = ""
     @State private var sensitiveReason = ""
     @State private var isSensitiveReasonVisible = false
@@ -23,6 +26,8 @@ struct ComposeSheetView: View {
     @State private var isComposerSettingsPresented = false
     @State private var isDraftCloseDialogPresented = false
     @State private var isDraftsViewPresented = false
+    @State private var savedDatabaseDrafts: [ComposeDraft] = []
+    @State private var activeDraftID: String?
     @AppStorage("astrenza.mockComposeDraftText") private var savedDraftText = ""
     @AppStorage("astrenza.mockComposeDraftMediaCount") private var savedDraftMediaCount = 0
     private let characterLimit = 500
@@ -31,11 +36,15 @@ struct ComposeSheetView: View {
     init(
         mode: ComposeSheetMode = .post,
         isSubmitAvailable: Bool = true,
-        onSubmit: ((ComposeSubmitRequest) async -> Bool)? = nil
+        onSubmit: ((ComposeSubmitRequest) async -> Bool)? = nil,
+        accountID: String? = nil,
+        eventStore: NostrEventStore? = nil
     ) {
         self.mode = mode
         self.isSubmitAvailable = isSubmitAvailable
         self.onSubmit = onSubmit
+        self.accountID = accountID
+        self.eventStore = eventStore
     }
 
     private var remainingCharacters: Int {
@@ -54,6 +63,9 @@ struct ComposeSheetView: View {
     }
 
     private var savedDrafts: [ComposeDraft] {
+        if accountID != nil, eventStore != nil {
+            return savedDatabaseDrafts
+        }
         guard !savedDraftText.isEmpty || savedDraftMediaCount > 0 else { return [] }
         return [
             ComposeDraft(
@@ -166,12 +178,13 @@ struct ComposeSheetView: View {
             isDraftCloseDialogPresented: $isDraftCloseDialogPresented,
             isDraftsViewPresented: $isDraftsViewPresented,
             savedDrafts: savedDrafts,
-            onIgnoreDraft: { dismiss() },
+            onIgnoreDraft: ignoreCurrentDraft,
             onSaveDraft: saveCurrentDraft,
-            onDeleteDrafts: { _ in deleteSavedDraft() },
+            onDeleteDrafts: deleteDrafts,
             onSelectDraft: restoreDraft
         )
         .onAppear {
+            reloadDrafts()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
                 isEditorFocused = true
             }
@@ -398,6 +411,7 @@ struct ComposeSheetView: View {
             await MainActor.run {
                 isSubmitting = false
                 if didSubmit {
+                    deleteActiveDatabaseDraftIfNeeded()
                     dismiss()
                 }
             }
@@ -405,21 +419,114 @@ struct ComposeSheetView: View {
     }
 
     private func saveCurrentDraft() {
-        savedDraftText = text
-        savedDraftMediaCount = selectedMediaItems.count
+        guard let accountID, let eventStore else {
+            savedDraftText = text
+            savedDraftMediaCount = selectedMediaItems.count
+            isDraftCloseDialogPresented = false
+            dismiss()
+            return
+        }
+
+        let draftID = activeDraftID ?? UUID().uuidString
+        let warning = isSensitiveReasonVisible
+            ? sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let media = selectedMediaItems.enumerated().map { index, item in
+            NostrDraftMediaReference(
+                id: "media-\(index)",
+                kind: "photo",
+                localIdentifier: nil,
+                altText: item.altText
+            )
+        }
+        try? eventStore.saveDraft(NostrDraftRecord(
+            draftID: draftID,
+            accountID: accountID,
+            kind: 1,
+            parentEventID: mode == .reply ? "reply-context" : nil,
+            text: text,
+            contentWarning: warning.isEmpty ? nil : warning,
+            media: media,
+            updatedAt: Int(Date().timeIntervalSince1970)
+        ))
+        activeDraftID = draftID
+        reloadDrafts()
         isDraftCloseDialogPresented = false
         dismiss()
     }
 
+    private func deleteActiveDatabaseDraftIfNeeded() {
+        guard let accountID, let eventStore, let activeDraftID else { return }
+        try? eventStore.deleteDraft(accountID: accountID, draftID: activeDraftID)
+        self.activeDraftID = nil
+        reloadDrafts()
+    }
+
+    private func ignoreCurrentDraft() {
+        deleteActiveDatabaseDraftIfNeeded()
+        dismiss()
+    }
+
     private func deleteSavedDraft() {
-        savedDraftText = ""
-        savedDraftMediaCount = 0
+        guard let accountID, let eventStore else {
+            savedDraftText = ""
+            savedDraftMediaCount = 0
+            return
+        }
+        let ids = savedDrafts.map(\.id)
+        try? eventStore.deleteDrafts(accountID: accountID, draftIDs: ids)
+        activeDraftID = nil
+        reloadDrafts()
+    }
+
+    private func deleteDrafts(at offsets: IndexSet) {
+        guard let accountID, let eventStore else {
+            deleteSavedDraft()
+            return
+        }
+        let ids = offsets.map { savedDrafts[$0].id }
+        try? eventStore.deleteDrafts(accountID: accountID, draftIDs: ids)
+        if let activeDraftID, ids.contains(activeDraftID) {
+            self.activeDraftID = nil
+        }
+        reloadDrafts()
     }
 
     private func restoreDraft(_ draft: ComposeDraft) {
+        activeDraftID = draft.id
         text = draft.text
+        if let contentWarning = draft.contentWarning, !contentWarning.isEmpty {
+            sensitiveReason = contentWarning
+            isSensitiveReasonVisible = true
+        } else {
+            sensitiveReason = ""
+            isSensitiveReasonVisible = false
+        }
+        selectedMediaItems = draft.mediaReferences.map { reference in
+            ComposeSelectedMedia(
+                image: Self.placeholderDraftImage(),
+                altText: reference.altText
+            )
+        }
         isDraftsViewPresented = false
         isEditorFocused = true
+    }
+
+    private func reloadDrafts() {
+        guard let accountID, let eventStore else { return }
+        let records = (try? eventStore.drafts(accountID: accountID)) ?? []
+        savedDatabaseDrafts = records.map(ComposeDraft.init(record:))
+    }
+
+    private static func placeholderDraftImage() -> UIImage {
+        let size = CGSize(width: 180, height: 180)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            UIColor.systemPurple.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.withAlphaComponent(0.9).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 62, y: 62, width: 56, height: 56)).fill()
+        }
     }
 
 }

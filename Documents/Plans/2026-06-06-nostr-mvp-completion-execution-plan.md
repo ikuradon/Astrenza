@@ -343,18 +343,18 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add schema:
+- [x] Add schema:
   - `drafts(draft_id, account_id, kind, parent_event_id, text, content_warning, media_json, updated_at)`
-- [ ] Draft count in gear menu reads from DB.
-- [ ] Draft list reads from DB and supports edit mode deletion.
-- [ ] Closing compose with text/media shows:
+- [x] Draft count in gear menu reads from DB.
+- [x] Draft list reads from DB and supports edit mode deletion.
+- [x] Closing compose with text/media shows:
   - Ignore Draft
   - Save Draft
   - Cancel
-- [ ] Ignore Draft deletes the draft and closes the sheet.
-- [ ] Save Draft persists and closes the sheet.
-- [ ] Opening a draft restores text, warning reason, media references, and reply context.
-- [ ] Drafts are account-scoped.
+- [x] Ignore Draft deletes the draft and closes the sheet.
+- [x] Save Draft persists and closes the sheet.
+- [x] Opening a draft restores text, warning reason, media references, and reply context.
+- [x] Drafts are account-scoped.
 
 **Acceptance tests:**
 - draft save/load/delete tests

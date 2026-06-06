@@ -21,7 +21,9 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                 ComposeSheetView(
                     mode: composeSheetMode,
                     isSubmitAvailable: isComposeSubmitAvailable,
-                    onSubmit: onComposeSubmit
+                    onSubmit: onComposeSubmit,
+                    accountID: accountID,
+                    eventStore: eventStore
                 )
                     .presentationDetents([.large])
                     .presentationDragIndicator(.hidden)

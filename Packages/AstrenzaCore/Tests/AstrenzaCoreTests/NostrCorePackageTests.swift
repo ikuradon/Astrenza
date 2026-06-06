@@ -828,6 +828,56 @@ struct NostrCorePackageTests {
         #expect(try store.relayPreferences(accountID: "other").isEmpty)
     }
 
+    @Test("Nostr event store persists and deletes compose drafts")
+    func eventStoreComposeDrafts() throws {
+        let store = try NostrEventStore.inMemory()
+        let draft = NostrDraftRecord(
+            draftID: "draft-1",
+            accountID: "account",
+            kind: 1,
+            parentEventID: "parent",
+            text: "draft text",
+            contentWarning: "spoilers",
+            media: [
+                NostrDraftMediaReference(id: "media-1", kind: "photo", localIdentifier: "local-1", altText: "alt")
+            ],
+            updatedAt: 100
+        )
+        let updatedDraft = NostrDraftRecord(
+            draftID: "draft-1",
+            accountID: "account",
+            kind: 1,
+            parentEventID: "parent",
+            text: "updated draft",
+            contentWarning: nil,
+            media: [],
+            updatedAt: 200
+        )
+
+        try store.saveDraft(draft)
+        try store.saveDraft(updatedDraft)
+
+        #expect(try store.drafts(accountID: "account") == [updatedDraft])
+        #expect(try store.drafts(accountID: "other").isEmpty)
+
+        try store.deleteDraft(accountID: "account", draftID: "draft-1")
+        #expect(try store.drafts(accountID: "account").isEmpty)
+    }
+
+    @Test("Nostr event store keeps compose drafts account scoped")
+    func eventStoreComposeDraftsAreAccountScoped() throws {
+        let store = try NostrEventStore.inMemory()
+        let first = NostrDraftRecord(draftID: "draft-1", accountID: "account-a", kind: 1, text: "a", updatedAt: 100)
+        let second = NostrDraftRecord(draftID: "draft-2", accountID: "account-b", kind: 1, text: "b", updatedAt: 200)
+
+        try store.saveDraft(first)
+        try store.saveDraft(second)
+        try store.deleteDraft(accountID: "account-a", draftID: "draft-2")
+
+        #expect(try store.drafts(accountID: "account-a") == [first])
+        #expect(try store.drafts(accountID: "account-b") == [second])
+    }
+
     @Test("Nostr event store persists relay profiles and event sources")
     func eventStoreRelayProfilesAndSources() throws {
         let store = try NostrEventStore.inMemory()

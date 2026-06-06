@@ -1060,6 +1060,73 @@ public final class NostrEventStore {
         }
     }
 
+    public func saveDraft(_ draft: NostrDraftRecord) throws {
+        let mediaData = try encoder.encode(draft.media)
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO drafts (
+                    draft_id, account_id, kind, parent_event_id, text, content_warning, media_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(draft_id) DO UPDATE SET
+                    account_id = excluded.account_id,
+                    kind = excluded.kind,
+                    parent_event_id = excluded.parent_event_id,
+                    text = excluded.text,
+                    content_warning = excluded.content_warning,
+                    media_json = excluded.media_json,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    draft.draftID,
+                    draft.accountID,
+                    draft.kind,
+                    draft.parentEventID,
+                    draft.text,
+                    draft.contentWarning,
+                    mediaData,
+                    draft.updatedAt
+                ]
+            )
+        }
+    }
+
+    public func drafts(accountID: String) throws -> [NostrDraftRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT draft_id, account_id, kind, parent_event_id, text,
+                    content_warning, media_json, updated_at
+                FROM drafts
+                WHERE account_id = ?
+                ORDER BY updated_at DESC, draft_id DESC
+                """,
+                arguments: [accountID]
+            )
+            return try rows.map(decodeDraft)
+        }
+    }
+
+    public func deleteDraft(accountID: String, draftID: String) throws {
+        try deleteDrafts(accountID: accountID, draftIDs: [draftID])
+    }
+
+    public func deleteDrafts(accountID: String, draftIDs: [String]) throws {
+        guard !draftIDs.isEmpty else { return }
+        try database.write { db in
+            for draftID in draftIDs {
+                try db.execute(
+                    sql: """
+                    DELETE FROM drafts
+                    WHERE account_id = ? AND draft_id = ?
+                    """,
+                    arguments: [accountID, draftID]
+                )
+            }
+        }
+    }
+
     public func saveRelaySyncEvents(_ events: [NostrRelaySyncEventRecord]) throws {
         guard !events.isEmpty else { return }
 
@@ -1459,6 +1526,21 @@ public final class NostrEventStore {
             }
 
             try db.create(index: "relay_preferences_account", on: "relay_preferences", columns: ["account_id", "updated_at"], ifNotExists: true)
+        }
+
+        migrator.registerMigration("addComposeDrafts") { db in
+            try db.create(table: "drafts", ifNotExists: true) { table in
+                table.column("draft_id", .text).primaryKey()
+                table.column("account_id", .text).notNull()
+                table.column("kind", .integer).notNull()
+                table.column("parent_event_id", .text)
+                table.column("text", .text).notNull()
+                table.column("content_warning", .text)
+                table.column("media_json", .blob).notNull()
+                table.column("updated_at", .integer).notNull()
+            }
+
+            try db.create(index: "drafts_account_updated", on: "drafts", columns: ["account_id", "updated_at"], ifNotExists: true)
         }
 
         migrator.registerMigration("addNostrLists") { db in
@@ -2391,6 +2473,20 @@ public final class NostrEventStore {
             isEnabled: row["is_enabled"],
             readEnabled: row["read_enabled"],
             writeEnabled: row["write_enabled"],
+            updatedAt: row["updated_at"]
+        )
+    }
+
+    private func decodeDraft(_ row: Row) throws -> NostrDraftRecord {
+        let mediaData: Data = row["media_json"]
+        return NostrDraftRecord(
+            draftID: row["draft_id"],
+            accountID: row["account_id"],
+            kind: row["kind"],
+            parentEventID: row["parent_event_id"],
+            text: row["text"],
+            contentWarning: row["content_warning"],
+            media: try decoder.decode([NostrDraftMediaReference].self, from: mediaData),
             updatedAt: row["updated_at"]
         )
     }
