@@ -204,6 +204,59 @@ struct NostrCorePackageTests {
         #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10).map(\.id) == [newer.id, older.id])
     }
 
+    @Test("Nostr event store applies same-author deletion requests")
+    func eventStoreAppliesSameAuthorDeletionRequests() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: author, createdAt: 100, content: "delete me")
+        let deletion = nostrEvent(kind: 5, pubkey: author, createdAt: 120, content: "remove", tags: [["e", note.id]])
+
+        try store.save(events: [deletion, note])
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(accountID: "account", timelineKey: "home", eventID: note.id, sortTimestamp: note.createdAt, insertedAt: 130)
+        ])
+
+        #expect(try store.event(id: note.id) == note)
+        #expect(try store.events(kind: 1, limit: 10, now: 200).isEmpty)
+        #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10, now: 200).isEmpty)
+    }
+
+    @Test("Nostr event store ignores deletion requests from other authors")
+    func eventStoreIgnoresOtherAuthorDeletionRequests() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let otherAuthor = String(repeating: "b", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: author, createdAt: 100, content: "keep me")
+        let deletion = nostrEvent(kind: 5, pubkey: otherAuthor, createdAt: 120, content: "remove", tags: [["e", note.id]])
+
+        try store.save(events: [note, deletion])
+
+        #expect(try store.events(kind: 1, limit: 10, now: 200).map(\.id) == [note.id])
+    }
+
+    @Test("Nostr event store filters expired events from visible queries")
+    func eventStoreFiltersExpiredEvents() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let expiring = nostrEvent(
+            kind: 1,
+            pubkey: author,
+            createdAt: 100,
+            content: "short lived",
+            tags: [["expiration", "150"]]
+        )
+
+        try store.save(events: [expiring])
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(accountID: "account", timelineKey: "home", eventID: expiring.id, sortTimestamp: expiring.createdAt, insertedAt: 120)
+        ])
+
+        #expect(try store.events(kind: 1, limit: 10, now: 149).map(\.id) == [expiring.id])
+        #expect(try store.events(kind: 1, limit: 10, now: 150).isEmpty)
+        #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10, now: 149).map(\.id) == [expiring.id])
+        #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10, now: 150).isEmpty)
+    }
+
     @Test("Nostr event store persists sync cursors")
     func eventStoreSyncCursors() throws {
         let store = try NostrEventStore.inMemory()

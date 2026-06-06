@@ -212,6 +212,11 @@ public final class NostrEventStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
+    private static func visibleEventPredicate(alias: String? = nil) -> String {
+        let prefix = alias.map { "\($0)." } ?? ""
+        return "\(prefix)deleted_at IS NULL AND (\(prefix)expires_at IS NULL OR \(prefix)expires_at > ?)"
+    }
+
     public init(path: String) throws {
         var configuration = Configuration()
         configuration.prepareDatabase { db in
@@ -250,6 +255,9 @@ public final class NostrEventStore {
                 try upsert(event: event, receivedAt: receivedAt, db: db)
                 try replaceTags(for: event, db: db)
                 try upsertReplaceableHeadIfNeeded(for: event, db: db)
+            }
+            for event in events where event.kind == 5 {
+                try applyDeletionRequest(event, db: db)
             }
         }
     }
@@ -292,20 +300,26 @@ public final class NostrEventStore {
         try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
     }
 
-    public func homeTimelineState(accountID: String, timelineKey: String = "home", limit: Int = 250) throws -> NostrHomeTimelineState? {
+    public func homeTimelineState(
+        accountID: String,
+        timelineKey: String = "home",
+        limit: Int = 250,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> NostrHomeTimelineState? {
         try database.read { db in
-            let notes = try timelineEvents(accountID: accountID, timelineKey: timelineKey, limit: limit, db: db)
+            let notes = try timelineEvents(accountID: accountID, timelineKey: timelineKey, limit: limit, now: now, db: db)
             guard !notes.isEmpty else { return nil }
 
             let metadataEvents = try latestReplaceableEvents(
                 pubkeys: Set(notes.map(\.pubkey)),
                 kind: 0,
+                now: now,
                 db: db
             )
 
             let stateMetadata = try timelineStateMetadata(accountID: accountID, timelineKey: timelineKey, db: db)
-            let relayListEvent = try latestReplaceableEvent(pubkey: accountID, kind: 10002, db: db)
-            let contactListEvent = try latestReplaceableEvent(pubkey: accountID, kind: 3, db: db)
+            let relayListEvent = try latestReplaceableEvent(pubkey: accountID, kind: 10002, now: now, db: db)
+            let contactListEvent = try latestReplaceableEvent(pubkey: accountID, kind: 3, now: now, db: db)
             let relayList = NostrRelayList.parse(from: relayListEvent)
             let contactPubkeys = contactListEvent.map(NostrContactList.pubkeys(from:)) ?? []
             let relays = relayList.readRelays.isEmpty
@@ -331,28 +345,34 @@ public final class NostrEventStore {
         }
     }
 
-    public func events(kind: Int, limit: Int) throws -> [NostrEvent] {
+    public func events(kind: Int, limit: Int, now: Int = Int(Date().timeIntervalSince1970)) throws -> [NostrEvent] {
         try database.read { db in
             let rows = try Row.fetchAll(
                 db,
                 sql: """
                 SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
                 FROM events
-                WHERE kind = ? AND deleted_at IS NULL
+                WHERE kind = ? AND \(Self.visibleEventPredicate())
                 ORDER BY created_at DESC, event_id ASC
                 LIMIT ?
                 """,
-                arguments: [kind, limit]
+                arguments: [kind, now, limit]
             )
             return try rows.map(decodeEvent)
         }
     }
 
-    public func events(kind: Int, authors: [String], until: Int, limit: Int) throws -> [NostrEvent] {
+    public func events(
+        kind: Int,
+        authors: [String],
+        until: Int,
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
         guard !authors.isEmpty else { return [] }
 
         return try database.read { db in
-            var arguments: StatementArguments = [kind, until]
+            var arguments: StatementArguments = [kind, until, now]
             let placeholders = authors.map { _ in "?" }.joined(separator: ", ")
             for author in authors {
                 arguments += [author]
@@ -364,7 +384,7 @@ public final class NostrEventStore {
                 sql: """
                 SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
                 FROM events
-                WHERE kind = ? AND created_at <= ? AND deleted_at IS NULL
+                WHERE kind = ? AND created_at <= ? AND \(Self.visibleEventPredicate())
                     AND pubkey IN (\(placeholders))
                 ORDER BY created_at DESC, event_id ASC
                 LIMIT ?
@@ -375,11 +395,16 @@ public final class NostrEventStore {
         }
     }
 
-    public func events(kind: Int, authors: [String], limit: Int) throws -> [NostrEvent] {
+    public func events(
+        kind: Int,
+        authors: [String],
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
         guard !authors.isEmpty else { return [] }
 
         return try database.read { db in
-            var arguments: StatementArguments = [kind]
+            var arguments: StatementArguments = [kind, now]
             let placeholders = authors.map { _ in "?" }.joined(separator: ", ")
             for author in authors {
                 arguments += [author]
@@ -391,7 +416,7 @@ public final class NostrEventStore {
                 sql: """
                 SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
                 FROM events
-                WHERE kind = ? AND deleted_at IS NULL
+                WHERE kind = ? AND \(Self.visibleEventPredicate())
                     AND pubkey IN (\(placeholders))
                 ORDER BY created_at DESC, event_id ASC
                 LIMIT ?
@@ -402,7 +427,12 @@ public final class NostrEventStore {
         }
     }
 
-    public func eventsReferencing(eventID: String, kind: Int, limit: Int) throws -> [NostrEvent] {
+    public func eventsReferencing(
+        eventID: String,
+        kind: Int,
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
         try database.read { db in
             let rows = try Row.fetchAll(
                 db,
@@ -413,11 +443,11 @@ public final class NostrEventStore {
                 WHERE tag.tag_name = 'e'
                     AND tag.tag_value = ?
                     AND e.kind = ?
-                    AND e.deleted_at IS NULL
+                    AND \(Self.visibleEventPredicate(alias: "e"))
                 ORDER BY e.created_at ASC, e.event_id ASC
                 LIMIT ?
                 """,
-                arguments: [eventID, kind, limit]
+                arguments: [eventID, kind, now, limit]
             )
             return try rows.map(decodeEvent)
         }
@@ -439,22 +469,23 @@ public final class NostrEventStore {
         }
     }
 
-    public func latestReplaceableEvent(pubkey: String, kind: Int) throws -> NostrEvent? {
+    public func latestReplaceableEvent(
+        pubkey: String,
+        kind: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> NostrEvent? {
         try database.read { db in
-            guard let eventID = try String.fetchOne(
-                db,
-                sql: "SELECT event_id FROM replaceable_heads WHERE pubkey = ? AND kind = ?",
-                arguments: [pubkey, kind]
-            ) else {
-                return nil
-            }
-            return try fetchEvent(id: eventID, db: db)
+            try latestReplaceableEvent(pubkey: pubkey, kind: kind, now: now, db: db)
         }
     }
 
-    public func latestReplaceableEvents(pubkeys: Set<String>, kind: Int) throws -> [NostrEvent] {
+    public func latestReplaceableEvents(
+        pubkeys: Set<String>,
+        kind: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
         try database.read { db in
-            try latestReplaceableEvents(pubkeys: pubkeys, kind: kind, db: db)
+            try latestReplaceableEvents(pubkeys: pubkeys, kind: kind, now: now, db: db)
         }
     }
 
@@ -531,9 +562,14 @@ public final class NostrEventStore {
         }
     }
 
-    public func timelineEvents(accountID: String, timelineKey: String, limit: Int) throws -> [NostrEvent] {
+    public func timelineEvents(
+        accountID: String,
+        timelineKey: String,
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
         try database.read { db in
-            try timelineEvents(accountID: accountID, timelineKey: timelineKey, limit: limit, db: db)
+            try timelineEvents(accountID: accountID, timelineKey: timelineKey, limit: limit, now: now, db: db)
         }
     }
 
@@ -1098,6 +1134,47 @@ public final class NostrEventStore {
         )
     }
 
+    private func applyDeletionRequest(_ deletionEvent: NostrEvent, db: Database) throws {
+        let targetIDs = deletionEvent.tags.compactMap { tag -> String? in
+            guard tag.first == "e", tag.count > 1 else { return nil }
+            return tag[1]
+        }
+        guard !targetIDs.isEmpty else { return }
+
+        for targetID in Set(targetIDs) {
+            guard let target = try fetchEvent(id: targetID, db: db), target.pubkey == deletionEvent.pubkey else {
+                continue
+            }
+
+            try db.execute(
+                sql: """
+                INSERT INTO deletion_tombstones (
+                    target_event_id, deletion_event_id, deleted_at, author_pubkey
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(target_event_id) DO UPDATE SET
+                    deletion_event_id = excluded.deletion_event_id,
+                    deleted_at = excluded.deleted_at,
+                    author_pubkey = excluded.author_pubkey
+                """,
+                arguments: [
+                    targetID,
+                    deletionEvent.id,
+                    deletionEvent.createdAt,
+                    deletionEvent.pubkey
+                ]
+            )
+
+            try db.execute(
+                sql: """
+                UPDATE events
+                SET deleted_at = ?
+                WHERE event_id = ?
+                """,
+                arguments: [deletionEvent.createdAt, targetID]
+            )
+        }
+    }
+
     private func saveTimelineStateMetadata(
         _ state: NostrHomeTimelineState,
         accountID: String,
@@ -1212,28 +1289,34 @@ public final class NostrEventStore {
         )
     }
 
-    private func timelineEvents(accountID: String, timelineKey: String, limit: Int, db: Database) throws -> [NostrEvent] {
+    private func timelineEvents(
+        accountID: String,
+        timelineKey: String,
+        limit: Int,
+        now: Int,
+        db: Database
+    ) throws -> [NostrEvent] {
         let rows = try Row.fetchAll(
             db,
             sql: """
             SELECT e.event_id, e.pubkey, e.created_at, e.kind, e.tags_json, e.content, e.sig
             FROM timeline_entries te
             JOIN events e ON e.event_id = te.event_id
-            WHERE te.account_id = ? AND te.timeline_key = ? AND e.deleted_at IS NULL
+            WHERE te.account_id = ? AND te.timeline_key = ? AND \(Self.visibleEventPredicate(alias: "e"))
             ORDER BY te.sort_ts DESC, te.event_id ASC
             LIMIT ?
             """,
-            arguments: [accountID, timelineKey, limit]
+            arguments: [accountID, timelineKey, now, limit]
         )
         return try rows.map(decodeEvent)
     }
 
-    private func latestReplaceableEvents(pubkeys: Set<String>, kind: Int, db: Database) throws -> [NostrEvent] {
+    private func latestReplaceableEvents(pubkeys: Set<String>, kind: Int, now: Int, db: Database) throws -> [NostrEvent] {
         guard !pubkeys.isEmpty else { return [] }
 
         var events: [NostrEvent] = []
         for pubkey in pubkeys {
-            guard let event = try latestReplaceableEvent(pubkey: pubkey, kind: kind, db: db) else {
+            guard let event = try latestReplaceableEvent(pubkey: pubkey, kind: kind, now: now, db: db) else {
                 continue
             }
             events.append(event)
@@ -1246,11 +1329,17 @@ public final class NostrEventStore {
         }
     }
 
-    private func latestReplaceableEvent(pubkey: String, kind: Int, db: Database) throws -> NostrEvent? {
+    private func latestReplaceableEvent(pubkey: String, kind: Int, now: Int, db: Database) throws -> NostrEvent? {
         guard let eventID = try String.fetchOne(
             db,
-            sql: "SELECT event_id FROM replaceable_heads WHERE pubkey = ? AND kind = ?",
-            arguments: [pubkey, kind]
+            sql: """
+            SELECT h.event_id
+            FROM replaceable_heads h
+            JOIN events e ON e.event_id = h.event_id
+            WHERE h.pubkey = ? AND h.kind = ?
+                AND \(Self.visibleEventPredicate(alias: "e"))
+            """,
+            arguments: [pubkey, kind, now]
         ) else {
             return nil
         }

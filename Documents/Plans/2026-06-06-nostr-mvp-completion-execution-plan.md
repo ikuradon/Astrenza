@@ -54,22 +54,22 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - same-author kind:5 deletion marks the target event as hidden from visible timeline queries
   - deletion by a different pubkey is ignored
   - deletion request can be saved in the same batch as its target and still apply
   - raw target event remains queryable by raw/debug API if such API exists
   - NIP-40 `expiration` tag hides an event when `expires_at <= now`
   - non-expired event remains visible when `expires_at > now`
-- [ ] Apply kind:5 deletion after all events in a save transaction are upserted, so batch order does not matter.
-- [ ] Only apply tombstones when deletion author matches the target author.
-- [ ] Insert/update `deletion_tombstones` with deletion event id, target id, author pubkey, and deletion timestamp.
-- [ ] Set `events.deleted_at` for valid deleted targets, but do not delete the raw row.
-- [ ] Add a shared visible-event SQL predicate:
+- [x] Apply kind:5 deletion after all events in a save transaction are upserted, so batch order does not matter.
+- [x] Only apply tombstones when deletion author matches the target author.
+- [x] Insert/update `deletion_tombstones` with deletion event id, target id, author pubkey, and deletion timestamp.
+- [x] Set `events.deleted_at` for valid deleted targets, but do not delete the raw row.
+- [x] Add a shared visible-event SQL predicate:
   - `deleted_at IS NULL`
   - `expires_at IS NULL OR expires_at > :now`
-- [ ] Use the predicate in visible timeline queries, reference queries, author/kind queries, profile/detail materializer queries, and Home TL state reconstruction.
-- [ ] Keep raw/debug fetches intentionally separate from visible fetches.
+- [x] Use the predicate in visible timeline queries, reference queries, author/kind queries, profile/detail materializer queries, and Home TL state reconstruction.
+- [x] Keep raw/debug fetches intentionally separate from visible fetches.
 
 **Acceptance tests:**
 - `swift test` in `Packages/AstrenzaCore`
@@ -449,4 +449,3 @@ Reasoning:
 - Relay runtime durability should be completed before outbox grows relay-specific write state.
 - NIP-51 lists and filters can use the same addressable/list infrastructure.
 - Drafts can land after outbox schema boundaries are known, so compose state and publish state do not collide.
-
