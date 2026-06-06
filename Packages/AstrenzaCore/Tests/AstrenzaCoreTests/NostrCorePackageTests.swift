@@ -941,6 +941,52 @@ struct NostrCorePackageTests {
         #expect(try store.localBookmarks(accountID: "account").isEmpty)
     }
 
+    @Test("Nostr event store updates and deletes filter rules by account")
+    func eventStoreUpdatesAndDeletesFilterRulesByAccount() throws {
+        let store = try NostrEventStore.inMemory()
+        let enabled = NostrFilterRuleRecord(
+            ruleID: "rule-1",
+            accountID: "account-a",
+            kind: .keyword,
+            value: "noise",
+            isEnabled: true,
+            createdAt: 100,
+            updatedAt: 100
+        )
+        let disabled = NostrFilterRuleRecord(
+            ruleID: "rule-1",
+            accountID: "account-a",
+            kind: .keyword,
+            value: "noise",
+            isEnabled: false,
+            createdAt: 100,
+            updatedAt: 200
+        )
+        let other = NostrFilterRuleRecord(
+            ruleID: "rule-2",
+            accountID: "account-b",
+            kind: .mutedHashtag,
+            value: "nostr",
+            createdAt: 150,
+            updatedAt: 150
+        )
+
+        try store.saveFilterRule(enabled)
+        try store.saveFilterRule(other)
+        try store.saveFilterRule(disabled)
+
+        #expect(try store.filterRules(accountID: "account-a") == [disabled])
+        #expect(try store.filterRules(accountID: "account-b") == [other])
+
+        try store.deleteFilterRule(accountID: "account-b", ruleID: "rule-1")
+        #expect(try store.filterRules(accountID: "account-a") == [disabled])
+        #expect(try store.filterRules(accountID: "account-b") == [other])
+
+        try store.deleteFilterRule(accountID: "account-a", ruleID: "rule-1")
+        #expect(try store.filterRules(accountID: "account-a").isEmpty)
+        #expect(try store.filterRules(accountID: "account-b") == [other])
+    }
+
     @Test("Nostr event store persists relay profiles and event sources")
     func eventStoreRelayProfilesAndSources() throws {
         let store = try NostrEventStore.inMemory()

@@ -1184,6 +1184,18 @@ public final class NostrEventStore {
         }
     }
 
+    public func deleteFilterRule(accountID: String, ruleID: String) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                DELETE FROM filter_rules
+                WHERE account_id = ? AND rule_id = ?
+                """,
+                arguments: [accountID, ruleID]
+            )
+        }
+    }
+
     public func saveLocalBookmark(_ bookmark: NostrLocalBookmarkRecord) throws {
         try database.write { db in
             try db.execute(
