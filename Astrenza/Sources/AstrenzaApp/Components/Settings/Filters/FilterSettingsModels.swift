@@ -1,0 +1,263 @@
+import AstrenzaCore
+import SwiftUI
+
+enum FilterEditorKind: String, Identifiable {
+    case user
+    case keyword
+    case hashtag
+    case potentialSpam
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .user: "Filter User"
+        case .keyword: "Filter Keyword"
+        case .hashtag: "Filter Hashtag"
+        case .potentialSpam: "Filter Potential Spam"
+        }
+    }
+}
+
+enum FilterApplicationScope: String, CaseIterable, Identifiable {
+    case home = "Home"
+    case mentions = "Mentions & Notifications"
+    case threads = "Threads"
+    case lists = "Lists"
+    case publicTimelines = "Public Timelines"
+
+    var id: String { rawValue }
+}
+
+struct FilterCandidateUser: Identifiable {
+    let id: String
+    let displayName: String
+    let npub: String
+    let nip05: String
+    let avatar: AvatarStyle
+
+    static let mockCandidates: [FilterCandidateUser] = [
+        FilterCandidateUser(
+            id: String(repeating: "1", count: 64),
+            displayName: "User Alpha",
+            npub: "npub1alpha7q3n9...9h2q",
+            nip05: "alpha@mock.example",
+            avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles")
+        ),
+        FilterCandidateUser(
+            id: String(repeating: "2", count: 64),
+            displayName: "Relay Maintainer",
+            npub: "npub1relay4j5m...2x8v",
+            nip05: "relay@mock.example",
+            avatar: AvatarStyle(primary: .green, secondary: .mint, symbolName: "antenna.radiowaves.left.and.right")
+        ),
+        FilterCandidateUser(
+            id: String(repeating: "3", count: 64),
+            displayName: "Media Curator",
+            npub: "npub1media6z8k...7n4c",
+            nip05: "media@mock.example",
+            avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "photo.fill")
+        )
+    ]
+}
+
+struct FilterEditorDraft: Identifiable {
+    static let potentialSpamRuleIDPrefix = "local:custom:potential-spam:"
+    private static let potentialSpamPattern = "(?i)\\b(airdrop|giveaway|free\\s+crypto|limited\\s+offer)\\b"
+
+    let id = UUID()
+    let kind: FilterEditorKind
+    var value: String
+    var isEnabled: Bool
+    var masksWithWarning: Bool
+    var selectedScopes: Set<FilterApplicationScope>
+    var selectedUser: FilterCandidateUser?
+    var matchingCount: Int
+    var totalCount: Int
+
+    static func newKeyword(accountID: String) -> FilterEditorDraft {
+        FilterEditorDraft(
+            kind: .keyword,
+            value: "",
+            isEnabled: true,
+            masksWithWarning: false,
+            selectedScopes: [.home, .lists, .publicTimelines],
+            selectedUser: nil,
+            matchingCount: 0,
+            totalCount: 3_944
+        )
+    }
+
+    static func newHashtag(accountID: String) -> FilterEditorDraft {
+        FilterEditorDraft(
+            kind: .hashtag,
+            value: "",
+            isEnabled: true,
+            masksWithWarning: false,
+            selectedScopes: [.home, .lists, .publicTimelines],
+            selectedUser: nil,
+            matchingCount: 0,
+            totalCount: 3_944
+        )
+    }
+
+    static func newUser(accountID: String) -> FilterEditorDraft {
+        FilterEditorDraft(
+            kind: .user,
+            value: "",
+            isEnabled: true,
+            masksWithWarning: false,
+            selectedScopes: [.home],
+            selectedUser: nil,
+            matchingCount: 0,
+            totalCount: 3_944
+        )
+    }
+
+    static func potentialSpam(accountID: String, existing: NostrFilterRuleRecord?) -> FilterEditorDraft {
+        FilterEditorDraft(
+            kind: .potentialSpam,
+            value: potentialSpamPattern,
+            isEnabled: existing?.isEnabled ?? false,
+            masksWithWarning: true,
+            selectedScopes: [.home],
+            selectedUser: nil,
+            matchingCount: 0,
+            totalCount: 4_001
+        )
+    }
+
+    static func existing(rule: NostrFilterRuleRecord) -> FilterEditorDraft {
+        switch rule.kind {
+        case .mutedPubkey:
+            let candidate = FilterCandidateUser(
+                id: rule.value,
+                displayName: "Muted User",
+                npub: rule.value.abbreviatedMiddle,
+                nip05: "unresolved@mock.example",
+                avatar: AvatarStyle(primary: .gray, secondary: .purple, symbolName: "person.crop.circle.fill")
+            )
+            return FilterEditorDraft(
+                kind: .user,
+                value: rule.value,
+                isEnabled: rule.isEnabled,
+                masksWithWarning: false,
+                selectedScopes: [.home],
+                selectedUser: candidate,
+                matchingCount: 2,
+                totalCount: 3_944
+            )
+        case .keyword:
+            return FilterEditorDraft(
+                kind: .keyword,
+                value: rule.value,
+                isEnabled: rule.isEnabled,
+                masksWithWarning: false,
+                selectedScopes: [.home, .lists, .publicTimelines],
+                selectedUser: nil,
+                matchingCount: 0,
+                totalCount: 3_944
+            )
+        case .mutedHashtag:
+            return FilterEditorDraft(
+                kind: .hashtag,
+                value: rule.value,
+                isEnabled: rule.isEnabled,
+                masksWithWarning: false,
+                selectedScopes: [.home, .lists, .publicTimelines],
+                selectedUser: nil,
+                matchingCount: 0,
+                totalCount: 3_944
+            )
+        default:
+            return potentialSpam(accountID: rule.accountID, existing: rule)
+        }
+    }
+
+    var canSave: Bool {
+        switch kind {
+        case .user:
+            selectedUser != nil
+        case .keyword, .hashtag:
+            !normalizedValue.isEmpty
+        case .potentialSpam:
+            true
+        }
+    }
+
+    var normalizedValue: String {
+        switch kind {
+        case .hashtag:
+            value.trimmingCharacters(in: .whitespacesAndNewlines).trimmingPrefix("#").lowercased()
+        case .keyword:
+            value.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .user:
+            selectedUser?.id ?? value
+        case .potentialSpam:
+            Self.potentialSpamPattern
+        }
+    }
+
+    func rule(accountID: String, now: Int) -> NostrFilterRuleRecord {
+        let ruleKind: NostrFilterRuleKind
+        let ruleID: String
+        let ruleValue: String
+
+        switch kind {
+        case .user:
+            ruleKind = .mutedPubkey
+            ruleValue = normalizedValue
+            ruleID = "local:filter-user:\(accountID):\(ruleValue)"
+        case .keyword:
+            ruleKind = .keyword
+            ruleValue = normalizedValue
+            ruleID = "local:filter-keyword:\(accountID):\(ruleValue.lowercased())"
+        case .hashtag:
+            ruleKind = .mutedHashtag
+            ruleValue = normalizedValue
+            ruleID = "local:filter-hashtag:\(accountID):\(ruleValue)"
+        case .potentialSpam:
+            ruleKind = .regex
+            ruleValue = normalizedValue
+            ruleID = "\(Self.potentialSpamRuleIDPrefix)\(accountID)"
+        }
+
+        return NostrFilterRuleRecord(
+            ruleID: ruleID,
+            accountID: accountID,
+            kind: ruleKind,
+            value: ruleValue,
+            isEnabled: isEnabled,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+}
+
+extension String {
+    var abbreviatedMiddle: String {
+        guard count > 18 else { return self }
+        return "\(prefix(10))...\(suffix(8))"
+    }
+
+    func trimmingPrefix(_ prefix: Character) -> String {
+        var trimmed = self
+        while trimmed.first == prefix {
+            trimmed.removeFirst()
+        }
+        return trimmed
+    }
+}
+
+extension NostrFilterRuleKind {
+    var displayTitle: String {
+        switch self {
+        case .mutedPubkey: "User"
+        case .mutedHashtag: "Hashtag"
+        case .keyword: "Keyword"
+        case .regex: "Custom"
+        case .mutedKind: "Kind"
+        case .relayMute: "Relay"
+        }
+    }
+}
