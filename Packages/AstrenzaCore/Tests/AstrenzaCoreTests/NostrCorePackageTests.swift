@@ -258,6 +258,28 @@ struct NostrCorePackageTests {
         #expect(relay.authRequired)
     }
 
+    @Test("Nostr event store writes home timeline state")
+    func eventStoreHomeTimelineStateWritePath() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "f", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: accountID, createdAt: 200, content: "home")
+        let metadata = nostrEvent(kind: 0, pubkey: accountID, createdAt: 150, content: #"{"name":"Home"}"#)
+        let state = NostrHomeTimelineState(
+            relays: ["wss://relay.example"],
+            followedPubkeys: [accountID],
+            noteEvents: [note],
+            metadataEvents: [metadata],
+            hasMoreOlder: true
+        )
+
+        try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 300)
+
+        #expect(try store.event(id: note.id) == note)
+        #expect(try store.latestReplaceableEvent(pubkey: accountID, kind: 0)?.id == metadata.id)
+        #expect(try store.timelineEvents(accountID: accountID, timelineKey: "home", limit: 10).map(\.id) == [note.id])
+        #expect(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: "wss://relay.example")?.newestCreatedAt == 200)
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)

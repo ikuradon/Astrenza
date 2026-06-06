@@ -50,6 +50,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let timelineCache: NostrTimelineCache
+    private let eventStore: NostrEventStore?
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
     private var noteEvents: [NostrEvent] = []
@@ -57,10 +58,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     init(
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
-        timelineCache: NostrTimelineCache = NostrTimelineCache()
+        timelineCache: NostrTimelineCache = NostrTimelineCache(),
+        eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza")
     ) {
         self.timelineLoader = timelineLoader
         self.timelineCache = timelineCache
+        self.eventStore = eventStore
     }
 
     func start(account: NostrAccount) {
@@ -118,6 +121,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             apply(state)
             materializeEntries()
             persistSnapshot(account: account)
+            persistDatabase(account: account)
             phase = .loaded
         } catch {
             guard Task.isCancelled == false else { return }
@@ -141,6 +145,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             apply(state)
             materializeEntries()
             persistSnapshot(account: account)
+            persistDatabase(account: account)
             phase = .loaded
         } catch {
             guard Task.isCancelled == false else { return }
@@ -162,6 +167,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
             materializeEntries()
             persistSnapshot(account: account)
+            persistDatabase(account: account)
             phase = .loaded
         } catch {
             guard Task.isCancelled == false else { return }
@@ -203,6 +209,15 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions
         )
+    }
+
+    private func persistDatabase(account: NostrAccount) {
+        guard let eventStore else { return }
+        do {
+            try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
+        } catch {
+            // The UserDefaults snapshot remains the fallback until the DB read path is fully migrated.
+        }
     }
 
     private func materializeEntries() {

@@ -145,6 +145,18 @@ public final class NostrEventStore {
         try NostrEventStore(database: DatabaseQueue())
     }
 
+    public static func applicationSupport(appDirectory: String, fileName: String = "nostr.sqlite") throws -> NostrEventStore {
+        let baseURL = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let directoryURL = baseURL.appendingPathComponent(appDirectory, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        return try NostrEventStore(path: directoryURL.appendingPathComponent(fileName).path)
+    }
+
     public func save(events: [NostrEvent], receivedAt: Int = Int(Date().timeIntervalSince1970)) throws {
         guard !events.isEmpty else { return }
 
@@ -154,6 +166,40 @@ public final class NostrEventStore {
                 try replaceTags(for: event, db: db)
                 try upsertReplaceableHeadIfNeeded(for: event, db: db)
             }
+        }
+    }
+
+    public func saveHomeTimelineState(
+        _ state: NostrHomeTimelineState,
+        accountID: String,
+        timelineKey: String = "home",
+        savedAt: Int = Int(Date().timeIntervalSince1970)
+    ) throws {
+        let events = state.noteEvents + state.metadataEvents
+        try save(events: events, receivedAt: savedAt)
+        try saveTimelineEntries(state.noteEvents.map { event in
+            NostrTimelineEntryRecord(
+                accountID: accountID,
+                timelineKey: timelineKey,
+                eventID: event.id,
+                sortTimestamp: event.createdAt,
+                source: "home",
+                insertedAt: savedAt
+            )
+        })
+
+        let newestCreatedAt = state.noteEvents.map(\.createdAt).max()
+        let oldestCreatedAt = state.noteEvents.map(\.createdAt).min()
+        for relayURL in state.relays {
+            try saveSyncCursor(NostrSyncCursorRecord(
+                accountID: accountID,
+                timelineKey: timelineKey,
+                relayURL: relayURL,
+                newestCreatedAt: newestCreatedAt,
+                oldestCreatedAt: oldestCreatedAt,
+                lastEOSEAt: savedAt,
+                lastNegentropyAt: nil
+            ))
         }
     }
 
