@@ -598,7 +598,7 @@ private struct AccountSettingsView: View {
                     EmptySettingsDestination(title: "Keys / Signer")
                 }
                 SettingsStatusNavigationRow(title: "Relays", statusColor: .green, icon: "antenna.radiowaves.left.and.right", tint: .green) {
-                    RelaySettingsView()
+                    RelaySettingsView(accountID: accountID, eventStore: eventStore)
                 }
                 SettingsNavigationRow(title: "Muting / Filters", icon: "line.3.horizontal.decrease.circle.fill", tint: .orange) {
                     NostrListSettingsView(accountID: accountID, eventStore: eventStore)

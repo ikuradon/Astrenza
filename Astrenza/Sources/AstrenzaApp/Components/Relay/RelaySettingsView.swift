@@ -1,9 +1,17 @@
+import AstrenzaCore
 import SwiftUI
 
 struct RelaySettingsView: View {
+    let accountID: String?
+    let eventStore: NostrEventStore?
     @State private var selectedSection: RelaySettingsSection = .nip65
     @State private var draftRelayURL = "wss://"
     @State private var isPublishingNIP65 = true
+
+    init(accountID: String? = nil, eventStore: NostrEventStore? = nil) {
+        self.accountID = accountID
+        self.eventStore = eventStore
+    }
 
     var body: some View {
         ScrollView {
@@ -44,28 +52,36 @@ struct RelaySettingsView: View {
                 title: "NIP-65 Home Relays",
                 subtitle: "Read/write relays published as kind:10002.",
                 relays: RelayMockStore.relays.filter { $0.source == .nip65 || $0.source == .manual },
-                showsUsageControls: true
+                showsUsageControls: true,
+                accountID: accountID,
+                eventStore: eventStore
             )
         case .dm:
             RelaySettingsListCard(
                 title: "DM Inbox Relays",
                 subtitle: "Used for gift wraps and private message discovery.",
                 relays: RelayMockStore.relays.filter { $0.usage.contains(.dm) || $0.source == .nip17 },
-                showsUsageControls: false
+                showsUsageControls: false,
+                accountID: accountID,
+                eventStore: eventStore
             )
         case .discovery:
             RelaySettingsListCard(
                 title: "Search / Discovery",
                 subtitle: "Indexers, search relays, and recommended bootstrap relays.",
                 relays: RelayMockStore.relays.filter { $0.usage.contains(.search) } + RelayMockStore.recommended,
-                showsUsageControls: false
+                showsUsageControls: false,
+                accountID: accountID,
+                eventStore: eventStore
             )
         case .blocked:
             RelaySettingsListCard(
                 title: "Blocked / Trusted",
                 subtitle: "Local policy relays. This mock keeps the moderation decisions visible.",
                 relays: RelayMockStore.relays.filter { $0.source == .blocked },
-                showsUsageControls: false
+                showsUsageControls: false,
+                accountID: accountID,
+                eventStore: eventStore
             )
         }
     }
@@ -132,6 +148,8 @@ private struct RelaySettingsListCard: View {
     let subtitle: String
     let relays: [RelayDescriptor]
     let showsUsageControls: Bool
+    let accountID: String?
+    let eventStore: NostrEventStore?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -146,7 +164,12 @@ private struct RelaySettingsListCard: View {
 
             VStack(spacing: 0) {
                 ForEach(relays) { relay in
-                    RelayEditableRow(relay: relay, showsUsageControls: showsUsageControls)
+                    RelayEditableRow(
+                        relay: relay,
+                        showsUsageControls: showsUsageControls,
+                        accountID: accountID,
+                        eventStore: eventStore
+                    )
                     if relay.id != relays.last?.id {
                         Divider().overlay(Color.white.opacity(0.08))
                     }
@@ -162,13 +185,22 @@ private struct RelaySettingsListCard: View {
 private struct RelayEditableRow: View {
     let relay: RelayDescriptor
     let showsUsageControls: Bool
+    let accountID: String?
+    let eventStore: NostrEventStore?
     @State private var isReadEnabled: Bool
     @State private var isWriteEnabled: Bool
     @State private var isEnabled: Bool
 
-    init(relay: RelayDescriptor, showsUsageControls: Bool) {
+    init(
+        relay: RelayDescriptor,
+        showsUsageControls: Bool,
+        accountID: String?,
+        eventStore: NostrEventStore?
+    ) {
         self.relay = relay
         self.showsUsageControls = showsUsageControls
+        self.accountID = accountID
+        self.eventStore = eventStore
         _isReadEnabled = State(initialValue: relay.usage.contains(.read))
         _isWriteEnabled = State(initialValue: relay.usage.contains(.write))
         _isEnabled = State(initialValue: relay.status != .offline)
@@ -219,6 +251,21 @@ private struct RelayEditableRow: View {
             }
         }
         .padding(14)
+        .onChange(of: isEnabled) { _, _ in savePreference() }
+        .onChange(of: isReadEnabled) { _, _ in savePreference() }
+        .onChange(of: isWriteEnabled) { _, _ in savePreference() }
+    }
+
+    private func savePreference() {
+        guard let accountID, let eventStore else { return }
+        try? eventStore.saveRelayPreference(NostrRelayPreferenceRecord(
+            accountID: accountID,
+            relayURL: relay.url,
+            isEnabled: isEnabled,
+            readEnabled: isReadEnabled,
+            writeEnabled: isWriteEnabled,
+            updatedAt: Int(Date().timeIntervalSince1970)
+        ))
     }
 }
 

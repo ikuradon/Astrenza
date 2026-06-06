@@ -2,6 +2,9 @@ import Foundation
 
 public enum NostrRelayClientError: Error {
     case invalidRelayURL(String)
+    case authRequired(challenge: String)
+    case paymentRequired(String)
+    case relayClosed(String)
     case negentropyRelayError(String)
     case timeout
 }
@@ -169,7 +172,17 @@ public struct NostrRelayClient: Sendable {
             case .eose(let subscriptionID):
                 guard subscriptionID == request.subscriptionID else { continue }
                 return await collector.snapshot()
-            case .closed, .notice, .auth:
+            case .closed(_, let message):
+                if message.lowercased().contains("auth-required") {
+                    throw NostrRelayClientError.authRequired(challenge: message)
+                }
+                if message.lowercased().contains("payment-required") {
+                    throw NostrRelayClientError.paymentRequired(message)
+                }
+                throw NostrRelayClientError.relayClosed(message)
+            case .auth(let challenge):
+                throw NostrRelayClientError.authRequired(challenge: challenge)
+            case .notice:
                 continue
             }
         }

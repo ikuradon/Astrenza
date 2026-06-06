@@ -416,11 +416,23 @@ public struct NostrHomeTimelineLoader: Sendable {
                     ))
                 case .failure(let error):
                     let kind: NostrRelaySyncEventKind
+                    let message: String
                     switch error as? NostrRelayClientError {
                     case .timeout:
                         kind = .timeout
+                        message = "timeout"
+                    case .authRequired(let challenge):
+                        kind = .authRequired
+                        message = challenge
+                    case .paymentRequired(let reason):
+                        kind = .paymentRequired
+                        message = reason
+                    case .relayClosed(let reason):
+                        kind = .closed
+                        message = reason
                     default:
                         kind = .partialFailure
+                        message = String(describing: error)
                     }
                     syncEvents.append(NostrRelaySyncEventRecord(
                         accountID: accountID,
@@ -431,7 +443,7 @@ public struct NostrHomeTimelineLoader: Sendable {
                         subscriptionID: request.subscriptionID,
                         eventCount: 0,
                         latencyMilliseconds: latency,
-                        message: String(describing: error)
+                        message: message
                     ))
                 }
             }

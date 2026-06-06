@@ -153,6 +153,13 @@ struct NostrCorePackageTests {
         #expect(info.limitation?.maxLimit == 500)
     }
 
+    @Test("Nostr relay message parses AUTH challenge")
+    func relayMessageParsesAuthChallenge() throws {
+        let message = try #require(NostrRelayMessage.parse(#"["AUTH","challenge-token"]"#))
+
+        #expect(message == .auth("challenge-token"))
+    }
+
     @Test("Remote data cache stores and reads response data by URL")
     func remoteDataCacheStoresData() throws {
         let urlCache = URLCache(memoryCapacity: 1024 * 1024, diskCapacity: 0, diskPath: nil)
@@ -717,6 +724,108 @@ struct NostrCorePackageTests {
         #expect(cursor.newestCreatedAt == 900)
         #expect(cursor.oldestCreatedAt == 500)
         #expect(cursor.lastEOSEAt == 1_000)
+    }
+
+    @Test("Nostr event store summarizes relay lifecycle states")
+    func eventStoreRelayLifecycleSummary() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = "account"
+        let relayURL = "wss://relay.example"
+
+        try store.saveRelaySyncEvents([
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .connected,
+                occurredAt: 10,
+                message: "connected"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .authRequired,
+                occurredAt: 20,
+                message: "challenge-token"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .paymentRequired,
+                occurredAt: 30,
+                message: "payment-required: paid relay"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .closed,
+                occurredAt: 40,
+                message: "closed"
+            )
+        ])
+
+        let summary = try #require(try store.relaySyncSummaries(accountID: accountID, timelineKey: "home").first)
+
+        #expect(summary.lastEventKind == .closed)
+        #expect(summary.lastConnectedAt == 10)
+        #expect(summary.lastErrorAt == 40)
+        #expect(summary.closedCount == 1)
+        #expect(summary.authRequiredCount == 1)
+        #expect(summary.paymentRequiredCount == 1)
+    }
+
+    @Test("Nostr event store bounds relay lifecycle history per relay")
+    func eventStoreBoundsRelayLifecycleHistory() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = "account"
+        let relayURL = "wss://relay.example"
+        let events = (0..<205).map { index in
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .reconnect,
+                occurredAt: index,
+                message: "reconnect \(index)"
+            )
+        }
+
+        try store.saveRelaySyncEvents(events)
+
+        let history = try store.relaySyncEvents(accountID: accountID, timelineKey: "home", relayURL: relayURL, limit: 300)
+        #expect(history.count == 200)
+        #expect(history.first?.occurredAt == 204)
+        #expect(history.last?.occurredAt == 5)
+    }
+
+    @Test("Nostr event store persists relay preferences per account")
+    func eventStoreRelayPreferences() throws {
+        let store = try NostrEventStore.inMemory()
+        let preference = NostrRelayPreferenceRecord(
+            accountID: "account",
+            relayURL: "wss://relay.example",
+            isEnabled: true,
+            readEnabled: true,
+            writeEnabled: false,
+            updatedAt: 100
+        )
+        let updatedPreference = NostrRelayPreferenceRecord(
+            accountID: "account",
+            relayURL: "wss://relay.example",
+            isEnabled: false,
+            readEnabled: false,
+            writeEnabled: true,
+            updatedAt: 200
+        )
+
+        try store.saveRelayPreference(preference)
+        try store.saveRelayPreference(updatedPreference)
+
+        #expect(try store.relayPreferences(accountID: "account") == [updatedPreference])
+        #expect(try store.relayPreferences(accountID: "other").isEmpty)
     }
 
     @Test("Nostr event store persists relay profiles and event sources")

@@ -122,11 +122,40 @@ public struct NostrRelayProfileRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct NostrRelayPreferenceRecord: Codable, Equatable, Sendable {
+    public let accountID: String
+    public let relayURL: String
+    public let isEnabled: Bool
+    public let readEnabled: Bool
+    public let writeEnabled: Bool
+    public let updatedAt: Int
+
+    public init(
+        accountID: String,
+        relayURL: String,
+        isEnabled: Bool,
+        readEnabled: Bool,
+        writeEnabled: Bool,
+        updatedAt: Int
+    ) {
+        self.accountID = accountID
+        self.relayURL = relayURL
+        self.isEnabled = isEnabled
+        self.readEnabled = readEnabled
+        self.writeEnabled = writeEnabled
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum NostrRelaySyncEventKind: String, Codable, Equatable, Sendable {
+    case connected
     case eose
+    case closed
     case reconnect
     case timeout
     case partialFailure
+    case authRequired
+    case paymentRequired
     case negentropy
 }
 
@@ -170,14 +199,26 @@ public struct NostrRelaySyncEventRecord: Codable, Equatable, Sendable {
     }
 }
 
+private struct RelaySyncBucket: Hashable {
+    let accountID: String
+    let timelineKey: String
+    let relayURL: String
+}
+
 public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
     public let relayURL: String
     public let lastEventKind: NostrRelaySyncEventKind?
     public let lastEventAt: Int?
+    public let lastConnectedAt: Int?
     public let lastEOSEAt: Int?
+    public let lastTimeoutAt: Int?
+    public let lastErrorAt: Int?
+    public let closedCount: Int
     public let reconnectCount: Int
     public let timeoutCount: Int
     public let partialFailureCount: Int
+    public let authRequiredCount: Int
+    public let paymentRequiredCount: Int
     public let lastPartialFailureReason: String?
     public let totalEventCount: Int
     public let averageEOSELatencyMilliseconds: Int?
@@ -186,10 +227,16 @@ public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
         relayURL: String,
         lastEventKind: NostrRelaySyncEventKind?,
         lastEventAt: Int?,
+        lastConnectedAt: Int?,
         lastEOSEAt: Int?,
+        lastTimeoutAt: Int?,
+        lastErrorAt: Int?,
+        closedCount: Int,
         reconnectCount: Int,
         timeoutCount: Int,
         partialFailureCount: Int,
+        authRequiredCount: Int,
+        paymentRequiredCount: Int,
         lastPartialFailureReason: String?,
         totalEventCount: Int,
         averageEOSELatencyMilliseconds: Int?
@@ -197,10 +244,16 @@ public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
         self.relayURL = relayURL
         self.lastEventKind = lastEventKind
         self.lastEventAt = lastEventAt
+        self.lastConnectedAt = lastConnectedAt
         self.lastEOSEAt = lastEOSEAt
+        self.lastTimeoutAt = lastTimeoutAt
+        self.lastErrorAt = lastErrorAt
+        self.closedCount = closedCount
         self.reconnectCount = reconnectCount
         self.timeoutCount = timeoutCount
         self.partialFailureCount = partialFailureCount
+        self.authRequiredCount = authRequiredCount
+        self.paymentRequiredCount = paymentRequiredCount
         self.lastPartialFailureReason = lastPartialFailureReason
         self.totalEventCount = totalEventCount
         self.averageEOSELatencyMilliseconds = averageEOSELatencyMilliseconds
@@ -966,6 +1019,47 @@ public final class NostrEventStore {
         }
     }
 
+    public func saveRelayPreference(_ preference: NostrRelayPreferenceRecord) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO relay_preferences (
+                    account_id, relay_url, is_enabled, read_enabled, write_enabled, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, relay_url) DO UPDATE SET
+                    is_enabled = excluded.is_enabled,
+                    read_enabled = excluded.read_enabled,
+                    write_enabled = excluded.write_enabled,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    preference.accountID,
+                    preference.relayURL,
+                    preference.isEnabled,
+                    preference.readEnabled,
+                    preference.writeEnabled,
+                    preference.updatedAt
+                ]
+            )
+        }
+    }
+
+    public func relayPreferences(accountID: String) throws -> [NostrRelayPreferenceRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, relay_url, is_enabled, read_enabled, write_enabled, updated_at
+                FROM relay_preferences
+                WHERE account_id = ?
+                ORDER BY relay_url ASC
+                """,
+                arguments: [accountID]
+            )
+            return rows.map(decodeRelayPreference)
+        }
+    }
+
     public func saveRelaySyncEvents(_ events: [NostrRelaySyncEventRecord]) throws {
         guard !events.isEmpty else { return }
 
@@ -994,6 +1088,7 @@ public final class NostrEventStore {
                     ]
                 )
             }
+            try pruneRelaySyncEvents(for: events, keeping: 200, db: db)
         }
     }
 
@@ -1052,6 +1147,7 @@ public final class NostrEventStore {
                     arguments: [accountID, timelineKey, relayURL]
                 ).flatMap(decodeRelaySyncEvent)
 
+                let lastConnectedAt = try relaySyncLastEventAt(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .connected, db: db)
                 let lastEOSEAt = try Int.fetchOne(
                     db,
                     sql: """
@@ -1061,9 +1157,14 @@ public final class NostrEventStore {
                     """,
                     arguments: [accountID, timelineKey, relayURL, NostrRelaySyncEventKind.eose.rawValue]
                 )
+                let lastTimeoutAt = try relaySyncLastEventAt(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .timeout, db: db)
+                let lastErrorAt = try relaySyncLastErrorAt(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, db: db)
+                let closedCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .closed, db: db)
                 let reconnectCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .reconnect, db: db)
                 let timeoutCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .timeout, db: db)
                 let partialFailureCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .partialFailure, db: db)
+                let authRequiredCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .authRequired, db: db)
+                let paymentRequiredCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .paymentRequired, db: db)
                 let lastPartialFailureReason = try String.fetchOne(
                     db,
                     sql: """
@@ -1099,10 +1200,16 @@ public final class NostrEventStore {
                     relayURL: relayURL,
                     lastEventKind: lastEvent?.kind,
                     lastEventAt: lastEvent?.occurredAt,
+                    lastConnectedAt: lastConnectedAt,
                     lastEOSEAt: lastEOSEAt,
+                    lastTimeoutAt: lastTimeoutAt,
+                    lastErrorAt: lastErrorAt,
+                    closedCount: closedCount,
                     reconnectCount: reconnectCount,
                     timeoutCount: timeoutCount,
                     partialFailureCount: partialFailureCount,
+                    authRequiredCount: authRequiredCount,
+                    paymentRequiredCount: paymentRequiredCount,
                     lastPartialFailureReason: lastPartialFailureReason,
                     totalEventCount: totalEventCount,
                     averageEOSELatencyMilliseconds: averageEOSELatency
@@ -1338,6 +1445,20 @@ public final class NostrEventStore {
 
             try db.create(index: "relay_sync_events_timeline", on: "relay_sync_events", columns: ["account_id", "timeline_key", "occurred_at"], ifNotExists: true)
             try db.create(index: "relay_sync_events_relay", on: "relay_sync_events", columns: ["relay_url", "occurred_at"], ifNotExists: true)
+        }
+
+        migrator.registerMigration("addRelayPreferences") { db in
+            try db.create(table: "relay_preferences", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("relay_url", .text).notNull()
+                table.column("is_enabled", .boolean).notNull().defaults(to: true)
+                table.column("read_enabled", .boolean).notNull().defaults(to: true)
+                table.column("write_enabled", .boolean).notNull().defaults(to: false)
+                table.column("updated_at", .integer).notNull()
+                table.primaryKey(["account_id", "relay_url"])
+            }
+
+            try db.create(index: "relay_preferences_account", on: "relay_preferences", columns: ["account_id", "updated_at"], ifNotExists: true)
         }
 
         migrator.registerMigration("addNostrLists") { db in
@@ -1976,6 +2097,83 @@ public final class NostrEventStore {
         return decodeSyncCursor(row)
     }
 
+    private func pruneRelaySyncEvents(
+        for events: [NostrRelaySyncEventRecord],
+        keeping limit: Int,
+        db: Database
+    ) throws {
+        let buckets = Set(events.map { RelaySyncBucket(accountID: $0.accountID, timelineKey: $0.timelineKey, relayURL: $0.relayURL) })
+        for bucket in buckets {
+            try db.execute(
+                sql: """
+                DELETE FROM relay_sync_events
+                WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                    AND id NOT IN (
+                        SELECT id
+                        FROM relay_sync_events
+                        WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                        ORDER BY occurred_at DESC, id DESC
+                        LIMIT ?
+                    )
+                """,
+                arguments: [
+                    bucket.accountID,
+                    bucket.timelineKey,
+                    bucket.relayURL,
+                    bucket.accountID,
+                    bucket.timelineKey,
+                    bucket.relayURL,
+                    limit
+                ]
+            )
+        }
+    }
+
+    private func relaySyncLastEventAt(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        db: Database
+    ) throws -> Int? {
+        try Int.fetchOne(
+            db,
+            sql: """
+            SELECT MAX(occurred_at)
+            FROM relay_sync_events
+            WHERE account_id = ? AND timeline_key = ? AND relay_url = ? AND event_kind = ?
+            """,
+            arguments: [accountID, timelineKey, relayURL, kind.rawValue]
+        )
+    }
+
+    private func relaySyncLastErrorAt(
+        accountID: String,
+        timelineKey: String,
+        relayURL: String,
+        db: Database
+    ) throws -> Int? {
+        try Int.fetchOne(
+            db,
+            sql: """
+            SELECT MAX(occurred_at)
+            FROM relay_sync_events
+            WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
+                AND event_kind IN (?, ?, ?, ?, ?)
+            """,
+            arguments: [
+                accountID,
+                timelineKey,
+                relayURL,
+                NostrRelaySyncEventKind.closed.rawValue,
+                NostrRelaySyncEventKind.timeout.rawValue,
+                NostrRelaySyncEventKind.partialFailure.rawValue,
+                NostrRelaySyncEventKind.authRequired.rawValue,
+                NostrRelaySyncEventKind.paymentRequired.rawValue
+            ]
+        )
+    }
+
     private func relaySyncEventCount(
         accountID: String,
         timelineKey: String,
@@ -2183,6 +2381,17 @@ public final class NostrEventStore {
             lastConnectedAt: row["last_connected_at"],
             authRequired: row["auth_required"],
             paymentRequired: row["payment_required"]
+        )
+    }
+
+    private func decodeRelayPreference(_ row: Row) -> NostrRelayPreferenceRecord {
+        NostrRelayPreferenceRecord(
+            accountID: row["account_id"],
+            relayURL: row["relay_url"],
+            isEnabled: row["is_enabled"],
+            readEnabled: row["read_enabled"],
+            writeEnabled: row["write_enabled"],
+            updatedAt: row["updated_at"]
         )
     }
 

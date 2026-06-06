@@ -290,7 +290,7 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Persist relay runtime summary fields:
+- [x] Persist relay runtime summary fields:
   - last connected
   - last EOSE
   - last timeout
@@ -301,7 +301,7 @@ The remaining phases below intentionally revisit some of those areas where they 
   - timeout count
   - partial failure count
   - average EOSE latency
-- [ ] Persist lifecycle history:
+- [x] Persist lifecycle history:
   - connected
   - EOSE
   - reconnect
@@ -310,12 +310,12 @@ The remaining phases below intentionally revisit some of those areas where they 
   - partial failure
   - auth required
   - payment required
-- [ ] Prune lifecycle rows per relay to a bounded count.
-- [ ] Parse NIP-42 `AUTH` challenge and store `.authRequired(challenge:)`.
-- [ ] Do not auto-sign AUTH until signer/outbox boundary is ready; surface clear state in relay sheet.
-- [ ] Update `sync_cursors` per relay from the actual newest/oldest event received from that relay, not from aggregate timeline state.
-- [ ] Relay status sheet reads recent runtime history from DB.
-- [ ] Relay settings writes per-account relay preferences; publishing NIP-65 changes can be queued after Phase 11.
+- [x] Prune lifecycle rows per relay to a bounded count.
+- [x] Parse NIP-42 `AUTH` challenge and store it as `.authRequired` lifecycle state with the challenge in `message`.
+- [x] Do not auto-sign AUTH until signer/outbox boundary is ready; surface clear state in relay sheet.
+- [x] Update `sync_cursors` per relay from the actual newest/oldest event received from that relay, not from aggregate timeline state.
+- [x] Relay status sheet reads recent runtime history from DB.
+- [x] Relay settings writes per-account relay preferences; publishing NIP-65 changes can be queued after Phase 11.
 
 **Acceptance tests:**
 - lifecycle event persistence test

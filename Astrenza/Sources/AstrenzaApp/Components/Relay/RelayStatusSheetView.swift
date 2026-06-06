@@ -100,7 +100,7 @@ private final class RelayStatusSheetStore: ObservableObject {
     }
 
     var connectedCount: Int {
-        relays.filter { $0.status == .online || $0.status == .authRequired }.count
+        relays.filter { $0.status == .online || $0.status == .authRequired || $0.status == .paymentRequired }.count
     }
 
     var plannedCount: Int {
@@ -127,7 +127,7 @@ private final class RelayStatusSheetStore: ObservableObject {
                 ))
                 recordRelaySyncEvent(
                     relayURL: relay.url,
-                    kind: .eose,
+                    kind: .connected,
                     occurredAt: startedAt,
                     message: "NIP-11 info fetched"
                 )
@@ -581,9 +581,15 @@ private extension RelayDescriptor {
     func applying(summary: NostrRelaySyncSummaryRecord?) -> RelayDescriptor {
         guard let summary else { return self }
 
-        let errors = summary.timeoutCount + summary.partialFailureCount
+        let errors = summary.closedCount + summary.timeoutCount + summary.partialFailureCount + summary.authRequiredCount + summary.paymentRequiredCount
         let status: RelayConnectionStatus
-        if summary.timeoutCount > 0 && summary.lastEventKind == .timeout {
+        if summary.lastEventKind == .authRequired {
+            status = .authRequired
+        } else if summary.lastEventKind == .paymentRequired {
+            status = .paymentRequired
+        } else if summary.timeoutCount > 0 && summary.lastEventKind == .timeout {
+            status = .offline
+        } else if summary.closedCount > 0 && summary.lastEventKind == .closed {
             status = .offline
         } else if summary.partialFailureCount > 0 && summary.lastEventKind == .partialFailure {
             status = .connecting
@@ -619,7 +625,7 @@ private extension RelayDescriptor {
         return RelayDescriptor(
             url: url,
             displayName: information.name ?? host,
-            status: information.limitation?.authRequired == true ? .authRequired : .online,
+            status: information.limitation?.authRequired == true ? .authRequired : (information.limitation?.paymentRequired == true ? .paymentRequired : .online),
             usage: [.read],
             source: .nip65,
             pingMilliseconds: nil,
@@ -663,15 +669,23 @@ private extension RelayDescriptor {
 private extension NostrRelaySyncSummaryRecord {
     var lastMessage: String {
         switch lastEventKind {
+        case .connected:
+            return "Connected"
         case .eose:
             if let averageEOSELatencyMilliseconds {
                 return "EOSE avg \(averageEOSELatencyMilliseconds) ms"
             }
             return "EOSE recorded"
+        case .closed:
+            return "Relay closed connection"
         case .timeout:
             return "Timeout recorded"
         case .partialFailure:
             return lastPartialFailureReason ?? "Partial failure recorded"
+        case .authRequired:
+            return "AUTH challenge required"
+        case .paymentRequired:
+            return "Payment required"
         case .reconnect:
             return "Reconnect recorded"
         case .negentropy:

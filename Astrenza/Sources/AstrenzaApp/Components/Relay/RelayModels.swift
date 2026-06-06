@@ -141,7 +141,7 @@ struct RelayMockStore {
     ]
 
     static var connectedCount: Int {
-        relays.filter { $0.status == .online || $0.status == .authRequired }.count
+        relays.filter { $0.status == .online || $0.status == .authRequired || $0.status == .paymentRequired }.count
     }
 
     static var plannedCount: Int {
@@ -202,6 +202,7 @@ enum RelayConnectionStatus: String {
     case online = "Online"
     case connecting = "Connecting"
     case authRequired = "AUTH"
+    case paymentRequired = "Payment"
     case offline = "Offline"
 
     var tint: Color {
@@ -209,6 +210,7 @@ enum RelayConnectionStatus: String {
         case .online: .green
         case .connecting: .orange
         case .authRequired: .purple
+        case .paymentRequired: .yellow
         case .offline: .red
         }
     }
@@ -218,6 +220,7 @@ enum RelayConnectionStatus: String {
         case .online: "checkmark.circle.fill"
         case .connecting: "arrow.triangle.2.circlepath"
         case .authRequired: "lock.shield.fill"
+        case .paymentRequired: "creditcard.fill"
         case .offline: "xmark.circle.fill"
         }
     }
