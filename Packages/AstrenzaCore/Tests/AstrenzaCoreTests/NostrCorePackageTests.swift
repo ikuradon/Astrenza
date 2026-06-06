@@ -350,6 +350,82 @@ struct NostrCorePackageTests {
         #expect(restored.contactListEvent == contacts)
     }
 
+    @Test("Nostr event store restores home state after store recreation")
+    func eventStoreHomeTimelineSurvivesStoreRecreation() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AstrenzaCoreTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("nostr.sqlite")
+        let accountID = String(repeating: "f", count: 64)
+        let followed = String(repeating: "1", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: followed, createdAt: 200, content: "persisted home")
+        let relayList = nostrEvent(
+            kind: 10002,
+            pubkey: accountID,
+            createdAt: 150,
+            tags: [
+                ["r", "wss://read.example", "read"],
+                ["r", "wss://write.example", "write"]
+            ]
+        )
+        let contacts = nostrEvent(kind: 3, pubkey: accountID, createdAt: 160, tags: [["p", followed]])
+        let metadata = nostrEvent(kind: 0, pubkey: followed, createdAt: 140, content: #"{"name":"Persisted"}"#)
+
+        do {
+            let store = try NostrEventStore(path: databaseURL.path)
+            try store.saveHomeTimelineState(
+                NostrHomeTimelineState(
+                    relays: ["wss://stale.example"],
+                    followedPubkeys: [],
+                    noteEvents: [note],
+                    metadataEvents: [metadata],
+                    relayListEvent: relayList,
+                    contactListEvent: contacts,
+                    hasMoreOlder: false
+                ),
+                accountID: accountID,
+                savedAt: 300
+            )
+        }
+
+        let reopenedStore = try NostrEventStore(path: databaseURL.path)
+        let restored = try #require(try reopenedStore.homeTimelineState(accountID: accountID))
+
+        #expect(restored.relays == ["wss://read.example"])
+        #expect(restored.followedPubkeys == [followed])
+        #expect(restored.noteEvents == [note])
+        #expect(restored.metadataEvents == [metadata])
+        #expect(restored.relayListEvent == relayList)
+        #expect(restored.contactListEvent == contacts)
+        #expect(!restored.hasMoreOlder)
+    }
+
+    @Test("Nostr event store restores bounded slice from persisted timeline events")
+    func eventStoreRestoresBoundedTimelineSlice() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "f", count: 64)
+        let author = String(repeating: "2", count: 64)
+        let notes = (0..<250).map { index in
+            nostrEvent(kind: 1, pubkey: author, createdAt: 1_800_000_000 + index, content: "large timeline \(index)")
+        }
+        let state = NostrHomeTimelineState(
+            relays: ["wss://relay.example"],
+            followedPubkeys: [author],
+            noteEvents: notes,
+            metadataEvents: [],
+            hasMoreOlder: true
+        )
+
+        try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 1_800_010_001)
+        let restored = try #require(try store.homeTimelineState(accountID: accountID, limit: 25))
+
+        #expect(restored.noteEvents.count == 25)
+        #expect(restored.noteEvents.map(\.createdAt) == Array((1_800_000_225...1_800_000_249).reversed()))
+        #expect(restored.noteEvents.first?.content == "large timeline 249")
+        #expect(restored.noteEvents.last?.content == "large timeline 225")
+    }
+
     @Test("Nostr event store returns local backfill events for NIP-77")
     func eventStoreLocalBackfillEvents() throws {
         let store = try NostrEventStore.inMemory()

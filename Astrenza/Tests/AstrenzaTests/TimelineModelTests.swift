@@ -245,6 +245,126 @@ struct TimelineModelTests {
         #expect(delta > 0)
     }
 
+    @Test("Timeline gap upward fill keeps lower anchor visually fixed")
+    func timelineGapUpwardFillKeepsLowerAnchor() throws {
+        let posts = Array(MockTimelineData.posts.prefix(4))
+        let newerPost = try #require(posts.first)
+        let lowerAnchor = try #require(posts.last)
+        let insertedPosts = Array(posts.dropFirst().dropLast())
+        let gap = TimelineGap(
+            id: "upward-gap",
+            newerPostID: newerPost.id,
+            olderPostID: lowerAnchor.id,
+            missingEstimate: insertedPosts.count,
+            relayCount: 2,
+            state: .needsBackfill,
+            backfilledPosts: insertedPosts
+        )
+        var cache = TimelineLayoutCache()
+        cache.measuredHeights = [
+            newerPost.id: 100,
+            insertedPosts[0].id: 90,
+            insertedPosts[1].id: 110,
+            lowerAnchor.id: 120
+        ]
+        let beforeEntries: [TimelineFeedEntry] = [
+            .post(newerPost),
+            .gap(gap),
+            .post(lowerAnchor)
+        ]
+        let afterEntries: [TimelineFeedEntry] = [
+            .post(newerPost),
+            .post(insertedPosts[0]),
+            .post(insertedPosts[1]),
+            .post(lowerAnchor)
+        ]
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: lowerAnchor.id,
+            anchorOffset: 0,
+            contentOffset: 0,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        let beforeOffset = try #require(TimelineViewportResolver.restoredContentOffsetY(
+            entries: beforeEntries,
+            state: state,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+        let afterOffset = try #require(TimelineViewportResolver.restoredContentOffsetY(
+            entries: afterEntries,
+            state: state,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        #expect(afterOffset - beforeOffset == TimelineLayoutEstimator.estimatedReplacementDelta(for: gap, layoutCache: cache))
+    }
+
+    @Test("Timeline gap downward fill keeps upper anchor visually fixed")
+    func timelineGapDownwardFillKeepsUpperAnchor() throws {
+        let posts = Array(MockTimelineData.posts.prefix(4))
+        let upperAnchor = try #require(posts.first)
+        let insertedPosts = Array(posts.dropFirst().dropLast())
+        let olderPost = try #require(posts.last)
+        let gap = TimelineGap(
+            id: "downward-gap",
+            newerPostID: upperAnchor.id,
+            olderPostID: olderPost.id,
+            missingEstimate: insertedPosts.count,
+            relayCount: 2,
+            state: .needsBackfill,
+            backfilledPosts: insertedPosts
+        )
+        var cache = TimelineLayoutCache()
+        cache.measuredHeights = [
+            upperAnchor.id: 100,
+            insertedPosts[0].id: 90,
+            insertedPosts[1].id: 110,
+            olderPost.id: 120
+        ]
+        let beforeEntries: [TimelineFeedEntry] = [
+            .post(upperAnchor),
+            .gap(gap),
+            .post(olderPost)
+        ]
+        let afterEntries: [TimelineFeedEntry] = [
+            .post(upperAnchor),
+            .post(insertedPosts[0]),
+            .post(insertedPosts[1]),
+            .post(olderPost)
+        ]
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: upperAnchor.id,
+            anchorOffset: 12,
+            contentOffset: 0,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+
+        let beforeOffset = try #require(TimelineViewportResolver.restoredContentOffsetY(
+            entries: beforeEntries,
+            state: state,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+        let afterOffset = try #require(TimelineViewportResolver.restoredContentOffsetY(
+            entries: afterEntries,
+            state: state,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        #expect(afterOffset == beforeOffset)
+    }
+
     @Test("Timeline viewport resolver restores exact content offset when available")
     func timelineViewportResolverPrefersExactContentOffset() throws {
         let posts = Array(MockTimelineData.posts.prefix(3))
@@ -268,8 +388,8 @@ struct TimelineModelTests {
         #expect(restoredOffset == 512)
     }
 
-    @Test("Timeline viewport resolver handles large timelines by snapshot offset")
-    func timelineViewportResolverHandlesLargeTimeline() throws {
+    @Test("Timeline viewport resolver handles persisted large timelines by snapshot offset")
+    func timelineViewportResolverHandlesPersistedLargeTimeline() throws {
         let posts = (0..<10_000).map { index in
             TimelinePost(
                 id: "large-\(index)",
@@ -291,6 +411,12 @@ struct TimelineModelTests {
         }
         var cache = TimelineLayoutCache()
         cache.measuredHeights = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, CGFloat(80)) })
+        let suiteName = "TimelineRestoreStoreLargeTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = TimelineRestoreStore(defaults: defaults)
+        store.saveLayoutCache(cache, accountID: "account-a", timelineKey: "home")
+        let persistedCache = store.layoutCache(accountID: "account-a", timelineKey: "home")
         let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: cache, topContentPadding: 72)
         let state = TimelineViewportState(
             accountID: "account-a",
@@ -307,6 +433,8 @@ struct TimelineModelTests {
             anchorLineY: 72
         )
 
+        #expect(persistedCache.measuredHeights.count == 10_000)
+        #expect(persistedCache.height(for: posts[9_876]) == 80)
         #expect(restoredOffset == CGFloat(9876 * 80 + 19))
     }
 
