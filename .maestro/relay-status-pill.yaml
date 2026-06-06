@@ -1,14 +1,15 @@
 appId: com.ikuradon.Astrenza
 ---
 - launchApp:
-    clearState: true
     arguments:
       AstrenzaMockTimeline: true
 - assertVisible:
     id: timeline.feed
 - assertVisible:
-    id: timeline.body.thread-a-root
+    id: home.relay_status.button
 - tapOn:
-    id: timeline.body.thread-a-root
+    id: home.relay_status.button
 - assertVisible:
-    id: post.detail
+    text: Relay Status
+- tapOn:
+    text: Done

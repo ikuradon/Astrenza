@@ -4,6 +4,8 @@ struct RelayStatusRingButton: View {
     let connected: Int
     let planned: Int
     let collapseProgress: CGFloat
+    let isProcessing: Bool
+    @State private var processingRotation: Double = 0
 
     private var progress: Double {
         guard planned > 0 else { return 0 }
@@ -37,6 +39,24 @@ struct RelayStatusRingButton: View {
                         style: StrokeStyle(lineWidth: 4, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
+                if isProcessing {
+                    Circle()
+                        .trim(from: 0.08, to: 0.38)
+                        .stroke(
+                            Color.white.opacity(0.84),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                        )
+                        .padding(7)
+                        .rotationEffect(.degrees(processingRotation))
+                        .onAppear {
+                            withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                                processingRotation = 360
+                            }
+                        }
+                        .onDisappear {
+                            processingRotation = 0
+                        }
+                }
                 Text("\(connected)")
                     .font(.system(size: 12, weight: .black, design: .rounded))
                     .foregroundStyle(.primary)
@@ -61,6 +81,7 @@ struct RelayStatusRingButton: View {
         .padding(.trailing, 11 - (3 * collapseProgress))
         .frame(width: containerWidth, height: 46 - (2 * collapseProgress))
         .astrenzaGlass(tint: Color.white.opacity(0.04), in: Capsule())
+        .contentShape(Capsule())
         .animation(.spring(duration: 0.36, bounce: 0.16), value: collapseProgress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Show relay information, \(connected) of \(planned) connected")

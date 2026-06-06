@@ -9,6 +9,9 @@ struct HomeTimelineTopBar: View {
     let onDismissFloatingMenus: () -> Void
     let onRelayStatusTap: () -> Void
     let onSettingsTap: () -> Void
+    let relayConnectedCount: Int
+    let relayPlannedCount: Int
+    let isRelayProcessing: Bool
 
     var body: some View {
         ZStack {
@@ -32,12 +35,15 @@ struct HomeTimelineTopBar: View {
 
                 Button(action: onRelayStatusTap) {
                     RelayStatusRingButton(
-                        connected: RelayMockStore.connectedCount,
-                        planned: RelayMockStore.plannedCount,
-                        collapseProgress: collapseProgress
+                        connected: relayConnectedCount,
+                        planned: relayPlannedCount,
+                        collapseProgress: collapseProgress,
+                        isProcessing: isRelayProcessing
                     )
                 }
                 .buttonStyle(.plain)
+                .contentShape(Capsule())
+                .accessibilityIdentifier("home.relay_status.button")
             }
         }
         .padding(.horizontal, 18)

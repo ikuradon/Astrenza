@@ -2,6 +2,8 @@ appId: com.ikuradon.Astrenza
 ---
 - launchApp:
     clearState: true
+    arguments:
+      AstrenzaMockTimeline: true
 - assertVisible:
     id: timeline.feed
 - assertVisible:

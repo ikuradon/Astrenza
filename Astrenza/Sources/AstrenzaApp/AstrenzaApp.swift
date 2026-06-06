@@ -4,7 +4,7 @@ import SwiftUI
 struct AstrenzaApp: App {
     var body: some Scene {
         WindowGroup {
-            HomeTimelineView()
+            AstrenzaRootView()
         }
     }
 }

@@ -9,12 +9,28 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "6.0"
+packages:
+  AstrenzaCore:
+    path: Packages/AstrenzaCore
+  secp256k1:
+    url: https://github.com/jb55/secp256k1.swift
+    revision: 40b4b38b3b1c83f7088c76189a742870e0ca06a9
+  negentropy-swift:
+    url: https://github.com/damus-io/negentropy-swift
+    from: 0.1.0
 targets:
   Astrenza:
     type: application
     platform: iOS
     sources:
       - path: Astrenza/Sources
+    dependencies:
+      - package: AstrenzaCore
+        product: AstrenzaCore
+      - package: secp256k1
+        product: secp256k1
+      - package: negentropy-swift
+        product: Negentropy
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ikuradon.Astrenza
@@ -33,6 +49,10 @@ targets:
       - path: Astrenza/Tests/AstrenzaTests
     dependencies:
       - target: Astrenza
+      - package: AstrenzaCore
+        product: AstrenzaCore
+      - package: secp256k1
+        product: secp256k1
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ikuradon.AstrenzaTests

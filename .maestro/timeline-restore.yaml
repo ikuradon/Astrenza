@@ -2,6 +2,8 @@ appId: com.ikuradon.Astrenza
 ---
 - launchApp:
     clearState: true
+    arguments:
+      AstrenzaMockTimeline: true
 - assertVisible:
     id: timeline.feed
 - swipe:
@@ -15,6 +17,8 @@ appId: com.ikuradon.Astrenza
 - assertVisible:
     text: Timeline Height Estimates
 - stopApp
-- launchApp
+- launchApp:
+    arguments:
+      AstrenzaMockTimeline: true
 - assertVisible:
     text: Timeline Height Estimates

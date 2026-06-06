@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 
 struct TimelinePost: Identifiable {
@@ -121,6 +122,7 @@ struct TimelinePost: Identifiable {
 enum TimelineFeedEntry: Identifiable {
     case post(TimelinePost)
     case gap(TimelineGap)
+    case deleted(TimelineDeletedEntry)
 
     var id: String {
         switch self {
@@ -128,6 +130,8 @@ enum TimelineFeedEntry: Identifiable {
             post.id
         case .gap(let gap):
             gap.id
+        case .deleted(let entry):
+            entry.id
         }
     }
 
@@ -135,10 +139,78 @@ enum TimelineFeedEntry: Identifiable {
         switch self {
         case .post(let post):
             post
-        case .gap:
+        case .gap, .deleted:
             nil
         }
     }
+}
+
+struct TimelineDeletedEntry: Identifiable, Equatable {
+    let id: String
+
+    init(id: String) {
+        self.id = id
+    }
+}
+
+struct TimelineEmptyState: Equatable {
+    let title: String
+    let message: String
+    let systemName: String
+    let primaryActionTitle: String
+    let secondaryActionTitle: String?
+
+    static let home = TimelineEmptyState(
+        title: "No notes yet",
+        message: "Your Home timeline will appear after the follow list and read relays are resolved.",
+        systemName: "tray",
+        primaryActionTitle: "Check Relays",
+        secondaryActionTitle: "Find People"
+    )
+
+    static let relays = TimelineEmptyState(
+        title: "No relay timeline",
+        message: "Pick a relay or wait for NIP-65 discovery to finish before showing relay-scoped notes.",
+        systemName: "antenna.radiowaves.left.and.right.slash",
+        primaryActionTitle: "Open Relay Status",
+        secondaryActionTitle: nil
+    )
+
+    static let lists = TimelineEmptyState(
+        title: "No list selected",
+        message: "NIP-51 lists can become custom timelines once the account has a saved list or bookmark set.",
+        systemName: "list.bullet.rectangle",
+        primaryActionTitle: "Create List",
+        secondaryActionTitle: nil
+    )
+
+    static func loadingHome(message: String) -> TimelineEmptyState {
+        TimelineEmptyState(
+            title: "Loading Home",
+            message: message,
+            systemName: "arrow.triangle.2.circlepath",
+            primaryActionTitle: "Relay Status",
+            secondaryActionTitle: nil
+        )
+    }
+
+    static func liveError(message: String) -> TimelineEmptyState {
+        TimelineEmptyState(
+            title: "Home unavailable",
+            message: message,
+            systemName: "exclamationmark.triangle",
+            primaryActionTitle: "Retry",
+            secondaryActionTitle: nil
+        )
+    }
+
+    static let noContacts = TimelineEmptyState(
+        title: "No follows found",
+        message: "NIP-65 relays were resolved, but kind:3 did not return follow pubkeys yet.",
+        systemName: "person.2.slash",
+        primaryActionTitle: "Retry",
+        secondaryActionTitle: nil
+    )
 }
 
 enum TimelineGapFillDirection: Equatable {
@@ -626,19 +698,22 @@ struct AvatarStyle {
     let symbolName: String
     let pictureState: AvatarPictureState
     let placeholderSeed: String
+    let imageURL: URL?
 
     init(
         primary: Color,
         secondary: Color,
         symbolName: String,
         pictureState: AvatarPictureState = .resolved,
-        placeholderSeed: String = ""
+        placeholderSeed: String = "",
+        imageURL: URL? = nil
     ) {
         self.primary = primary
         self.secondary = secondary
         self.symbolName = symbolName
         self.pictureState = pictureState
         self.placeholderSeed = placeholderSeed
+        self.imageURL = imageURL
     }
 
     func withPlaceholderSeed(_ seed: String) -> AvatarStyle {
@@ -647,7 +722,8 @@ struct AvatarStyle {
             secondary: secondary,
             symbolName: symbolName,
             pictureState: pictureState,
-            placeholderSeed: seed
+            placeholderSeed: seed,
+            imageURL: imageURL
         )
     }
 }
@@ -657,6 +733,17 @@ enum AvatarPictureState {
     case missing
     case metadataPending
     case failed
+
+    init(_ nostrState: NostrAvatarPictureState) {
+        switch nostrState {
+        case .resolved:
+            self = .resolved
+        case .missing:
+            self = .missing
+        case .metadataPending:
+            self = .metadataPending
+        }
+    }
 
     var usesPlaceholder: Bool {
         switch self {

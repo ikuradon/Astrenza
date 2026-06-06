@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AvatarView: View {
     let style: AvatarStyle
@@ -8,6 +9,8 @@ struct AvatarView: View {
         ZStack {
             if style.pictureState.usesPlaceholder {
                 ProceduralAvatarPlaceholder(style: style, size: size)
+            } else if let imageURL = style.imageURL {
+                CachedRemoteAvatarImage(url: imageURL, style: style, size: size)
             } else {
                 resolvedAvatar
             }
@@ -31,6 +34,65 @@ struct AvatarView: View {
                 .font(.system(size: size * 0.42, weight: .black))
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.16), radius: 5, y: 3)
+        }
+    }
+}
+
+private struct CachedRemoteAvatarImage: View {
+    let url: URL
+    let style: AvatarStyle
+    let size: CGFloat
+
+    @StateObject private var loader = RemoteAvatarImageLoader()
+
+    var body: some View {
+        ZStack {
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+            } else {
+                ProceduralAvatarPlaceholder(
+                    style: AvatarStyle(
+                        primary: style.primary,
+                        secondary: style.secondary,
+                        symbolName: style.symbolName,
+                        pictureState: loader.didFail ? .failed : .metadataPending,
+                        placeholderSeed: style.placeholderSeed,
+                        imageURL: style.imageURL
+                    ),
+                    size: size
+                )
+            }
+        }
+        .task(id: url) {
+            await loader.load(url: url)
+        }
+    }
+}
+
+@MainActor
+private final class RemoteAvatarImageLoader: ObservableObject {
+    @Published private(set) var image: UIImage?
+    @Published private(set) var didFail = false
+
+    private var loadedURL: URL?
+
+    func load(url: URL) async {
+        guard loadedURL != url else { return }
+        loadedURL = url
+        didFail = false
+
+        if let cachedImage = NostrImageCache.shared.cachedImage(for: url) {
+            image = cachedImage
+            return
+        }
+
+        do {
+            image = try await NostrImageCache.shared.image(for: url)
+        } catch {
+            didFail = true
         }
     }
 }

@@ -23,6 +23,14 @@ enum TimelineKind: String, CaseIterable, Identifiable {
         case .lists: "list.bullet.rectangle"
         }
     }
+
+    var emptyState: TimelineEmptyState {
+        switch self {
+        case .home: .home
+        case .relays: .relays
+        case .lists: .lists
+        }
+    }
 }
 
 enum TimelineTab: String, CaseIterable, Identifiable {

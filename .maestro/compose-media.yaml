@@ -5,6 +5,8 @@ appId: com.ikuradon.Astrenza
     - "assets/compose-media-2.png"
 - launchApp:
     clearState: true
+    arguments:
+      AstrenzaMockTimeline: true
 - assertVisible:
     id: timeline.feed
 - tapOn:

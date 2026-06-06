@@ -1,0 +1,23 @@
+{
+  "originHash" : "65ad780325a490541c4b3afa0e31e49b4e636c3aef6cf7a94b1113226e72885c",
+  "pins" : [
+    {
+      "identity" : "negentropy-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/damus-io/negentropy-swift",
+      "state" : {
+        "revision" : "181789fb0842f5666020db87ffea0d120cc5aa5d",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "secp256k1.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jb55/secp256k1.swift",
+      "state" : {
+        "revision" : "40b4b38b3b1c83f7088c76189a742870e0ca06a9"
+      }
+    }
+  ],
+  "version" : 3
+}

@@ -8,6 +8,10 @@ enum MockTimelineData {
     static var homeEntries: [TimelineFeedEntry] {
         store.homeEntries
     }
+
+    static func entries(for timeline: TimelineKind) -> [TimelineFeedEntry] {
+        store.entries(for: timeline)
+    }
 }
 
 extension MockTimelineData {
@@ -712,6 +716,10 @@ private struct MockTimelineStore {
         entries.reserveCapacity(posts.count + 1)
 
         for (index, post) in posts.enumerated() {
+            if index == 1 {
+                entries.append(.deleted(TimelineDeletedEntry(id: "home-deleted-request-1")))
+            }
+
             if index == 2 {
                 entries.append(.gap(gap))
             }
@@ -720,6 +728,24 @@ private struct MockTimelineStore {
         }
 
         return entries
+    }
+
+    func entries(for timeline: TimelineKind) -> [TimelineFeedEntry] {
+        switch timeline {
+        case .home:
+            homeEntries
+        case .relays:
+            homeTimeline
+                .filter { post in
+                    post.body.localizedCaseInsensitiveContains("relay")
+                        || post.linkSummary?.visibleHosts.contains { host in
+                            host.localizedCaseInsensitiveContains("relay")
+                        } == true
+                }
+                .map(TimelineFeedEntry.post)
+        case .lists:
+            []
+        }
     }
 
     func replies(to post: TimelinePost) -> [TimelinePost] {

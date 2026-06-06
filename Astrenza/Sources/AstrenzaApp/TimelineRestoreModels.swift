@@ -61,6 +61,8 @@ struct TimelineLayoutSnapshot {
                 offset += layoutCache.height(for: post)
             case .gap(let gap):
                 offset += TimelineLayoutEstimator.estimatedHeight(for: gap)
+            case .deleted:
+                offset += TimelineLayoutEstimator.estimatedHeightForDeletedRow
             }
         }
 
@@ -111,6 +113,8 @@ enum TimelineViewportResolver {
 }
 
 enum TimelineLayoutEstimator {
+    static let estimatedHeightForDeletedRow: CGFloat = 44
+
     static func estimatedHeight(for gap: TimelineGap) -> CGFloat {
         74
     }

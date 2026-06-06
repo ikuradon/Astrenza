@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct HomeTimelineView: View {
+    @ObservedObject var sessionStore: NostrSessionStore
+    @ObservedObject var liveTimelineStore: NostrHomeTimelineStore
     @State private var selectedTab: TimelineTab = .home
     @State private var previousTab: TimelineTab = .home
     @State private var selectedTimeline: TimelineKind = .home
@@ -29,7 +31,17 @@ struct HomeTimelineView: View {
         timelineKey: "home"
     )
 
-    private let accountID = "mock-account"
+    private var accountID: String {
+        sessionStore.account?.pubkey ?? "mock-account"
+    }
+
+    init(
+        sessionStore: NostrSessionStore = NostrSessionStore(restoreAccount: false),
+        liveTimelineStore: NostrHomeTimelineStore = NostrHomeTimelineStore()
+    ) {
+        self.sessionStore = sessionStore
+        self.liveTimelineStore = liveTimelineStore
+    }
 
     private var actionMenuTopClearance: CGFloat {
         max(unreadBadgeFrame.maxY + 10, 96)
@@ -45,6 +57,51 @@ struct HomeTimelineView: View {
 
     private var isPostDetailPresented: Bool {
         !postNavigationPath.isEmpty || !profileNavigationPath.isEmpty
+    }
+
+    private var timelineEntries: [TimelineFeedEntry] {
+        guard sessionStore.account != nil else {
+            return MockTimelineData.entries(for: selectedTimeline)
+        }
+
+        switch selectedTimeline {
+        case .home:
+            return liveTimelineStore.entries
+        case .relays, .lists:
+            return MockTimelineData.entries(for: selectedTimeline)
+        }
+    }
+
+    private var timelineEmptyState: TimelineEmptyState {
+        guard sessionStore.account != nil, selectedTimeline == .home else {
+            return selectedTimeline.emptyState
+        }
+
+        switch liveTimelineStore.phase {
+        case .resolvingRelays, .resolvingContacts, .loadingHome:
+            return .loadingHome(message: liveTimelineStore.phase.copy)
+        case .failed(let message):
+            return .liveError(message: message)
+        case .idle, .loaded:
+            if liveTimelineStore.followedPubkeys.isEmpty {
+                return .noContacts
+            }
+            return .home
+        }
+    }
+
+    private var relayConnectedCount: Int {
+        guard sessionStore.account != nil else {
+            return RelayMockStore.connectedCount
+        }
+        return liveTimelineStore.resolvedRelays.count
+    }
+
+    private var relayPlannedCount: Int {
+        guard sessionStore.account != nil else {
+            return RelayMockStore.plannedCount
+        }
+        return max(liveTimelineStore.resolvedRelays.count, 1)
     }
 
     var body: some View {
@@ -66,7 +123,10 @@ struct HomeTimelineView: View {
                         collapseProgress: topChromeCollapseProgress,
                         onDismissFloatingMenus: dismissFloatingMenus,
                         onRelayStatusTap: presentRelayStatus,
-                        onSettingsTap: presentSettings
+                        onSettingsTap: presentSettings,
+                        relayConnectedCount: relayConnectedCount,
+                        relayPlannedCount: relayPlannedCount,
+                        isRelayProcessing: liveTimelineStore.phase.isProcessing
                     )
                     .zIndex(30)
 
@@ -102,6 +162,9 @@ struct HomeTimelineView: View {
         .onChange(of: selectedTimeline) { _, _ in
             loadTimelineRestoreState()
         }
+        .onChange(of: sessionStore.account?.pubkey) { _, _ in
+            loadTimelineRestoreState()
+        }
         .homeTimelinePresentations(
             isComposerPresented: $isComposerPresented,
             isSettingsPresented: $isSettingsPresented,
@@ -131,18 +194,23 @@ private extension HomeTimelineView {
     var timelineList: some View {
         NavigationStack(path: $postNavigationPath) {
             TimelineFeedView(
-                entries: MockTimelineData.homeEntries,
+                entries: timelineEntries,
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: homeViewportState,
                 layoutCache: homeLayoutCache,
+                emptyState: timelineEmptyState,
+                onEmptyStatePrimaryAction: handleTimelineEmptyStatePrimaryAction,
+                onEmptyStateSecondaryAction: handleTimelineEmptyStateSecondaryAction,
                 onOpenPost: openPost,
                 onOpenProfile: openProfile,
                 onReplyPost: { _ in
                     presentReplyComposer()
                 },
                 onOpenMedia: openMedia,
-                onOpenURL: openURL
+                onOpenURL: openURL,
+                onRefresh: refreshVisibleTimeline,
+                onLoadOlderPost: loadOlderVisibleTimeline
             ) { offset in
                 handleTimelineScrollOffset(offset)
             } onViewportStateChanged: { state in
@@ -334,6 +402,42 @@ private extension HomeTimelineView {
         dismissFloatingMenus()
         guard !isComposerPresented && !isSettingsPresented && browserDestination == nil && fullscreenMedia == nil else { return }
         isRelayStatusPresented = true
+    }
+
+    func handleTimelineEmptyStatePrimaryAction() {
+        if sessionStore.account != nil, selectedTimeline == .home {
+            switch liveTimelineStore.phase {
+            case .failed:
+                liveTimelineStore.refresh()
+            case .loaded where liveTimelineStore.followedPubkeys.isEmpty:
+                liveTimelineStore.refresh()
+            case .resolvingRelays, .resolvingContacts, .loadingHome, .idle, .loaded:
+                presentRelayStatus()
+            }
+            return
+        }
+
+        switch selectedTimeline {
+        case .home, .relays:
+            presentRelayStatus()
+        case .lists:
+            presentSettings()
+        }
+    }
+
+    func handleTimelineEmptyStateSecondaryAction() {
+        guard selectedTimeline == .home else { return }
+        selectedTab = .explore
+    }
+
+    func refreshVisibleTimeline() async {
+        guard sessionStore.account != nil, selectedTimeline == .home else { return }
+        await liveTimelineStore.refreshLatest()
+    }
+
+    func loadOlderVisibleTimeline(_ postID: TimelinePost.ID) {
+        guard sessionStore.account != nil, selectedTimeline == .home else { return }
+        liveTimelineStore.loadOlder()
     }
 
     func presentComposer(mode: ComposeSheetMode) {

@@ -80,9 +80,6 @@ struct SettingsView: View {
                     SettingsNavigationRow(title: "Notifications", icon: "bell.fill", tint: .purple) {
                         EmptySettingsDestination(title: "Notifications")
                     }
-                    SettingsNavigationRow(title: "Relays", icon: "antenna.radiowaves.left.and.right", tint: .green) {
-                        RelaySettingsView()
-                    }
                     SettingsToggleRow(title: "Sounds", icon: "speaker.wave.2.fill", tint: .brown, isOn: $isSoundsEnabled)
                     SettingsToggleRow(title: "Haptics", icon: "circle.dotted.circle", tint: .gray, isOn: $isHapticsEnabled)
                     SettingsValueNavigationRow(title: "Browser", value: "Astrenza", icon: "safari.fill", tint: .cyan) {
@@ -340,6 +337,60 @@ private struct EmptySettingsDestination: View {
     }
 }
 
+private struct AccountSettingsView: View {
+    let title: String
+    let subtitle: String
+    let avatarStyle: AvatarStyle
+
+    private var abbreviatedNpub: String {
+        title.contains("Beta") ? "npub1beta4x2ck8...w6mx" : "npub1astrenza7q3n9...9h2q"
+    }
+
+    var body: some View {
+        SettingsList {
+            SettingsSection {
+                HStack(spacing: 14) {
+                    AvatarView(style: avatarStyle, size: 54)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.system(size: 24, weight: .black, design: .rounded))
+                        Text(subtitle)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Text(abbreviatedNpub)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+
+            SettingsSection(title: "NOSTR ACCOUNT") {
+                SettingsNavigationRow(title: "Profile", icon: "person.crop.circle.fill", tint: .cyan) {
+                    EmptySettingsDestination(title: "Profile")
+                }
+                SettingsValueNavigationRow(title: "Keys / Signer", value: "Local", icon: "key.fill", tint: .purple) {
+                    EmptySettingsDestination(title: "Keys / Signer")
+                }
+                SettingsStatusNavigationRow(title: "Relays", statusColor: .green, icon: "antenna.radiowaves.left.and.right", tint: .green) {
+                    RelaySettingsView()
+                }
+                SettingsNavigationRow(title: "Muting / Filters", icon: "line.3.horizontal.decrease.circle.fill", tint: .orange) {
+                    EmptySettingsDestination(title: "Muting / Filters")
+                }
+                SettingsNavigationRow(title: "Backup / Export", icon: "square.and.arrow.up.fill", tint: .gray) {
+                    EmptySettingsDestination(title: "Backup / Export")
+                }
+            } footer: {
+                "These settings belong to this Nostr identity. Switching accounts should switch relay lists, signer permissions, filters, and backup state."
+            }
+        }
+        .settingsNavigation(title: title)
+    }
+}
+
 private struct SettingsList<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
@@ -487,20 +538,25 @@ private struct SettingsAccountRow: View {
     let avatarStyle: AvatarStyle
 
     var body: some View {
-        SettingsRowShell(iconView: {
-            AvatarView(style: avatarStyle, size: 36)
-        }) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                Text(subtitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+        NavigationLink {
+            AccountSettingsView(title: title, subtitle: subtitle, avatarStyle: avatarStyle)
+        } label: {
+            SettingsRowShell(iconView: {
+                AvatarView(style: avatarStyle, size: 36)
+            }) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .settingsChevronStyle()
             }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .settingsChevronStyle()
         }
+        .buttonStyle(.plain)
         .settingsRowTextStyle()
     }
 }

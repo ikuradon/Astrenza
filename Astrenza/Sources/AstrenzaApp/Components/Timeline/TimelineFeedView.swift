@@ -6,11 +6,16 @@ struct TimelineFeedView: View {
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let layoutCache: TimelineLayoutCache
+    let emptyState: TimelineEmptyState
+    let onEmptyStatePrimaryAction: () -> Void
+    let onEmptyStateSecondaryAction: (() -> Void)?
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
+    let onRefresh: (() async -> Void)?
+    let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
@@ -40,11 +45,16 @@ struct TimelineFeedView: View {
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         layoutCache: TimelineLayoutCache,
+        emptyState: TimelineEmptyState = .home,
+        onEmptyStatePrimaryAction: @escaping () -> Void = {},
+        onEmptyStateSecondaryAction: (() -> Void)? = nil,
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void,
         onReplyPost: @escaping (TimelinePost) -> Void,
         onOpenMedia: @escaping (TimelineMedia) -> Void,
         onOpenURL: @escaping (URL) -> Void,
+        onRefresh: (() async -> Void)? = nil,
+        onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
@@ -55,11 +65,16 @@ struct TimelineFeedView: View {
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             layoutCache: layoutCache,
+            emptyState: emptyState,
+            onEmptyStatePrimaryAction: onEmptyStatePrimaryAction,
+            onEmptyStateSecondaryAction: onEmptyStateSecondaryAction,
             onOpenPost: onOpenPost,
             onOpenProfile: onOpenProfile,
             onReplyPost: onReplyPost,
             onOpenMedia: onOpenMedia,
             onOpenURL: onOpenURL,
+            onRefresh: onRefresh,
+            onLoadOlderPost: onLoadOlderPost,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onViewportStateChanged: onViewportStateChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
@@ -72,11 +87,16 @@ struct TimelineFeedView: View {
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         layoutCache: TimelineLayoutCache,
+        emptyState: TimelineEmptyState = .home,
+        onEmptyStatePrimaryAction: @escaping () -> Void = {},
+        onEmptyStateSecondaryAction: (() -> Void)? = nil,
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void,
         onReplyPost: @escaping (TimelinePost) -> Void,
         onOpenMedia: @escaping (TimelineMedia) -> Void,
         onOpenURL: @escaping (URL) -> Void,
+        onRefresh: (() async -> Void)? = nil,
+        onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
@@ -86,11 +106,16 @@ struct TimelineFeedView: View {
         self.swipeSettings = swipeSettings
         self.viewportState = viewportState
         self.layoutCache = layoutCache
+        self.emptyState = emptyState
+        self.onEmptyStatePrimaryAction = onEmptyStatePrimaryAction
+        self.onEmptyStateSecondaryAction = onEmptyStateSecondaryAction
         self.onOpenPost = onOpenPost
         self.onOpenProfile = onOpenProfile
         self.onReplyPost = onReplyPost
         self.onOpenMedia = onOpenMedia
         self.onOpenURL = onOpenURL
+        self.onRefresh = onRefresh
+        self.onLoadOlderPost = onLoadOlderPost
         self.onScrollOffsetChanged = onScrollOffsetChanged
         self.onViewportStateChanged = onViewportStateChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
@@ -100,50 +125,64 @@ struct TimelineFeedView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(displayedEntries) { entry in
-                    switch entry {
-                    case .post(let post):
-                        TimelinePostRow(
-                            post: post,
-                            isActionMenuPresented: menuState.openedMenu?.postID == post.id && menuState.openedMenu?.kind == .more,
-                            swipeSettings: swipeSettings,
-                            onActionEvent: handlePostActionEvent,
-                            onOpenPost: { selectedPost in
-                                if menuState.isOpen {
-                                    closeFloatingPostMenus()
-                                } else {
-                                    onOpenPost(selectedPost)
+                if displayedEntries.isEmpty {
+                    TimelineEmptyStateView(
+                        state: emptyState,
+                        onPrimaryAction: onEmptyStatePrimaryAction,
+                        onSecondaryAction: onEmptyStateSecondaryAction
+                    )
+                } else {
+                    ForEach(displayedEntries) { entry in
+                        switch entry {
+                        case .post(let post):
+                            TimelinePostRow(
+                                post: post,
+                                isActionMenuPresented: menuState.openedMenu?.postID == post.id && menuState.openedMenu?.kind == .more,
+                                swipeSettings: swipeSettings,
+                                onActionEvent: handlePostActionEvent,
+                                onOpenPost: { selectedPost in
+                                    if menuState.isOpen {
+                                        closeFloatingPostMenus()
+                                    } else {
+                                        onOpenPost(selectedPost)
+                                    }
+                                },
+                                onOpenProfile: { selectedPost in
+                                    if menuState.isOpen {
+                                        closeFloatingPostMenus()
+                                    } else {
+                                        onOpenProfile(selectedPost)
+                                    }
+                                },
+                                onReplyPost: onReplyPost,
+                                onOpenMedia: openMedia,
+                                onOpenURL: openURL,
+                                onDismissActionMenu: {
+                                    if menuState.isOpen {
+                                        closeFloatingPostMenus()
+                                    }
                                 }
-                            },
-                            onOpenProfile: { selectedPost in
-                                if menuState.isOpen {
-                                    closeFloatingPostMenus()
-                                } else {
-                                    onOpenProfile(selectedPost)
-                                }
-                            },
-                            onReplyPost: onReplyPost,
-                            onOpenMedia: openMedia,
-                            onOpenURL: openURL,
-                            onDismissActionMenu: {
-                                if menuState.isOpen {
-                                    closeFloatingPostMenus()
-                                }
+                            )
+                            .id(post.id)
+                            .background(rowFrameReader(postID: post.id))
+                            .transition(postInsertionTransition(for: post))
+                            .zIndex(menuState.openedMenu?.postID == post.id ? 20 : 0)
+                            .onAppear {
+                                handlePostAppear(post)
                             }
-                        )
-                        .id(post.id)
-                        .background(rowFrameReader(postID: post.id))
-                        .transition(postInsertionTransition(for: post))
-                        .zIndex(menuState.openedMenu?.postID == post.id ? 20 : 0)
-                    case .gap(let gap):
-                        TimelineGapRow(gap: displayGap(gap), direction: displayDirection(for: gap)) {
-                            requestBackfill(for: gap)
+                        case .gap(let gap):
+                            TimelineGapRow(gap: displayGap(gap), direction: displayDirection(for: gap)) {
+                                requestBackfill(for: gap)
+                            }
+                            .id(gap.id)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(gapFrameReader(gapID: gap.id))
+                            .transition(.scale(scale: 0.96, anchor: .center).combined(with: .opacity))
+                        case .deleted(let deletedEntry):
+                            TimelineDeletedRow(entry: deletedEntry)
+                                .id(deletedEntry.id)
                         }
-                        .id(gap.id)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(gapFrameReader(gapID: gap.id))
-                        .transition(.scale(scale: 0.96, anchor: .center).combined(with: .opacity))
                     }
                 }
             }
@@ -151,6 +190,9 @@ struct TimelineFeedView: View {
             .padding(.bottom, 124)
         }
         .scrollPosition($scrollPosition)
+        .refreshable {
+            await onRefresh?()
+        }
         .coordinateSpace(name: "timelineFeedOverlay")
         .coordinateSpace(name: "timelineFeedViewport")
         .background(viewportSizeReader)
@@ -164,6 +206,9 @@ struct TimelineFeedView: View {
         }
         .onPreferenceChange(TimelineViewportSizePreferenceKey.self) { size in
             viewportSize = size
+        }
+        .onChange(of: entries.map(\.id)) { _, _ in
+            syncDisplayedEntriesFromSource()
         }
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
@@ -353,6 +398,25 @@ private extension TimelineFeedView {
         currentContentOffset = offset
         onScrollOffsetChanged(offset)
         saveViewportStateIfPossible()
+    }
+
+    func syncDisplayedEntriesFromSource() {
+        guard fetchingGapDirections.isEmpty else { return }
+
+        let oldIDs = displayedEntries.map(\.id)
+        let newIDs = entries.map(\.id)
+        guard oldIDs != newIDs else { return }
+
+        withAnimation(.spring(duration: 0.26, bounce: 0.08)) {
+            displayedEntries = entries
+        }
+
+        restoreViewportIfNeeded()
+    }
+
+    func handlePostAppear(_ post: TimelinePost) {
+        guard post.id == posts.last?.id else { return }
+        onLoadOlderPost?(post.id)
     }
 
     func closeFloatingPostMenus() {
