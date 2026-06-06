@@ -231,6 +231,33 @@ struct TimelineModelTests {
         #expect(post.replyContext?.bodyPreview == "legacy parent")
     }
 
+    @Test("Nostr materializer turns kind 6 reposts into attributed timeline posts")
+    func nostrMaterializerUsesKind6Reposts() throws {
+        let author = String(repeating: "a", count: 64)
+        let reposter = String(repeating: "b", count: 64)
+        let target = timelineEvent(idSeed: "repost-target", pubkey: author, createdAt: 100, content: "original body")
+        let repost = timelineEvent(
+            idSeed: "repost-event",
+            kind: 6,
+            pubkey: reposter,
+            createdAt: 300,
+            tags: [["e", target.id]],
+            content: ""
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [target, repost],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let repostedPost = try #require(posts.first { $0.id == repost.id })
+
+        #expect(posts.map { $0.id }.first == repost.id)
+        #expect(repostedPost.body == "original body")
+        #expect(repostedPost.author.pubkey == author)
+        #expect(repostedPost.repostedBy?.author.pubkey == reposter)
+    }
+
     @Test("_@domain NIP-05 is displayed as domain only")
     func rootNIP05Display() {
         let author = TimelineAuthor.resolved(
@@ -586,6 +613,7 @@ struct TimelineModelTests {
 
 private func timelineEvent(
     idSeed: String,
+    kind: Int = 1,
     pubkey: String,
     createdAt: Int,
     tags: [[String]] = [],
@@ -595,7 +623,7 @@ private func timelineEvent(
         id: timelineEventID(idSeed),
         pubkey: pubkey,
         createdAt: createdAt,
-        kind: 1,
+        kind: kind,
         tags: tags,
         content: content,
         sig: String(repeating: "0", count: 128)

@@ -485,16 +485,36 @@ enum NostrTimelineMaterializer {
         followedPubkeys: Set<String>
     ) -> [TimelinePost] {
         let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
-        return NostrHomeTimelineMaterializer.items(
+        let directPosts = NostrHomeTimelineMaterializer.items(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
             followedPubkeys: followedPubkeys,
             nip05Resolutions: nip05Resolutions
         )
-        .compactMap { item in
-            guard let event = eventsByID[item.id] else { return post(for: item) }
-            return post(for: item, event: event, eventsByID: eventsByID)
+        .compactMap { item -> SortableTimelinePost? in
+            guard let event = eventsByID[item.id] else { return nil }
+            return SortableTimelinePost(
+                id: event.id,
+                sortTimestamp: event.createdAt,
+                post: post(for: item, event: event, eventsByID: eventsByID)
+            )
         }
+        let reposts = repostPosts(
+            from: noteEvents,
+            metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions,
+            followedPubkeys: followedPubkeys,
+            eventsByID: eventsByID
+        )
+
+        return (directPosts + reposts)
+            .sorted { lhs, rhs in
+                if lhs.sortTimestamp == rhs.sortTimestamp {
+                    return lhs.id < rhs.id
+                }
+                return lhs.sortTimestamp > rhs.sortTimestamp
+            }
+            .map(\.post)
     }
 
     static func post(for item: NostrHomeTimelineItem) -> TimelinePost {
@@ -504,7 +524,9 @@ enum NostrTimelineMaterializer {
     private static func post(
         for item: NostrHomeTimelineItem,
         event: NostrEvent?,
-        eventsByID: [String: NostrEvent]
+        eventsByID: [String: NostrEvent],
+        idOverride: String? = nil,
+        repostedBy: TimelineRepostAttribution? = nil
     ) -> TimelinePost {
         let author: TimelineAuthor
         if let displayName = item.displayName {
@@ -524,7 +546,7 @@ enum NostrTimelineMaterializer {
         let contentWarning = event.flatMap(contentWarning(from:))
 
         return TimelinePost(
-            id: item.id,
+            id: idOverride ?? item.id,
             author: author,
             avatar: avatar(for: item),
             body: item.body,
@@ -535,6 +557,7 @@ enum NostrTimelineMaterializer {
             isLocked: false,
             media: media(imageURLs: imageURLs, linkURLs: linkURLs, pubkey: item.pubkey),
             context: nil,
+            repostedBy: repostedBy,
             quotedPost: event.flatMap { quotedPost(from: $0, eventsByID: eventsByID) },
             replyContext: event.flatMap { replyContext(from: $0, eventsByID: eventsByID, fallbackAuthor: author) },
             replyMention: event.flatMap { replyMention(from: $0, author: author) },
@@ -543,6 +566,67 @@ enum NostrTimelineMaterializer {
             linkSummary: linkSummary(from: linkURLs),
             actionState: .none
         )
+    }
+
+    private struct SortableTimelinePost {
+        let id: String
+        let sortTimestamp: Int
+        let post: TimelinePost
+    }
+
+    private static func repostPosts(
+        from events: [NostrEvent],
+        metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution],
+        followedPubkeys: Set<String>,
+        eventsByID: [String: NostrEvent]
+    ) -> [SortableTimelinePost] {
+        events
+            .filter { $0.kind == 6 }
+            .compactMap { repostEvent in
+                guard let targetID = repostTargetID(from: repostEvent),
+                      let targetEvent = eventsByID[targetID],
+                      targetEvent.kind == 1
+                else { return nil }
+
+                let targetItem = NostrHomeTimelineMaterializer.items(
+                    noteEvents: [targetEvent],
+                    metadataEvents: metadataEvents,
+                    followedPubkeys: followedPubkeys,
+                    nip05Resolutions: nip05Resolutions
+                ).first
+                guard let targetItem else { return nil }
+
+                let repostAuthor = TimelineAuthor.unresolved(pubkey: repostEvent.pubkey)
+                let repostItem = NostrHomeTimelineItem(
+                    id: repostEvent.id,
+                    pubkey: repostEvent.pubkey,
+                    displayName: nil,
+                    nip05: nil,
+                    nip05Status: .absent,
+                    isFollowed: followedPubkeys.contains(repostEvent.pubkey),
+                    body: "",
+                    createdAt: repostEvent.createdAt,
+                    avatarPictureState: .metadataPending,
+                    avatarImageURL: nil
+                )
+                let attribution = TimelineRepostAttribution(
+                    author: repostAuthor,
+                    avatar: avatar(for: repostItem),
+                    timestamp: relativeTimestamp(from: repostEvent.createdAt)
+                )
+                return SortableTimelinePost(
+                    id: repostEvent.id,
+                    sortTimestamp: repostEvent.createdAt,
+                    post: post(
+                        for: targetItem,
+                        event: targetEvent,
+                        eventsByID: eventsByID,
+                        idOverride: repostEvent.id,
+                        repostedBy: attribution
+                    )
+                )
+            }
     }
 
     static func avatar(for item: NostrHomeTimelineItem) -> AvatarStyle {
@@ -695,6 +779,12 @@ enum NostrTimelineMaterializer {
             timestamp: "",
             isAvailable: false
         )
+    }
+
+    private static func repostTargetID(from event: NostrEvent) -> String? {
+        event.tags.last { tag in
+            tag.count >= 2 && tag[0] == "e"
+        }?[1]
     }
 
     private static func bodyPresentation(body: String, linkURLs: [URL], isFollowed: Bool) -> TimelineBodyPresentation {
