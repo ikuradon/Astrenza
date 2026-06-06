@@ -55,6 +55,24 @@ public struct NostrFilterRuleSet: Equatable, Sendable {
         self.rules = rules
     }
 
+    public static func publicMuteRules(
+        accountID: String,
+        items: [NostrListItemRecord],
+        updatedAt: Int
+    ) -> [NostrFilterRuleRecord] {
+        items.compactMap { item in
+            guard let kind = filterKind(forNIP51ItemType: item.itemType) else { return nil }
+            return NostrFilterRuleRecord(
+                ruleID: "nip51:\(item.listID):\(item.itemKey)",
+                accountID: accountID,
+                kind: kind,
+                value: item.value,
+                createdAt: updatedAt,
+                updatedAt: updatedAt
+            )
+        }
+    }
+
     public func match(event: NostrEvent, now: Int) -> NostrFilterMatchReason? {
         for rule in activeRules(now: now) {
             switch rule.kind {
@@ -87,6 +105,19 @@ public struct NostrFilterRuleSet: Equatable, Sendable {
         }
         let range = NSRange(content.startIndex..<content.endIndex, in: content)
         return expression.firstMatch(in: content, range: range) != nil
+    }
+
+    private static func filterKind(forNIP51ItemType itemType: String) -> NostrFilterRuleKind? {
+        switch itemType {
+        case "pubkey":
+            .mutedPubkey
+        case "hashtag":
+            .mutedHashtag
+        case "word":
+            .keyword
+        default:
+            nil
+        }
     }
 }
 

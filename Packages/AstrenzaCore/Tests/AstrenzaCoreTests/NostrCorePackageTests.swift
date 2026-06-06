@@ -309,6 +309,23 @@ struct NostrCorePackageTests {
         #expect(itemsByKind[10_007]?.map(\.value) == ["wss://search.example"])
     }
 
+    @Test("NIP-51 public mute items project into filter rules")
+    func nip51MuteItemsProjectIntoFilterRules() throws {
+        let listID = "10000:account:"
+        let items = [
+            NostrListItemRecord(listID: listID, itemKey: "pubkey:pub", itemType: "pubkey", value: "pub", relayHint: nil, visibility: "public", position: 0),
+            NostrListItemRecord(listID: listID, itemKey: "hashtag:nostr", itemType: "hashtag", value: "nostr", relayHint: nil, visibility: "public", position: 1),
+            NostrListItemRecord(listID: listID, itemKey: "word:noise", itemType: "word", value: "noise", relayHint: nil, visibility: "public", position: 2),
+            NostrListItemRecord(listID: listID, itemKey: "event:ignored", itemType: "event", value: "ignored", relayHint: nil, visibility: "public", position: 3)
+        ]
+
+        let rules = NostrFilterRuleSet.publicMuteRules(accountID: "account", items: items, updatedAt: 123)
+
+        #expect(rules.map(\.kind) == [.mutedPubkey, .mutedHashtag, .keyword])
+        #expect(rules.map(\.value) == ["pub", "nostr", "noise"])
+        #expect(rules.allSatisfy { $0.accountID == "account" && $0.createdAt == 123 && $0.updatedAt == 123 })
+    }
+
     @Test("Nostr event store persists NIP-92 imeta media assets")
     func eventStoreNIP92MediaAssets() throws {
         let store = try NostrEventStore.inMemory()
