@@ -221,6 +221,30 @@ struct NostrCorePackageTests {
         #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10, now: 200).isEmpty)
     }
 
+    @Test("Nostr event store returns deleted timeline rows from timeline entries")
+    func eventStoreReturnsDeletedTimelineEntries() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: author, createdAt: 100, content: "delete me")
+        let deletion = nostrEvent(kind: 5, pubkey: author, createdAt: 120, content: "remove", tags: [["e", note.id]])
+
+        try store.save(events: [note, deletion])
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(accountID: "account", timelineKey: "home", eventID: note.id, sortTimestamp: note.createdAt, insertedAt: 130)
+        ])
+
+        let deletedRows = try store.deletedTimelineEntries(accountID: "account", timelineKey: "home", limit: 10, now: 200)
+
+        #expect(deletedRows == [
+            NostrDeletedTimelineEntryRecord(
+                targetEventID: note.id,
+                deletionEventID: deletion.id,
+                deletedAt: deletion.createdAt,
+                sortTimestamp: note.createdAt
+            )
+        ])
+    }
+
     @Test("Nostr event store ignores deletion requests from other authors")
     func eventStoreIgnoresOtherAuthorDeletionRequests() throws {
         let store = try NostrEventStore.inMemory()

@@ -308,11 +308,15 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries() {
+        let deletedEntries = account.flatMap { account in
+            try? eventStore?.deletedTimelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 250)
+        } ?? []
         entries = NostrTimelineMaterializer.entries(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
-            followedPubkeys: Set(followedPubkeys)
+            followedPubkeys: Set(followedPubkeys),
+            deletedEntries: deletedEntries
         )
     }
 
@@ -419,19 +423,53 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 enum NostrTimelineMaterializer {
+    private struct SortableTimelineEntry {
+        let id: String
+        let sortTimestamp: Int
+        let entry: TimelineFeedEntry
+    }
+
     static func entries(
         noteEvents: [NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
-        followedPubkeys: Set<String>
+        followedPubkeys: Set<String>,
+        deletedEntries: [NostrDeletedTimelineEntryRecord] = []
     ) -> [TimelineFeedEntry] {
-        posts(
+        let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
+        let postsByID = Dictionary(uniqueKeysWithValues: posts(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: followedPubkeys
         )
-        .map(TimelineFeedEntry.post)
+        .filter { !deletedTargetIDs.contains($0.id) }
+        .map { ($0.id, $0) })
+
+        let postEntries = noteEvents.compactMap { event -> SortableTimelineEntry? in
+            guard let post = postsByID[event.id] else { return nil }
+            return SortableTimelineEntry(
+                id: post.id,
+                sortTimestamp: event.createdAt,
+                entry: .post(post)
+            )
+        }
+        let deletedRows = deletedEntries.map { deletedEntry in
+            SortableTimelineEntry(
+                id: deletedEntry.targetEventID,
+                sortTimestamp: deletedEntry.sortTimestamp,
+                entry: .deleted(TimelineDeletedEntry(id: "deleted-\(deletedEntry.targetEventID)"))
+            )
+        }
+
+        return (postEntries + deletedRows)
+            .sorted { lhs, rhs in
+                if lhs.sortTimestamp == rhs.sortTimestamp {
+                    return lhs.id < rhs.id
+                }
+                return lhs.sortTimestamp > rhs.sortTimestamp
+            }
+            .map(\.entry)
     }
 
     static func posts(

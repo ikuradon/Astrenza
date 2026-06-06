@@ -159,6 +159,33 @@ struct TimelineModelTests {
         }
     }
 
+    @Test("Nostr materializer merges deleted timeline entries by sort position")
+    func nostrMaterializerMergesDeletedTimelineEntries() throws {
+        let author = String(repeating: "a", count: 64)
+        let newer = timelineEvent(idSeed: "newer", pubkey: author, createdAt: 300, content: "newer")
+        let older = timelineEvent(idSeed: "older", pubkey: author, createdAt: 100, content: "older")
+        let deleted = NostrDeletedTimelineEntryRecord(
+            targetEventID: "deleted-target",
+            deletionEventID: "delete-event",
+            deletedAt: 210,
+            sortTimestamp: 200
+        )
+
+        let entries = NostrTimelineMaterializer.entries(
+            noteEvents: [newer, older],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            deletedEntries: [deleted]
+        )
+
+        #expect(entries.map(\.id) == [newer.id, "deleted-deleted-target", older.id])
+        guard case .deleted(let deletedEntry) = entries[1] else {
+            Issue.record("Expected deleted timeline entry")
+            return
+        }
+        #expect(deletedEntry.id == "deleted-deleted-target")
+    }
+
     @Test("_@domain NIP-05 is displayed as domain only")
     func rootNIP05Display() {
         let author = TimelineAuthor.resolved(

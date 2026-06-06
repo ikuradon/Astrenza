@@ -93,8 +93,8 @@ The remaining phases below intentionally revisit some of those areas where they 
 
 **Implementation steps:**
 
-- [ ] Materialize valid kind:5 effects as `TimelineFeedEntry.deleted` or a compact deleted row when the deleted event still occupies an expected timeline slot.
-- [ ] Interpret NIP-36 `content-warning` tags from actual event tags:
+- [x] Materialize valid kind:5 effects as `TimelineFeedEntry.deleted` or a compact deleted row when the deleted event still occupies an expected timeline slot.
+- [x] Interpret NIP-36 `content-warning` tags from actual event tags:
   - empty reason: generic sensitive state
   - non-empty reason: overlay reason text
   - author/header remains visible, body/media/OGP are blurred

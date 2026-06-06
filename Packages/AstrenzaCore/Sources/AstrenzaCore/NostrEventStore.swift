@@ -52,6 +52,20 @@ public struct NostrTimelineEntryRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct NostrDeletedTimelineEntryRecord: Codable, Equatable, Sendable {
+    public let targetEventID: String
+    public let deletionEventID: String?
+    public let deletedAt: Int
+    public let sortTimestamp: Int
+
+    public init(targetEventID: String, deletionEventID: String?, deletedAt: Int, sortTimestamp: Int) {
+        self.targetEventID = targetEventID
+        self.deletionEventID = deletionEventID
+        self.deletedAt = deletedAt
+        self.sortTimestamp = sortTimestamp
+    }
+}
+
 public struct NostrSyncCursorRecord: Codable, Equatable, Sendable {
     public let accountID: String
     public let timelineKey: String
@@ -587,6 +601,35 @@ public final class NostrEventStore {
                 arguments: [accountID, timelineKey, limit]
             )
             return rows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func deletedTimelineEntries(
+        accountID: String,
+        timelineKey: String,
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrDeletedTimelineEntryRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT te.event_id AS target_event_id,
+                    tombstone.deletion_event_id,
+                    e.deleted_at,
+                    te.sort_ts
+                FROM timeline_entries te
+                JOIN events e ON e.event_id = te.event_id
+                LEFT JOIN deletion_tombstones tombstone ON tombstone.target_event_id = te.event_id
+                WHERE te.account_id = ? AND te.timeline_key = ?
+                    AND e.deleted_at IS NOT NULL
+                    AND (e.expires_at IS NULL OR e.expires_at > ?)
+                ORDER BY te.sort_ts DESC, te.event_id ASC
+                LIMIT ?
+                """,
+                arguments: [accountID, timelineKey, now, limit]
+            )
+            return rows.map(decodeDeletedTimelineEntry)
         }
     }
 
@@ -1449,6 +1492,15 @@ public final class NostrEventStore {
             insertedAt: row["inserted_at"],
             gapBefore: row["gap_before"],
             gapAfter: row["gap_after"]
+        )
+    }
+
+    private func decodeDeletedTimelineEntry(_ row: Row) -> NostrDeletedTimelineEntryRecord {
+        NostrDeletedTimelineEntryRecord(
+            targetEventID: row["target_event_id"],
+            deletionEventID: row["deletion_event_id"],
+            deletedAt: row["deleted_at"],
+            sortTimestamp: row["sort_ts"]
         )
     }
 
