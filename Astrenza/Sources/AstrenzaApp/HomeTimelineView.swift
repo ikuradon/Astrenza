@@ -229,8 +229,8 @@ private extension HomeTimelineView {
     var profileView: some View {
         NavigationStack(path: $profileNavigationPath) {
             UserDetailView(
-                profile: MockTimelineData.selfProfile,
-                posts: MockTimelineData.selfProfilePosts,
+                profile: currentUserProfile,
+                posts: currentUserProfilePosts,
                 swipeSettings: swipeSettings,
                 onOpenPost: openProfilePost,
                 onOpenProfile: openProfileFromProfile,
@@ -250,8 +250,11 @@ private extension HomeTimelineView {
     func timelineDestination(for route: TimelineNavigationRoute) -> some View {
         switch route {
         case .post(let selectedPost):
+            let post = detailPost(for: selectedPost.post)
             PostDetailView(
-                post: selectedPost.post,
+                post: post,
+                replyAncestors: liveReplyAncestors(for: post),
+                replies: liveReplies(for: post),
                 swipeSettings: swipeSettings,
                 onOpenPost: openPost,
                 onReplyPost: { _ in
@@ -273,8 +276,11 @@ private extension HomeTimelineView {
     func profileDestination(for route: TimelineNavigationRoute) -> some View {
         switch route {
         case .post(let selectedPost):
+            let post = detailPost(for: selectedPost.post)
             PostDetailView(
-                post: selectedPost.post,
+                post: post,
+                replyAncestors: liveReplyAncestors(for: post),
+                replies: liveReplies(for: post),
                 swipeSettings: swipeSettings,
                 onOpenPost: openProfilePost,
                 onReplyPost: { _ in
@@ -297,11 +303,11 @@ private extension HomeTimelineView {
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void
     ) -> some View {
-        let profile = MockTimelineData.profile(for: post)
+        let profile = userProfile(for: post)
 
         return UserDetailView(
             profile: profile,
-            posts: MockTimelineData.profilePosts(for: profile),
+            posts: userProfilePosts(for: profile),
             swipeSettings: swipeSettings,
             onOpenPost: onOpenPost,
             onOpenProfile: onOpenProfile,
@@ -311,6 +317,53 @@ private extension HomeTimelineView {
             onOpenMedia: openMedia,
             onOpenURL: openURL
         )
+    }
+
+    var currentUserProfile: UserProfile {
+        guard let account = sessionStore.account else {
+            return MockTimelineData.selfProfile
+        }
+
+        return liveTimelineStore.profile(pubkey: account.pubkey, isCurrentUser: true)
+    }
+
+    var currentUserProfilePosts: [TimelinePost] {
+        guard let account = sessionStore.account else {
+            return MockTimelineData.selfProfilePosts
+        }
+
+        return liveTimelineStore.profilePosts(pubkey: account.pubkey)
+    }
+
+    func detailPost(for post: TimelinePost) -> TimelinePost {
+        guard sessionStore.account != nil else { return post }
+        return liveTimelineStore.post(eventID: post.id) ?? post
+    }
+
+    func liveReplyAncestors(for post: TimelinePost) -> [TimelinePost]? {
+        guard sessionStore.account != nil else { return nil }
+        return liveTimelineStore.replyAncestors(for: post)
+    }
+
+    func liveReplies(for post: TimelinePost) -> [TimelinePost]? {
+        guard sessionStore.account != nil else { return nil }
+        return liveTimelineStore.replies(for: post)
+    }
+
+    func userProfile(for post: TimelinePost) -> UserProfile {
+        guard sessionStore.account != nil else {
+            return MockTimelineData.profile(for: post)
+        }
+
+        return liveTimelineStore.profile(pubkey: post.author.pubkey)
+    }
+
+    func userProfilePosts(for profile: UserProfile) -> [TimelinePost] {
+        guard sessionStore.account != nil else {
+            return MockTimelineData.profilePosts(for: profile)
+        }
+
+        return liveTimelineStore.profilePosts(pubkey: profile.author.pubkey)
     }
 
     func completeInitialAppearanceIfNeeded() {

@@ -116,6 +116,84 @@ final class NostrHomeTimelineStore: ObservableObject {
         phase = .idle
     }
 
+    func post(eventID: String) -> TimelinePost? {
+        guard let eventStore,
+              let event = try? eventStore.event(id: eventID),
+              event.kind == 1
+        else {
+            return entries.compactMap(\.post).first { $0.id == eventID }
+        }
+
+        return materializedPosts(from: [event]).first
+    }
+
+    func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
+        let metadata = try? eventStore?.latestReplaceableEvent(pubkey: pubkey, kind: 0)
+        let posts = profilePosts(pubkey: pubkey, limit: 1_000)
+        let author = materializedAuthor(pubkey: pubkey, metadataEvent: metadata)
+        let avatar = posts.first?.avatar ?? avatar(for: pubkey)
+        let relayCount = isCurrentUser ? resolvedRelays.count : max(1, resolvedRelays.count)
+
+        return UserProfile(
+            id: pubkey,
+            author: author,
+            avatar: avatar,
+            banner: banner(for: pubkey),
+            bio: metadata.flatMap(Self.profileMetadata).map { _ in "kind:0 profile metadata is cached." } ?? "kind:0 profile is not cached yet.",
+            isCurrentUser: isCurrentUser,
+            isFollowed: followedPubkeys.contains(pubkey) || isCurrentUser,
+            followerCount: 0,
+            followingCount: isCurrentUser ? followedPubkeys.count : 0,
+            postCount: posts.count,
+            relayCount: relayCount,
+            latestFollowers: [],
+            featuredHashtags: []
+        )
+    }
+
+    func profilePosts(pubkey: String, limit: Int = 80) -> [TimelinePost] {
+        guard let events = try? eventStore?.events(kind: 1, authors: [pubkey], limit: limit) else {
+            return entries.compactMap(\.post).filter { $0.author.pubkey == pubkey }
+        }
+
+        return materializedPosts(from: events)
+    }
+
+    func replyAncestors(for post: TimelinePost, limit: Int = 8) -> [TimelinePost] {
+        guard let eventStore else { return [] }
+
+        var ancestors: [NostrEvent] = []
+        var currentID = post.id
+        var visited = Set([post.id])
+
+        while ancestors.count < limit {
+            guard let tags = try? eventStore.tags(eventID: currentID),
+                  let parentID = Self.replyParentID(from: tags),
+                  !visited.contains(parentID),
+                  let parentEvent = try? eventStore.event(id: parentID),
+                  parentEvent.kind == 1
+            else {
+                break
+            }
+
+            ancestors.append(parentEvent)
+            visited.insert(parentID)
+            currentID = parentID
+        }
+
+        return materializedPosts(from: ancestors.reversed())
+    }
+
+    func replies(for post: TimelinePost, limit: Int = 24) -> [TimelinePost] {
+        guard let events = try? eventStore?.eventsReferencing(eventID: post.id, kind: 1, limit: limit) else {
+            return []
+        }
+
+        return materializedPosts(from: events.filter { event in
+            Self.replyParentID(from: event.tags) == post.id
+        })
+    }
+
     private func load(account: NostrAccount) async {
         do {
             let state = try await timelineLoader.initialState(account: account)
@@ -266,6 +344,81 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
+    private func materializedPosts(from events: [NostrEvent]) -> [TimelinePost] {
+        let pubkeys = Set(events.map(\.pubkey))
+        let metadata = (try? eventStore?.latestReplaceableEvents(pubkeys: pubkeys, kind: 0)) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
+
+        return NostrTimelineMaterializer.posts(
+            noteEvents: events,
+            metadataEvents: metadata,
+            nip05Resolutions: nip05Resolutions,
+            followedPubkeys: Set(followedPubkeys)
+        )
+    }
+
+    private func materializedAuthor(pubkey: String, metadataEvent: NostrEvent?) -> TimelineAuthor {
+        let metadata = metadataEvent.flatMap(Self.profileMetadata)
+        guard let displayName = metadata?.bestName else {
+            return .unresolved(pubkey: pubkey)
+        }
+
+        return .resolved(
+            displayName: displayName,
+            nip05: metadata?.nip05,
+            nip05Status: NIP05Status(nip05Resolutions[pubkey]?.status ?? .unchecked),
+            pubkey: pubkey,
+            isFollowed: followedPubkeys.contains(pubkey)
+        )
+    }
+
+    private func avatar(for pubkey: String) -> AvatarStyle {
+        let item = NostrHomeTimelineItem(
+            id: pubkey,
+            pubkey: pubkey,
+            displayName: nil,
+            nip05: nil,
+            nip05Status: .absent,
+            isFollowed: followedPubkeys.contains(pubkey),
+            body: "",
+            createdAt: Int(Date().timeIntervalSince1970),
+            avatarPictureState: .metadataPending,
+            avatarImageURL: nil
+        )
+        return NostrTimelineMaterializer.avatar(for: item)
+    }
+
+    private func banner(for pubkey: String) -> ProfileBannerStyle {
+        let palette = NostrTimelineMaterializer.avatarPalette(for: pubkey)
+        return ProfileBannerStyle(colors: [palette.secondary, palette.primary], symbolName: "sparkles")
+    }
+
+    private static func profileMetadata(from event: NostrEvent) -> NostrProfileMetadata? {
+        guard let data = event.content.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(NostrProfileMetadata.self, from: data)
+    }
+
+    private static func replyParentID(from tags: [NostrStoredEventTag]) -> String? {
+        let replyTag = tags.last { $0.name == "e" && $0.marker == "reply" }
+        let fallbackTag = tags.last { $0.name == "e" }
+        return replyTag?.value ?? fallbackTag?.value
+    }
+
+    private static func replyParentID(from tags: [[String]]) -> String? {
+        let replyTag = tags.last { tag in
+            tag.count >= 4 && tag[0] == "e" && tag[3] == "reply"
+        }
+        let fallbackTag = tags.last { tag in
+            tag.count >= 2 && tag[0] == "e"
+        }
+        if let replyTag, replyTag.count >= 2 {
+            return replyTag[1]
+        }
+        if let fallbackTag, fallbackTag.count >= 2 {
+            return fallbackTag[1]
+        }
+        return nil
+    }
+
     private func loaderState() -> NostrHomeTimelineState {
         NostrHomeTimelineState(
             relays: resolvedRelays,
@@ -307,7 +460,22 @@ enum NostrTimelineMaterializer {
         .map { TimelineFeedEntry.post(post(for: $0)) }
     }
 
-    private static func post(for item: NostrHomeTimelineItem) -> TimelinePost {
+    static func posts(
+        noteEvents: [NostrEvent],
+        metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        followedPubkeys: Set<String>
+    ) -> [TimelinePost] {
+        NostrHomeTimelineMaterializer.items(
+            noteEvents: noteEvents,
+            metadataEvents: metadataEvents,
+            followedPubkeys: followedPubkeys,
+            nip05Resolutions: nip05Resolutions
+        )
+        .map(post(for:))
+    }
+
+    static func post(for item: NostrHomeTimelineItem) -> TimelinePost {
         let author: TimelineAuthor
         if let displayName = item.displayName {
             author = .resolved(
@@ -337,7 +505,7 @@ enum NostrTimelineMaterializer {
         )
     }
 
-    private static func avatar(for item: NostrHomeTimelineItem) -> AvatarStyle {
+    static func avatar(for item: NostrHomeTimelineItem) -> AvatarStyle {
         let palette = avatarPalette(for: item.pubkey)
         return AvatarStyle(
             primary: palette.primary,
@@ -349,7 +517,7 @@ enum NostrTimelineMaterializer {
         )
     }
 
-    private static func avatarPalette(for pubkey: String) -> (primary: Color, secondary: Color) {
+    static func avatarPalette(for pubkey: String) -> (primary: Color, secondary: Color) {
         let colors: [Color] = [.purple, .cyan, .mint, .orange, .pink, .blue, .green, .indigo]
         let seed = pubkey.utf8.reduce(0) { Int($0) + Int($1) }
         return (colors[seed % colors.count], colors[(seed / 3 + 2) % colors.count])

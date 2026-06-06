@@ -288,6 +288,54 @@ public final class NostrEventStore {
         }
     }
 
+    public func events(kind: Int, authors: [String], limit: Int) throws -> [NostrEvent] {
+        guard !authors.isEmpty else { return [] }
+
+        return try database.read { db in
+            var arguments: StatementArguments = [kind]
+            let placeholders = authors.map { _ in "?" }.joined(separator: ", ")
+            for author in authors {
+                arguments += [author]
+            }
+            arguments += [limit]
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
+                FROM events
+                WHERE kind = ? AND deleted_at IS NULL
+                    AND pubkey IN (\(placeholders))
+                ORDER BY created_at DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: arguments
+            )
+            return try rows.map(decodeEvent)
+        }
+    }
+
+    public func eventsReferencing(eventID: String, kind: Int, limit: Int) throws -> [NostrEvent] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT DISTINCT e.event_id, e.pubkey, e.created_at, e.kind, e.tags_json, e.content, e.sig
+                FROM event_tags tag
+                JOIN events e ON e.event_id = tag.event_id
+                WHERE tag.tag_name = 'e'
+                    AND tag.tag_value = ?
+                    AND e.kind = ?
+                    AND e.deleted_at IS NULL
+                ORDER BY e.created_at ASC, e.event_id ASC
+                LIMIT ?
+                """,
+                arguments: [eventID, kind, limit]
+            )
+            return try rows.map(decodeEvent)
+        }
+    }
+
     public func tags(eventID: String) throws -> [NostrStoredEventTag] {
         try database.read { db in
             let rows = try Row.fetchAll(
@@ -314,6 +362,12 @@ public final class NostrEventStore {
                 return nil
             }
             return try fetchEvent(id: eventID, db: db)
+        }
+    }
+
+    public func latestReplaceableEvents(pubkeys: Set<String>, kind: Int) throws -> [NostrEvent] {
+        try database.read { db in
+            try latestReplaceableEvents(pubkeys: pubkeys, kind: kind, db: db)
         }
     }
 

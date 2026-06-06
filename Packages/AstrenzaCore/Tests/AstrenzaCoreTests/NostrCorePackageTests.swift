@@ -363,6 +363,33 @@ struct NostrCorePackageTests {
         #expect(try store.events(kind: 1, authors: [author], until: 200, limit: 10).map(\.id) == [matching.id])
     }
 
+    @Test("Nostr event store returns profile events by author")
+    func eventStoreProfileEventsByAuthor() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let other = String(repeating: "b", count: 64)
+        let newest = nostrEvent(kind: 1, pubkey: author, createdAt: 300, content: "newest")
+        let oldest = nostrEvent(kind: 1, pubkey: author, createdAt: 100, content: "oldest")
+        let otherAuthor = nostrEvent(kind: 1, pubkey: other, createdAt: 200, content: "other")
+
+        try store.save(events: [oldest, otherAuthor, newest])
+
+        #expect(try store.events(kind: 1, authors: [author], limit: 10).map(\.id) == [newest.id, oldest.id])
+    }
+
+    @Test("Nostr event store returns replies by event reference")
+    func eventStoreRepliesByReference() throws {
+        let store = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let parent = nostrEvent(kind: 1, pubkey: author, createdAt: 100, content: "parent")
+        let reply = nostrEvent(kind: 1, pubkey: author, createdAt: 120, content: "reply", tags: [["e", parent.id, "", "reply"]])
+        let unrelated = nostrEvent(kind: 1, pubkey: author, createdAt: 130, content: "unrelated")
+
+        try store.save(events: [parent, reply, unrelated])
+
+        #expect(try store.eventsReferencing(eventID: parent.id, kind: 1, limit: 10).map(\.id) == [reply.id])
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)
