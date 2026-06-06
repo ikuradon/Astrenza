@@ -260,7 +260,7 @@ The remaining phases below intentionally revisit some of those areas where they 
   - account write relays from kind:10002
   - tagged users' cached read relays
   - settings fallback relays
-- [ ] Compose Post button inserts outbox row and optimistic event row.
+- [x] Compose Post button inserts outbox row and optimistic event row.
 - [ ] Relay `OK` results update per-relay status and aggregate outbox status.
 - [ ] UI exposes pending/partial/failed state without blocking timeline rendering.
 

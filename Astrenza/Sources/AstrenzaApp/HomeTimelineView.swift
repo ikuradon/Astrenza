@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 
 struct HomeTimelineView: View {
@@ -57,6 +58,17 @@ struct HomeTimelineView: View {
 
     private var isPostDetailPresented: Bool {
         !postNavigationPath.isEmpty || !profileNavigationPath.isEmpty
+    }
+
+    private var isComposeSubmitAvailable: Bool {
+        sessionStore.account == nil || sessionStore.signer != nil
+    }
+
+    private var composeSubmitHandler: ((ComposeSubmitRequest) async -> Bool)? {
+        guard sessionStore.account != nil else { return nil }
+        return { request in
+            await submitCompose(request)
+        }
     }
 
     private var timelineEntries: [TimelineFeedEntry] {
@@ -175,7 +187,9 @@ struct HomeTimelineView: View {
             swipeSettings: $swipeSettings,
             relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays,
             accountID: sessionStore.account?.pubkey,
-            eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore
+            eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore,
+            isComposeSubmitAvailable: isComposeSubmitAvailable,
+            onComposeSubmit: composeSubmitHandler
         )
     }
 }
@@ -494,6 +508,32 @@ private extension HomeTimelineView {
     func loadOlderVisibleTimeline(_ postID: TimelinePost.ID) {
         guard sessionStore.account != nil, selectedTimeline == .home else { return }
         liveTimelineStore.loadOlder()
+    }
+
+    func submitCompose(_ request: ComposeSubmitRequest) async -> Bool {
+        guard let signer = sessionStore.signer else { return false }
+        var tags: [[String]] = []
+        if request.isSensitive {
+            tags.append(["content-warning", request.sensitiveReason])
+        }
+
+        do {
+            switch request.mode {
+            case .post:
+                try await liveTimelineStore.enqueuePublish(
+                    .post(content: request.text, tags: tags),
+                    signer: signer
+                )
+            case .reply:
+                try await liveTimelineStore.enqueuePublish(
+                    .post(content: request.text, tags: tags),
+                    signer: signer
+                )
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 
     func presentComposer(mode: ComposeSheetMode) {

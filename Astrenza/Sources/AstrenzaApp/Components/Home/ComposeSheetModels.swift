@@ -23,3 +23,10 @@ enum ComposeSheetMode {
         }
     }
 }
+
+struct ComposeSubmitRequest: Equatable {
+    let mode: ComposeSheetMode
+    let text: String
+    let isSensitive: Bool
+    let sensitiveReason: String
+}

@@ -110,6 +110,36 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
+    func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
+        guard let account, let eventStore else { return }
+        let writeRelays = NostrRelayList.parse(from: relayListEvent).writeRelays
+        let relayURLs = writeRelays.isEmpty ? resolvedRelays : writeRelays
+        let createdAt = Int(Date().timeIntervalSince1970)
+        let unsignedEvent = input.unsignedEvent(pubkey: account.pubkey, createdAt: createdAt)
+        let signedEvent = try await signer.sign(unsignedEvent)
+        let destinationRelays = NostrPublishDestinationResolver.relayDestinations(
+            accountWriteRelays: relayURLs,
+            taggedUserReadRelays: [],
+            fallbackRelays: resolvedRelays
+        )
+        let record = try eventStore.enqueueOutboxEvent(
+            signedEvent,
+            accountID: account.pubkey,
+            relayURLs: destinationRelays,
+            createdAt: createdAt
+        )
+
+        try eventStore.save(events: [record.event])
+        noteEvents.removeAll { $0.id == record.event.id }
+        noteEvents.insert(record.event, at: 0)
+        if !followedPubkeys.contains(account.pubkey) {
+            followedPubkeys.append(account.pubkey)
+        }
+        materializeEntries()
+        persistDatabase(account: account)
+        phase = .loaded
+    }
+
     func cancel() {
         loadTask?.cancel()
         paginationTask?.cancel()

@@ -142,6 +142,10 @@ public enum NostrNIP19 {
         try hexPayload(from: input, prefix: "npub")
     }
 
+    public static func privateKeyHex(from input: String) throws -> String {
+        try hexPayload(from: input, prefix: "nsec")
+    }
+
     public static func eventIDHex(from input: String) throws -> String {
         try hexPayload(from: input, prefix: "note")
     }

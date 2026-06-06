@@ -6,9 +6,12 @@ struct ComposeSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isEditorFocused: Bool
     let mode: ComposeSheetMode
+    let isSubmitAvailable: Bool
+    let onSubmit: ((ComposeSubmitRequest) async -> Bool)?
     @State private var text = ""
     @State private var sensitiveReason = ""
     @State private var isSensitiveReasonVisible = false
+    @State private var isSubmitting = false
     @State private var isUserSwitcherPresented = false
     @State private var isCameraPresented = false
     @State private var isFileImporterPresented = false
@@ -25,8 +28,14 @@ struct ComposeSheetView: View {
     private let characterLimit = 500
     private let accent = Color.astrenzaAccent
 
-    init(mode: ComposeSheetMode = .post) {
+    init(
+        mode: ComposeSheetMode = .post,
+        isSubmitAvailable: Bool = true,
+        onSubmit: ((ComposeSubmitRequest) async -> Bool)? = nil
+    ) {
         self.mode = mode
+        self.isSubmitAvailable = isSubmitAvailable
+        self.onSubmit = onSubmit
     }
 
     private var remainingCharacters: Int {
@@ -34,7 +43,10 @@ struct ComposeSheetView: View {
     }
 
     private var canSubmit: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && remainingCharacters >= 0
+        isSubmitAvailable
+            && !isSubmitting
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && remainingCharacters >= 0
     }
 
     private var hasDraftContent: Bool {
@@ -180,7 +192,7 @@ struct ComposeSheetView: View {
             canSubmit: canSubmit,
             accent: accent,
             onClose: closeComposer,
-            onSubmit: { dismiss() }
+            onSubmit: submitComposer
         )
     }
 
@@ -364,6 +376,31 @@ struct ComposeSheetView: View {
             isDraftCloseDialogPresented = true
         } else {
             dismiss()
+        }
+    }
+
+    private func submitComposer() {
+        guard canSubmit else { return }
+        guard let onSubmit else {
+            dismiss()
+            return
+        }
+
+        isSubmitting = true
+        let request = ComposeSubmitRequest(
+            mode: mode,
+            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            isSensitive: isSensitiveReasonVisible,
+            sensitiveReason: sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        Task {
+            let didSubmit = await onSubmit(request)
+            await MainActor.run {
+                isSubmitting = false
+                if didSubmit {
+                    dismiss()
+                }
+            }
         }
     }
 

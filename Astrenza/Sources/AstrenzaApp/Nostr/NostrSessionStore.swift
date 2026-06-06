@@ -4,6 +4,7 @@ import AstrenzaCore
 @MainActor
 final class NostrSessionStore: ObservableObject {
     @Published private(set) var account: NostrAccount?
+    @Published private(set) var signer: (any NostrEventSigning)?
     @Published var loginInput = ""
     @Published private(set) var isLoggingIn = false
     @Published private(set) var errorMessage: String?
@@ -31,8 +32,15 @@ final class NostrSessionStore: ObservableObject {
         }
 
         do {
+            if let signingAccount = try? signingAccount(from: loginInput) {
+                account = signingAccount.account
+                signer = signingAccount.signer
+                return
+            }
+
             let resolved = try await resolver.resolve(loginInput)
             account = resolved
+            signer = nil
             accountStorage.persist(resolved)
         } catch {
             errorMessage = loginErrorCopy(for: error)
@@ -41,7 +49,17 @@ final class NostrSessionStore: ObservableObject {
 
     func logout() {
         account = nil
+        signer = nil
         accountStorage.clear()
+    }
+
+    private func signingAccount(from input: String) throws -> (account: NostrAccount, signer: any NostrEventSigning) {
+        let privateKeyHex = try NostrNIP19.privateKeyHex(from: input)
+        let signer = try NostrPrivateKeySigner(privateKeyHex: privateKeyHex)
+        return (
+            NostrAccount(pubkey: signer.pubkey, displayIdentifier: "nsec account", readOnly: false),
+            signer
+        )
     }
 
     private func loginErrorCopy(for error: Error) -> String {
@@ -49,7 +67,7 @@ final class NostrSessionStore: ObservableObject {
         case NostrLoginError.emptyInput:
             "Enter npub, hex pubkey, or NIP-05."
         case NostrLoginError.unsupportedInput:
-            "Use npub, 64-character hex pubkey, or name@example.com for read-only login."
+            "Use npub, nsec, 64-character hex pubkey, or name@example.com."
         case NostrLoginError.invalidNIP05:
             "That NIP-05 address does not look valid."
         case NostrLoginError.nip05NotFound:

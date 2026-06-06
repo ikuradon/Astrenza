@@ -12,11 +12,17 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     let relayURLs: [String]
     let accountID: String?
     let eventStore: NostrEventStore?
+    let isComposeSubmitAvailable: Bool
+    let onComposeSubmit: ((ComposeSubmitRequest) async -> Bool)?
 
     func body(content: Content) -> some View {
         content
             .sheet(isPresented: $isComposerPresented) {
-                ComposeSheetView(mode: composeSheetMode)
+                ComposeSheetView(
+                    mode: composeSheetMode,
+                    isSubmitAvailable: isComposeSubmitAvailable,
+                    onSubmit: onComposeSubmit
+                )
                     .presentationDetents([.large])
                     .presentationDragIndicator(.hidden)
                     .presentationCornerRadius(28)
@@ -69,7 +75,9 @@ extension View {
         swipeSettings: Binding<TimelineSwipeSettings>,
         relayURLs: [String],
         accountID: String?,
-        eventStore: NostrEventStore?
+        eventStore: NostrEventStore?,
+        isComposeSubmitAvailable: Bool = true,
+        onComposeSubmit: ((ComposeSubmitRequest) async -> Bool)? = nil
     ) -> some View {
         modifier(
             HomeTimelinePresentationModifier(
@@ -82,7 +90,9 @@ extension View {
                 swipeSettings: swipeSettings,
                 relayURLs: relayURLs,
                 accountID: accountID,
-                eventStore: eventStore
+                eventStore: eventStore,
+                isComposeSubmitAvailable: isComposeSubmitAvailable,
+                onComposeSubmit: onComposeSubmit
             )
         )
     }

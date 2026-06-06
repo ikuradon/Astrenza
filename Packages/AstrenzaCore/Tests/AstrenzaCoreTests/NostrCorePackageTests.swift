@@ -24,6 +24,28 @@ struct NostrCorePackageTests {
         #expect(eventID == "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2")
     }
 
+    @Test("NIP-19 nsec decodes to canonical hex private key")
+    func nsecDecoding() throws {
+        let privateKey = try NostrNIP19.privateKeyHex(
+            from: "nsec1g9q5zs2pg9q5zs2pg9q5zs2pg9q5zs2pg9q5zs2pg9q5zs2pg9qs3whxln"
+        )
+
+        #expect(privateKey == String(repeating: "41", count: 32))
+    }
+
+    @Test("Nostr private key signer creates valid kind 1 events")
+    func privateKeySigner() async throws {
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "21", count: 32))
+        let unsigned = NostrPublishInput.post(content: "signed")
+            .unsignedEvent(pubkey: signer.pubkey, createdAt: 900)
+
+        let event = try await signer.sign(unsigned)
+
+        #expect(event.id == unsigned.eventID)
+        #expect(event.pubkey == signer.pubkey)
+        #expect(NostrEventValidator().isValid(event))
+    }
+
     @Test("kind:3 contact list extracts unique p tags")
     func contactList() {
         let first = String(repeating: "a", count: 64)
