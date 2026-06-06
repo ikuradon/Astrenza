@@ -201,6 +201,33 @@ public final class NostrEventStore {
                 lastNegentropyAt: nil
             ))
         }
+
+        try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
+    }
+
+    public func homeTimelineState(accountID: String, timelineKey: String = "home", limit: Int = 250) throws -> NostrHomeTimelineState? {
+        try database.read { db in
+            let notes = try timelineEvents(accountID: accountID, timelineKey: timelineKey, limit: limit, db: db)
+            guard !notes.isEmpty else { return nil }
+
+            let metadataEvents = try latestReplaceableEvents(
+                pubkeys: Set(notes.map(\.pubkey)),
+                kind: 0,
+                db: db
+            )
+
+            let stateMetadata = try timelineStateMetadata(accountID: accountID, timelineKey: timelineKey, db: db)
+            let relays = stateMetadata?.relays ?? syncRelayURLs(accountID: accountID, timelineKey: timelineKey, db: db)
+
+            return NostrHomeTimelineState(
+                relays: relays,
+                followedPubkeys: stateMetadata?.followedPubkeys ?? [],
+                noteEvents: notes,
+                metadataEvents: metadataEvents,
+                nip05Resolutions: stateMetadata?.nip05Resolutions ?? [:],
+                hasMoreOlder: stateMetadata?.hasMoreOlder ?? true
+            )
+        }
     }
 
     public func event(id: String) throws -> NostrEvent? {
@@ -330,19 +357,7 @@ public final class NostrEventStore {
 
     public func timelineEvents(accountID: String, timelineKey: String, limit: Int) throws -> [NostrEvent] {
         try database.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                SELECT e.event_id, e.pubkey, e.created_at, e.kind, e.tags_json, e.content, e.sig
-                FROM timeline_entries te
-                JOIN events e ON e.event_id = te.event_id
-                WHERE te.account_id = ? AND te.timeline_key = ? AND e.deleted_at IS NULL
-                ORDER BY te.sort_ts DESC, te.event_id ASC
-                LIMIT ?
-                """,
-                arguments: [accountID, timelineKey, limit]
-            )
-            return try rows.map(decodeEvent)
+            try timelineEvents(accountID: accountID, timelineKey: timelineKey, limit: limit, db: db)
         }
     }
 
@@ -562,6 +577,89 @@ public final class NostrEventStore {
                 table.column("deleted_at", .integer).notNull()
                 table.column("author_pubkey", .text).notNull()
             }
+
+            try db.create(table: "timeline_state", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("relays_json", .blob).notNull()
+                table.column("followed_pubkeys_json", .blob).notNull()
+                table.column("nip05_resolutions_json", .blob).notNull()
+                table.column("has_more_older", .boolean).notNull().defaults(to: true)
+                table.column("updated_at", .integer).notNull()
+                table.primaryKey(["account_id", "timeline_key"])
+            }
+        }
+
+        migrator.registerMigration("expandNostrEventStoreSchema") { db in
+            try db.create(table: "timeline_entries", ifNotExists: true) { table in
+                table.autoIncrementedPrimaryKey("id")
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("sort_ts", .integer).notNull()
+                table.column("source", .text).notNull()
+                table.column("inserted_at", .integer).notNull()
+                table.column("gap_before", .boolean).notNull().defaults(to: false)
+                table.column("gap_after", .boolean).notNull().defaults(to: false)
+                table.uniqueKey(["account_id", "timeline_key", "event_id"])
+            }
+
+            try db.create(index: "timeline_entries_account_timeline_sort", on: "timeline_entries", columns: ["account_id", "timeline_key", "sort_ts"], ifNotExists: true)
+            try db.create(index: "timeline_entries_account_timeline_event", on: "timeline_entries", columns: ["account_id", "timeline_key", "event_id"], ifNotExists: true)
+
+            try db.create(table: "sync_cursors", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("relay_url", .text).notNull()
+                table.column("newest_created_at", .integer)
+                table.column("oldest_created_at", .integer)
+                table.column("last_eose_at", .integer)
+                table.column("last_negentropy_at", .integer)
+                table.primaryKey(["account_id", "timeline_key", "relay_url"])
+            }
+
+            try db.create(index: "sync_cursors_timeline", on: "sync_cursors", columns: ["account_id", "timeline_key"], ifNotExists: true)
+
+            try db.create(table: "relay_profiles", ifNotExists: true) { table in
+                table.column("relay_url", .text).primaryKey()
+                table.column("information_json", .blob)
+                table.column("health_score", .double).notNull().defaults(to: 0)
+                table.column("last_eose_at", .integer)
+                table.column("last_connected_at", .integer)
+                table.column("auth_required", .boolean).notNull().defaults(to: false)
+                table.column("payment_required", .boolean).notNull().defaults(to: false)
+            }
+
+            try db.create(index: "relay_profiles_health", on: "relay_profiles", columns: ["health_score"], ifNotExists: true)
+            try db.create(index: "relay_profiles_last_eose", on: "relay_profiles", columns: ["last_eose_at"], ifNotExists: true)
+
+            try db.create(table: "event_sources", ifNotExists: true) { table in
+                table.column("event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("relay_url", .text).notNull()
+                table.column("first_seen_at", .integer).notNull()
+                table.column("last_seen_at", .integer).notNull()
+                table.primaryKey(["event_id", "relay_url"])
+            }
+
+            try db.create(index: "event_sources_relay", on: "event_sources", columns: ["relay_url"], ifNotExists: true)
+
+            try db.create(table: "deletion_tombstones", ifNotExists: true) { table in
+                table.column("target_event_id", .text).primaryKey()
+                table.column("deletion_event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("deleted_at", .integer).notNull()
+                table.column("author_pubkey", .text).notNull()
+            }
+
+            try db.create(table: "timeline_state", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("timeline_key", .text).notNull()
+                table.column("relays_json", .blob).notNull()
+                table.column("followed_pubkeys_json", .blob).notNull()
+                table.column("nip05_resolutions_json", .blob).notNull()
+                table.column("has_more_older", .boolean).notNull().defaults(to: true)
+                table.column("updated_at", .integer).notNull()
+                table.primaryKey(["account_id", "timeline_key"])
+            }
         }
 
         try migrator.migrate(database)
@@ -651,6 +749,126 @@ public final class NostrEventStore {
                 Int(Date().timeIntervalSince1970)
             ]
         )
+    }
+
+    private func saveTimelineStateMetadata(
+        _ state: NostrHomeTimelineState,
+        accountID: String,
+        timelineKey: String,
+        savedAt: Int
+    ) throws {
+        let relaysData = try encoder.encode(state.relays)
+        let followedData = try encoder.encode(state.followedPubkeys)
+        let nip05Data = try encoder.encode(state.nip05Resolutions)
+
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO timeline_state (
+                    account_id, timeline_key, relays_json, followed_pubkeys_json,
+                    nip05_resolutions_json, has_more_older, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, timeline_key) DO UPDATE SET
+                    relays_json = excluded.relays_json,
+                    followed_pubkeys_json = excluded.followed_pubkeys_json,
+                    nip05_resolutions_json = excluded.nip05_resolutions_json,
+                    has_more_older = excluded.has_more_older,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    accountID,
+                    timelineKey,
+                    relaysData,
+                    followedData,
+                    nip05Data,
+                    state.hasMoreOlder,
+                    savedAt
+                ]
+            )
+        }
+    }
+
+    private struct TimelineStateMetadata {
+        let relays: [String]
+        let followedPubkeys: [String]
+        let nip05Resolutions: [String: NostrNIP05Resolution]
+        let hasMoreOlder: Bool
+    }
+
+    private func timelineStateMetadata(accountID: String, timelineKey: String, db: Database) throws -> TimelineStateMetadata? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT relays_json, followed_pubkeys_json, nip05_resolutions_json, has_more_older
+            FROM timeline_state
+            WHERE account_id = ? AND timeline_key = ?
+            """,
+            arguments: [accountID, timelineKey]
+        ) else {
+            return nil
+        }
+
+        let relaysData: Data = row["relays_json"]
+        let followedData: Data = row["followed_pubkeys_json"]
+        let nip05Data: Data = row["nip05_resolutions_json"]
+
+        return TimelineStateMetadata(
+            relays: try decoder.decode([String].self, from: relaysData),
+            followedPubkeys: try decoder.decode([String].self, from: followedData),
+            nip05Resolutions: try decoder.decode([String: NostrNIP05Resolution].self, from: nip05Data),
+            hasMoreOlder: row["has_more_older"]
+        )
+    }
+
+    private func timelineEvents(accountID: String, timelineKey: String, limit: Int, db: Database) throws -> [NostrEvent] {
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT e.event_id, e.pubkey, e.created_at, e.kind, e.tags_json, e.content, e.sig
+            FROM timeline_entries te
+            JOIN events e ON e.event_id = te.event_id
+            WHERE te.account_id = ? AND te.timeline_key = ? AND e.deleted_at IS NULL
+            ORDER BY te.sort_ts DESC, te.event_id ASC
+            LIMIT ?
+            """,
+            arguments: [accountID, timelineKey, limit]
+        )
+        return try rows.map(decodeEvent)
+    }
+
+    private func latestReplaceableEvents(pubkeys: Set<String>, kind: Int, db: Database) throws -> [NostrEvent] {
+        guard !pubkeys.isEmpty else { return [] }
+
+        var events: [NostrEvent] = []
+        for pubkey in pubkeys {
+            guard let eventID = try String.fetchOne(
+                db,
+                sql: "SELECT event_id FROM replaceable_heads WHERE pubkey = ? AND kind = ?",
+                arguments: [pubkey, kind]
+            ), let event = try fetchEvent(id: eventID, db: db) else {
+                continue
+            }
+            events.append(event)
+        }
+        return events.sorted { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id < rhs.id
+            }
+            return lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    private func syncRelayURLs(accountID: String, timelineKey: String, db: Database) -> [String] {
+        (try? String.fetchAll(
+            db,
+            sql: """
+            SELECT relay_url
+            FROM sync_cursors
+            WHERE account_id = ? AND timeline_key = ?
+            ORDER BY relay_url ASC
+            """,
+            arguments: [accountID, timelineKey]
+        )) ?? []
     }
 
     private func fetchEvent(id: String, db: Database) throws -> NostrEvent? {

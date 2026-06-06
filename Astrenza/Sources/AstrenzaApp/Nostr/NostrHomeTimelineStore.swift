@@ -176,6 +176,15 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func restoreCachedSnapshot(account: NostrAccount) {
+        if let databaseState = try? eventStore?.homeTimelineState(accountID: account.pubkey) {
+            apply(databaseState)
+            materializeEntries()
+            if !entries.isEmpty {
+                phase = .loaded
+            }
+            return
+        }
+
         guard let snapshot = timelineCache.snapshot(accountID: account.pubkey, timelineKey: "home") else {
             entries = []
             resolvedRelays = []

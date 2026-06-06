@@ -280,6 +280,39 @@ struct NostrCorePackageTests {
         #expect(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: "wss://relay.example")?.newestCreatedAt == 200)
     }
 
+    @Test("Nostr event store restores home timeline state")
+    func eventStoreHomeTimelineStateReadPath() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "f", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: accountID, createdAt: 200, content: "home")
+        let metadata = nostrEvent(kind: 0, pubkey: accountID, createdAt: 150, content: #"{"name":"Home"}"#)
+        let resolution = NostrNIP05Resolution(
+            identifier: "home@example.test",
+            pubkey: accountID,
+            relays: ["wss://relay.example"],
+            status: .verified
+        )
+        let state = NostrHomeTimelineState(
+            relays: ["wss://relay.example"],
+            followedPubkeys: [accountID],
+            noteEvents: [note],
+            metadataEvents: [metadata],
+            nip05Resolutions: [accountID: resolution],
+            hasMoreOlder: false
+        )
+
+        try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 300)
+        let restoredState = try store.homeTimelineState(accountID: accountID)
+        let restored = try #require(restoredState)
+
+        #expect(restored.relays == ["wss://relay.example"])
+        #expect(restored.followedPubkeys == [accountID])
+        #expect(restored.noteEvents == [note])
+        #expect(restored.metadataEvents == [metadata])
+        #expect(restored.nip05Resolutions == [accountID: resolution])
+        #expect(!restored.hasMoreOlder)
+    }
+
     @Test("Home materializer builds UI-independent timeline items")
     func homeTimelineMaterializerItems() throws {
         let pubkey = String(repeating: "d", count: 64)
