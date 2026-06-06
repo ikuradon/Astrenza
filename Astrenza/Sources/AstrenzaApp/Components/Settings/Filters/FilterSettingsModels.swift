@@ -54,6 +54,44 @@ enum FilterApplicationScope: String, CaseIterable, Identifiable {
     }
 }
 
+enum FilterDuration: String, CaseIterable, Identifiable {
+    case forever = "Forever"
+    case oneDay = "24 Hours"
+    case sevenDays = "7 Days"
+    case thirtyDays = "30 Days"
+
+    var id: String { rawValue }
+
+    func expiresAt(from now: Int) -> Int? {
+        switch self {
+        case .forever:
+            nil
+        case .oneDay:
+            now + 86_400
+        case .sevenDays:
+            now + 604_800
+        case .thirtyDays:
+            now + 2_592_000
+        }
+    }
+
+    init(expiresAt: Int?, referenceTime: Int) {
+        guard let expiresAt else {
+            self = .forever
+            return
+        }
+
+        let delta = max(0, expiresAt - referenceTime)
+        if delta <= 86_400 {
+            self = .oneDay
+        } else if delta <= 604_800 {
+            self = .sevenDays
+        } else {
+            self = .thirtyDays
+        }
+    }
+}
+
 struct FilterCandidateUser: Identifiable {
     let id: String
     let displayName: String
@@ -96,6 +134,7 @@ struct FilterEditorDraft: Identifiable {
     var isEnabled: Bool
     var masksWithWarning: Bool
     var selectedScopes: Set<FilterApplicationScope>
+    var duration: FilterDuration
     var selectedUser: FilterCandidateUser?
     var matchingCount: Int
     var totalCount: Int
@@ -107,6 +146,7 @@ struct FilterEditorDraft: Identifiable {
             isEnabled: true,
             masksWithWarning: false,
             selectedScopes: [.home, .lists, .publicTimelines],
+            duration: .forever,
             selectedUser: nil,
             matchingCount: 0,
             totalCount: 3_944
@@ -120,6 +160,7 @@ struct FilterEditorDraft: Identifiable {
             isEnabled: true,
             masksWithWarning: false,
             selectedScopes: [.home, .lists, .publicTimelines],
+            duration: .forever,
             selectedUser: nil,
             matchingCount: 0,
             totalCount: 3_944
@@ -133,6 +174,7 @@ struct FilterEditorDraft: Identifiable {
             isEnabled: true,
             masksWithWarning: false,
             selectedScopes: [.home],
+            duration: .forever,
             selectedUser: nil,
             matchingCount: 0,
             totalCount: 3_944
@@ -151,6 +193,7 @@ struct FilterEditorDraft: Identifiable {
             isEnabled: existing?.isEnabled ?? false,
             masksWithWarning: existing?.presentation != .hide,
             selectedScopes: existing.map(scopeSet(from:)) ?? [.home],
+            duration: existing.map { FilterDuration(expiresAt: $0.expiresAt, referenceTime: $0.updatedAt) } ?? .forever,
             selectedUser: nil,
             matchingCount: matchingCount,
             totalCount: totalCount
@@ -173,6 +216,7 @@ struct FilterEditorDraft: Identifiable {
                 isEnabled: rule.isEnabled,
                 masksWithWarning: rule.presentation != .hide,
                 selectedScopes: scopeSet(from: rule),
+                duration: FilterDuration(expiresAt: rule.expiresAt, referenceTime: rule.updatedAt),
                 selectedUser: candidate,
                 matchingCount: matchingCount,
                 totalCount: totalCount
@@ -184,6 +228,7 @@ struct FilterEditorDraft: Identifiable {
                 isEnabled: rule.isEnabled,
                 masksWithWarning: rule.presentation != .hide,
                 selectedScopes: scopeSet(from: rule),
+                duration: FilterDuration(expiresAt: rule.expiresAt, referenceTime: rule.updatedAt),
                 selectedUser: nil,
                 matchingCount: matchingCount,
                 totalCount: totalCount
@@ -195,6 +240,7 @@ struct FilterEditorDraft: Identifiable {
                 isEnabled: rule.isEnabled,
                 masksWithWarning: rule.presentation != .hide,
                 selectedScopes: scopeSet(from: rule),
+                duration: FilterDuration(expiresAt: rule.expiresAt, referenceTime: rule.updatedAt),
                 selectedUser: nil,
                 matchingCount: matchingCount,
                 totalCount: totalCount
@@ -262,6 +308,7 @@ struct FilterEditorDraft: Identifiable {
             accountID: accountID,
             kind: ruleKind,
             value: ruleValue,
+            expiresAt: duration.expiresAt(from: now),
             isEnabled: isEnabled,
             presentation: masksWithWarning ? .maskWithWarning : .hide,
             scopes: Set(selectedScopes.map(\.coreScope)),

@@ -4,11 +4,18 @@ struct FilterEditorSheet: View {
     @State private var draft: FilterEditorDraft
     @State private var searchText = ""
     let onCancel: () -> Void
+    let onShowMatchingPosts: (FilterEditorDraft) -> Void
     let onSave: (FilterEditorDraft) -> Void
 
-    init(draft: FilterEditorDraft, onCancel: @escaping () -> Void, onSave: @escaping (FilterEditorDraft) -> Void) {
+    init(
+        draft: FilterEditorDraft,
+        onCancel: @escaping () -> Void,
+        onShowMatchingPosts: @escaping (FilterEditorDraft) -> Void,
+        onSave: @escaping (FilterEditorDraft) -> Void
+    ) {
         _draft = State(initialValue: draft)
         self.onCancel = onCancel
+        self.onShowMatchingPosts = onShowMatchingPosts
         self.onSave = onSave
     }
 
@@ -135,29 +142,53 @@ struct FilterEditorSheet: View {
             }
 
             SettingsSection(title: "OPTIONS") {
-                HStack {
-                    Text("Duration")
-                    Spacer()
-                    Text("Forever")
-                        .foregroundStyle(Color.astrenzaAccent)
+                Menu {
+                    ForEach(FilterDuration.allCases) { duration in
+                        Button {
+                            draft.duration = duration
+                        } label: {
+                            if draft.duration == duration {
+                                Label(duration.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(duration.rawValue)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text("Duration")
+                        Spacer()
+                        Text(draft.duration.rawValue)
+                            .foregroundStyle(Color.astrenzaAccent)
+                        Image(systemName: "chevron.right")
+                            .settingsChevronStyle()
+                    }
+                    .padding(.horizontal, 18)
+                    .frame(height: 58)
+                    .settingsRowTextStyle()
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 18)
-                .frame(height: 58)
-                .settingsRowTextStyle()
+                .buttonStyle(.plain)
             }
         }
 
         SettingsSection(title: "POSTS") {
-            HStack {
-                Text("Matching Posts")
-                Spacer()
-                Text("\(draft.matchingCount)/\(draft.totalCount)")
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .settingsChevronStyle()
+            Button {
+                onShowMatchingPosts(draft)
+            } label: {
+                HStack {
+                    Text("Matching Posts")
+                    Spacer()
+                    Text("\(draft.matchingCount)/\(draft.totalCount)")
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .settingsChevronStyle()
+                }
+                .padding(.horizontal, 18)
+                .frame(height: 58)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 18)
-            .frame(height: 58)
+            .buttonStyle(.plain)
             .settingsRowTextStyle()
         } footer: {
             "Filtering mentions will not prevent push notifications for those posts."

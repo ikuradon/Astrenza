@@ -1195,10 +1195,21 @@ public final class NostrEventStore {
         timeline: NostrFilterTimelineScope,
         now: Int = Int(Date().timeIntervalSince1970)
     ) throws -> Int {
-        guard rule.accountID == accountID else { return 0 }
+        try filterRuleMatchingEvents(accountID: accountID, rule: rule, timeline: timeline, limit: 10_000, now: now).count
+    }
+
+    public func filterRuleMatchingEvents(
+        accountID: String,
+        rule: NostrFilterRuleRecord,
+        timeline: NostrFilterTimelineScope,
+        limit: Int = 100,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
+        guard rule.accountID == accountID else { return [] }
         let events = try events(kind: 1, limit: 10_000, now: now)
         let ruleSet = NostrFilterRuleSet(rules: [rule])
-        return ruleSet.matchingCount(events: events, timeline: timeline, now: now)
+        let matches = events.filter { ruleSet.matchingRule(for: $0, timeline: timeline, now: now) != nil }
+        return Array(matches.prefix(max(0, limit)))
     }
 
     public func deleteFilterRule(accountID: String, ruleID: String) throws {

@@ -956,6 +956,53 @@ struct NostrCorePackageTests {
         #expect(mentionsRule.presentation == .hide)
     }
 
+    @Test("Nostr filter rules expose the matching rule details")
+    func filterRulesExposeMatchingRuleDetails() throws {
+        let event = nostrEvent(kind: 1, content: "hello quiet timeline")
+        let rule = NostrFilterRuleRecord(
+            ruleID: "rule-1",
+            accountID: "account",
+            kind: .keyword,
+            value: "quiet",
+            presentation: .hide,
+            scopes: [.home],
+            createdAt: 1,
+            updatedAt: 1
+        )
+
+        let match = try #require(NostrFilterRuleSet(rules: [rule]).matchDetail(event: event, timeline: .home, now: 20))
+        #expect(match.rule == rule)
+        #expect(match.reason == .keyword("quiet"))
+    }
+
+    @Test("Nostr home materializer omits hidden filtered items")
+    func homeMaterializerOmitsHiddenFilteredItems() throws {
+        let hidden = nostrEvent(kind: 1, content: "quiet filtered post")
+        let visible = nostrEvent(kind: 1, content: "ordinary post")
+        let filterRules = NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(
+                ruleID: "rule-1",
+                accountID: "account",
+                kind: .keyword,
+                value: "quiet",
+                presentation: .hide,
+                scopes: [.home],
+                createdAt: 1,
+                updatedAt: 1
+            )
+        ])
+
+        let items = NostrHomeTimelineMaterializer.items(
+            noteEvents: [hidden, visible],
+            metadataEvents: [],
+            followedPubkeys: [],
+            filterRules: filterRules,
+            now: 20
+        )
+
+        #expect(items.map(\.id) == [visible.id])
+    }
+
     @Test("Nostr event store persists filter rules and local bookmarks")
     func eventStoreFilterRulesAndBookmarks() throws {
         let store = try NostrEventStore.inMemory()
@@ -1042,6 +1089,35 @@ struct NostrCorePackageTests {
         #expect(try store.filterRules(accountID: account) == [rule])
         #expect(try store.filterRuleMatchingCount(accountID: account, rule: rule, timeline: .home, now: 200) == 1)
         #expect(try store.filterRuleMatchingCount(accountID: account, rule: rule, timeline: .mentions, now: 200) == 0)
+    }
+
+    @Test("Nostr event store returns cached filter matching events")
+    func eventStoreReturnsCachedFilterMatchingEvents() throws {
+        let store = try NostrEventStore.inMemory()
+        let account = String(repeating: "a", count: 64)
+        let newest = nostrEvent(kind: 1, pubkey: account, createdAt: 300, content: "quiet newest")
+        let older = nostrEvent(kind: 1, pubkey: account, createdAt: 200, content: "quiet older")
+        let other = nostrEvent(kind: 1, pubkey: account, createdAt: 100, content: "ordinary text")
+        try store.save(events: [other, older, newest])
+
+        let rule = NostrFilterRuleRecord(
+            ruleID: "rule-1",
+            accountID: account,
+            kind: .keyword,
+            value: "quiet",
+            scopes: [.home],
+            createdAt: 100,
+            updatedAt: 100
+        )
+
+        let matches = try store.filterRuleMatchingEvents(
+            accountID: account,
+            rule: rule,
+            timeline: .home,
+            limit: 10,
+            now: 400
+        )
+        #expect(matches.map(\.id) == [newest.id, older.id])
     }
 
     @Test("Nostr event store persists relay profiles and event sources")

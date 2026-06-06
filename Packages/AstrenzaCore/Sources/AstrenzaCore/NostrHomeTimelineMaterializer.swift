@@ -58,13 +58,17 @@ public enum NostrHomeTimelineMaterializer {
         let metadataByPubkey = latestMetadataByPubkey(metadataEvents)
         return noteEvents
             .filter { $0.kind == 1 && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map { event in
-                item(
+            .compactMap { event in
+                let filterMatch = filterRules?.matchDetail(event: event, timeline: .home, now: now)
+                if filterMatch?.rule.presentation == .hide {
+                    return nil
+                }
+                return item(
                     for: event,
                     metadata: metadataByPubkey[event.pubkey],
                     nip05Resolution: nip05Resolutions[event.pubkey],
                     isFollowed: followedPubkeys.contains(event.pubkey),
-                    filterMatch: filterRules?.match(event: event, timeline: .home, now: now)
+                    filterMatch: filterMatch?.reason
                 )
             }
     }

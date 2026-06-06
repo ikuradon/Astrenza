@@ -9,6 +9,7 @@ struct NostrListSettingsView: View {
     @State private var localBookmarkCount = 0
     @State private var localRules: [NostrFilterRuleRecord] = []
     @State private var editorDraft: FilterEditorDraft?
+    @State private var matchingPostsSheet: FilterMatchingPostsSheetModel?
     @State private var isEditingFilters = false
     @State private var loadError: String?
 
@@ -157,7 +158,14 @@ struct NostrListSettingsView: View {
             FilterEditorSheet(
                 draft: draft,
                 onCancel: { editorDraft = nil },
+                onShowMatchingPosts: showMatchingPosts,
                 onSave: saveFilterDraft
+            )
+        }
+        .sheet(item: $matchingPostsSheet) { model in
+            FilterMatchingPostsSheet(
+                model: model,
+                onDone: { matchingPostsSheet = nil }
             )
         }
     }
@@ -236,6 +244,30 @@ struct NostrListSettingsView: View {
     private func totalCachedPostCount() -> Int {
         guard let eventStore else { return 0 }
         return ((try? eventStore.events(kind: 1, limit: 10_000).count) ?? 0)
+    }
+
+    private func showMatchingPosts(for draft: FilterEditorDraft) {
+        guard let accountID, let eventStore else { return }
+        let now = Int(Date().timeIntervalSince1970)
+        let rule = draft.rule(accountID: accountID, now: now)
+        let events = (try? eventStore.filterRuleMatchingEvents(
+            accountID: accountID,
+            rule: rule,
+            timeline: .home,
+            limit: 100,
+            now: now
+        )) ?? []
+        let totalCount = (try? eventStore.filterRuleMatchingCount(
+            accountID: accountID,
+            rule: rule,
+            timeline: .home,
+            now: now
+        )) ?? events.count
+        matchingPostsSheet = FilterMatchingPostsSheetModel(
+            title: "Matching Posts",
+            posts: events.map(FilterMatchingPostRow.init(event:)),
+            totalCount: totalCount
+        )
     }
 
     private func saveFilterDraft(_ draft: FilterEditorDraft) {

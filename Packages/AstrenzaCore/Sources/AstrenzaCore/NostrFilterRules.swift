@@ -72,6 +72,16 @@ public enum NostrFilterMatchReason: Equatable, Sendable {
     case relayMute(String)
 }
 
+public struct NostrFilterMatch: Equatable, Sendable {
+    public let rule: NostrFilterRuleRecord
+    public let reason: NostrFilterMatchReason
+
+    public init(rule: NostrFilterRuleRecord, reason: NostrFilterMatchReason) {
+        self.rule = rule
+        self.reason = reason
+    }
+}
+
 public struct NostrFilterRuleSet: Equatable, Sendable {
     public let rules: [NostrFilterRuleRecord]
 
@@ -102,7 +112,16 @@ public struct NostrFilterRuleSet: Equatable, Sendable {
         timeline: NostrFilterTimelineScope = .home,
         now: Int
     ) -> NostrFilterMatchReason? {
-        matchingRule(for: event, timeline: timeline, now: now).map { matchReason(rule: $0, event: event) }
+        matchDetail(event: event, timeline: timeline, now: now)?.reason
+    }
+
+    public func matchDetail(
+        event: NostrEvent,
+        timeline: NostrFilterTimelineScope = .home,
+        now: Int
+    ) -> NostrFilterMatch? {
+        guard let rule = matchingRule(for: event, timeline: timeline, now: now) else { return nil }
+        return NostrFilterMatch(rule: rule, reason: matchReason(rule: rule, event: event))
     }
 
     public func matchingRule(

@@ -398,6 +398,44 @@ struct TimelineModelTests {
         #expect(post.bodyPresentation.collapseReason == .filtered)
     }
 
+    @Test("Nostr materializer hides filtered posts configured as hidden")
+    func nostrMaterializerHidesFilteredPosts() throws {
+        let author = String(repeating: "a", count: 64)
+        let hidden = timelineEvent(
+            idSeed: "hidden-filtered-note",
+            pubkey: author,
+            createdAt: 100,
+            content: "this contains noisy text"
+        )
+        let visible = timelineEvent(
+            idSeed: "visible-note",
+            pubkey: author,
+            createdAt: 90,
+            content: "ordinary text"
+        )
+        let filterRules = NostrFilterRuleSet(rules: [
+            NostrFilterRuleRecord(
+                ruleID: "rule",
+                accountID: "account",
+                kind: .keyword,
+                value: "noisy",
+                presentation: .hide,
+                createdAt: 1,
+                updatedAt: 1
+            )
+        ])
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [hidden, visible],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            filterRules: filterRules,
+            now: 100
+        )
+
+        #expect(posts.map(\.id) == [visible.id])
+    }
+
     @Test("Nostr materializer collapses posts muted by cached NIP-51 list items")
     func nostrMaterializerCollapsesNIP51MutedPosts() throws {
         let author = String(repeating: "b", count: 64)
