@@ -1351,6 +1351,44 @@ struct NostrCorePackageTests {
         #expect(try store.events(kind: 1, authors: [author], limit: 10).map(\.id) == [newest.id, oldest.id])
     }
 
+    @Test("Nostr event store searches cached profile metadata candidates")
+    func eventStoreSearchesCachedProfileCandidates() throws {
+        let store = try NostrEventStore.inMemory()
+        let alpha = String(repeating: "a", count: 64)
+        let beta = String(repeating: "b", count: 64)
+        let alphaMetadata = #"{"display_name":"User Alpha","name":"alpha","nip05":"alpha@mock.example","picture":"https://example.com/a.png"}"#
+        let betaMetadata = #"{"name":"Beta Relay","nip05":"relay@mock.example"}"#
+
+        try store.save(events: [
+            nostrEvent(kind: 0, pubkey: alpha, createdAt: 100, content: alphaMetadata),
+            nostrEvent(kind: 0, pubkey: beta, createdAt: 200, content: betaMetadata)
+        ])
+
+        let alphaResults = try store.profileSearchCandidates(query: "alpha", limit: 10)
+        #expect(alphaResults.map(\.pubkey) == [alpha])
+        #expect(alphaResults.first?.displayName == "User Alpha")
+        #expect(alphaResults.first?.nip05 == "alpha@mock.example")
+        #expect(alphaResults.first?.pictureURL?.absoluteString == "https://example.com/a.png")
+
+        let relayResults = try store.profileSearchCandidates(query: "relay", limit: 10)
+        #expect(relayResults.map(\.pubkey) == [beta])
+    }
+
+    @Test("Nostr event store profile search skips malformed metadata")
+    func eventStoreProfileSearchSkipsMalformedMetadata() throws {
+        let store = try NostrEventStore.inMemory()
+        let broken = String(repeating: "c", count: 64)
+        let valid = String(repeating: "d", count: 64)
+
+        try store.save(events: [
+            nostrEvent(kind: 0, pubkey: broken, createdAt: 100, content: "{"),
+            nostrEvent(kind: 0, pubkey: valid, createdAt: 120, content: #"{"name":"Valid User"}"#)
+        ])
+
+        let results = try store.profileSearchCandidates(query: "valid", limit: 10)
+        #expect(results.map(\.pubkey) == [valid])
+    }
+
     @Test("Nostr event store returns replies by event reference")
     func eventStoreRepliesByReference() throws {
         let store = try NostrEventStore.inMemory()

@@ -99,6 +99,63 @@ struct FilterCandidateUser: Identifiable {
     let nip05: String
     let avatar: AvatarStyle
 
+    init(id: String, displayName: String, npub: String, nip05: String, avatar: AvatarStyle) {
+        self.id = id
+        self.displayName = displayName
+        self.npub = npub
+        self.nip05 = nip05
+        self.avatar = avatar
+    }
+
+    init(profile: NostrProfileSearchResult) {
+        let hasImage = profile.pictureURL != nil
+        self.init(
+            id: profile.pubkey,
+            displayName: profile.displayName ?? "Unknown User",
+            npub: profile.pubkey.abbreviatedMiddle,
+            nip05: profile.nip05 ?? "NIP-05 not cached",
+            avatar: AvatarStyle(
+                primary: .purple,
+                secondary: .blue,
+                symbolName: "person.crop.circle.fill",
+                pictureState: hasImage ? .resolved : .missing,
+                placeholderSeed: profile.pubkey,
+                imageURL: profile.pictureURL
+            )
+        )
+    }
+
+    static func directCandidate(from input: String) -> FilterCandidateUser? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let pubkey: String
+        let label: String
+        if NostrHex.isLowercaseHex(trimmed, byteCount: 32) {
+            pubkey = trimmed
+            label = "Direct pubkey"
+        } else if let decoded = try? NostrNIP19.publicKeyHex(from: trimmed) {
+            pubkey = decoded
+            label = "Direct npub"
+        } else {
+            return nil
+        }
+
+        return FilterCandidateUser(
+            id: pubkey,
+            displayName: "Nostr User",
+            npub: trimmed.abbreviatedMiddle,
+            nip05: label,
+            avatar: AvatarStyle(
+                primary: .indigo,
+                secondary: .purple,
+                symbolName: "person.crop.circle.fill",
+                pictureState: .missing,
+                placeholderSeed: pubkey
+            )
+        )
+    }
+
     static let mockCandidates: [FilterCandidateUser] = [
         FilterCandidateUser(
             id: String(repeating: "1", count: 64),
@@ -200,10 +257,15 @@ struct FilterEditorDraft: Identifiable {
         )
     }
 
-    static func existing(rule: NostrFilterRuleRecord, matchingCount: Int = 0, totalCount: Int = 0) -> FilterEditorDraft {
+    static func existing(
+        rule: NostrFilterRuleRecord,
+        selectedUser: FilterCandidateUser? = nil,
+        matchingCount: Int = 0,
+        totalCount: Int = 0
+    ) -> FilterEditorDraft {
         switch rule.kind {
         case .mutedPubkey:
-            let candidate = FilterCandidateUser(
+            let candidate = selectedUser ?? FilterCandidateUser(
                 id: rule.value,
                 displayName: "Muted User",
                 npub: rule.value.abbreviatedMiddle,
@@ -258,7 +320,7 @@ struct FilterEditorDraft: Identifiable {
     var canSave: Bool {
         switch kind {
         case .user:
-            selectedUser != nil
+            NostrHex.isLowercaseHex(normalizedValue, byteCount: 32)
         case .keyword, .hashtag:
             !normalizedValue.isEmpty
         case .potentialSpam:

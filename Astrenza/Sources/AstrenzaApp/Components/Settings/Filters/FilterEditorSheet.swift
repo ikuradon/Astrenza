@@ -3,17 +3,20 @@ import SwiftUI
 struct FilterEditorSheet: View {
     @State private var draft: FilterEditorDraft
     @State private var searchText = ""
+    let candidateUsers: [FilterCandidateUser]
     let onCancel: () -> Void
     let onShowMatchingPosts: (FilterEditorDraft) -> Void
     let onSave: (FilterEditorDraft) -> Void
 
     init(
         draft: FilterEditorDraft,
+        candidateUsers: [FilterCandidateUser],
         onCancel: @escaping () -> Void,
         onShowMatchingPosts: @escaping (FilterEditorDraft) -> Void,
         onSave: @escaping (FilterEditorDraft) -> Void
     ) {
         _draft = State(initialValue: draft)
+        self.candidateUsers = candidateUsers
         self.onCancel = onCancel
         self.onShowMatchingPosts = onShowMatchingPosts
         self.onSave = onSave
@@ -205,11 +208,18 @@ struct FilterEditorSheet: View {
 
     private var filteredCandidates: [FilterCandidateUser] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return FilterCandidateUser.mockCandidates }
-        return FilterCandidateUser.mockCandidates.filter {
+        let baseCandidates = candidateUsers.isEmpty ? FilterCandidateUser.mockCandidates : candidateUsers
+        guard !query.isEmpty else { return baseCandidates }
+        var candidates = baseCandidates.filter {
             $0.displayName.localizedCaseInsensitiveContains(query)
                 || $0.nip05.localizedCaseInsensitiveContains(query)
                 || $0.npub.localizedCaseInsensitiveContains(query)
+                || $0.id.localizedCaseInsensitiveContains(query)
         }
+        if let directCandidate = FilterCandidateUser.directCandidate(from: query),
+           !candidates.contains(where: { $0.id == directCandidate.id }) {
+            candidates.append(directCandidate)
+        }
+        return candidates
     }
 }

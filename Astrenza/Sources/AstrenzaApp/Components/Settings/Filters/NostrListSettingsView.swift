@@ -157,6 +157,7 @@ struct NostrListSettingsView: View {
         .sheet(item: $editorDraft) { draft in
             FilterEditorSheet(
                 draft: draft,
+                candidateUsers: candidateUsers(),
                 onCancel: { editorDraft = nil },
                 onShowMatchingPosts: showMatchingPosts,
                 onSave: saveFilterDraft
@@ -211,6 +212,7 @@ struct NostrListSettingsView: View {
     private func draft(for rule: NostrFilterRuleRecord) -> FilterEditorDraft {
         FilterEditorDraft.existing(
             rule: rule,
+            selectedUser: rule.kind == .mutedPubkey ? cachedCandidate(pubkey: rule.value) : nil,
             matchingCount: matchingCount(for: rule),
             totalCount: totalCachedPostCount()
         )
@@ -244,6 +246,17 @@ struct NostrListSettingsView: View {
     private func totalCachedPostCount() -> Int {
         guard let eventStore else { return 0 }
         return ((try? eventStore.events(kind: 1, limit: 10_000).count) ?? 0)
+    }
+
+    private func candidateUsers(query: String = "") -> [FilterCandidateUser] {
+        guard let eventStore else { return FilterCandidateUser.mockCandidates }
+        let profiles = (try? eventStore.profileSearchCandidates(query: query, limit: 50)) ?? []
+        let candidates = profiles.map(FilterCandidateUser.init(profile:))
+        return candidates.isEmpty ? FilterCandidateUser.mockCandidates : candidates
+    }
+
+    private func cachedCandidate(pubkey: String) -> FilterCandidateUser? {
+        candidateUsers(query: pubkey).first { $0.id == pubkey }
     }
 
     private func showMatchingPosts(for draft: FilterEditorDraft) {

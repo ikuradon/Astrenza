@@ -541,6 +541,31 @@ struct TimelineModelTests {
         #expect(author.secondaryText == "mock.example")
     }
 
+    @Test("Filter user direct candidate accepts hex pubkeys")
+    func filterUserDirectCandidateAcceptsHexPubkeys() throws {
+        let pubkey = String(repeating: "a", count: 64)
+        let candidate = try #require(FilterCandidateUser.directCandidate(from: pubkey))
+
+        #expect(candidate.id == pubkey)
+        #expect(candidate.nip05 == "Direct pubkey")
+    }
+
+    @Test("Filter user direct candidate accepts npub")
+    func filterUserDirectCandidateAcceptsNpub() throws {
+        let candidate = try #require(FilterCandidateUser.directCandidate(
+            from: "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"
+        ))
+
+        #expect(candidate.id == "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2")
+        #expect(candidate.nip05 == "Direct npub")
+    }
+
+    @Test("Filter user direct candidate rejects unresolved names")
+    func filterUserDirectCandidateRejectsUnresolvedNames() {
+        #expect(FilterCandidateUser.directCandidate(from: "someone@example.com") == nil)
+        #expect(FilterCandidateUser.directCandidate(from: "not a key") == nil)
+    }
+
     @Test("Unresolved authors display a valid npub-like abbreviated pubkey")
     func unresolvedAuthorDisplay() {
         let author = TimelineAuthor.unresolved(pubkey: TimelineAuthor.mockPubkey(for: "unresolved"))

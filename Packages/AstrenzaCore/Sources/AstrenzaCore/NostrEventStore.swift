@@ -21,6 +21,22 @@ public struct NostrStoredEventTag: Codable, Equatable, Sendable {
     }
 }
 
+public struct NostrProfileSearchResult: Equatable, Sendable {
+    public let pubkey: String
+    public let displayName: String?
+    public let nip05: String?
+    public let pictureURL: URL?
+    public let updatedAt: Int
+
+    public init(pubkey: String, displayName: String?, nip05: String?, pictureURL: URL?, updatedAt: Int) {
+        self.pubkey = pubkey
+        self.displayName = displayName
+        self.nip05 = nip05
+        self.pictureURL = pictureURL
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct NostrTimelineEntryRecord: Codable, Equatable, Sendable {
     public let accountID: String
     public let timelineKey: String
@@ -795,6 +811,54 @@ public final class NostrEventStore {
     ) throws -> [NostrEvent] {
         try database.read { db in
             try latestReplaceableEvents(pubkeys: pubkeys, kind: kind, now: now, db: db)
+        }
+    }
+
+    public func profileSearchCandidates(
+        query: String,
+        limit: Int = 20,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrProfileSearchResult] {
+        let boundedLimit = max(0, limit)
+        guard boundedLimit > 0 else { return [] }
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        return try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT e.event_id, e.pubkey, e.created_at, e.kind, e.tags_json, e.content, e.sig
+                FROM replaceable_heads h
+                JOIN events e ON e.event_id = h.event_id
+                WHERE h.kind = 0
+                    AND \(Self.visibleEventPredicate(alias: "e"))
+                ORDER BY e.created_at DESC, e.pubkey ASC
+                LIMIT 1000
+                """,
+                arguments: [now]
+            )
+
+            var results: [NostrProfileSearchResult] = []
+            results.reserveCapacity(min(rows.count, boundedLimit))
+
+            for row in rows {
+                let event = try decodeEvent(row)
+                guard let metadata = Self.profileMetadata(from: event) else { continue }
+                let result = NostrProfileSearchResult(
+                    pubkey: event.pubkey,
+                    displayName: metadata.bestName,
+                    nip05: metadata.nip05?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                    pictureURL: metadata.pictureURL,
+                    updatedAt: event.createdAt
+                )
+                guard normalizedQuery.isEmpty || result.matches(normalizedQuery) else { continue }
+                results.append(result)
+                if results.count == boundedLimit {
+                    break
+                }
+            }
+
+            return results
         }
     }
 
@@ -2755,5 +2819,35 @@ public final class NostrEventStore {
         default:
             return nil
         }
+    }
+
+    private static func profileMetadata(from event: NostrEvent) -> NostrProfileMetadata? {
+        guard let data = event.content.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(NostrProfileMetadata.self, from: data)
+    }
+}
+
+private extension NostrProfileSearchResult {
+    func matches(_ normalizedQuery: String) -> Bool {
+        let haystacks = [
+            displayName,
+            nip05,
+            pubkey,
+            pubkey.abbreviatedMiddle
+        ]
+        return haystacks
+            .compactMap { $0?.lowercased() }
+            .contains { $0.contains(normalizedQuery) }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+
+    var abbreviatedMiddle: String {
+        guard count > 18 else { return self }
+        return "\(prefix(10))...\(suffix(8))"
     }
 }
