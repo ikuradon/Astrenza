@@ -377,7 +377,7 @@ struct TimelineModelTests {
             title: "Cached Article",
             summary: "OGP summary",
             siteName: "Example",
-            imageURL: nil,
+            imageURL: "https://example.test/card.png",
             fetchedAt: 100,
             expiresAt: 200,
             error: nil
@@ -395,8 +395,49 @@ struct TimelineModelTests {
             #expect(card.title == "Cached Article")
             #expect(card.subtitle == "OGP summary")
             #expect(card.host == "Example")
+            #expect(card.imageURL?.absoluteString == "https://example.test/card.png")
+            #expect(card.style == .standard)
         } else {
             Issue.record("Expected resolved link preview media")
+        }
+    }
+
+    @Test("Nostr materializer gives YouTube previews a video card style")
+    func nostrMaterializerUsesYouTubeLinkPreviewStyle() throws {
+        let author = String(repeating: "a", count: 64)
+        let note = timelineEvent(
+            idSeed: "youtube-note",
+            pubkey: author,
+            createdAt: 120,
+            content: "watch https://youtu.be/abc123"
+        )
+        let url = try #require(URL(string: "https://youtu.be/abc123"))
+        let preview = NostrLinkPreviewRecord(
+            url: url.absoluteString,
+            normalizedURL: NostrLinkParser.normalizedURLString(url),
+            status: "resolved",
+            title: "Video Title",
+            summary: "Video summary",
+            siteName: "YouTube",
+            imageURL: "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+            fetchedAt: 100,
+            expiresAt: 200,
+            error: nil
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            linkPreviewsByNormalizedURL: [preview.normalizedURL: preview]
+        )
+        let post = try #require(posts.first)
+
+        if case .linkPreview(let card) = post.media {
+            #expect(card.style == .youtube)
+            #expect(card.imageURL?.absoluteString == "https://i.ytimg.com/vi/abc123/hqdefault.jpg")
+        } else {
+            Issue.record("Expected YouTube link preview media")
         }
     }
 
@@ -964,6 +1005,44 @@ struct TimelineModelTests {
         store.start(account: account)
         try await waitForRelayRuntimeState(in: store, relayURL: "wss://live.example", state: .suspended)
         try await waitForRelayStatusCounts(in: store, connected: 0, planned: 1)
+    }
+
+    @Test("Home timeline runtime exposes provisional bootstrap relays immediately")
+    @MainActor
+    func homeTimelineRuntimeExposesProvisionalBootstrapRelaysImmediately() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "e", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true,
+            discoveryRelays: ["hint.example", "wss://bootstrap.example"]
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            autoReceive: true,
+            retryPolicy: NostrRelayRuntimeRetryPolicy(maxAttempts: 0, initialDelayMilliseconds: 0, delayStepMilliseconds: 0),
+            heartbeatPolicy: .disabled
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
+                bootstrapRelays: ["wss://bootstrap.example", "wss://fallback.example"],
+                pageLimit: 20
+            ),
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+
+        #expect(store.resolvedRelays == [
+            "wss://hint.example",
+            "wss://bootstrap.example",
+            "wss://fallback.example"
+        ])
+        #expect(store.followedPubkeys == [account.pubkey])
+        #expect(store.relayStatusCounts.planned == 3)
     }
 
     @Test("Home relay pill keeps newer cached NIP-65 over stale bootstrap result")

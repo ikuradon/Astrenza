@@ -838,6 +838,29 @@ struct LinkPreview {
     let subtitle: String
     let host: String
     let url: String
+    let imageURL: URL?
+    let style: LinkPreviewStyle
+
+    init(
+        title: String,
+        subtitle: String,
+        host: String,
+        url: String,
+        imageURL: URL? = nil,
+        style: LinkPreviewStyle = .standard
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.host = host
+        self.url = url
+        self.imageURL = imageURL
+        self.style = style
+    }
+}
+
+enum LinkPreviewStyle: Equatable {
+    case standard
+    case youtube
 }
 
 struct UnresolvedLinkPreview {

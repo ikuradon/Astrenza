@@ -889,6 +889,63 @@ struct NostrCorePackageTests {
         #expect(loaded.expiresAt == 1_300)
     }
 
+    @Test("Nostr link preview resolver falls back to oEmbed thumbnail")
+    func linkPreviewResolverUsesOEmbedThumbnailFallback() async throws {
+        let preview = NostrLinkPreviewRecord(
+            url: "https://video.example.test/watch/1",
+            normalizedURL: "https://video.example.test/watch/1",
+            status: "unresolved",
+            title: nil,
+            summary: nil,
+            siteName: nil,
+            imageURL: nil,
+            fetchedAt: nil,
+            expiresAt: nil,
+            error: nil
+        )
+        let html = """
+        <html>
+          <head>
+            <meta property="og:title" content="Video without OG image">
+            <link rel="alternate" type="application/json+oembed" href="/oembed?url=watch-1">
+          </head>
+        </html>
+        """
+        let oEmbed = """
+        {
+          "type": "video",
+          "version": "1.0",
+          "provider_name": "Example Video",
+          "title": "oEmbed Video",
+          "thumbnail_url": "https://cdn.example.test/thumb.jpg"
+        }
+        """
+        let resolver = NostrLinkPreviewResolver(
+            dataLoader: { request in
+                switch request.url?.path {
+                case "/watch/1":
+                    let data = try #require(html.data(using: .utf8))
+                    return (data, httpResponse(url: request.url, statusCode: 200))
+                case "/oembed":
+                    let data = try #require(oEmbed.data(using: .utf8))
+                    return (data, httpResponse(url: request.url, statusCode: 200))
+                default:
+                    Issue.record("Unexpected URL \(request.url?.absoluteString ?? "nil")")
+                    return (Data(), httpResponse(url: request.url, statusCode: 404))
+                }
+            },
+            now: { Date(timeIntervalSince1970: 1_000) },
+            cacheTTLSeconds: 300
+        )
+
+        let resolved = await resolver.resolve(preview)
+
+        #expect(resolved.status == "resolved")
+        #expect(resolved.title == "Video without OG image")
+        #expect(resolved.siteName == "Example Video")
+        #expect(resolved.imageURL == "https://cdn.example.test/thumb.jpg")
+    }
+
     @Test("Nostr link preview resolver stores failed status for HTTP errors")
     func linkPreviewResolverStoresFailure() async throws {
         let preview = NostrLinkPreviewRecord(
@@ -2392,6 +2449,42 @@ struct NostrCorePackageTests {
         let state = try await loader.initialState(account: account)
 
         #expect(state.relays == ["wss://read.example"])
+        #expect(Date().timeIntervalSince(started) < 1)
+    }
+
+    @Test("Home timeline bootstrap returns after the first kind 3 relay responds")
+    func homeTimelineBootstrapReturnsAfterFirstKind3RelayResponds() async throws {
+        let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
+        let followed = String(repeating: "2", count: 64)
+        let relayEvent = nostrEvent(
+            kind: 10002,
+            pubkey: account.pubkey,
+            tags: [
+                ["r", "wss://fast-kind3.example", "read"],
+                ["r", "wss://slow-kind3.example", "read"]
+            ]
+        )
+        let contacts = nostrEvent(kind: 3, pubkey: account.pubkey, tags: [["p", followed]])
+        let fake = FakeRelayClient(
+            eventsByRelayAndSubscriptionID: [
+                "wss://bootstrap.example": ["astrenza-nip65": [relayEvent]],
+                "wss://fast-kind3.example": ["astrenza-kind3": [contacts]],
+                "wss://slow-kind3.example": ["astrenza-kind3": [contacts]]
+            ],
+            delayNanosecondsByRelayAndSubscriptionID: [
+                "wss://slow-kind3.example": ["astrenza-kind3": 2_000_000_000]
+            ]
+        )
+        let loader = NostrHomeTimelineLoader(
+            relayClient: fake,
+            bootstrapRelays: ["wss://bootstrap.example"],
+            pageLimit: 10
+        )
+        let started = Date()
+
+        let state = try await loader.bootstrapState(account: account)
+
+        #expect(state.followedPubkeys == [followed])
         #expect(Date().timeIntervalSince(started) < 1)
     }
 

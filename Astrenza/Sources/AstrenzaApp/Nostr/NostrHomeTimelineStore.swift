@@ -197,6 +197,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.account = account
         startRuntimeEventPump()
         restoreCachedSnapshot(account: account)
+        installProvisionalRuntimeBootstrapIfNeeded(account: account)
         if !resolvedRelays.isEmpty {
             Task {
                 await configureRelayRuntime(account: account)
@@ -787,6 +788,37 @@ final class NostrHomeTimelineStore: ObservableObject {
             for await packet in await relayRuntime.events() {
                 self?.handleRuntimePacket(packet)
             }
+        }
+    }
+
+    private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
+        guard relayRuntime != nil, resolvedRelays.isEmpty else { return }
+        let provisionalRelays = provisionalDiscoveryRelays(for: account)
+        guard !provisionalRelays.isEmpty else { return }
+        resolvedRelays = provisionalRelays
+        followedPubkeys = [account.pubkey]
+        updateRelayStatusCounts()
+    }
+
+    private func provisionalDiscoveryRelays(for account: NostrAccount) -> [String] {
+        normalizedRelayURLs(account.discoveryRelays + timelineLoader.bootstrapRelays)
+            .dedupedPreservingOrder()
+    }
+
+    private func normalizedRelayURLs(_ relays: [String]) -> [String] {
+        relays.compactMap { raw in
+            var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasPrefix("https://") {
+                value = "wss://" + value.dropFirst("https://".count)
+            } else if value.hasPrefix("http://") {
+                value = "ws://" + value.dropFirst("http://".count)
+            } else if !value.hasPrefix("wss://") && !value.hasPrefix("ws://") {
+                value = "wss://\(value)"
+            }
+            guard let url = URL(string: value), url.scheme == "wss" || url.scheme == "ws", url.host != nil else {
+                return nil
+            }
+            return value
         }
     }
 
@@ -1560,7 +1592,15 @@ final class NostrHomeTimelineStore: ObservableObject {
                 ].joined(separator: "\u{1e}")
             }.joined(separator: "\u{1d}")
         case .linkPreview(let preview):
-            return ["link", preview.title, preview.subtitle, preview.host, preview.url].joined(separator: "\u{1e}")
+            return [
+                "link",
+                preview.title,
+                preview.subtitle,
+                preview.host,
+                preview.url,
+                preview.imageURL?.absoluteString ?? "",
+                String(describing: preview.style)
+            ].joined(separator: "\u{1e}")
         case .unresolvedLink(let preview):
             return ["unresolved", preview.host, preview.url].joined(separator: "\u{1e}")
         }
@@ -2396,10 +2436,24 @@ enum NostrTimelineMaterializer {
                 title: title,
                 subtitle: preview.summary ?? preview.siteName ?? normalizedURL,
                 host: preview.siteName ?? link.host ?? link.absoluteString,
-                url: preview.url
+                url: preview.url,
+                imageURL: preview.imageURL.flatMap(URL.init(string:)),
+                style: linkPreviewStyle(for: link)
             ))
         }
         return .unresolvedLink(UnresolvedLinkPreview(host: link.host ?? link.absoluteString, url: link.absoluteString))
+    }
+
+    private static func linkPreviewStyle(for url: URL) -> LinkPreviewStyle {
+        guard let host = url.host?.lowercased() else { return .standard }
+        if host == "youtu.be" ||
+            host == "youtube.com" ||
+            host.hasSuffix(".youtube.com") ||
+            host == "youtube-nocookie.com" ||
+            host.hasSuffix(".youtube-nocookie.com") {
+            return .youtube
+        }
+        return .standard
     }
 
     private static func contentWarning(from event: NostrEvent) -> TimelineContentWarning? {
@@ -2682,5 +2736,16 @@ private struct RuntimeSyncWindow {
     mutating func include(_ event: NostrEvent) {
         newestCreatedAt = [newestCreatedAt, event.createdAt].compactMap { $0 }.max()
         oldestCreatedAt = [oldestCreatedAt, event.createdAt].compactMap { $0 }.min()
+    }
+}
+
+private extension Array where Element == String {
+    func dedupedPreservingOrder() -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in self where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
     }
 }

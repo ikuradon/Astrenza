@@ -451,13 +451,21 @@ private struct LinkPreviewAttachmentView: View {
     var body: some View {
         VStack(spacing: 0) {
             LinkPreviewHeroView(preview: preview)
-                .frame(height: 128)
+                .frame(height: preview.imageURL == nil ? 128 : 154)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(preview.host)
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Color.astrenzaAccent)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if preview.style == .youtube {
+                        Image(systemName: "play.rectangle.fill")
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(.red)
+                    }
+
+                    Text(preview.host)
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
+                        .lineLimit(1)
+                }
 
                 Text(preview.title)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
@@ -473,7 +481,7 @@ private struct LinkPreviewAttachmentView: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(height: 226)
+        .frame(height: preview.imageURL == nil ? 226 : 252)
         .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -487,6 +495,20 @@ private struct LinkPreviewHeroView: View {
     let preview: LinkPreview
 
     var body: some View {
+        ZStack {
+            if let imageURL = preview.imageURL {
+                LinkPreviewRemoteImage(url: imageURL, style: preview.style)
+            } else {
+                fallbackHero
+            }
+
+            if preview.style == .youtube {
+                YouTubePlayBadge()
+            }
+        }
+    }
+
+    private var fallbackHero: some View {
         ZStack {
             Color(red: 0.93, green: 0.94, blue: 0.95)
 
@@ -506,25 +528,81 @@ private struct LinkPreviewHeroView: View {
 
                     ZStack {
                         Circle()
-                            .fill(Color.green.opacity(0.3))
-                        Image(systemName: "link")
+                            .fill((preview.style == .youtube ? Color.red : Color.green).opacity(0.3))
+                        Image(systemName: preview.style == .youtube ? "play.rectangle.fill" : "link")
                             .font(.system(size: 25, weight: .black))
-                            .foregroundStyle(.green)
+                            .foregroundStyle(preview.style == .youtube ? .red : .green)
                     }
                     .frame(width: 52, height: 52)
                 }
 
                 Spacer(minLength: 0)
-
-                HStack(spacing: 5) {
-                    Image(systemName: "bubble.left")
-                    Text("21 comments")
-                }
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.gray)
             }
             .padding(18)
         }
+    }
+}
+
+private struct LinkPreviewRemoteImage: View {
+    let url: URL
+    let style: LinkPreviewStyle
+    @StateObject private var loader = RemoteLinkPreviewImageLoader()
+
+    var body: some View {
+        ZStack {
+            Color.astrenzaAttachmentBackground
+
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ProgressView()
+                    .tint(style == .youtube ? .red : Color.astrenzaAccent)
+            }
+
+            LinearGradient(
+                colors: [.black.opacity(0.28), .clear, .black.opacity(0.18)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .task(id: url) {
+            await loader.load(url: url)
+        }
+    }
+}
+
+private struct YouTubePlayBadge: View {
+    var body: some View {
+        ZStack {
+            Capsule()
+                .fill(.red)
+                .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
+            Image(systemName: "play.fill")
+                .font(.system(size: 22, weight: .black))
+                .foregroundStyle(.white)
+                .offset(x: 2)
+        }
+        .frame(width: 68, height: 46)
+    }
+}
+
+@MainActor
+private final class RemoteLinkPreviewImageLoader: ObservableObject {
+    @Published private(set) var image: UIImage?
+    private var loadedURL: URL?
+
+    func load(url: URL) async {
+        guard loadedURL != url else { return }
+        loadedURL = url
+
+        if let cachedImage = NostrImageCache.shared.memoryCachedImage(for: url) {
+            image = cachedImage
+            return
+        }
+
+        image = try? await NostrImageCache.shared.image(for: url)
     }
 }
 

@@ -223,8 +223,8 @@ enum TimelineLayoutEstimator {
         switch media {
         case .gallery:
             return 218
-        case .linkPreview:
-            return 112
+        case .linkPreview(let preview):
+            return preview.imageURL == nil ? 226 : 252
         case .unresolvedLink:
             return 72
         }

@@ -79,7 +79,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
         let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
 
-        let contactResult = try await latestEvent(
+        let contactResult = try await firstAvailableEvent(
             relays: contactRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-kind3",

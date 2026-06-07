@@ -35,7 +35,8 @@ public struct NostrLinkPreviewResolver: Sendable {
             guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
                 return failedPreview(from: preview, message: "unsupported encoding")
             }
-            let metadata = NostrOpenGraphParser.metadata(from: html, baseURL: url)
+            let initialMetadata = NostrOpenGraphParser.metadata(from: html, baseURL: url)
+            let metadata = await metadataWithOEmbedFallback(initialMetadata, html: html, baseURL: url)
             let fetchedAt = Int(now().timeIntervalSince1970)
             return NostrLinkPreviewRecord(
                 url: preview.url,
@@ -51,6 +52,38 @@ public struct NostrLinkPreviewResolver: Sendable {
             )
         } catch {
             return failedPreview(from: preview, message: error.localizedDescription)
+        }
+    }
+
+    private func metadataWithOEmbedFallback(
+        _ metadata: NostrOpenGraphMetadata,
+        html: String,
+        baseURL: URL
+    ) async -> NostrOpenGraphMetadata {
+        guard metadata.imageURL == nil,
+              let oEmbedURL = NostrOpenGraphParser.oEmbedURL(from: html, baseURL: baseURL)
+        else { return metadata }
+
+        var request = URLRequest(url: oEmbedURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Astrenza/1.0 LinkPreview", forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (data, response) = try await dataLoader(request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<300).contains(httpResponse.statusCode) {
+                return metadata
+            }
+            let oEmbed = try JSONDecoder().decode(NostrOEmbedResponse.self, from: data)
+            let oEmbedSiteName = metadata.siteName == baseURL.host ? oEmbed.providerName ?? metadata.siteName : metadata.siteName
+            return NostrOpenGraphMetadata(
+                title: metadata.title ?? oEmbed.title,
+                summary: metadata.summary,
+                siteName: oEmbedSiteName,
+                imageURL: oEmbed.thumbnailURL.flatMap { NostrOpenGraphParser.absoluteURLString($0, baseURL: baseURL) }
+            )
+        } catch {
+            return metadata
         }
     }
 
@@ -76,6 +109,18 @@ public struct NostrOpenGraphMetadata: Equatable, Sendable {
     public let summary: String?
     public let siteName: String?
     public let imageURL: String?
+}
+
+private struct NostrOEmbedResponse: Decodable {
+    let title: String?
+    let providerName: String?
+    let thumbnailURL: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case providerName = "provider_name"
+        case thumbnailURL = "thumbnail_url"
+    }
 }
 
 public enum NostrOpenGraphParser {
@@ -106,6 +151,29 @@ public enum NostrOpenGraphParser {
             siteName: siteName,
             imageURL: imageURL
         )
+    }
+
+    public static func oEmbedURL(from html: String, baseURL: URL) -> URL? {
+        let pattern = #"<link\s+([^>]+)>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        for match in regex.matches(in: html, range: nsRange) {
+            guard let attributesRange = Range(match.range(at: 1), in: html) else { continue }
+            let values = attributeValues(in: String(html[attributesRange]))
+            guard let rel = values["rel"]?.lowercased(),
+                  rel.split(separator: " ").contains("alternate"),
+                  let type = values["type"]?.lowercased(),
+                  type == "application/json+oembed" || type == "text/json+oembed",
+                  let href = values["href"],
+                  let url = URL(string: href, relativeTo: baseURL)?.absoluteURL
+            else { continue }
+            return url
+        }
+
+        return nil
     }
 
     private static func metaProperties(in html: String) -> [String: String] {
@@ -155,7 +223,7 @@ public enum NostrOpenGraphParser {
         return result
     }
 
-    private static func absoluteURLString(_ raw: String, baseURL: URL) -> String? {
+    public static func absoluteURLString(_ raw: String, baseURL: URL) -> String? {
         URL(string: raw, relativeTo: baseURL)?.absoluteURL.absoluteString
     }
 
