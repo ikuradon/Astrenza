@@ -13,7 +13,7 @@ struct SensitiveTimelineContent<Content: View>: View {
 
             SensitiveTimelineOverlay(contentWarning: contentWarning)
         }
-        .frame(height: 118)
+        .frame(height: 98)
         .clipped()
         .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
@@ -23,30 +23,30 @@ private struct SensitiveTimelineOverlay: View {
     let contentWarning: TimelineContentWarning
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 7) {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 15, weight: .black))
+                    .font(.system(size: 13, weight: .black))
                 Text("CONTENT WARNING")
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .tracking(0.8)
             }
             .foregroundStyle(.black.opacity(0.72))
-            .padding(.horizontal, 14)
-            .frame(height: 34)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
             .background(Color.secondary.opacity(0.92), in: Capsule())
 
             Text(contentWarning.displayReason)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
 
             Text("Tap to open detail")
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
                 .foregroundStyle(Color.astrenzaAccent)
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.astrenzaBackground.opacity(0.18))
     }
@@ -56,27 +56,27 @@ struct RepostAttributionView: View {
     let attribution: TimelineRepostAttribution
 
     var body: some View {
-        HStack(spacing: 7) {
-            AvatarView(style: attribution.avatar, size: 24)
+        HStack(spacing: 6) {
+            AvatarView(style: attribution.avatar, size: AstrenzaTimelineMetrics.contextAvatarSize)
 
             Text(attribution.author.primaryText)
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .layoutPriority(1)
 
             Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 12, weight: .black))
+                .font(.system(size: 11, weight: .black))
 
             Text(attribution.timestamp)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.tertiary)
                 .fixedSize()
         }
         .foregroundStyle(.secondary)
         .padding(.leading, 4)
-        .padding(.trailing, 10)
-        .padding(.vertical, 4)
+        .padding(.trailing, 9)
+        .padding(.vertical, 3)
         .background(Color.white.opacity(0.07), in: Capsule())
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -90,7 +90,7 @@ struct TimelineAuthorHeader: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
                 Text(author.primaryText)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: AstrenzaTimelineMetrics.authorPrimaryFontSize, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -98,7 +98,7 @@ struct TimelineAuthorHeader: View {
 
                 if isLocked {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .fixedSize()
                 }
@@ -107,12 +107,12 @@ struct TimelineAuthorHeader: View {
 
             HStack(spacing: 5) {
                 Image(systemName: author.secondarySystemName)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(secondaryIconStyle)
-                    .frame(width: 13)
+                    .frame(width: 12)
 
                 Text(author.secondaryText)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.system(size: AstrenzaTimelineMetrics.authorSecondaryFontSize, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -141,20 +141,20 @@ struct QuotedPostCard: View {
     let quotedPost: QuotedTimelinePost
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            AvatarView(style: quotedPost.avatar, size: 32)
+        HStack(alignment: .top, spacing: 8) {
+            AvatarView(style: quotedPost.avatar, size: AstrenzaTimelineMetrics.quotedAvatarSize)
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(quotedPost.author.primaryText)
-                            .font(.system(size: 14, weight: .heavy, design: .rounded))
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .truncationMode(.middle)
 
                         Text(quotedPost.author.secondaryText)
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -163,30 +163,26 @@ struct QuotedPostCard: View {
                     .layoutPriority(1)
 
                     Text(quotedPost.timestamp)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.tertiary)
                         .fixedSize()
                 }
 
                 if quotedPost.isAvailable {
-                    Text(quotedPost.body)
-                        .font(.system(size: 15, weight: .regular))
-                        .lineSpacing(2)
-                        .foregroundStyle(Color.astrenzaText)
-                        .lineLimit(3)
+                    TimelinePostBodyText(text: quotedPost.body, mention: nil, lineLimit: 3)
                 } else {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                         Text("Quoted note could not be loaded")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
                     .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {

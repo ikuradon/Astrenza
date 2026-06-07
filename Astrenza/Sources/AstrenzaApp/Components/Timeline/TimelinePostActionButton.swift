@@ -25,7 +25,7 @@ struct TimelinePostActionButton: View {
             onLongPressDragChanged: onLongPressDragChanged,
             onLongPressDragEnded: onLongPressDragEnded
         )
-        .frame(height: 30)
+        .frame(height: AstrenzaTimelineMetrics.actionHeight)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier ?? accessibilityLabel)
@@ -189,7 +189,10 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         }
 
         func update(systemName: String, isActive: Bool) {
-            let configuration = UIImage.SymbolConfiguration(pointSize: 21, weight: isActive ? .bold : .semibold)
+            let configuration = UIImage.SymbolConfiguration(
+                pointSize: AstrenzaTimelineMetrics.actionIconSize,
+                weight: isActive ? .bold : .semibold
+            )
             imageView.image = UIImage(systemName: systemName, withConfiguration: configuration)
             imageView.tintColor = isActive ? UIColor.label : UIColor.secondaryLabel
             imageView.preferredSymbolConfiguration = configuration

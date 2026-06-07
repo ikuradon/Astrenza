@@ -34,7 +34,7 @@ struct PostDetailView: View {
                             SensitiveDetailBanner(contentWarning: contentWarning)
                         }
 
-                        TimelinePostBodyText(text: post.body, mention: post.replyMention, fontSize: 22)
+                        TimelinePostBodyText(text: post.body, mention: post.replyMention)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         if let linkSummary = post.linkSummary {
@@ -82,10 +82,8 @@ struct PostDetailView: View {
         .accessibilityIdentifier("post.detail")
         .navigationTitle("Detail")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(Color.astrenzaBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .preferredColorScheme(.dark)
     }
 
     private var replyAncestorPosts: [TimelinePost] {
@@ -105,29 +103,20 @@ struct PostDetailView: View {
     }
 
     private var postHeader: some View {
-        HStack(alignment: .top, spacing: 14) {
-            AvatarView(style: post.avatar, size: 68)
+        HStack(alignment: .top, spacing: AstrenzaTimelineMetrics.rowAvatarSpacing) {
+            AvatarView(style: post.avatar, size: AstrenzaTimelineMetrics.avatarSize)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(post.author.primaryText)
-                        .font(.system(size: 23, weight: .heavy, design: .rounded))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            HStack(alignment: .top, spacing: 6) {
+                TimelineAuthorHeader(author: post.author, isLocked: post.isLocked)
 
-                    if post.contentWarning != nil {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 15, weight: .black))
-                            .foregroundStyle(.orange)
-                            .accessibilityLabel("Sensitive post")
-                    }
+                if post.contentWarning != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Sensitive post")
+                        .padding(.top, 1)
+                        .fixedSize()
                 }
-
-                Text(post.author.secondaryText)
-                    .font(.system(size: 19, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -158,10 +147,10 @@ struct PostDetailView: View {
         Button {
         } label: {
             Image(systemName: systemName)
-                .font(.system(size: 30, weight: .semibold))
+                .font(.system(size: AstrenzaTimelineMetrics.detailActionIconSize, weight: .semibold))
                 .foregroundStyle(Color.astrenzaAccent)
                 .frame(maxWidth: .infinity)
-                .frame(height: 46)
+                .frame(height: AstrenzaTimelineMetrics.detailActionHeight)
         }
         .buttonStyle(.plain)
     }
