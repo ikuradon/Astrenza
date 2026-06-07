@@ -138,6 +138,18 @@ enum TimelineViewportResolver {
         let restoredOffset = anchorTopY - anchorLineY + state.anchorOffset
         return max(restoredOffset, 0)
     }
+
+    static func contentOffsetPreservingAnchor(
+        entries: [TimelineFeedEntry],
+        anchor: TimelineViewportAnchor,
+        layoutCache: TimelineLayoutCache,
+        topContentPadding: CGFloat,
+        anchorLineY: CGFloat
+    ) -> CGFloat? {
+        let snapshot = TimelineLayoutSnapshot(entries: entries, layoutCache: layoutCache, topContentPadding: topContentPadding)
+        guard let anchorTopY = snapshot.offset(for: anchor.postID) else { return nil }
+        return max(anchorTopY - anchorLineY + anchor.offset, 0)
+    }
 }
 
 enum TimelineLayoutEstimator {

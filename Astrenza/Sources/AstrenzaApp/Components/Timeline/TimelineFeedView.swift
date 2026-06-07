@@ -31,10 +31,15 @@ struct TimelineFeedView: View {
     @State private var fetchingGapDirections: [TimelineGap.ID: TimelineGapFillDirection] = [:]
     @State private var insertedPostDirections: [TimelinePost.ID: TimelineGapFillDirection] = [:]
     @State private var scrollRuntime = TimelineFeedScrollRuntime()
+    @State private var isPullRefreshing = false
+    @State private var pullRefreshProgress: CGFloat = 0
+    @State private var isPullRefreshArmed = false
+    @State private var isUserPullingToRefresh = false
     private let actionMenuGap: CGFloat = 12
     private let bottomChromeClearance: CGFloat = 116
     private let rowAnchorLineY: CGFloat = 72
     private let topContentPadding: CGFloat = 72
+    private let pullRefreshTriggerOffset: CGFloat = -96
     private let viewportSaveInterval: TimeInterval = 0.25
     private let viewportSaveOffsetThreshold: CGFloat = 48
     private var posts: [TimelinePost] {
@@ -199,8 +204,9 @@ struct TimelineFeedView: View {
             .padding(.bottom, 124)
         }
         .scrollPosition($scrollPosition)
-        .refreshable {
-            await onRefresh?()
+        .overlay(alignment: .top) {
+            TimelinePullRefreshIndicator(isRefreshing: isPullRefreshing, progress: pullRefreshProgress)
+                .padding(.top, topContentPadding + 8)
         }
         .coordinateSpace(name: "timelineFeedOverlay")
         .coordinateSpace(name: "timelineFeedViewport")
@@ -223,6 +229,9 @@ struct TimelineFeedView: View {
             geometry.contentOffset.y
         } action: { _, offset in
             handleObservedContentOffset(offset)
+        }
+        .onScrollPhaseChange { _, newPhase in
+            handleScrollPhaseChange(newPhase)
         }
         .scrollDisabled(menuState.isOpen)
         .scrollIndicators(.visible)
@@ -388,6 +397,7 @@ private extension TimelineFeedView {
 
     func handleObservedContentOffset(_ offset: CGFloat) {
         scrollRuntime.currentContentOffset = offset
+        updatePullRefreshState(offset: offset)
         onScrollOffsetChanged(offset)
         saveViewportStateIfPossible()
     }
@@ -406,12 +416,104 @@ private extension TimelineFeedView {
         let newIDs = entries.map(\.id)
         guard oldIDs != newIDs else { return }
 
-        withAnimation(.spring(duration: 0.26, bounce: 0.08)) {
-            displayedEntries = entries
+        let anchor = estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
+        let preservedOffset = preservedContentOffset(
+            oldIDs: oldIDs,
+            newIDs: newIDs,
+            anchor: anchor
+        )
+
+        if let preservedOffset {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            transaction.animation = nil
+            withTransaction(transaction) {
+                displayedEntries = entries
+                updateLayoutSnapshot()
+                scrollPosition.scrollTo(y: preservedOffset)
+            }
+            scrollRuntime.currentContentOffset = preservedOffset
+        } else {
+            withAnimation(.spring(duration: 0.26, bounce: 0.08)) {
+                displayedEntries = entries
+            }
+            updateLayoutSnapshot()
         }
-        updateLayoutSnapshot()
 
         restoreViewportIfNeeded()
+    }
+
+    func updatePullRefreshState(offset: CGFloat) {
+        guard onRefresh != nil else { return }
+        let progress = min(max(abs(min(offset, 0)) / abs(pullRefreshTriggerOffset), 0), 1)
+        DispatchQueue.main.async {
+            if !isPullRefreshing {
+                pullRefreshProgress = progress
+            }
+
+            if isUserPullingToRefresh && offset <= pullRefreshTriggerOffset {
+                isPullRefreshArmed = true
+            }
+        }
+    }
+
+    func handleScrollPhaseChange(_ phase: ScrollPhase) {
+        guard onRefresh != nil else { return }
+        switch phase {
+        case .interacting, .tracking:
+            isUserPullingToRefresh = true
+        case .decelerating, .animating, .idle:
+            let shouldRefresh = isPullRefreshArmed && !isPullRefreshing
+            isUserPullingToRefresh = false
+            isPullRefreshArmed = false
+            if shouldRefresh {
+                requestPullRefresh()
+            } else if !isPullRefreshing {
+                withAnimation(.snappy(duration: 0.16)) {
+                    pullRefreshProgress = 0
+                }
+            }
+        @unknown default:
+            isUserPullingToRefresh = false
+            isPullRefreshArmed = false
+        }
+    }
+
+    func requestPullRefresh() {
+        guard let onRefresh else { return }
+        isPullRefreshing = true
+        pullRefreshProgress = 1
+        Task {
+            await onRefresh()
+            await MainActor.run {
+                withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
+                    isPullRefreshing = false
+                    pullRefreshProgress = 0
+                }
+            }
+        }
+    }
+
+    func preservedContentOffset(
+        oldIDs: [TimelineFeedEntry.ID],
+        newIDs: [TimelineFeedEntry.ID],
+        anchor: TimelineViewportAnchor?
+    ) -> CGFloat? {
+        guard let anchor,
+              let oldIndex = oldIDs.firstIndex(of: anchor.postID),
+              let newIndex = newIDs.firstIndex(of: anchor.postID),
+              newIndex > oldIndex
+        else {
+            return nil
+        }
+
+        return TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: entries,
+            anchor: anchor,
+            layoutCache: measuredLayoutCache,
+            topContentPadding: topContentPadding,
+            anchorLineY: rowAnchorLineY
+        )
     }
 
     func handlePostAppear(_ post: TimelinePost) {
@@ -780,6 +882,34 @@ private struct TimelineViewportSizePreferenceKey: PreferenceKey {
         if next != .zero {
             value = next
         }
+    }
+}
+
+private struct TimelinePullRefreshIndicator: View {
+    let isRefreshing: Bool
+    let progress: CGFloat
+
+    var body: some View {
+        let visibleProgress = isRefreshing ? 1 : progress
+        HStack(spacing: 8) {
+            ProgressView(value: isRefreshing ? nil : visibleProgress)
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .tint(Color.astrenzaAccent)
+                .frame(width: 18, height: 18)
+
+            Text(isRefreshing ? "Updating" : "Pull to update")
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .astrenzaGlass(tint: Color.white.opacity(0.06), in: Capsule())
+        .scaleEffect(0.92 + visibleProgress * 0.08)
+        .opacity(isRefreshing || progress > 0.08 ? 1 : 0)
+        .allowsHitTesting(false)
+        .animation(.spring(duration: 0.22, bounce: 0.12), value: isRefreshing)
+        .animation(.snappy(duration: 0.12), value: progress)
     }
 }
 

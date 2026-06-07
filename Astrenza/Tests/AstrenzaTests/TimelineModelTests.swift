@@ -4104,6 +4104,39 @@ struct TimelineModelTests {
         #expect(afterOffset - beforeOffset == TimelineLayoutEstimator.estimatedReplacementDelta(for: gap, layoutCache: cache))
     }
 
+    @Test("Timeline prepended refresh entries keep current anchor visually fixed")
+    func timelinePrependedRefreshEntriesKeepCurrentAnchor() throws {
+        let posts = Array(MockTimelineData.posts.prefix(4))
+        let firstNewPost = try #require(posts.first)
+        let secondNewPost = posts[1]
+        let anchorPost = posts[2]
+        let olderPost = try #require(posts.last)
+        var cache = TimelineLayoutCache()
+        cache.measuredHeights = [
+            firstNewPost.id: 80,
+            secondNewPost.id: 100,
+            anchorPost.id: 120,
+            olderPost.id: 140
+        ]
+        let afterEntries: [TimelineFeedEntry] = [
+            .post(firstNewPost),
+            .post(secondNewPost),
+            .post(anchorPost),
+            .post(olderPost)
+        ]
+        let anchor = TimelineViewportAnchor(postID: anchorPost.id, offset: 20)
+
+        let preservedOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: afterEntries,
+            anchor: anchor,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        #expect(preservedOffset == 200)
+    }
+
     @Test("Timeline gap downward fill keeps upper anchor visually fixed")
     func timelineGapDownwardFillKeepsUpperAnchor() throws {
         let posts = Array(MockTimelineData.posts.prefix(4))
