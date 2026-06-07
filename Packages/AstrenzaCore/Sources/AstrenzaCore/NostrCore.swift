@@ -154,9 +154,37 @@ public enum NostrNIP19Error: Error, Equatable {
     case invalidPayloadLength(Int)
 }
 
+public struct NostrNIP19ProfileReference: Equatable, Sendable {
+    public let pubkey: String
+    public let relays: [String]
+
+    public init(pubkey: String, relays: [String]) {
+        self.pubkey = pubkey
+        self.relays = relays
+    }
+}
+
+public struct NostrNIP19EventReference: Equatable, Sendable {
+    public let eventID: String
+    public let relays: [String]
+    public let author: String?
+    public let kind: Int?
+
+    public init(eventID: String, relays: [String], author: String?, kind: Int?) {
+        self.eventID = eventID
+        self.relays = relays
+        self.author = author
+        self.kind = kind
+    }
+}
+
 public enum NostrNIP19 {
     public static func publicKeyHex(from input: String) throws -> String {
         try hexPayload(from: input, prefix: "npub")
+    }
+
+    public static func publicKey(_ pubkeyHex: String) throws -> String {
+        try bech32String(prefix: "npub", bytes: hexBytes(pubkeyHex, expectedCount: 32))
     }
 
     public static func privateKeyHex(from input: String) throws -> String {
@@ -165,6 +193,75 @@ public enum NostrNIP19 {
 
     public static func eventIDHex(from input: String) throws -> String {
         try hexPayload(from: input, prefix: "note")
+    }
+
+    public static func profileReference(from input: String) throws -> NostrNIP19ProfileReference {
+        let lowered = normalizedInput(input)
+        if NostrHex.isLowercaseHex(lowered, byteCount: 32) {
+            return NostrNIP19ProfileReference(pubkey: lowered, relays: [])
+        }
+        if let pubkey = try? publicKeyHex(from: lowered) {
+            return NostrNIP19ProfileReference(pubkey: pubkey, relays: [])
+        }
+
+        let tlvs = try tlvPayload(from: lowered, prefix: "nprofile")
+        guard let pubkey = tlvs[0]?.first, pubkey.count == 32 else {
+            throw NostrNIP19Error.invalidPayloadLength(tlvs[0]?.first?.count ?? 0)
+        }
+        let relays = relayStrings(from: tlvs[1] ?? [])
+        return NostrNIP19ProfileReference(pubkey: NostrHex.hexString(pubkey), relays: relays)
+    }
+
+    public static func eventReference(from input: String) throws -> NostrNIP19EventReference {
+        let lowered = normalizedInput(input)
+        if NostrHex.isLowercaseHex(lowered, byteCount: 32) {
+            return NostrNIP19EventReference(eventID: lowered, relays: [], author: nil, kind: nil)
+        }
+        if let eventID = try? eventIDHex(from: lowered) {
+            return NostrNIP19EventReference(eventID: eventID, relays: [], author: nil, kind: nil)
+        }
+
+        let tlvs = try tlvPayload(from: lowered, prefix: "nevent")
+        guard let eventID = tlvs[0]?.first, eventID.count == 32 else {
+            throw NostrNIP19Error.invalidPayloadLength(tlvs[0]?.first?.count ?? 0)
+        }
+        let author = tlvs[2]?.first.flatMap { $0.count == 32 ? NostrHex.hexString($0) : nil }
+        let kind = tlvs[3]?.first.flatMap { bytes -> Int? in
+            guard bytes.count == 4 else { return nil }
+            return bytes.reduce(0) { ($0 << 8) | Int($1) }
+        }
+        return NostrNIP19EventReference(
+            eventID: NostrHex.hexString(eventID),
+            relays: relayStrings(from: tlvs[1] ?? []),
+            author: author,
+            kind: kind
+        )
+    }
+
+    public static func encodeEventReference(
+        eventID: String,
+        relays: [String] = [],
+        author: String? = nil,
+        kind: Int? = nil
+    ) throws -> String {
+        var bytes: [UInt8] = []
+        appendTLV(type: 0, value: try hexBytes(eventID, expectedCount: 32), to: &bytes)
+        for relay in relays {
+            appendTLV(type: 1, value: Array(relay.utf8), to: &bytes)
+        }
+        if let author {
+            appendTLV(type: 2, value: try hexBytes(author, expectedCount: 32), to: &bytes)
+        }
+        if let kind {
+            let value = [
+                UInt8((kind >> 24) & 0xff),
+                UInt8((kind >> 16) & 0xff),
+                UInt8((kind >> 8) & 0xff),
+                UInt8(kind & 0xff)
+            ]
+            appendTLV(type: 3, value: value, to: &bytes)
+        }
+        return try bech32String(prefix: "nevent", bytes: bytes)
     }
 
     private static func hexPayload(from input: String, prefix: String) throws -> String {
@@ -183,6 +280,62 @@ public enum NostrNIP19 {
         return NostrHex.hexString(bytes)
     }
 
+    private static func tlvPayload(from input: String, prefix: String) throws -> [UInt8: [[UInt8]]] {
+        let decoded = try Bech32.decode(input)
+        guard decoded.hrp == prefix else {
+            throw NostrNIP19Error.unsupportedPrefix(decoded.hrp)
+        }
+        let bytes = try Bech32.convertBits(decoded.data, from: 5, to: 8, pad: false)
+        var result: [UInt8: [[UInt8]]] = [:]
+        var index = 0
+        while index < bytes.count {
+            guard index + 2 <= bytes.count else {
+                throw NostrNIP19Error.invalidEncoding
+            }
+            let type = bytes[index]
+            let length = Int(bytes[index + 1])
+            index += 2
+            guard index + length <= bytes.count else {
+                throw NostrNIP19Error.invalidPayloadLength(length)
+            }
+            result[type, default: []].append(Array(bytes[index..<index + length]))
+            index += length
+        }
+        return result
+    }
+
+    private static func relayStrings(from payloads: [[UInt8]]) -> [String] {
+        var seen = Set<String>()
+        var relays: [String] = []
+        for payload in payloads {
+            let relay = String(decoding: payload, as: UTF8.self)
+            guard !relay.isEmpty, seen.insert(relay).inserted else {
+                continue
+            }
+            relays.append(relay)
+        }
+        return relays
+    }
+
+    private static func bech32String(prefix: String, bytes: [UInt8]) throws -> String {
+        try Bech32.encode(hrp: prefix, data: Bech32.convertBits(bytes, from: 8, to: 5, pad: true))
+    }
+
+    private static func hexBytes(_ hex: String, expectedCount: Int) throws -> [UInt8] {
+        let lowered = hex.lowercased()
+        guard let bytes = NostrHex.bytes(fromLowercaseHex: lowered), bytes.count == expectedCount else {
+            throw NostrNIP19Error.invalidPayloadLength(NostrHex.bytes(fromLowercaseHex: lowered)?.count ?? 0)
+        }
+        return bytes
+    }
+
+    private static func appendTLV(type: UInt8, value: [UInt8], to bytes: inout [UInt8]) {
+        guard value.count <= UInt8.max else { return }
+        bytes.append(type)
+        bytes.append(UInt8(value.count))
+        bytes.append(contentsOf: value)
+    }
+
     private static func normalizedInput(_ input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let value = trimmed.hasPrefix("nostr:") ? String(trimmed.dropFirst("nostr:".count)) : trimmed
@@ -193,6 +346,20 @@ public enum NostrNIP19 {
 enum Bech32 {
     private static let charset = Array("qpzry9x8gf2tvdw0s3jn54khce6mua7l")
     private static let generators: [UInt32] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+
+    static func encode(hrp: String, data: [UInt8]) throws -> String {
+        guard !hrp.isEmpty, hrp.allSatisfy({ $0.unicodeScalars.allSatisfy { (33...126).contains($0.value) } }) else {
+            throw NostrNIP19Error.invalidEncoding
+        }
+        let checksum = createChecksum(hrp: hrp, data: data)
+        let encoded = try (data + checksum).map { value -> Character in
+            guard value < charset.count else {
+                throw NostrNIP19Error.invalidEncoding
+            }
+            return charset[Int(value)]
+        }
+        return hrp.lowercased() + "1" + String(encoded)
+    }
 
     static func decode(_ input: String) throws -> (hrp: String, data: [UInt8]) {
         guard let separator = input.lastIndex(of: "1") else {
@@ -249,6 +416,14 @@ enum Bech32 {
     private static func hrpExpand(_ hrp: String) -> [UInt8] {
         let scalars = hrp.unicodeScalars.map { UInt8($0.value) }
         return scalars.map { $0 >> 5 } + [0] + scalars.map { $0 & 31 }
+    }
+
+    private static func createChecksum(hrp: String, data: [UInt8]) -> [UInt8] {
+        let values = hrpExpand(hrp.lowercased()) + data
+        let mod = polymod(values + Array(repeating: 0, count: 6)) ^ 1
+        return (0..<6).map { index in
+            UInt8((mod >> UInt32(5 * (5 - index))) & 31)
+        }
     }
 
     private static func polymod(_ values: [UInt8]) -> UInt32 {

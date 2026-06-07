@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 
 enum TimelineReplyContextStyle {
@@ -133,6 +134,7 @@ struct TimelineBodySummaryPill: View {
 
 struct TimelinePostBodyText: View {
     let text: String
+    var richContent: NostrRichContent? = nil
     let mention: TimelineReplyMention?
     var fontSize: CGFloat = 18
     var lineLimit: Int?
@@ -158,10 +160,39 @@ struct TimelinePostBodyText: View {
             result += mentionPart
         }
 
-        var bodyPart = AttributedString(text)
-        bodyPart.foregroundColor = Color.astrenzaText
-        result += bodyPart
+        if let richContent {
+            for (index, token) in richContent.tokens.enumerated() {
+                if index > 0 {
+                    result += AttributedString(" ")
+                }
+                result += attributedToken(token)
+            }
+        } else {
+            var bodyPart = AttributedString(text)
+            bodyPart.foregroundColor = Color.astrenzaText
+            result += bodyPart
+        }
 
         return result
+    }
+
+    private func attributedToken(_ token: NostrRichContentToken) -> AttributedString {
+        var part = AttributedString(token.displayText)
+        switch token {
+        case .text:
+            part.foregroundColor = Color.astrenzaText
+        case .url(let url):
+            part.foregroundColor = Color.astrenzaAccent
+            part.link = url
+        case .profile(let pubkey, _):
+            part.foregroundColor = Color.astrenzaAccent
+            part.link = URL(string: "astrenza://profile/\(pubkey)")
+        case .event(let eventID, _, _, _):
+            part.foregroundColor = Color.astrenzaAccent
+            part.link = URL(string: "astrenza://event/\(eventID)")
+        case .customEmoji:
+            part.foregroundColor = Color.astrenzaAccent
+        }
+        return part
     }
 }

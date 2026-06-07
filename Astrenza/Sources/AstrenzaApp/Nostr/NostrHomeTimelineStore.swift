@@ -1970,13 +1970,18 @@ enum NostrTimelineMaterializer {
         let attachments = event.map(NostrContentAttachmentClassifier.attachments(from:)) ?? []
         let mediaAttachments = attachments.filter { $0.kind == .media }
         let linkURLs = attachments.filter { $0.kind == .linkPreview }.map(\.url)
+        let richBody = event.map {
+            NostrRichContentParser.parse(event: $0, attachments: attachments, promotedLinkURLs: [])
+        }
+        let bodyText = richBody?.displayText ?? item.body
         let contentWarning = event.flatMap(contentWarning(from:))
 
         return TimelinePost(
             id: idOverride ?? item.id,
             author: author,
             avatar: avatar(for: item),
-            body: item.body,
+            body: bodyText,
+            richBody: richBody,
             timestamp: relativeTimestamp(from: item.createdAt),
             replyCount: nil,
             boostCount: nil,
@@ -2004,7 +2009,7 @@ enum NostrTimelineMaterializer {
             replyMention: event.flatMap { replyMention(from: $0, author: author) },
             contentWarning: contentWarning,
             bodyPresentation: bodyPresentation(
-                body: item.body,
+                body: bodyText,
                 linkURLs: linkURLs,
                 isFollowed: item.isFollowed,
                 filterMatch: item.filterMatch

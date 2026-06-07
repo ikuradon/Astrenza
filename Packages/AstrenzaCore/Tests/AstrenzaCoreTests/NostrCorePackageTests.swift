@@ -24,6 +24,35 @@ struct NostrCorePackageTests {
         #expect(eventID == "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2")
     }
 
+    @Test("NIP-19 nprofile decodes TLV pubkey and relay hints")
+    func nip19NProfileDecodesTLV() throws {
+        let profile = try NostrNIP19.profileReference(
+            from: "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8gpp4mhxue69uhhytnc9e3k7mgpz4mhxue69uhkg6nzv9ejuumpv34kytnrdaksjlyr9p"
+        )
+
+        #expect(profile.pubkey == "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d")
+        #expect(profile.relays == ["wss://r.x.com", "wss://djbas.sadkb.com"])
+    }
+
+    @Test("NIP-19 nevent decodes TLV event id author kind and relay hints")
+    func nip19NEventDecodesTLV() throws {
+        let eventID = String(repeating: "a", count: 64)
+        let author = String(repeating: "b", count: 64)
+        let encoded = try NostrNIP19.encodeEventReference(
+            eventID: eventID,
+            relays: ["wss://relay.example"],
+            author: author,
+            kind: 1
+        )
+
+        let decoded = try NostrNIP19.eventReference(from: encoded)
+
+        #expect(decoded.eventID == eventID)
+        #expect(decoded.relays == ["wss://relay.example"])
+        #expect(decoded.author == author)
+        #expect(decoded.kind == 1)
+    }
+
     @Test("NIP-19 nsec decodes to canonical hex private key")
     func nsecDecoding() throws {
         let privateKey = try NostrNIP19.privateKeyHex(
@@ -686,6 +715,70 @@ struct NostrCorePackageTests {
         #expect(NostrContentAttachmentClassifier.linkPreviewURLs(from: event).map(\.absoluteString) == [
             "https://example.test/watch"
         ])
+    }
+
+    @Test("Rich content removes promoted media URLs but keeps fallback clickable URLs")
+    func richContentRemovesMediaAndKeepsClickableURLs() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "photo https://cdn.example.test/pic.png read https://example.test/page",
+            tags: [["imeta", "url https://cdn.example.test/pic.png", "m image/png", "alt image alt"]]
+        )
+        let attachments = NostrContentAttachmentClassifier.attachments(from: event)
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: attachments, promotedLinkURLs: [])
+
+        #expect(rich.displayText == "photo read https://example.test/page")
+        #expect(rich.tokens.contains(.url(url: try #require(URL(string: "https://example.test/page")))))
+        #expect(rich.tokens.contains { token in
+            if case .url(let url) = token {
+                return url.absoluteString == "https://cdn.example.test/pic.png"
+            }
+            return false
+        } == false)
+    }
+
+    @Test("Rich content turns tagged custom emoji shortcode into token")
+    func richContentParsesCustomEmoji() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "hello :astrenza:",
+            tags: [["emoji", "astrenza", "https://emoji.example.test/astrenza.png"]]
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+
+        #expect(rich.tokens.contains(.customEmoji(
+            shortcode: "astrenza",
+            url: try #require(URL(string: "https://emoji.example.test/astrenza.png"))
+        )))
+    }
+
+    @Test("Rich content parses profile and event references")
+    func richContentParsesNostrReferences() throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let eventID = String(repeating: "d", count: 64)
+        let nevent = try NostrNIP19.encodeEventReference(
+            eventID: eventID,
+            relays: ["wss://relay.example"],
+            author: pubkey,
+            kind: 1
+        )
+        let npub = try NostrNIP19.publicKey(pubkey)
+        let event = nostrEvent(
+            kind: 1,
+            content: "hi nostr:\(npub) see nostr:\(nevent)"
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+
+        #expect(rich.references.contains(.profile(pubkey: pubkey, relays: [])))
+        #expect(rich.references.contains(.event(
+            eventID: eventID,
+            relays: ["wss://relay.example"],
+            author: pubkey,
+            kind: 1
+        )))
     }
 
     @Test("Nostr event store records unresolved link preview requests")

@@ -7,6 +7,7 @@ struct TimelinePost: Identifiable {
     let author: TimelineAuthor
     let avatar: AvatarStyle
     let body: String
+    let richBody: NostrRichContent?
     let timestamp: String
     let replyCount: Int?
     let boostCount: Int?
@@ -29,6 +30,7 @@ struct TimelinePost: Identifiable {
         handle: String,
         avatar: AvatarStyle,
         body: String,
+        richBody: NostrRichContent? = nil,
         timestamp: String,
         replyCount: Int?,
         boostCount: Int?,
@@ -55,6 +57,7 @@ struct TimelinePost: Identifiable {
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
+        self.richBody = richBody
         self.timestamp = timestamp
         self.replyCount = replyCount
         self.boostCount = boostCount
@@ -77,6 +80,7 @@ struct TimelinePost: Identifiable {
         author: TimelineAuthor,
         avatar: AvatarStyle,
         body: String,
+        richBody: NostrRichContent? = nil,
         timestamp: String,
         replyCount: Int?,
         boostCount: Int?,
@@ -97,6 +101,7 @@ struct TimelinePost: Identifiable {
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
+        self.richBody = richBody
         self.timestamp = timestamp
         self.replyCount = replyCount
         self.boostCount = boostCount

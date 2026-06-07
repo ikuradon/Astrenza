@@ -116,15 +116,24 @@ struct TimelinePostRow: View {
         }
     }
 
+    @ViewBuilder
     private var textContent: some View {
-        TimelinePostBodyText(
+        let bodyText = TimelinePostBodyText(
             text: post.body,
+            richContent: post.richBody,
             mention: post.replyMention,
             lineLimit: post.bodyPresentation.timelineLineLimit
         )
             .contentShape(Rectangle())
             .accessibilityIdentifier("timeline.body.\(post.id)")
-            .onTapGesture(perform: handleRowTap)
+
+        if post.richBody != nil {
+            bodyText
+                .environment(\.openURL, OpenURLAction(handler: handleRichTextURL))
+        } else {
+            bodyText
+                .onTapGesture(perform: handleRowTap)
+        }
     }
 
     @ViewBuilder
@@ -310,6 +319,46 @@ private extension TimelinePostRow {
         } else if let url = media.browserURL {
             onOpenURL(url)
         }
+    }
+
+    func handleRichTextURL(_ url: URL) -> OpenURLAction.Result {
+        guard url.scheme == "astrenza" else {
+            onOpenURL(url)
+            return .handled
+        }
+
+        if url.host == "profile", let pubkey = url.pathComponents.dropFirst().first {
+            onOpenProfile(profilePost(pubkey: pubkey))
+            return .handled
+        }
+
+        if url.host == "event" {
+            onOpenPost(post)
+            return .handled
+        }
+
+        return .discarded
+    }
+
+    func profilePost(pubkey: String) -> TimelinePost {
+        TimelinePost(
+            author: .unresolved(pubkey: pubkey),
+            avatar: AvatarStyle(
+                primary: .astrenzaAccent,
+                secondary: .astrenzaAttachmentBackground,
+                symbolName: "person.fill",
+                pictureState: .metadataPending,
+                placeholderSeed: pubkey
+            ),
+            body: "",
+            timestamp: "",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
     }
 
     func performSwipeAction(_ action: TimelineSwipeAction) -> Bool {
