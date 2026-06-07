@@ -32,6 +32,30 @@ public struct NostrNIP05Resolution: Codable, Equatable, Sendable {
     }
 }
 
+public struct NostrNIP05CachePolicy: Equatable, Sendable {
+    public let verifiedTTLSeconds: TimeInterval
+    public let failureTTLSeconds: TimeInterval
+
+    public init(
+        verifiedTTLSeconds: TimeInterval = 24 * 60 * 60,
+        failureTTLSeconds: TimeInterval = 15 * 60
+    ) {
+        self.verifiedTTLSeconds = max(0, verifiedTTLSeconds)
+        self.failureTTLSeconds = max(0, failureTTLSeconds)
+    }
+
+    public func isFresh(_ resolution: NostrNIP05Resolution, now: Date = Date()) -> Bool {
+        let ttl: TimeInterval
+        switch resolution.status {
+        case .verified:
+            ttl = verifiedTTLSeconds
+        case .absent, .unchecked, .invalid, .failed:
+            ttl = failureTTLSeconds
+        }
+        return now.timeIntervalSince(resolution.resolvedAt) < ttl
+    }
+}
+
 public protocol NostrNIP05Resolving: Sendable {
     func resolve(identifier: String, expectedPubkey: String?) async -> NostrNIP05Resolution
 }
@@ -52,8 +76,20 @@ public actor NostrNIP05Cache {
         }
     }
 
-    public func resolution(for identifier: String, expectedPubkey: String?) -> NostrNIP05Resolution? {
-        resolutions[cacheKey(identifier: identifier, expectedPubkey: expectedPubkey)]
+    public func resolution(
+        for identifier: String,
+        expectedPubkey: String?,
+        now: Date = Date(),
+        policy: NostrNIP05CachePolicy = NostrNIP05CachePolicy()
+    ) -> NostrNIP05Resolution? {
+        let key = cacheKey(identifier: identifier, expectedPubkey: expectedPubkey)
+        guard let resolution = resolutions[key] else { return nil }
+        guard policy.isFresh(resolution, now: now) else {
+            resolutions.removeValue(forKey: key)
+            persist()
+            return nil
+        }
+        return resolution
     }
 
     public func store(_ resolution: NostrNIP05Resolution, expectedPubkey: String?) {
@@ -73,15 +109,18 @@ public actor NostrNIP05Cache {
 
 public struct NostrNIP05Resolver: NostrNIP05Resolving {
     public let cache: NostrNIP05Cache?
+    public let cachePolicy: NostrNIP05CachePolicy
     public let dataLoader: NostrHTTPDataLoader
 
     public init(
         cache: NostrNIP05Cache? = NostrNIP05Cache(),
+        cachePolicy: NostrNIP05CachePolicy = NostrNIP05CachePolicy(),
         dataLoader: @escaping NostrHTTPDataLoader = { request in
             try await URLSession.shared.data(for: request)
         }
     ) {
         self.cache = cache
+        self.cachePolicy = cachePolicy
         self.dataLoader = dataLoader
     }
 
@@ -92,7 +131,11 @@ public struct NostrNIP05Resolver: NostrNIP05Resolving {
             return NostrNIP05Resolution(identifier: identifier, pubkey: nil, relays: [], status: .absent)
         }
 
-        if let cached = await cache?.resolution(for: normalizedIdentifier, expectedPubkey: expectedPubkey) {
+        if let cached = await cache?.resolution(
+            for: normalizedIdentifier,
+            expectedPubkey: expectedPubkey,
+            policy: cachePolicy
+        ) {
             return cached
         }
 

@@ -78,12 +78,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var linkPreviewTask: Task<Void, Never>?
     private var materializeTask: Task<Void, Never>?
     private var resolvingLinkPreviewURLs = Set<String>()
-    private var pendingProfilePubkeys = Set<String>()
-    private var pendingSourceEventIDs = Set<String>()
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var runtimeSyncWindows: [RuntimeSubscriptionKey: RuntimeSyncWindow] = [:]
-    private var bufferedProfilePubkeysByRelay: [RelaySelectionKey: Set<String>] = [:]
-    private var bufferedSourceEventIDsByRelay: [RelaySelectionKey: Set<String>] = [:]
+    private var dependencyFetchQueue = NostrDependencyFetchQueue()
     private var backwardFlushTask: Task<Void, Never>?
     private var installedHomeForwardPacket: NostrREQPacket?
     private var noteEvents: [NostrEvent] = []
@@ -173,8 +170,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     var isRelayProcessing: Bool {
         phase.isProcessing ||
-            !pendingProfilePubkeys.isEmpty ||
-            !pendingSourceEventIDs.isEmpty ||
+            dependencyFetchQueue.hasPendingWork ||
             !pendingBackwardRequests.isEmpty
     }
 
@@ -372,14 +368,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         runtimeTask = nil
         linkPreviewTask = nil
         backwardFlushTask = nil
-        pendingProfilePubkeys.removeAll()
-        pendingSourceEventIDs.removeAll()
+        dependencyFetchQueue.removeAll()
         pendingBackwardRequests.removeAll()
         pendingNewEventIDs.removeAll()
         pendingNewCount = 0
         runtimeSyncWindows.removeAll()
-        bufferedProfilePubkeysByRelay.removeAll()
-        bufferedSourceEventIDsByRelay.removeAll()
         relayRuntimeStates = [:]
         updateRelayStatusCounts()
         relayStatusRevision &+= 1
@@ -989,7 +982,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         case 0:
             metadataEvents.removeAll { $0.pubkey == event.pubkey }
             metadataEvents.append(event)
-            pendingProfilePubkeys.remove(event.pubkey)
+            dependencyFetchQueue.finish(profilePubkeys: [event.pubkey], succeeded: true)
             resolveNIP05IfNeeded(for: event)
             scheduleMaterializeEntries()
         case 1, 6:
@@ -1003,7 +996,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                     pendingBackwardRequests[requestKey]?.receivedTimelineEventCount += 1
                 }
             }
-            pendingSourceEventIDs.remove(event.id)
+            dependencyFetchQueue.finish(sourceEventIDs: [event.id], succeeded: true)
             enqueueBackwardDependencies(for: event)
             embeddedTarget.map(enqueueBackwardDependencies)
             if request?.isOlderPage == true || request?.gap != nil {
@@ -1038,32 +1031,14 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func enqueueBackwardDependencies(for event: NostrEvent) {
         guard relayRuntime != nil, !resolvedRelays.isEmpty else { return }
         let dependencies = NostrEventDependencies.extract(from: event)
-        ingestCachedDependencies(dependencies)
-        let knownProfilePubkeys = Set(metadataEvents.map(\.pubkey))
-        let cachedSourceEventIDs = Set(((try? eventStore?.events(ids: dependencies.sourceEventIDs)) ?? []).map(\.id))
-        let knownEventIDs = Set(noteEvents.map(\.id)).union(cachedSourceEventIDs)
-        let missingProfiles = dependencies.profilePubkeys.filter { !knownProfilePubkeys.contains($0) && pendingProfilePubkeys.insert($0).inserted }
-        let missingSourceIDs = dependencies.sourceEventIDs.filter { !knownEventIDs.contains($0) && pendingSourceEventIDs.insert($0).inserted }
+        let cacheSnapshot = ingestCachedDependencies(dependencies)
 
-        guard !missingProfiles.isEmpty || !missingSourceIDs.isEmpty else { return }
-
-        queueBackwardDependencies(
-            missingProfiles: missingProfiles,
-            missingSourceIDs: missingSourceIDs,
-            dependencies: dependencies
-        )
-    }
-
-    private func queueBackwardDependencies(
-        missingProfiles: [String],
-        missingSourceIDs: [String],
-        dependencies: NostrEventDependencies
-    ) {
-        for (relayURLs, pubkeys) in groupedProfileDependencies(missingProfiles, dependencies: dependencies) {
-            bufferedProfilePubkeysByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(pubkeys)
-        }
-        for (relayURLs, ids) in groupedSourceDependencies(missingSourceIDs, dependencies: dependencies) {
-            bufferedSourceEventIDsByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(ids)
+        guard dependencyFetchQueue.enqueue(
+            dependencies: dependencies,
+            cacheSnapshot: cacheSnapshot,
+            availableRelayURLs: resolvedRelays
+        ) else {
+            return
         }
         scheduleBackwardDependencyFlush()
     }
@@ -1078,6 +1053,44 @@ final class NostrHomeTimelineStore: ObservableObject {
             return nil
         }
         return embedded
+    }
+
+    private func ingestCachedDependencies(_ dependencies: NostrEventDependencies) -> NostrDependencyFetchCacheSnapshot {
+        guard let eventStore else {
+            let profileReceivedAtByPubkey = Dictionary(uniqueKeysWithValues: metadataEvents.map { event in
+                (event.pubkey, Int(Date().timeIntervalSince1970))
+            })
+            let knownEventIDs = Set(noteEvents.map(\.id))
+            return NostrDependencyFetchCacheSnapshot(
+                profileReceivedAtByPubkey: profileReceivedAtByPubkey,
+                sourceEventIDs: knownEventIDs
+            )
+        }
+
+        let cachedProfiles = (try? eventStore.latestReplaceableEvents(
+            pubkeys: Set(dependencies.profilePubkeys),
+            kind: 0
+        )) ?? []
+        for profile in cachedProfiles {
+            metadataEvents.removeAll { $0.pubkey == profile.pubkey }
+            metadataEvents.append(profile)
+        }
+
+        let profileReceivedAtByPubkey = ((try? eventStore.latestReplaceableEventReceivedAtByPubkey(
+            pubkeys: Set(dependencies.profilePubkeys),
+            kind: 0
+        )) ?? [:]).merging(
+            Dictionary(uniqueKeysWithValues: metadataEvents.map { event in
+                (event.pubkey, Int(Date().timeIntervalSince1970))
+            }),
+            uniquingKeysWith: { stored, _ in stored }
+        )
+        let cachedSourceEventIDs = Set(((try? eventStore.events(ids: dependencies.sourceEventIDs)) ?? []).map(\.id))
+        let knownEventIDs = Set(noteEvents.map(\.id)).union(cachedSourceEventIDs)
+        return NostrDependencyFetchCacheSnapshot(
+            profileReceivedAtByPubkey: profileReceivedAtByPubkey,
+            sourceEventIDs: knownEventIDs
+        )
     }
 
     private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
@@ -1130,14 +1143,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let relayRuntime else { return }
         backwardFlushTask = nil
 
-        let profileGroups = bufferedProfilePubkeysByRelay
-            .map { (relayURLs: $0.key.relayURLs, pubkeys: Array($0.value).sorted()) }
-            .filter { !$0.pubkeys.isEmpty }
-        let sourceGroups = bufferedSourceEventIDsByRelay
-            .map { (relayURLs: $0.key.relayURLs, ids: Array($0.value).sorted()) }
-            .filter { !$0.ids.isEmpty }
-        bufferedProfilePubkeysByRelay.removeAll()
-        bufferedSourceEventIDsByRelay.removeAll()
+        let batch = dependencyFetchQueue.drain()
 
         var profilePackets: [NostrREQPacket] = []
         var sourcePackets: [NostrREQPacket] = []
@@ -1145,22 +1151,22 @@ final class NostrHomeTimelineStore: ObservableObject {
         var registeredProfilePubkeys: [String] = []
         var registeredSourceEventIDs: [String] = []
 
-        for group in profileGroups {
-            guard let packet = NostrBackwardREQBuilder.profiles(authors: group.pubkeys, relayURLs: group.relayURLs) else {
+        for group in batch.profileGroups {
+            guard let packet = NostrBackwardREQBuilder.profiles(authors: group.values, relayURLs: group.relayURLs) else {
                 continue
             }
-            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: group.pubkeys, sourceEventIDs: [])
+            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: group.values, sourceEventIDs: [])
             registeredGroupIDs.append(packet.groupID)
-            registeredProfilePubkeys.append(contentsOf: group.pubkeys)
+            registeredProfilePubkeys.append(contentsOf: group.values)
             profilePackets.append(packet)
         }
-        for group in sourceGroups {
-            guard let packet = NostrBackwardREQBuilder.sourceEvents(ids: group.ids, relayURLs: group.relayURLs) else {
+        for group in batch.sourceGroups {
+            guard let packet = NostrBackwardREQBuilder.sourceEvents(ids: group.values, relayURLs: group.relayURLs) else {
                 continue
             }
-            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: [], sourceEventIDs: group.ids)
+            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: [], sourceEventIDs: group.values)
             registeredGroupIDs.append(packet.groupID)
-            registeredSourceEventIDs.append(contentsOf: group.ids)
+            registeredSourceEventIDs.append(contentsOf: group.values)
             sourcePackets.append(packet)
         }
 
@@ -1177,8 +1183,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             } catch {
                 await MainActor.run {
                     registeredGroupIDs.forEach { pendingBackwardRequests.removeValue(forKey: $0) }
-                    registeredProfilePubkeys.forEach { pendingProfilePubkeys.remove($0) }
-                    registeredSourceEventIDs.forEach { pendingSourceEventIDs.remove($0) }
+                    dependencyFetchQueue.finish(
+                        profilePubkeys: registeredProfilePubkeys,
+                        sourceEventIDs: registeredSourceEventIDs,
+                        succeeded: false
+                    )
                     recordRuntimeSyncEvent(
                         relayURL: resolvedRelays.first ?? "runtime",
                         kind: .partialFailure,
@@ -1190,68 +1199,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func ingestCachedDependencies(_ dependencies: NostrEventDependencies) {
-        guard let eventStore else { return }
-
-        let cachedProfiles = (try? eventStore.latestReplaceableEvents(
-            pubkeys: Set(dependencies.profilePubkeys),
-            kind: 0
-        )) ?? []
-        for profile in cachedProfiles {
-            metadataEvents.removeAll { $0.pubkey == profile.pubkey }
-            metadataEvents.append(profile)
-        }
-
-        _ = try? eventStore.events(ids: dependencies.sourceEventIDs)
-    }
-
-    private func groupedProfileDependencies(
-        _ pubkeys: [String],
-        dependencies: NostrEventDependencies
-    ) -> [(relayURLs: [String], pubkeys: [String])] {
-        groupedDependencies(pubkeys) { pubkey in
-            dependencies.profileRelayURLsByPubkey[pubkey] ?? []
-        }.map { group in
-            (relayURLs: group.relayURLs, pubkeys: group.values)
-        }
-    }
-
-    private func groupedSourceDependencies(
-        _ ids: [String],
-        dependencies: NostrEventDependencies
-    ) -> [(relayURLs: [String], ids: [String])] {
-        groupedDependencies(ids) { id in
-            dependencies.sourceRelayURLsByEventID[id] ?? []
-        }.map { group in
-            (relayURLs: group.relayURLs, ids: group.values)
-        }
-    }
-
-    private func groupedDependencies(
-        _ values: [String],
-        hintsForValue: (String) -> [String]
-    ) -> [(relayURLs: [String], values: [String])] {
-        var groups: [RelaySelectionKey: [String]] = [:]
-        for value in values {
-            let relayURLs = relaySelection(for: hintsForValue(value))
-            groups[RelaySelectionKey(relayURLs: relayURLs), default: []].append(value)
-        }
-        return groups
-            .map { key, values in (relayURLs: key.relayURLs, values: Array(Set(values)).sorted()) }
-            .sorted { lhs, rhs in lhs.relayURLs.lexicographicallyPrecedes(rhs.relayURLs) }
-    }
-
-    private func relaySelection(for hintedRelayURLs: [String]) -> [String] {
-        let hinted = Set(hintedRelayURLs)
-        let connectedHints = resolvedRelays.filter { hinted.contains($0) }
-        return connectedHints.isEmpty ? resolvedRelays : connectedHints
-    }
-
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
         guard let request = pendingBackwardRequests.removeValue(forKey: completion.groupID) else { return }
         let priorBottomPostID = noteEvents.last?.id
-        request.profilePubkeys.forEach { pendingProfilePubkeys.remove($0) }
-        request.sourceEventIDs.forEach { pendingSourceEventIDs.remove($0) }
+        dependencyFetchQueue.finish(
+            profilePubkeys: request.profilePubkeys,
+            sourceEventIDs: request.sourceEventIDs,
+            succeeded: completion.status == .completed || completion.status == .partial
+        )
         if request.isOlderPage && completion.status == .completed && completion.eventCount == 0 {
             hasMoreOlder = false
         }
@@ -2547,8 +2502,4 @@ private struct RuntimeSyncWindow {
         newestCreatedAt = [newestCreatedAt, event.createdAt].compactMap { $0 }.max()
         oldestCreatedAt = [oldestCreatedAt, event.createdAt].compactMap { $0 }.min()
     }
-}
-
-private struct RelaySelectionKey: Hashable {
-    let relayURLs: [String]
 }

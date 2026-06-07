@@ -182,6 +182,99 @@ struct NostrCorePackageTests {
         #expect(await callCount.value == 1)
     }
 
+    @Test("NIP-05 cache expires stale verified resolutions")
+    func nip05CacheExpiresStaleVerifiedResolutions() async {
+        let cache = NostrNIP05Cache(defaults: nil)
+        let freshPolicy = NostrNIP05CachePolicy(verifiedTTLSeconds: 60, failureTTLSeconds: 10)
+        let stale = NostrNIP05Resolution(
+            identifier: "alice@example.test",
+            pubkey: String(repeating: "a", count: 64),
+            relays: [],
+            status: .verified,
+            resolvedAt: Date(timeIntervalSince1970: 100)
+        )
+
+        await cache.store(stale, expectedPubkey: stale.pubkey)
+        let cached = await cache.resolution(
+            for: "alice@example.test",
+            expectedPubkey: stale.pubkey,
+            now: Date(timeIntervalSince1970: 120),
+            policy: freshPolicy
+        )
+        let expired = await cache.resolution(
+            for: "alice@example.test",
+            expectedPubkey: stale.pubkey,
+            now: Date(timeIntervalSince1970: 200),
+            policy: freshPolicy
+        )
+
+        #expect(cached == stale)
+        #expect(expired == nil)
+    }
+
+    @Test("NIP-05 resolver refreshes stale verified cache")
+    func nip05ResolverRefreshesStaleVerifiedCache() async throws {
+        let oldPubkey = String(repeating: "a", count: 64)
+        let newPubkey = String(repeating: "b", count: 64)
+        let cache = NostrNIP05Cache(defaults: nil)
+        await cache.store(
+            NostrNIP05Resolution(
+                identifier: "alice@example.test",
+                pubkey: oldPubkey,
+                relays: [],
+                status: .verified,
+                resolvedAt: Date(timeIntervalSince1970: 100)
+            ),
+            expectedPubkey: nil
+        )
+        let callCount = LockedCounter()
+        let resolver = NostrNIP05Resolver(
+            cache: cache,
+            cachePolicy: NostrNIP05CachePolicy(verifiedTTLSeconds: 1, failureTTLSeconds: 1)
+        ) { request in
+            await callCount.increment()
+            #expect(request.url?.absoluteString == "https://example.test/.well-known/nostr.json?name=alice")
+            let data = Data(#"{"names":{"alice":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"#.utf8)
+            return (data, httpResponse(url: request.url, statusCode: 200))
+        }
+
+        let refreshed = await resolver.resolve(identifier: "alice@example.test", expectedPubkey: nil)
+
+        #expect(refreshed.pubkey == newPubkey)
+        #expect(refreshed.status == .verified)
+        #expect(await callCount.value == 1)
+    }
+
+    @Test("NIP-05 cache uses shorter TTL for failed resolutions")
+    func nip05CacheUsesShorterTTLForFailures() async {
+        let cache = NostrNIP05Cache(defaults: nil)
+        let policy = NostrNIP05CachePolicy(verifiedTTLSeconds: 3_600, failureTTLSeconds: 30)
+        let failed = NostrNIP05Resolution(
+            identifier: "alice@example.test",
+            pubkey: nil,
+            relays: [],
+            status: .failed,
+            resolvedAt: Date(timeIntervalSince1970: 100)
+        )
+
+        await cache.store(failed, expectedPubkey: nil)
+        let cached = await cache.resolution(
+            for: "alice@example.test",
+            expectedPubkey: nil,
+            now: Date(timeIntervalSince1970: 120),
+            policy: policy
+        )
+        let expired = await cache.resolution(
+            for: "alice@example.test",
+            expectedPubkey: nil,
+            now: Date(timeIntervalSince1970: 140),
+            policy: policy
+        )
+
+        #expect(cached == failed)
+        #expect(expired == nil)
+    }
+
     @Test("NIP-05 resolver marks mismatched pubkey invalid")
     func nip05ResolverMismatch() async throws {
         let resolver = NostrNIP05Resolver(cache: NostrNIP05Cache(defaults: nil)) { request in
@@ -282,6 +375,123 @@ struct NostrCorePackageTests {
         try store.save(events: [newer, older])
 
         #expect(try store.latestReplaceableEvent(pubkey: pubkey, kind: 0)?.id == newer.id)
+    }
+
+    @Test("Nostr event store returns replaceable head received timestamps")
+    func eventStoreReplaceableHeadReceivedAtByPubkey() throws {
+        let store = try NostrEventStore.inMemory()
+        let pubkey = String(repeating: "e", count: 64)
+        let metadata = nostrEvent(kind: 0, pubkey: pubkey, createdAt: 100, content: #"{"name":"cached"}"#)
+
+        try store.save(events: [metadata], receivedAt: 1234)
+
+        #expect(try store.latestReplaceableEventReceivedAtByPubkey(pubkeys: [pubkey], kind: 0) == [pubkey: 1234])
+    }
+
+    @Test("Dependency fetch queue batches missing dependencies by relay hint")
+    func dependencyFetchQueueBatchesMissingDependenciesByRelayHint() {
+        let pubkey = String(repeating: "a", count: 64)
+        let eventID = String(repeating: "b", count: 64)
+        var queue = NostrDependencyFetchQueue(
+            policy: NostrDependencyFetchPolicy(profileStaleAfterSeconds: 60, retryAfterSeconds: 30)
+        )
+        let dependencies = NostrEventDependencies(
+            profilePubkeys: [pubkey, pubkey],
+            sourceEventIDs: [eventID],
+            profileRelayURLsByPubkey: [pubkey: ["wss://profiles.example", "wss://missing.example"]],
+            sourceRelayURLsByEventID: [eventID: ["wss://source.example"]]
+        )
+
+        let didEnqueue = queue.enqueue(
+            dependencies: dependencies,
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://profiles.example", "wss://source.example"],
+            now: 100
+        )
+        let batch = queue.drain()
+
+        #expect(didEnqueue)
+        #expect(batch.profileGroups == [
+            NostrDependencyFetchGroup(relayURLs: ["wss://profiles.example"], values: [pubkey])
+        ])
+        #expect(batch.sourceGroups == [
+            NostrDependencyFetchGroup(relayURLs: ["wss://source.example"], values: [eventID])
+        ])
+        #expect(queue.pendingProfilePubkeys == [pubkey])
+        #expect(queue.pendingSourceEventIDs == [eventID])
+    }
+
+    @Test("Dependency fetch queue refreshes stale profiles but not cached source events")
+    func dependencyFetchQueueRefreshesStaleProfilesOnly() {
+        let stalePubkey = String(repeating: "c", count: 64)
+        let freshPubkey = String(repeating: "d", count: 64)
+        let cachedEventID = String(repeating: "e", count: 64)
+        let missingEventID = String(repeating: "f", count: 64)
+        var queue = NostrDependencyFetchQueue(
+            policy: NostrDependencyFetchPolicy(profileStaleAfterSeconds: 60, retryAfterSeconds: 30)
+        )
+        let dependencies = NostrEventDependencies(
+            profilePubkeys: [stalePubkey, freshPubkey],
+            sourceEventIDs: [cachedEventID, missingEventID]
+        )
+        let snapshot = NostrDependencyFetchCacheSnapshot(
+            profileReceivedAtByPubkey: [
+                stalePubkey: 10,
+                freshPubkey: 90
+            ],
+            sourceEventIDs: [cachedEventID]
+        )
+
+        let didEnqueue = queue.enqueue(
+            dependencies: dependencies,
+            cacheSnapshot: snapshot,
+            availableRelayURLs: ["wss://relay.example"],
+            now: 100
+        )
+        let batch = queue.drain()
+
+        #expect(didEnqueue)
+        #expect(batch.profileGroups == [
+            NostrDependencyFetchGroup(relayURLs: ["wss://relay.example"], values: [stalePubkey])
+        ])
+        #expect(batch.sourceGroups == [
+            NostrDependencyFetchGroup(relayURLs: ["wss://relay.example"], values: [missingEventID])
+        ])
+    }
+
+    @Test("Dependency fetch queue suppresses retries until backoff expires")
+    func dependencyFetchQueueSuppressesRetriesUntilBackoffExpires() {
+        let pubkey = String(repeating: "a", count: 64)
+        var queue = NostrDependencyFetchQueue(
+            policy: NostrDependencyFetchPolicy(profileStaleAfterSeconds: 60, retryAfterSeconds: 30)
+        )
+        let dependencies = NostrEventDependencies(profilePubkeys: [pubkey])
+
+        let firstEnqueue = queue.enqueue(
+            dependencies: dependencies,
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 100
+        )
+        _ = queue.drain()
+        queue.finish(profilePubkeys: [pubkey], succeeded: false, now: 110)
+
+        let suppressedEnqueue = queue.enqueue(
+            dependencies: dependencies,
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 120
+        )
+        let retryEnqueue = queue.enqueue(
+            dependencies: dependencies,
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 141
+        )
+
+        #expect(firstEnqueue)
+        #expect(!suppressedEnqueue)
+        #expect(retryEnqueue)
     }
 
     @Test("Nostr event store keeps latest addressable head by d tag")

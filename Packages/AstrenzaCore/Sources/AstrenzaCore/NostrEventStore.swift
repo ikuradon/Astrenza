@@ -872,6 +872,40 @@ public final class NostrEventStore {
         }
     }
 
+    public func latestReplaceableEventReceivedAtByPubkey(
+        pubkeys: Set<String>,
+        kind: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [String: Int] {
+        guard !pubkeys.isEmpty else { return [:] }
+
+        return try database.read { db in
+            var arguments: StatementArguments = [kind, now]
+            let placeholders = pubkeys.map { _ in "?" }.joined(separator: ", ")
+            for pubkey in pubkeys {
+                arguments += [pubkey]
+            }
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT h.pubkey, e.received_at
+                FROM replaceable_heads h
+                JOIN events e ON e.event_id = h.event_id
+                WHERE h.kind = ?
+                    AND \(Self.visibleEventPredicate(alias: "e"))
+                    AND h.pubkey IN (\(placeholders))
+                """,
+                arguments: arguments
+            )
+            return Dictionary(uniqueKeysWithValues: rows.map { row in
+                let pubkey: String = row["pubkey"]
+                let receivedAt: Int = row["received_at"]
+                return (pubkey, receivedAt)
+            })
+        }
+    }
+
     public func profileSearchCandidates(
         query: String,
         limit: Int = 20,

@@ -3229,6 +3229,80 @@ struct TimelineModelTests {
         #expect(resolution.status == .verified)
     }
 
+    @Test("Home timeline store renders stale cached profile while refreshing it")
+    @MainActor
+    func homeTimelineStoreRendersStaleCachedProfileWhileRefreshingIt() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "3f", count: 32))
+        let account = NostrAccount(pubkey: signer.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let staleMetadata = try await signer.sign(
+            NostrUnsignedEvent(
+                pubkey: signer.pubkey,
+                createdAt: 10,
+                kind: 0,
+                tags: [],
+                content: #"{"display_name":"Cached Author"}"#
+            )
+        )
+        let liveEvent = try await signer.sign(
+            NostrPublishInput.post(content: "profile stale refresh")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 540)
+        )
+        try eventStore.save(events: [staleMetadata], receivedAt: 1)
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-home-forward"]"#,
+            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: liveEvent)
+        ])
+        let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
+            FakeRelayRuntimeTransport(connection: connection)
+        }, autoReceive: false)
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "stale-profile-refresh-relays",
+                        kind: 10002,
+                        pubkey: signer.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "stale-profile-refresh-follows",
+                        kind: 3,
+                        pubkey: signer.pubkey,
+                        createdAt: 101,
+                        tags: [["p", signer.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let post = try await waitForTimelinePost(in: store, id: liveEvent.id) { post in
+            post.author.primaryText == "Cached Author"
+        }
+        _ = try await waitForREQSubscriptionID(in: connection, containing: signer.pubkey)
+
+        #expect(post.body == "profile stale refresh")
+        #expect(post.author.primaryText == "Cached Author")
+    }
+
     @Test("Home timeline store materializes runtime repost metadata")
     @MainActor
     func homeTimelineStoreMaterializesRuntimeRepostMetadata() async throws {
