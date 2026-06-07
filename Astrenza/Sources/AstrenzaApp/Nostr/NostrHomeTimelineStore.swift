@@ -1007,10 +1007,9 @@ final class NostrHomeTimelineStore: ObservableObject {
 
         switch event.kind {
         case 0:
-            metadataEvents.removeAll { $0.pubkey == event.pubkey }
-            metadataEvents.append(event)
+            let effectiveMetadataEvent = rememberLatestMetadataEvent(event)
             dependencyFetchQueue.finish(profilePubkeys: [event.pubkey], succeeded: true)
-            resolveNIP05IfNeeded(for: event)
+            resolveNIP05IfNeeded(for: effectiveMetadataEvent)
             scheduleMaterializeEntries()
         case 1, 6:
             if request?.isOlderPage == true || request?.gap != nil {
@@ -1102,8 +1101,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             kind: 0
         )) ?? []
         for profile in cachedProfiles {
-            metadataEvents.removeAll { $0.pubkey == profile.pubkey }
-            metadataEvents.append(profile)
+            rememberLatestMetadataEvent(profile)
         }
 
         let profileReceivedAtByPubkey = ((try? eventStore.latestReplaceableEventReceivedAtByPubkey(
@@ -1794,16 +1792,72 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func apply(_ state: NostrHomeTimelineState) {
-        resolvedRelays = state.relays
-        followedPubkeys = state.followedPubkeys
+        let storedRelayListEvent = account.flatMap { account in
+            try? eventStore?.latestReplaceableEvent(pubkey: account.pubkey, kind: 10002)
+        }
+        let storedContactListEvent = account.flatMap { account in
+            try? eventStore?.latestReplaceableEvent(pubkey: account.pubkey, kind: 3)
+        }
+        let effectiveRelayListEvent = freshestReplaceableEvent([
+            relayListEvent,
+            state.relayListEvent,
+            storedRelayListEvent
+        ])
+        let effectiveContactListEvent = freshestReplaceableEvent([
+            contactListEvent,
+            state.contactListEvent,
+            storedContactListEvent
+        ])
+        let effectiveRelays: [String]
+        if effectiveRelayListEvent?.id != nil,
+           effectiveRelayListEvent?.id != state.relayListEvent?.id {
+            let currentReadRelays = NostrRelayList.parse(from: effectiveRelayListEvent).readRelays
+            effectiveRelays = currentReadRelays.isEmpty ? resolvedRelays : currentReadRelays
+        } else {
+            effectiveRelays = state.relays
+        }
+        let effectiveFollowedPubkeys: [String]
+        if effectiveContactListEvent?.id != nil,
+           effectiveContactListEvent?.id != state.contactListEvent?.id {
+            let currentFollowedPubkeys = NostrContactList.pubkeys(from: effectiveContactListEvent)
+            effectiveFollowedPubkeys = currentFollowedPubkeys.isEmpty ? followedPubkeys : currentFollowedPubkeys
+        } else {
+            effectiveFollowedPubkeys = state.followedPubkeys
+        }
+
+        resolvedRelays = effectiveRelays
+        followedPubkeys = effectiveFollowedPubkeys
         noteEvents = state.noteEvents
         metadataEvents = state.metadataEvents
-        relayListEvent = state.relayListEvent
-        contactListEvent = state.contactListEvent
+        relayListEvent = effectiveRelayListEvent
+        contactListEvent = effectiveContactListEvent
         nip05Resolutions = state.nip05Resolutions
         relaySyncEvents = state.relaySyncEvents
         hasMoreOlder = state.hasMoreOlder
         updateRelayStatusCounts()
+    }
+
+    @discardableResult
+    private func rememberLatestMetadataEvent(_ event: NostrEvent) -> NostrEvent {
+        let storedMetadataEvent = try? eventStore?.latestReplaceableEvent(pubkey: event.pubkey, kind: 0)
+        let currentMetadataEvent = metadataEvents.first { $0.pubkey == event.pubkey }
+        let effectiveMetadataEvent = freshestReplaceableEvent([
+            currentMetadataEvent,
+            event,
+            storedMetadataEvent
+        ]) ?? event
+        metadataEvents.removeAll { $0.pubkey == event.pubkey }
+        metadataEvents.append(effectiveMetadataEvent)
+        return effectiveMetadataEvent
+    }
+
+    private func freshestReplaceableEvent(_ events: [NostrEvent?]) -> NostrEvent? {
+        events.compactMap(\.self).max { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id > rhs.id
+            }
+            return lhs.createdAt < rhs.createdAt
+        }
     }
 }
 

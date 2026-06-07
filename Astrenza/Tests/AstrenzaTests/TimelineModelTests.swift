@@ -966,6 +966,129 @@ struct TimelineModelTests {
         try await waitForRelayStatusCounts(in: store, connected: 0, planned: 1)
     }
 
+    @Test("Home relay pill keeps newer cached NIP-65 over stale bootstrap result")
+    @MainActor
+    func homeRelayPillKeepsNewerCachedNIP65OverStaleBootstrapResult() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "f", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let newerRelayList = timelineEvent(
+            idSeed: "newer-cached-nip65",
+            kind: 10002,
+            pubkey: account.pubkey,
+            createdAt: 300,
+            tags: [
+                ["r", "wss://relay-a.example", "read"],
+                ["r", "wss://relay-b.example", "read"],
+                ["r", "wss://relay-c.example", "read"]
+            ],
+            content: ""
+        )
+        try eventStore.save(events: [newerRelayList])
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "stale-bootstrap-nip65",
+                        kind: 10002,
+                        pubkey: account.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://old-relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "stale-bootstrap-follows",
+                        kind: 3,
+                        pubkey: account.pubkey,
+                        createdAt: 101,
+                        tags: [["p", account.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://old-relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(timelineLoader: timelineLoader, eventStore: eventStore)
+
+        store.start(account: account)
+        try await waitForRelayStatusCounts(in: store, connected: 0, planned: 3)
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(store.resolvedRelays == [
+            "wss://relay-a.example",
+            "wss://relay-b.example",
+            "wss://relay-c.example"
+        ])
+        #expect(store.relayStatusCounts.planned == 3)
+    }
+
+    @Test("Home timeline keeps newer cached kind 3 over stale bootstrap result")
+    @MainActor
+    func homeTimelineKeepsNewerCachedKind3OverStaleBootstrapResult() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "f", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let firstFollow = String(repeating: "1", count: 64)
+        let secondFollow = String(repeating: "2", count: 64)
+        let staleFollow = String(repeating: "3", count: 64)
+        let newerContactList = timelineEvent(
+            idSeed: "newer-cached-kind3",
+            kind: 3,
+            pubkey: account.pubkey,
+            createdAt: 300,
+            tags: [
+                ["p", firstFollow],
+                ["p", secondFollow]
+            ],
+            content: ""
+        )
+        try eventStore.save(events: [newerContactList])
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "kind3-stale-relays",
+                        kind: 10002,
+                        pubkey: account.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "stale-bootstrap-kind3",
+                        kind: 3,
+                        pubkey: account.pubkey,
+                        createdAt: 100,
+                        tags: [["p", staleFollow]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(timelineLoader: timelineLoader, eventStore: eventStore)
+
+        store.start(account: account)
+        try await waitForFollowedPubkeys(in: store, [firstFollow, secondFollow])
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(store.followedPubkeys == [firstFollow, secondFollow])
+    }
+
     @Test("Relay status sheet refresh does not mark NIP-11 HTTP fetches as relay connectivity")
     @MainActor
     func relayStatusSheetRefreshDoesNotPolluteRelaySyncHistory() async throws {
@@ -4870,6 +4993,22 @@ private func waitForRelayStatusCounts(
     let counts = store.relayStatusCounts
     #expect(counts.connected == connected)
     #expect(counts.planned == planned)
+}
+
+@MainActor
+private func waitForFollowedPubkeys(
+    in store: NostrHomeTimelineStore,
+    _ expected: [String],
+    attempts: Int = 100
+) async throws {
+    for _ in 0..<attempts {
+        if store.followedPubkeys == expected {
+            return
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    #expect(store.followedPubkeys == expected)
 }
 
 @MainActor
