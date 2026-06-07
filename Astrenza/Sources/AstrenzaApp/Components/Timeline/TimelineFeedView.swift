@@ -328,9 +328,21 @@ private extension TimelineFeedView {
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .named("timelineFeedViewport"))
             } action: { _, frame in
-                scrollRuntime.postFrames[postID] = frame
+                updateMeasuredPostFrame(postID: postID, frame: frame)
                 notifyReadablePostIDs()
             }
+    }
+
+    func updateMeasuredPostFrame(postID: TimelinePost.ID, frame: CGRect) {
+        scrollRuntime.postFrames[postID] = frame
+
+        guard frame.height > 0 else { return }
+        let previousHeight = measuredLayoutCache.measuredHeights[postID]
+        guard previousHeight == nil || abs((previousHeight ?? 0) - frame.height) > 0.5 else { return }
+
+        measuredLayoutCache.measuredHeights[postID] = frame.height
+        updateLayoutSnapshot()
+        onLayoutCacheChanged(measuredLayoutCache)
     }
 
     func postInsertionTransition(for post: TimelinePost) -> AnyTransition {
@@ -482,7 +494,8 @@ private extension TimelineFeedView {
         let newIDs = entries.map(\.id)
         guard oldIDs != newIDs else { return }
 
-        let shouldFollowNewestEntries = followsNewestEntries && entriesDidPrependNewest(oldIDs: oldIDs, newIDs: newIDs)
+        let shouldPreserveAnchorForPullRefresh = isPullRefreshing || isPullRefreshArmed || isUserPullingToRefresh || pullRefreshProgress > 0
+        let shouldFollowNewestEntries = !shouldPreserveAnchorForPullRefresh && followsNewestEntries && entriesDidPrependNewest(oldIDs: oldIDs, newIDs: newIDs)
         let anchor = estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
         let preservedOffset = preservedContentOffset(
             oldIDs: oldIDs,
