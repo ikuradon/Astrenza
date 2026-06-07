@@ -129,7 +129,6 @@ struct TimelineFullscreenMediaViewer: View {
         .simultaneousGesture(chromeToggleGesture)
         .simultaneousGesture(dismissalGesture)
         .animation(.spring(duration: 0.2, bounce: 0.08), value: isChromeVisible)
-        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder
@@ -367,16 +366,13 @@ struct TimelineInAppBrowserView: UIViewControllerRepresentable {
 private struct GalleryAttachmentView: View {
     let tiles: [MediaTile]
 
-    private let landscapeAspectRatio: CGFloat = 1.9
-    private let portraitGalleryAspectRatio: CGFloat = 1 / 1.9
-
     var body: some View {
         Group {
             switch tiles.count {
             case 0:
                 EmptyView()
             case 1:
-                TimelineMediaTileView(tile: tiles[0])
+                SingleMediaAttachmentView(tile: tiles[0])
             case 2:
                 HStack(spacing: 2) {
                     TimelineMediaTileView(tile: tiles[0])
@@ -406,20 +402,62 @@ private struct GalleryAttachmentView: View {
                 }
             }
         }
-        .aspectRatio(resolvedAspectRatio, contentMode: .fit)
+        .modifier(GalleryAspectRatioModifier(aspectRatio: resolvedAspectRatio, isSingleMedia: tiles.count == 1))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var resolvedAspectRatio: CGFloat {
-        switch tiles.count {
-        case 1:
-            guard let aspectRatio = tiles.first?.aspectRatio else { return landscapeAspectRatio }
-            return min(max(aspectRatio, 0.72), landscapeAspectRatio)
-        case 2, 3:
-            return tiles.contains(where: \.isPortrait) ? portraitGalleryAspectRatio : landscapeAspectRatio
-        default:
-            return landscapeAspectRatio
+        TimelineMediaLayoutMetrics.galleryAspectRatio(for: tiles)
+    }
+}
+
+private struct GalleryAspectRatioModifier: ViewModifier {
+    let aspectRatio: CGFloat
+    let isSingleMedia: Bool
+
+    func body(content: Content) -> some View {
+        if isSingleMedia {
+            content
+        } else {
+            content.aspectRatio(aspectRatio, contentMode: .fit)
         }
+    }
+}
+
+private struct SingleMediaAttachmentView: View {
+    let tile: MediaTile
+    @State private var availableWidth: CGFloat = 0
+
+    var body: some View {
+        let size = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: tile.aspectRatio,
+            availableWidth: measuredWidth
+        )
+
+        TimelineMediaTileView(tile: tile)
+            .frame(width: size.width, height: size.height)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: SingleMediaAvailableWidthKey.self, value: proxy.size.width)
+                }
+            )
+            .onPreferenceChange(SingleMediaAvailableWidthKey.self) { width in
+                guard width > 0, abs(width - availableWidth) > 0.5 else { return }
+                availableWidth = width
+            }
+    }
+
+    private var measuredWidth: CGFloat {
+        availableWidth > 0 ? availableWidth : 320
+    }
+}
+
+private struct SingleMediaAvailableWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -435,10 +473,10 @@ private struct TimelineMediaTileView: View {
                 .blur(radius: overlayCount == nil ? 0 : 8)
 
             if tile.isVideo {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 24, weight: .black))
+                    Image(systemName: "play.fill")
+                    .font(.system(size: 20, weight: .black))
                     .foregroundStyle(.white)
-                    .frame(width: 52, height: 52)
+                    .frame(width: 44, height: 44)
                     .background(.black.opacity(0.42), in: Circle())
                     .shadow(color: .black.opacity(0.3), radius: 14, y: 4)
                     .blur(radius: overlayCount == nil ? 0 : 5)
@@ -454,7 +492,7 @@ private struct TimelineMediaTileView: View {
                     .fill(.black.opacity(0.34))
 
                 Text("+\(overlayCount)")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.system(size: 24, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.38), radius: 10, y: 4)
             }
@@ -477,7 +515,7 @@ private struct TimelineMediaTileView: View {
             BlurHashPlaceholderView(blurhash: tile.blurhash, colors: tile.colors)
 
             Image(systemName: tile.symbolName)
-                .font(.system(size: 42, weight: .bold))
+                .font(.system(size: 34, weight: .bold))
                 .foregroundStyle(.white.opacity(0.88))
                 .blur(radius: overlayCount == nil ? 0 : 5)
         }
@@ -485,7 +523,7 @@ private struct TimelineMediaTileView: View {
 
     private var fallbackLabel: some View {
         Text(tile.title)
-            .font(.system(size: 14, weight: .heavy, design: .rounded))
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
             .foregroundStyle(.white.opacity(0.9))
             .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
@@ -556,23 +594,23 @@ private struct LinkPreviewAttachmentView: View {
                 HStack(spacing: 6) {
                     if preview.style == .youtube {
                         Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 13, weight: .black))
+                            .font(.system(size: 11, weight: .black))
                             .foregroundStyle(.red)
                     }
 
                     Text(preview.host)
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
                         .lineLimit(1)
                 }
 
                 Text(preview.title)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
 
                 Text(preview.subtitle)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -714,19 +752,19 @@ private struct UnresolvedLinkAttachmentView: View {
                 Circle()
                     .fill(Color.white.opacity(0.08))
                 Image(systemName: "link")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.system(size: 15, weight: .black))
                     .foregroundStyle(Color.astrenzaAccent)
             }
-            .frame(width: 38, height: 38)
+            .frame(width: 32, height: 32)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(preview.host)
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(preview.url)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
