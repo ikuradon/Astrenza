@@ -6,6 +6,96 @@ import Testing
 
 @Suite("Timeline models")
 struct TimelineModelTests {
+    @Test("Session store persists multiple accounts and restores the selected account")
+    @MainActor
+    func sessionStorePersistsMultipleAccounts() async throws {
+        let suiteName = "AstrenzaTests.session.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstPubkey = String(repeating: "a", count: 64)
+        let secondPubkey = String(repeating: "b", count: 64)
+        let store = NostrSessionStore(defaults: defaults, restoreAccount: false)
+
+        store.loginInput = firstPubkey
+        await store.login()
+        store.loginInput = secondPubkey
+        await store.login()
+
+        #expect(store.accounts.map(\.pubkey) == [secondPubkey, firstPubkey])
+        #expect(store.account?.pubkey == secondPubkey)
+
+        store.selectAccount(firstPubkey)
+
+        let restored = NostrSessionStore(defaults: defaults)
+        #expect(restored.accounts.map(\.pubkey) == [secondPubkey, firstPubkey])
+        #expect(restored.account?.pubkey == firstPubkey)
+    }
+
+    @Test("Session store selects and removes persisted accounts")
+    @MainActor
+    func sessionStoreSelectsAndRemovesAccounts() async throws {
+        let suiteName = "AstrenzaTests.session.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstPubkey = String(repeating: "c", count: 64)
+        let secondPubkey = String(repeating: "d", count: 64)
+        let store = NostrSessionStore(defaults: defaults, restoreAccount: false)
+
+        store.loginInput = firstPubkey
+        await store.login()
+        store.loginInput = secondPubkey
+        await store.login()
+        store.selectAccount(firstPubkey)
+        store.removeAccount(firstPubkey)
+
+        #expect(store.accounts.map(\.pubkey) == [secondPubkey])
+        #expect(store.account?.pubkey == secondPubkey)
+
+        store.removeAccount(secondPubkey)
+
+        #expect(store.accounts.isEmpty)
+        #expect(store.account == nil)
+    }
+
+    @Test("Session account summaries prefer cached kind 0 profile metadata")
+    @MainActor
+    func sessionAccountSummariesPreferCachedProfileMetadata() async throws {
+        let suiteName = "AstrenzaTests.session.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let pubkey = String(repeating: "e", count: 64)
+        let eventStore = try NostrEventStore.inMemory()
+        let metadata = timelineEvent(
+            idSeed: "account-metadata",
+            kind: 0,
+            pubkey: pubkey,
+            createdAt: 1_800_000_000,
+            content: #"{"name":"Fallback","display_name":"User Real","nip05":"_@real.example","picture":"https://real.example/avatar.png"}"#
+        )
+        try eventStore.save(events: [metadata])
+
+        let store = NostrSessionStore(defaults: defaults, restoreAccount: false)
+        store.loginInput = pubkey
+        await store.login()
+
+        let summary = try #require(store.accountSummaries(eventStore: eventStore).first)
+        #expect(summary.title == "User Real")
+        #expect(summary.subtitle == "_@real.example")
+        #expect(summary.npub.hasPrefix("npub1"))
+        #expect(summary.isSelected)
+        #expect(summary.isReadOnly)
+        #expect(summary.avatarStyle.imageURL?.absoluteString == "https://real.example/avatar.png")
+    }
+
     @Test("Home timeline keeps mock root posts and excludes hidden reply-chain descendants")
     func homeTimelineShape() throws {
         let posts = MockTimelineData.posts

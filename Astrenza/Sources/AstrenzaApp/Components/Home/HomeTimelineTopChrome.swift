@@ -9,6 +9,10 @@ struct HomeTimelineTopBar: View {
     let onDismissFloatingMenus: () -> Void
     let onRelayStatusTap: () -> Void
     let onSettingsTap: () -> Void
+    let currentAccount: NostrAccountSummary?
+    let accounts: [NostrAccountSummary]
+    let onSelectAccount: (String) -> Void
+    let onAddAccount: () -> Void
     let relayConnectedCount: Int
     let relayPlannedCount: Int
     let isRelayProcessing: Bool
@@ -19,12 +23,17 @@ struct HomeTimelineTopBar: View {
 
             HStack {
                 Button(action: toggleUserSwitcher) {
-                    UserSwitchButton(isExpanded: isUserSwitcherPresented)
+                    UserSwitchButton(isExpanded: isUserSwitcherPresented, account: currentAccount)
                 }
                 .buttonStyle(.plain)
                 .overlay(alignment: .topLeading) {
                     if isUserSwitcherPresented {
-                        UserSwitcherMenu(onSettingsTap: onSettingsTap)
+                        UserSwitcherMenu(
+                            accounts: accounts,
+                            onSelectAccount: selectAccount,
+                            onAddAccount: onAddAccount,
+                            onSettingsTap: onSettingsTap
+                        )
                             .offset(y: 44)
                             .transition(.scale(scale: 0.72, anchor: .topLeading).combined(with: .opacity))
                             .zIndex(20)
@@ -97,6 +106,13 @@ struct HomeTimelineTopBar: View {
     private func toggleTimelineMenu() {
         withAnimation(.snappy(duration: 0.18)) {
             isTimelineMenuPresented.toggle()
+            isUserSwitcherPresented = false
+        }
+    }
+
+    private func selectAccount(_ pubkey: String) {
+        onSelectAccount(pubkey)
+        withAnimation(.spring(duration: 0.24, bounce: 0.14)) {
             isUserSwitcherPresented = false
         }
     }

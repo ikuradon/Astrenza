@@ -580,7 +580,7 @@ struct TimelineAuthor {
     }
 }
 
-private enum NIP19Display {
+enum NIP19Display {
     private static let cache = NIP19DisplayCache()
     private static let charset = Array("qpzry9x8gf2tvdw0s3jn54khce6mua7l")
     private static let generator: [Int] = [

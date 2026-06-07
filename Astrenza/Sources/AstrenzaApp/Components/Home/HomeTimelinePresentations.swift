@@ -14,6 +14,10 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     let relayRuntimeStates: [String: NostrRelayConnectionState]
     let accountID: String?
     let eventStore: NostrEventStore?
+    let accountSummaries: [NostrAccountSummary]
+    let onSelectAccount: (String) -> Void
+    let onRemoveAccount: (String) -> Void
+    let onAddAccount: () -> Void
     let isComposeSubmitAvailable: Bool
     let onComposeSubmit: ((ComposeSubmitRequest) async -> Bool)?
 
@@ -34,7 +38,11 @@ struct HomeTimelinePresentationModifier: ViewModifier {
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView(onClose: {
                     isSettingsPresented = false
-                }, swipeSettings: $swipeSettings, accountID: accountID, eventStore: eventStore)
+                }, swipeSettings: $swipeSettings, accountID: accountID, eventStore: eventStore,
+                accountSummaries: accountSummaries,
+                onSelectAccount: onSelectAccount,
+                onRemoveAccount: onRemoveAccount,
+                onAddAccount: onAddAccount)
                 .presentationCornerRadius(26)
             }
             .sheet(isPresented: $isFiltersSettingsPresented) {
@@ -100,6 +108,10 @@ extension View {
         relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
         accountID: String?,
         eventStore: NostrEventStore?,
+        accountSummaries: [NostrAccountSummary] = [],
+        onSelectAccount: @escaping (String) -> Void = { _ in },
+        onRemoveAccount: @escaping (String) -> Void = { _ in },
+        onAddAccount: @escaping () -> Void = {},
         isComposeSubmitAvailable: Bool = true,
         onComposeSubmit: ((ComposeSubmitRequest) async -> Bool)? = nil
     ) -> some View {
@@ -117,6 +129,10 @@ extension View {
                 relayRuntimeStates: relayRuntimeStates,
                 accountID: accountID,
                 eventStore: eventStore,
+                accountSummaries: accountSummaries,
+                onSelectAccount: onSelectAccount,
+                onRemoveAccount: onRemoveAccount,
+                onAddAccount: onAddAccount,
                 isComposeSubmitAvailable: isComposeSubmitAvailable,
                 onComposeSubmit: onComposeSubmit
             )

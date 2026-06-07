@@ -66,6 +66,15 @@ struct HomeTimelineView: View {
         sessionStore.account == nil || sessionStore.signer != nil
     }
 
+    private var accountSummaries: [NostrAccountSummary] {
+        sessionStore.accountSummaries(eventStore: liveTimelineStore.relayStatusEventStore)
+    }
+
+    private var currentAccountSummary: NostrAccountSummary? {
+        guard let currentPubkey = sessionStore.account?.pubkey else { return nil }
+        return accountSummaries.first { $0.id == currentPubkey }
+    }
+
     private var composeSubmitHandler: ((ComposeSubmitRequest) async -> Bool)? {
         guard sessionStore.account != nil else { return nil }
         return { request in
@@ -141,6 +150,10 @@ struct HomeTimelineView: View {
                         onDismissFloatingMenus: dismissFloatingMenus,
                         onRelayStatusTap: presentRelayStatus,
                         onSettingsTap: presentSettings,
+                        currentAccount: currentAccountSummary,
+                        accounts: accountSummaries,
+                        onSelectAccount: selectAccountFromSwitcher,
+                        onAddAccount: presentSettings,
                         relayConnectedCount: relayConnectedCount,
                         relayPlannedCount: relayPlannedCount,
                         isRelayProcessing: liveTimelineStore.isRelayProcessing
@@ -209,6 +222,10 @@ struct HomeTimelineView: View {
             relayRuntimeStates: sessionStore.account == nil ? [:] : liveTimelineStore.relayRuntimeStates,
             accountID: sessionStore.account?.pubkey,
             eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore,
+            accountSummaries: accountSummaries,
+            onSelectAccount: selectAccountFromSwitcher,
+            onRemoveAccount: removeAccountFromSettings,
+            onAddAccount: presentSettings,
             isComposeSubmitAvailable: isComposeSubmitAvailable,
             onComposeSubmit: composeSubmitHandler
         )
@@ -501,6 +518,16 @@ private extension HomeTimelineView {
         dismissFloatingMenus()
         guard !isComposerPresented && !isFiltersSettingsPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
         isSettingsPresented = true
+    }
+
+    func selectAccountFromSwitcher(_ pubkey: String) {
+        dismissFloatingMenus()
+        guard sessionStore.account?.pubkey != pubkey else { return }
+        sessionStore.selectAccount(pubkey)
+    }
+
+    func removeAccountFromSettings(_ pubkey: String) {
+        sessionStore.removeAccount(pubkey)
     }
 
     func presentFiltersSettings() {

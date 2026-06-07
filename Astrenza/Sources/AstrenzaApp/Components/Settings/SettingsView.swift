@@ -12,6 +12,10 @@ struct SettingsView: View {
     let onClose: () -> Void
     let accountID: String?
     let eventStore: NostrEventStore?
+    let accountSummaries: [NostrAccountSummary]
+    let onSelectAccount: (String) -> Void
+    let onRemoveAccount: (String) -> Void
+    let onAddAccount: () -> Void
     @Binding var swipeSettings: TimelineSwipeSettings
     @State private var isSoundsEnabled = true
     @State private var isHapticsEnabled = true
@@ -34,32 +38,34 @@ struct SettingsView: View {
         onClose: @escaping () -> Void,
         swipeSettings: Binding<TimelineSwipeSettings>,
         accountID: String? = nil,
-        eventStore: NostrEventStore? = nil
+        eventStore: NostrEventStore? = nil,
+        accountSummaries: [NostrAccountSummary] = [],
+        onSelectAccount: @escaping (String) -> Void = { _ in },
+        onRemoveAccount: @escaping (String) -> Void = { _ in },
+        onAddAccount: @escaping () -> Void = {}
     ) {
         self.onClose = onClose
         _swipeSettings = swipeSettings
         self.accountID = accountID
         self.eventStore = eventStore
+        self.accountSummaries = accountSummaries
+        self.onSelectAccount = onSelectAccount
+        self.onRemoveAccount = onRemoveAccount
+        self.onAddAccount = onAddAccount
     }
 
     var body: some View {
         NavigationStack {
             SettingsList {
                 SettingsSection(title: "ACCOUNTS") {
-                    SettingsAccountRow(
-                        title: "User Alpha",
-                        subtitle: "alpha@mock.example",
-                        avatarStyle: AvatarStyle(primary: .black, secondary: .cyan, symbolName: "cat.fill"),
-                        accountID: accountID,
-                        eventStore: eventStore
-                    )
-                    SettingsAccountRow(
-                        title: "User Beta",
-                        subtitle: "beta@mock.example",
-                        avatarStyle: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
-                        accountID: nil,
-                        eventStore: nil
-                    )
+                    ForEach(accountSummaries) { summary in
+                        SettingsAccountRow(
+                            summary: summary,
+                            eventStore: eventStore,
+                            onSelectAccount: onSelectAccount,
+                            onRemoveAccount: onRemoveAccount
+                        )
+                    }
                     SettingsNavigationRow(title: "Add Account", icon: "plus", tint: .green) {
                         OnboardingView()
                     }
@@ -511,49 +517,54 @@ struct NostrListEmptyRow: View {
 }
 
 private struct AccountSettingsView: View {
-    let title: String
-    let subtitle: String
-    let avatarStyle: AvatarStyle
-    let accountID: String?
+    let summary: NostrAccountSummary
     let eventStore: NostrEventStore?
-
-    private var abbreviatedNpub: String {
-        title.contains("Beta") ? "npub1beta4x2ck8...w6mx" : "npub1astrenza7q3n9...9h2q"
-    }
+    let onSelectAccount: (String) -> Void
+    let onRemoveAccount: (String) -> Void
 
     var body: some View {
         SettingsList {
             SettingsSection {
                 HStack(spacing: 14) {
-                    AvatarView(style: avatarStyle, size: 54)
+                    AvatarView(style: summary.avatarStyle, size: 54)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(title)
+                        Text(summary.title)
                             .font(.system(size: 24, weight: .black, design: .rounded))
-                        Text(subtitle)
+                        Text(summary.subtitle)
                             .font(.system(size: 15, weight: .bold, design: .rounded))
                             .foregroundStyle(.secondary)
-                        Text(abbreviatedNpub)
+                        Text(summary.npub)
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
+                    if summary.isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(Color.astrenzaAccent)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
 
             SettingsSection(title: "NOSTR ACCOUNT") {
+                if !summary.isSelected {
+                    SettingsActionRow(title: "Switch to this Account", icon: "arrow.triangle.2.circlepath", tint: .purple) {
+                        onSelectAccount(summary.id)
+                    }
+                }
                 SettingsNavigationRow(title: "Profile", icon: "person.crop.circle.fill", tint: .cyan) {
                     EmptySettingsDestination(title: "Profile")
                 }
-                SettingsValueNavigationRow(title: "Keys / Signer", value: "Local", icon: "key.fill", tint: .purple) {
+                SettingsValueNavigationRow(title: "Keys / Signer", value: summary.signerLabel, icon: "key.fill", tint: .purple) {
                     EmptySettingsDestination(title: "Keys / Signer")
                 }
                 SettingsStatusNavigationRow(title: "Relays", statusColor: .green, icon: "antenna.radiowaves.left.and.right", tint: .green) {
-                    RelaySettingsView(accountID: accountID, eventStore: eventStore)
+                    RelaySettingsView(accountID: summary.id, eventStore: eventStore)
                 }
                 SettingsNavigationRow(title: "Muting / Filters", icon: "line.3.horizontal.decrease.circle.fill", tint: .orange) {
-                    NostrListSettingsView(accountID: accountID, eventStore: eventStore)
+                    NostrListSettingsView(accountID: summary.id, eventStore: eventStore)
                 }
                 SettingsNavigationRow(title: "Backup / Export", icon: "square.and.arrow.up.fill", tint: .gray) {
                     EmptySettingsDestination(title: "Backup / Export")
@@ -561,8 +572,14 @@ private struct AccountSettingsView: View {
             } footer: {
                 "These settings belong to this Nostr identity. Switching accounts should switch relay lists, signer permissions, filters, and backup state."
             }
+
+            SettingsSection {
+                SettingsActionRow(title: "Remove Account", icon: "minus.circle.fill", tint: .red) {
+                    onRemoveAccount(summary.id)
+                }
+            }
         }
-        .settingsNavigation(title: title)
+        .settingsNavigation(title: summary.title)
     }
 }
 
@@ -707,34 +724,58 @@ private struct SettingsToggleRow: View {
     }
 }
 
-private struct SettingsAccountRow: View {
+private struct SettingsActionRow: View {
     let title: String
-    let subtitle: String
-    let avatarStyle: AvatarStyle
-    let accountID: String?
+    let icon: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            SettingsRowShell(icon: icon, tint: tint) {
+                Text(title)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+        .settingsRowTextStyle()
+    }
+}
+
+private struct SettingsAccountRow: View {
+    let summary: NostrAccountSummary
     let eventStore: NostrEventStore?
+    let onSelectAccount: (String) -> Void
+    let onRemoveAccount: (String) -> Void
 
     var body: some View {
         NavigationLink {
             AccountSettingsView(
-                title: title,
-                subtitle: subtitle,
-                avatarStyle: avatarStyle,
-                accountID: accountID,
-                eventStore: eventStore
+                summary: summary,
+                eventStore: eventStore,
+                onSelectAccount: onSelectAccount,
+                onRemoveAccount: onRemoveAccount
             )
         } label: {
             SettingsRowShell(iconView: {
-                AvatarView(style: avatarStyle, size: 36)
+                AvatarView(style: summary.avatarStyle, size: 36)
             }) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
+                    Text(summary.title)
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                    Text(subtitle)
+                        .lineLimit(1)
+                    Text(summary.subtitle)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 Spacer()
+                if summary.isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.astrenzaAccent)
+                }
                 Image(systemName: "chevron.right")
                     .settingsChevronStyle()
             }
