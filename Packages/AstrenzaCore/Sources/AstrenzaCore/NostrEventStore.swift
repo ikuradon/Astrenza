@@ -2215,7 +2215,7 @@ public final class NostrEventStore {
     }
 
     private func upsertLinkPreviewRequests(for event: NostrEvent, db: Database) throws {
-        for url in NostrLinkParser.webURLs(in: event.content) where !NostrMediaParser.isDirectMediaURL(url) {
+        for url in NostrContentAttachmentClassifier.linkPreviewURLs(from: event) {
             let preview = NostrLinkPreviewRecord(
                 url: url.absoluteString,
                 normalizedURL: NostrLinkParser.normalizedURLString(url),

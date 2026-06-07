@@ -39,16 +39,7 @@ public struct NostrLinkPreviewRecord: Codable, Equatable, Sendable {
 
 public enum NostrLinkParser {
     public static func webURLs(in content: String) -> [URL] {
-        var seen = Set<String>()
-        return content
-            .split(whereSeparator: \.isWhitespace)
-            .compactMap { token -> URL? in
-                let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}>\n"))
-                guard let url = URL(string: trimmed),
-                      url.scheme == "http" || url.scheme == "https"
-                else { return nil }
-                return seen.insert(normalizedURLString(url)).inserted ? url : nil
-            }
+        NostrContentAttachmentClassifier.webURLs(in: content)
     }
 
     public static func normalizedURLString(_ url: URL) -> String {

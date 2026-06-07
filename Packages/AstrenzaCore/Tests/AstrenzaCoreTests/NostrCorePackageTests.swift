@@ -645,6 +645,49 @@ struct NostrCorePackageTests {
         #expect(try store.mediaAssets(eventID: imetaPreferred.id).map(\.url) == ["https://cdn.example.test/tagged.webp"])
     }
 
+    @Test("Nostr attachment classifier prioritizes NIP-92 imeta and dedupes content URLs")
+    func attachmentClassifierPrioritizesIMeta() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "photo https://cdn.example.test/photo.png read https://example.test/article",
+            tags: [["imeta", "url https://cdn.example.test/photo.png", "m image/png", "dim 1200x800", "alt preview"]]
+        )
+
+        let attachments = NostrContentAttachmentClassifier.attachments(from: event)
+
+        #expect(attachments.map(\.url.absoluteString) == [
+            "https://cdn.example.test/photo.png",
+            "https://example.test/article"
+        ])
+        #expect(attachments[0].kind == .media)
+        #expect(attachments[0].source == .imeta(position: 0))
+        #expect(attachments[0].mimeType == "image/png")
+        #expect(attachments[0].width == 1200)
+        #expect(attachments[0].height == 800)
+        #expect(attachments[0].alt == "preview")
+        #expect(attachments[1].kind == .linkPreview)
+        #expect(attachments[1].source == .content(position: 1))
+    }
+
+    @Test("Nostr attachment classifier treats direct videos as media")
+    func attachmentClassifierTreatsDirectVideosAsMedia() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "clip https://video.example.test/movie.mp4 page https://example.test/watch"
+        )
+
+        let attachments = NostrContentAttachmentClassifier.attachments(from: event)
+
+        #expect(attachments.map(\.kind) == [.media, .linkPreview])
+        #expect(attachments[0].mimeType == "video/mp4")
+        #expect(NostrContentAttachmentClassifier.mediaURLs(from: event).map(\.absoluteString) == [
+            "https://video.example.test/movie.mp4"
+        ])
+        #expect(NostrContentAttachmentClassifier.linkPreviewURLs(from: event).map(\.absoluteString) == [
+            "https://example.test/watch"
+        ])
+    }
+
     @Test("Nostr event store records unresolved link preview requests")
     func eventStoreLinkPreviewRequests() throws {
         let store = try NostrEventStore.inMemory()
@@ -664,6 +707,24 @@ struct NostrCorePackageTests {
         #expect(preview.url == "https://Example.TEST/page#section")
         #expect(preview.status == "unresolved")
         #expect(preview.title == nil)
+    }
+
+    @Test("Nostr event store treats direct video URLs as media not OGP")
+    func eventStoreDirectVideoIsMediaNotPreview() throws {
+        let store = try NostrEventStore.inMemory()
+        let event = nostrEvent(
+            kind: 1,
+            content: "clip https://cdn.example.test/movie.mp4 page https://example.test/article"
+        )
+
+        try store.save(events: [event])
+
+        #expect(try store.mediaAssets(eventID: event.id).map(\.url) == ["https://cdn.example.test/movie.mp4"])
+        let previews = try store.linkPreviews(urls: [
+            try #require(URL(string: "https://cdn.example.test/movie.mp4")),
+            try #require(URL(string: "https://example.test/article"))
+        ])
+        #expect(previews.keys.sorted() == ["https://example.test/article"])
     }
 
     @Test("Nostr link preview cache can store resolved metadata")

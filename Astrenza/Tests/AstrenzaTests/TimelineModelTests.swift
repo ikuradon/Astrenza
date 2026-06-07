@@ -333,6 +333,33 @@ struct TimelineModelTests {
         }
     }
 
+    @Test("Nostr materializer keeps direct media URL on fallback tiles")
+    func nostrMaterializerDirectMediaFallbackKeepsURL() throws {
+        let author = String(repeating: "a", count: 64)
+        let note = timelineEvent(
+            idSeed: "direct-media-url",
+            pubkey: author,
+            createdAt: 120,
+            content: "clip https://cdn.example.test/movie.mp4 page https://example.test/article"
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first)
+
+        if case .gallery(let tiles) = post.media {
+            #expect(tiles.count == 1)
+            #expect(tiles[0].url?.absoluteString == "https://cdn.example.test/movie.mp4")
+            #expect(tiles[0].symbolName == "play.rectangle")
+            #expect(post.linkSummary?.totalCount == 1)
+        } else {
+            Issue.record("Expected direct media fallback gallery")
+        }
+    }
+
     @Test("Nostr materializer maps resolved cached link previews to OGP cards")
     func nostrMaterializerUsesCachedLinkPreview() throws {
         let author = String(repeating: "a", count: 64)

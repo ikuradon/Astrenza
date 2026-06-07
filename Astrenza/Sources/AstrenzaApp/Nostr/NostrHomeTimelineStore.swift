@@ -1967,9 +1967,9 @@ enum NostrTimelineMaterializer {
         } else {
             author = .unresolved(pubkey: item.pubkey)
         }
-        let urls = event.map(urls(from:)) ?? []
-        let imageURLs = urls.filter(isImageURL)
-        let linkURLs = urls.filter { !isImageURL($0) }
+        let attachments = event.map(NostrContentAttachmentClassifier.attachments(from:)) ?? []
+        let mediaAttachments = attachments.filter { $0.kind == .media }
+        let linkURLs = attachments.filter { $0.kind == .linkPreview }.map(\.url)
         let contentWarning = event.flatMap(contentWarning(from:))
 
         return TimelinePost(
@@ -1984,7 +1984,7 @@ enum NostrTimelineMaterializer {
             isLocked: false,
             media: media(
                 assets: mediaAssets,
-                imageURLs: imageURLs,
+                mediaAttachments: mediaAttachments,
                 linkURLs: linkURLs,
                 linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
                 pubkey: item.pubkey
@@ -2196,33 +2196,9 @@ enum NostrTimelineMaterializer {
         return "\(delta / 86_400)d"
     }
 
-    private static func urls(from event: NostrEvent) -> [URL] {
-        let contentURLs = event.content
-            .split(whereSeparator: \.isWhitespace)
-            .compactMap { token -> URL? in
-                let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}>\n"))
-                guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else { return nil }
-                return URL(string: trimmed)
-            }
-        let imetaURLs = event.tags.compactMap { tag -> URL? in
-            guard tag.first == "imeta" else { return nil }
-            for item in tag.dropFirst() where item.hasPrefix("url ") {
-                return URL(string: String(item.dropFirst(4)))
-            }
-            return nil
-        }
-        var seen = Set<String>()
-        return (contentURLs + imetaURLs).filter { seen.insert($0.absoluteString).inserted }
-    }
-
-    private static func isImageURL(_ url: URL) -> Bool {
-        let path = url.path.lowercased()
-        return [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"].contains { path.hasSuffix($0) }
-    }
-
     private static func media(
         assets: [NostrMediaAssetRecord],
-        imageURLs: [URL],
+        mediaAttachments: [NostrClassifiedAttachment],
         linkURLs: [URL],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord],
         pubkey: String
@@ -2244,13 +2220,16 @@ enum NostrTimelineMaterializer {
             }
         }
 
-        if !imageURLs.isEmpty {
+        if !mediaAttachments.isEmpty {
             let palette = avatarPalette(for: pubkey)
-            let tiles = imageURLs.prefix(5).map { url in
-                MediaTile(
-                    title: url.lastPathComponent.isEmpty ? (url.host ?? "media") : url.lastPathComponent,
+            let tiles = mediaAttachments.prefix(5).map { attachment in
+                let url = attachment.url
+                return MediaTile(
+                    title: attachment.alt ?? (url.lastPathComponent.isEmpty ? (url.host ?? "media") : url.lastPathComponent),
                     colors: [palette.primary, palette.secondary],
-                    symbolName: "photo"
+                    symbolName: attachment.mimeType?.hasPrefix("video/") == true ? "play.rectangle" : "photo",
+                    url: url,
+                    altText: attachment.alt
                 )
             }
             return .gallery(Array(tiles))
