@@ -160,6 +160,5 @@ struct ComposeDraftsView: View {
             Spacer(minLength: 0)
         }
         .background(Color.astrenzaBackground)
-        .preferredColorScheme(.dark)
     }
 }

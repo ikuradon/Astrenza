@@ -41,7 +41,6 @@ struct RelaySettingsView: View {
                     .fontWeight(.bold)
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder

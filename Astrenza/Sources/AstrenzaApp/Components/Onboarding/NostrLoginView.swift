@@ -94,6 +94,5 @@ struct NostrLoginView: View {
         }
         .padding(.horizontal, 24)
         .background(Color.astrenzaBackground.ignoresSafeArea())
-        .preferredColorScheme(.dark)
     }
 }

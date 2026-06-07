@@ -201,7 +201,6 @@ struct HomeTimelineView: View {
             }
         }
         .coordinateSpace(name: "homeTimelineChrome")
-        .preferredColorScheme(.dark)
         .onPreferenceChange(UnreadBadgeFramePreferenceKey.self) { frame in
             unreadBadgeFrame = frame
         }

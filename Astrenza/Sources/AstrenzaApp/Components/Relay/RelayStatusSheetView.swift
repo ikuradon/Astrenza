@@ -83,7 +83,6 @@ struct RelayStatusSheetView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .task {
             await store.refresh()
         }

@@ -104,7 +104,6 @@ struct UserDetailView: View {
         .accessibilityIdentifier("user.detail")
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -115,7 +114,6 @@ struct UserDetailView: View {
                 profileNavigationActionButton
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private var profileHero: some View {

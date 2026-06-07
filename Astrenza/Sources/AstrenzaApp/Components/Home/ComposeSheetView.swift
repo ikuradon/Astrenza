@@ -168,7 +168,6 @@ struct ComposeSheetView: View {
             }
         }
         .background(Color.astrenzaBackground)
-        .preferredColorScheme(.dark)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomComposerControls
         }
