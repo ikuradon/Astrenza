@@ -7,6 +7,7 @@ struct TimelineFeedView: View {
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
+    let followsNewestEntries: Bool
     let layoutCache: TimelineLayoutCache
     let emptyState: TimelineEmptyState
     let onEmptyStatePrimaryAction: () -> Void
@@ -54,6 +55,7 @@ struct TimelineFeedView: View {
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
+        followsNewestEntries: Bool = false,
         layoutCache: TimelineLayoutCache,
         emptyState: TimelineEmptyState = .home,
         onEmptyStatePrimaryAction: @escaping () -> Void = {},
@@ -78,6 +80,7 @@ struct TimelineFeedView: View {
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             scrollCommand: scrollCommand,
+            followsNewestEntries: followsNewestEntries,
             layoutCache: layoutCache,
             emptyState: emptyState,
             onEmptyStatePrimaryAction: onEmptyStatePrimaryAction,
@@ -104,6 +107,7 @@ struct TimelineFeedView: View {
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
+        followsNewestEntries: Bool = false,
         layoutCache: TimelineLayoutCache,
         emptyState: TimelineEmptyState = .home,
         onEmptyStatePrimaryAction: @escaping () -> Void = {},
@@ -127,6 +131,7 @@ struct TimelineFeedView: View {
         self.swipeSettings = swipeSettings
         self.viewportState = viewportState
         self.scrollCommand = scrollCommand
+        self.followsNewestEntries = followsNewestEntries
         self.layoutCache = layoutCache
         self.emptyState = emptyState
         self.onEmptyStatePrimaryAction = onEmptyStatePrimaryAction
@@ -230,10 +235,6 @@ struct TimelineFeedView: View {
         .onPreferenceChange(TimelineGapFramePreferenceKey.self) { frames in
             scrollRuntime.gapFrames = frames
         }
-        .onPreferenceChange(TimelinePostFramePreferenceKey.self) { frames in
-            scrollRuntime.postFrames = frames
-            notifyReadablePostIDs()
-        }
         .onPreferenceChange(TimelineViewportSizePreferenceKey.self) { size in
             scrollRuntime.viewportSize = size
         }
@@ -323,12 +324,13 @@ private extension TimelineFeedView {
     }
 
     func postFrameReader(postID: TimelinePost.ID) -> some View {
-        GeometryReader { proxy in
-            Color.clear.preference(
-                key: TimelinePostFramePreferenceKey.self,
-                value: [postID: proxy.frame(in: .named("timelineFeedViewport"))]
-            )
-        }
+        Color.clear
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named("timelineFeedViewport"))
+            } action: { _, frame in
+                scrollRuntime.postFrames[postID] = frame
+                notifyReadablePostIDs()
+            }
     }
 
     func postInsertionTransition(for post: TimelinePost) -> AnyTransition {
@@ -449,11 +451,7 @@ private extension TimelineFeedView {
         guard let scrollCommand else { return }
         switch scrollCommand.target {
         case .top:
-            if let firstPostID = posts.first?.id {
-                scrollPosition.scrollTo(id: firstPostID, anchor: .top)
-            } else {
-                scrollPosition.scrollTo(y: 0)
-            }
+            scrollPosition.scrollTo(y: 0)
         case .viewport(let state):
             let targetOffsetY = TimelineViewportResolver.restoredContentOffsetY(
                 entries: displayedEntries,
@@ -484,6 +482,7 @@ private extension TimelineFeedView {
         let newIDs = entries.map(\.id)
         guard oldIDs != newIDs else { return }
 
+        let shouldFollowNewestEntries = followsNewestEntries && entriesDidPrependNewest(oldIDs: oldIDs, newIDs: newIDs)
         let anchor = estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
         let preservedOffset = preservedContentOffset(
             oldIDs: oldIDs,
@@ -491,7 +490,17 @@ private extension TimelineFeedView {
             anchor: anchor
         )
 
-        if let preservedOffset {
+        if shouldFollowNewestEntries {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            transaction.animation = nil
+            withTransaction(transaction) {
+                displayedEntries = entries
+                updateLayoutSnapshot()
+                scrollPosition.scrollTo(y: 0)
+            }
+            scrollRuntime.currentContentOffset = 0
+        } else if let preservedOffset {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             transaction.animation = nil
@@ -509,6 +518,13 @@ private extension TimelineFeedView {
         }
 
         restoreViewportIfNeeded()
+    }
+
+    func entriesDidPrependNewest(oldIDs: [TimelineFeedEntry.ID], newIDs: [TimelineFeedEntry.ID]) -> Bool {
+        guard let firstOldID = oldIDs.first,
+              let firstOldIndexInNewEntries = newIDs.firstIndex(of: firstOldID)
+        else { return false }
+        return firstOldIndexInNewEntries > 0
     }
 
     func updatePullRefreshState(offset: CGFloat) {
@@ -923,14 +939,6 @@ private extension TimelineFeedView {
         }
 
         return selectedChoice != nil || !menuFrame.contains(endLocation)
-    }
-}
-
-private struct TimelinePostFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [TimelinePost.ID: CGRect] = [:]
-
-    static func reduce(value: inout [TimelinePost.ID: CGRect], nextValue: () -> [TimelinePost.ID: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
     }
 }
 

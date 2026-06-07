@@ -2853,14 +2853,18 @@ struct TimelineModelTests {
             eventStore: eventStore,
             relayRuntime: relayRuntime
         )
+        let initialRevision = store.resolvedContentRevision
 
         store.start(account: account)
         _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 150_000_000)
 
-        let post = try #require(store.entries.compactMap(\.post).first { $0.id == quoteEvent.id })
+        let post = try await waitForTimelinePost(in: store, id: quoteEvent.id) { post in
+            post.quotedPost?.body == "cached quoted source" &&
+                post.quotedPost?.author.primaryText == "Cached Quote Author"
+        }
+        #expect(store.resolvedContentRevision > initialRevision)
         #expect(post.quotedPost?.body == "cached quoted source")
         #expect(post.quotedPost?.author.primaryText == "Cached Quote Author")
         try await assertNoREQSubscriptionID(in: connection, containing: quotedEvent.id)

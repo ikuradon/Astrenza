@@ -69,7 +69,8 @@ struct HomeTimelineView: View {
     }
 
     private var accountSummaries: [NostrAccountSummary] {
-        sessionStore.accountSummaries(eventStore: liveTimelineStore.relayStatusEventStore)
+        _ = liveTimelineStore.resolvedContentRevision
+        return sessionStore.accountSummaries(eventStore: liveTimelineStore.relayStatusEventStore)
     }
 
     private var currentAccountSummary: NostrAccountSummary? {
@@ -264,6 +265,7 @@ private extension HomeTimelineView {
                 swipeSettings: swipeSettings,
                 viewportState: homeViewportState,
                 scrollCommand: homeScrollCommand,
+                followsNewestEntries: isTimelineAtNewestWindow,
                 layoutCache: homeLayoutCache,
                 emptyState: timelineEmptyState,
                 onEmptyStatePrimaryAction: handleTimelineEmptyStatePrimaryAction,
@@ -604,6 +606,7 @@ private extension HomeTimelineView {
 
     func refreshVisibleTimeline() async {
         guard sessionStore.account != nil, selectedTimeline == .home else { return }
+        clearHomeReturnAnchor()
         if liveTimelineStore.unmaterializedNewCount > 0 {
             await liveTimelineStore.applyPendingNewEvents()
             return

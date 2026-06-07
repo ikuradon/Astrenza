@@ -69,6 +69,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var unmaterializedNewCount = 0
     @Published private(set) var materializedUnreadCount = 0
     @Published private(set) var visibleUnreadBadgeCount = 0
+    @Published private(set) var resolvedContentRevision = 0
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
@@ -1058,6 +1059,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard relayRuntime != nil, !resolvedRelays.isEmpty else { return }
         let dependencies = NostrEventDependencies.extract(from: event)
         let cacheSnapshot = ingestCachedDependencies(dependencies)
+        if cacheSnapshot.hasResolvedDependencies(for: dependencies) {
+            scheduleMaterializeEntries()
+        }
 
         guard dependencyFetchQueue.enqueue(
             dependencies: dependencies,
@@ -1418,6 +1422,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         if nextFilterStatus != filterStatus {
             filterStatus = nextFilterStatus
         }
+        resolvedContentRevision &+= 1
     }
 
     private func recomputeMaterializedUnreadState() {
@@ -2578,6 +2583,13 @@ private extension NIP05Status {
         case .invalid, .failed:
             self = .invalid
         }
+    }
+}
+
+private extension NostrDependencyFetchCacheSnapshot {
+    func hasResolvedDependencies(for dependencies: NostrEventDependencies) -> Bool {
+        dependencies.profilePubkeys.contains { profileReceivedAtByPubkey[$0] != nil } ||
+            dependencies.sourceEventIDs.contains { sourceEventIDs.contains($0) }
     }
 }
 
