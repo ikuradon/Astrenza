@@ -36,6 +36,13 @@ struct NostrLoginView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
+                    .submitLabel(.go)
+                    .onSubmit {
+                        guard !sessionStore.isLoggingIn else { return }
+                        Task {
+                            await sessionStore.login()
+                        }
+                    }
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.astrenzaText)
                     .padding(.horizontal, 16)

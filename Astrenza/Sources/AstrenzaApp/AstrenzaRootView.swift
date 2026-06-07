@@ -1,9 +1,19 @@
+import AstrenzaCore
 import SwiftUI
 
 struct AstrenzaRootView: View {
     @StateObject private var sessionStore = NostrSessionStore()
-    @StateObject private var homeTimelineStore = NostrHomeTimelineStore()
+    @StateObject private var homeTimelineStore: NostrHomeTimelineStore
     private let launchMode = AstrenzaLaunchMode()
+
+    init() {
+        _homeTimelineStore = StateObject(wrappedValue: NostrHomeTimelineStore(
+            relayRuntime: NostrRelayRuntime { _ in
+                NostrURLSessionRelayTransport()
+            },
+            linkPreviewResolver: NostrLinkPreviewResolver()
+        ))
+    }
 
     var body: some View {
         Group {

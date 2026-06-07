@@ -72,11 +72,11 @@ public actor NostrNIP05Cache {
 }
 
 public struct NostrNIP05Resolver: NostrNIP05Resolving {
-    public let cache: NostrNIP05Cache
+    public let cache: NostrNIP05Cache?
     public let dataLoader: NostrHTTPDataLoader
 
     public init(
-        cache: NostrNIP05Cache = NostrNIP05Cache(),
+        cache: NostrNIP05Cache? = NostrNIP05Cache(),
         dataLoader: @escaping NostrHTTPDataLoader = { request in
             try await URLSession.shared.data(for: request)
         }
@@ -86,12 +86,13 @@ public struct NostrNIP05Resolver: NostrNIP05Resolving {
     }
 
     public func resolve(identifier: String, expectedPubkey: String?) async -> NostrNIP05Resolution {
-        let normalizedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedIdentifier = NostrNIP05Address.normalizedIdentifier(identifier)
+            ?? identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedIdentifier.isEmpty else {
             return NostrNIP05Resolution(identifier: identifier, pubkey: nil, relays: [], status: .absent)
         }
 
-        if let cached = await cache.resolution(for: normalizedIdentifier, expectedPubkey: expectedPubkey) {
+        if let cached = await cache?.resolution(for: normalizedIdentifier, expectedPubkey: expectedPubkey) {
             return cached
         }
 
@@ -99,7 +100,7 @@ public struct NostrNIP05Resolver: NostrNIP05Resolving {
               let request = address.request
         else {
             let resolution = NostrNIP05Resolution(identifier: normalizedIdentifier, pubkey: nil, relays: [], status: .invalid)
-            await cache.store(resolution, expectedPubkey: expectedPubkey)
+            await cache?.store(resolution, expectedPubkey: expectedPubkey)
             return resolution
         }
 
@@ -110,7 +111,7 @@ public struct NostrNIP05Resolver: NostrNIP05Resolving {
                   let document = try? JSONDecoder().decode(NostrNIP05Document.self, from: data)
             else {
                 let resolution = NostrNIP05Resolution(identifier: normalizedIdentifier, pubkey: nil, relays: [], status: .failed)
-                await cache.store(resolution, expectedPubkey: expectedPubkey)
+                await cache?.store(resolution, expectedPubkey: expectedPubkey)
                 return resolution
             }
 
@@ -133,11 +134,11 @@ public struct NostrNIP05Resolver: NostrNIP05Resolving {
                 relays: relays,
                 status: status
             )
-            await cache.store(resolution, expectedPubkey: expectedPubkey)
+            await cache?.store(resolution, expectedPubkey: expectedPubkey)
             return resolution
         } catch {
             let resolution = NostrNIP05Resolution(identifier: normalizedIdentifier, pubkey: nil, relays: [], status: .failed)
-            await cache.store(resolution, expectedPubkey: expectedPubkey)
+            await cache?.store(resolution, expectedPubkey: expectedPubkey)
             return resolution
         }
     }
@@ -146,6 +147,16 @@ public struct NostrNIP05Resolver: NostrNIP05Resolving {
 public struct NostrNIP05Address: Equatable, Sendable {
     public let name: String
     public let domain: String
+
+    public static func normalizedIdentifier(_ identifier: String) -> String? {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let parsed = parse(trimmed) {
+            return "\(parsed.name)@\(parsed.domain)"
+        }
+
+        guard isBareDomain(trimmed) else { return nil }
+        return "_@\(trimmed.lowercased())"
+    }
 
     public static func parse(_ identifier: String) -> NostrNIP05Address? {
         let parts = identifier.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
@@ -156,6 +167,24 @@ public struct NostrNIP05Address: Equatable, Sendable {
         else { return nil }
 
         return NostrNIP05Address(name: parts[0], domain: parts[1].lowercased())
+    }
+
+    private static func isBareDomain(_ input: String) -> Bool {
+        let domain = input.lowercased()
+        guard domain.contains("."),
+              !domain.contains("@"),
+              !domain.contains("/"),
+              !domain.contains(":"),
+              domain.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+        else { return false }
+
+        let labels = domain.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2 else { return false }
+        return labels.allSatisfy { label in
+            !label.isEmpty && label.allSatisfy { character in
+                character.isLetter || character.isNumber || character == "-"
+            }
+        }
     }
 
     public var request: URLRequest? {

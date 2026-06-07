@@ -10,7 +10,7 @@ public enum NostrLoginError: Error, Equatable {
 public struct NostrLoginResolver: Sendable {
     public var nip05Resolver: any NostrNIP05Resolving
 
-    public init(nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver()) {
+    public init(nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver(cache: nil)) {
         self.nip05Resolver = nip05Resolver
     }
 
@@ -21,17 +21,22 @@ public struct NostrLoginResolver: Sendable {
         }
 
         if isLikelyNIP05(trimmed) {
-            guard NostrNIP05Address.parse(trimmed) != nil else {
+            guard let normalizedIdentifier = NostrNIP05Address.normalizedIdentifier(trimmed) else {
                 throw NostrLoginError.invalidNIP05
             }
-            let resolved = await nip05Resolver.resolve(identifier: trimmed, expectedPubkey: nil)
+            let resolved = await nip05Resolver.resolve(identifier: normalizedIdentifier, expectedPubkey: nil)
             guard let pubkey = resolved.pubkey,
                   NostrHex.isLowercaseHex(pubkey, byteCount: 32),
                   resolved.status == .verified
             else {
                 throw NostrLoginError.nip05NotFound
             }
-            return NostrAccount(pubkey: pubkey, displayIdentifier: resolved.identifier, readOnly: true)
+            return NostrAccount(
+                pubkey: pubkey,
+                displayIdentifier: resolved.identifier,
+                readOnly: true,
+                discoveryRelays: resolved.relays
+            )
         }
 
         do {
@@ -43,7 +48,11 @@ public struct NostrLoginResolver: Sendable {
     }
 
     private func isLikelyNIP05(_ input: String) -> Bool {
-        input.contains("@") && !input.hasPrefix("npub1") && !input.hasPrefix("nostr:")
+        guard !input.hasPrefix("npub1"),
+              !input.hasPrefix("nostr:")
+        else { return false }
+
+        return NostrNIP05Address.normalizedIdentifier(input) != nil
     }
 
 }

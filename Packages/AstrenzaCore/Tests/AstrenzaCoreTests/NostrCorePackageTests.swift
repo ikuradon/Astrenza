@@ -102,6 +102,64 @@ struct NostrCorePackageTests {
         #expect(account.readOnly)
     }
 
+    @Test("Login resolver accepts root NIP-05 identifiers")
+    func loginResolverRootNIP05() async throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let resolver = NostrLoginResolver(
+            nip05Resolver: NostrNIP05Resolver(cache: NostrNIP05Cache(defaults: nil)) { request in
+                #expect(request.url?.absoluteString == "https://example.test/.well-known/nostr.json?name=_")
+                let data = Data(#"{"names":{"_":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"relays":{"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc":["wss://hint.example"]}}"#.utf8)
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            }
+        )
+
+        let account = try await resolver.resolve("_@example.test")
+
+        #expect(account.pubkey == pubkey)
+        #expect(account.displayIdentifier == "_@example.test")
+        #expect(account.discoveryRelays == ["wss://hint.example"])
+        #expect(account.readOnly)
+    }
+
+    @Test("Login resolver rewrites bare domains to root NIP-05 identifiers")
+    func loginResolverBareDomainAsRootNIP05() async throws {
+        let pubkey = String(repeating: "d", count: 64)
+        let resolver = NostrLoginResolver(
+            nip05Resolver: NostrNIP05Resolver(cache: NostrNIP05Cache(defaults: nil)) { request in
+                #expect(request.url?.absoluteString == "https://example.test/.well-known/nostr.json?name=_")
+                let data = Data(#"{"names":{"_":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}"#.utf8)
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            }
+        )
+
+        let account = try await resolver.resolve("example.test")
+
+        #expect(account.pubkey == pubkey)
+        #expect(account.displayIdentifier == "_@example.test")
+        #expect(account.readOnly)
+    }
+
+    @Test("NIP-05 resolver can run without caching for login")
+    func loginNIP05ResolverCanSkipCache() async throws {
+        let pubkey = String(repeating: "e", count: 64)
+        let callCount = LockedCounter()
+        let resolver = NostrLoginResolver(
+            nip05Resolver: NostrNIP05Resolver(cache: nil) { request in
+                await callCount.increment()
+                #expect(request.url?.absoluteString == "https://example.test/.well-known/nostr.json?name=_")
+                let data = Data(#"{"names":{"_":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}"#.utf8)
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            }
+        )
+
+        let first = try await resolver.resolve("example.test")
+        let second = try await resolver.resolve("example.test")
+
+        #expect(first.pubkey == pubkey)
+        #expect(second.pubkey == pubkey)
+        #expect(await callCount.value == 2)
+    }
+
     @Test("NIP-05 resolver verifies pubkey and reuses cache")
     func nip05ResolverVerifiesAndCaches() async throws {
         let pubkey = String(repeating: "b", count: 64)
@@ -424,6 +482,79 @@ struct NostrCorePackageTests {
         #expect(loaded.siteName == "Example")
     }
 
+    @Test("Nostr link preview resolver stores OGP metadata from unresolved requests")
+    func linkPreviewResolverStoresOGPMetadata() async throws {
+        let store = try NostrEventStore.inMemory()
+        let event = nostrEvent(
+            kind: 1,
+            content: "read https://example.test/article"
+        )
+        let html = """
+        <html>
+          <head>
+            <meta property="og:title" content="Resolved &amp; Cached">
+            <meta property="og:description" content="OGP summary from source">
+            <meta property="og:site_name" content="Example Site">
+            <meta property="og:image" content="/og.png">
+          </head>
+        </html>
+        """
+        let resolver = NostrLinkPreviewResolver(
+            dataLoader: { request in
+                #expect(request.url?.absoluteString == "https://example.test/article")
+                let data = try #require(html.data(using: .utf8))
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            },
+            now: { Date(timeIntervalSince1970: 1_000) },
+            cacheTTLSeconds: 300
+        )
+
+        try store.save(events: [event])
+        let request = try #require(try store.unresolvedLinkPreviews().first)
+        let resolved = await resolver.resolve(request)
+        try store.saveLinkPreview(resolved)
+        let url = try #require(URL(string: "https://example.test/article"))
+        let loaded = try #require(try store.linkPreviews(urls: [url]).values.first)
+
+        #expect(loaded.status == "resolved")
+        #expect(loaded.title == "Resolved & Cached")
+        #expect(loaded.summary == "OGP summary from source")
+        #expect(loaded.siteName == "Example Site")
+        #expect(loaded.imageURL == "https://example.test/og.png")
+        #expect(loaded.fetchedAt == 1_000)
+        #expect(loaded.expiresAt == 1_300)
+    }
+
+    @Test("Nostr link preview resolver stores failed status for HTTP errors")
+    func linkPreviewResolverStoresFailure() async throws {
+        let preview = NostrLinkPreviewRecord(
+            url: "https://example.test/missing",
+            normalizedURL: "https://example.test/missing",
+            status: "unresolved",
+            title: nil,
+            summary: nil,
+            siteName: nil,
+            imageURL: nil,
+            fetchedAt: nil,
+            expiresAt: nil,
+            error: nil
+        )
+        let resolver = NostrLinkPreviewResolver(
+            dataLoader: { request in
+                (Data(), httpResponse(url: request.url, statusCode: 404))
+            },
+            now: { Date(timeIntervalSince1970: 2_000) },
+            cacheTTLSeconds: 3_600
+        )
+
+        let failed = await resolver.resolve(preview)
+
+        #expect(failed.status == "failed")
+        #expect(failed.error == "HTTP 404")
+        #expect(failed.fetchedAt == 2_000)
+        #expect(failed.expiresAt == 3_800)
+    }
+
     @Test("Nostr outbox persists events and relay destinations")
     func eventStoreOutboxPersistence() throws {
         let store = try NostrEventStore.inMemory()
@@ -575,6 +706,96 @@ struct NostrCorePackageTests {
 
         #expect(try store.timelineEntries(accountID: "account", timelineKey: "home", limit: 10).map(\.eventID) == [newer.id, older.id])
         #expect(try store.timelineEvents(accountID: "account", timelineKey: "home", limit: 10).map(\.id) == [newer.id, older.id])
+    }
+
+    @Test("Nostr event store reads timeline projection windows around anchors")
+    func eventStoreTimelineProjectionWindows() throws {
+        let store = try NostrEventStore.inMemory()
+        let event500 = nostrEvent(kind: 1, createdAt: 500, content: "500")
+        let event400 = nostrEvent(kind: 1, createdAt: 400, content: "400")
+        let event300 = nostrEvent(kind: 1, createdAt: 300, content: "300")
+        let event200 = nostrEvent(kind: 1, createdAt: 200, content: "200")
+        let event100 = nostrEvent(kind: 1, createdAt: 100, content: "100")
+        try store.save(events: [event100, event200, event300, event400, event500])
+        try store.saveTimelineEntries([event100, event200, event300, event400, event500].map { event in
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: event.id,
+                sortTimestamp: event.createdAt,
+                insertedAt: 600
+            )
+        })
+
+        #expect(
+            try store.timelineEntries(
+                accountID: "account",
+                timelineKey: "home",
+                newerThan: 300,
+                limit: 10
+            ).map(\.eventID) == [event500.id, event400.id]
+        )
+        #expect(
+            try store.timelineEntries(
+                accountID: "account",
+                timelineKey: "home",
+                olderThan: 300,
+                limit: 10
+            ).map(\.eventID) == [event200.id, event100.id]
+        )
+        #expect(
+            try store.timelineEntries(
+                accountID: "account",
+                timelineKey: "home",
+                aroundEventID: event300.id,
+                leadingLimit: 1,
+                trailingLimit: 2
+            ).map(\.eventID) == [event400.id, event300.id, event200.id, event100.id]
+        )
+        #expect(
+            try store.events(ids: [event300.id, event500.id, event100.id]).map(\.id) == [
+                event300.id,
+                event500.id,
+                event100.id
+            ]
+        )
+    }
+
+    @Test("Nostr event store can clear resolved gap flags between timeline entries")
+    func eventStoreClearsResolvedGapFlags() throws {
+        let store = try NostrEventStore.inMemory()
+        let older = nostrEvent(kind: 1, createdAt: 100, content: "older")
+        let newer = nostrEvent(kind: 1, createdAt: 200, content: "newer")
+        try store.save(events: [older, newer])
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: newer.id,
+                sortTimestamp: newer.createdAt,
+                insertedAt: 300,
+                gapAfter: true
+            ),
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: older.id,
+                sortTimestamp: older.createdAt,
+                insertedAt: 300,
+                gapBefore: true
+            )
+        ])
+
+        try store.markTimelineGapResolved(
+            accountID: "account",
+            timelineKey: "home",
+            newerEventID: newer.id,
+            olderEventID: older.id
+        )
+
+        let entries = try store.timelineEntries(accountID: "account", timelineKey: "home", limit: 10)
+        #expect(entries.first { $0.eventID == newer.id }?.gapAfter == false)
+        #expect(entries.first { $0.eventID == older.id }?.gapBefore == false)
     }
 
     @Test("Nostr event store applies same-author deletion requests")
@@ -743,6 +964,55 @@ struct NostrCorePackageTests {
         #expect(cursor.lastEOSEAt == 1_000)
     }
 
+    @Test("Nostr event store updates relay cursors from runtime event history")
+    func eventStoreRelayRuntimeEventsUpdateCursors() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = "account"
+        let relayURL = "wss://relay.example"
+
+        try store.saveRelaySyncEvents([
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .connected,
+                occurredAt: 2_000,
+                subscriptionID: "astrenza-home-forward",
+                eventCount: 1,
+                newestCreatedAt: 700,
+                oldestCreatedAt: 700,
+                message: "EVENT received"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .connected,
+                occurredAt: 2_010,
+                subscriptionID: "astrenza-home-forward",
+                eventCount: 1,
+                newestCreatedAt: 900,
+                oldestCreatedAt: 600,
+                message: "EVENT received"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .eose,
+                occurredAt: 2_020,
+                subscriptionID: "astrenza-home-forward",
+                eventCount: 0,
+                message: "EOSE received"
+            )
+        ])
+
+        let cursor = try #require(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: relayURL))
+        #expect(cursor.newestCreatedAt == 900)
+        #expect(cursor.oldestCreatedAt == 600)
+        #expect(cursor.lastEOSEAt == 2_020)
+    }
+
     @Test("Nostr event store summarizes relay lifecycle states")
     func eventStoreRelayLifecycleSummary() throws {
         let store = try NostrEventStore.inMemory()
@@ -781,17 +1051,97 @@ struct NostrCorePackageTests {
                 kind: .closed,
                 occurredAt: 40,
                 message: "closed"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .rejected,
+                occurredAt: 50,
+                message: "rejected"
+            ),
+            NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relayURL,
+                kind: .suspended,
+                occurredAt: 60,
+                message: "suspended"
             )
         ])
 
         let summary = try #require(try store.relaySyncSummaries(accountID: accountID, timelineKey: "home").first)
 
-        #expect(summary.lastEventKind == .closed)
+        #expect(summary.lastEventKind == .suspended)
         #expect(summary.lastConnectedAt == 10)
-        #expect(summary.lastErrorAt == 40)
+        #expect(summary.lastErrorAt == 60)
         #expect(summary.closedCount == 1)
         #expect(summary.authRequiredCount == 1)
         #expect(summary.paymentRequiredCount == 1)
+        #expect(summary.rejectedCount == 1)
+        #expect(summary.suspendedCount == 1)
+    }
+
+    @Test("Nostr relay sync summary only treats fresh reachable states as recently reachable")
+    func relaySyncSummaryFreshReachability() {
+        let fresh = NostrRelaySyncSummaryRecord(
+            relayURL: "wss://relay.example",
+            lastEventKind: .connected,
+            lastEventAt: 1_000,
+            lastConnectedAt: 1_000,
+            lastEOSEAt: nil,
+            lastTimeoutAt: nil,
+            lastErrorAt: nil,
+            closedCount: 0,
+            reconnectCount: 0,
+            timeoutCount: 0,
+            partialFailureCount: 0,
+            authRequiredCount: 0,
+            paymentRequiredCount: 0,
+            lastPartialFailureReason: nil,
+            totalEventCount: 1,
+            averageEOSELatencyMilliseconds: nil
+        )
+        let stale = NostrRelaySyncSummaryRecord(
+            relayURL: "wss://relay.example",
+            lastEventKind: .connected,
+            lastEventAt: 700,
+            lastConnectedAt: 700,
+            lastEOSEAt: nil,
+            lastTimeoutAt: nil,
+            lastErrorAt: nil,
+            closedCount: 0,
+            reconnectCount: 0,
+            timeoutCount: 0,
+            partialFailureCount: 0,
+            authRequiredCount: 0,
+            paymentRequiredCount: 0,
+            lastPartialFailureReason: nil,
+            totalEventCount: 1,
+            averageEOSELatencyMilliseconds: nil
+        )
+        let failed = NostrRelaySyncSummaryRecord(
+            relayURL: "wss://relay.example",
+            lastEventKind: .timeout,
+            lastEventAt: 1_000,
+            lastConnectedAt: 990,
+            lastEOSEAt: nil,
+            lastTimeoutAt: 1_000,
+            lastErrorAt: 1_000,
+            closedCount: 0,
+            reconnectCount: 0,
+            timeoutCount: 1,
+            partialFailureCount: 0,
+            authRequiredCount: 0,
+            paymentRequiredCount: 0,
+            lastPartialFailureReason: nil,
+            totalEventCount: 0,
+            averageEOSELatencyMilliseconds: nil
+        )
+
+        #expect(fresh.isRecentlyReachable(now: 1_060, freshnessWindowSeconds: 180))
+        #expect(!stale.isRecentlyReachable(now: 1_000, freshnessWindowSeconds: 180))
+        #expect(!failed.isRecentlyReachable(now: 1_020, freshnessWindowSeconds: 180))
     }
 
     @Test("Nostr event store bounds relay lifecycle history per relay")
@@ -1175,7 +1525,43 @@ struct NostrCorePackageTests {
         #expect(try store.event(id: note.id) == note)
         #expect(try store.latestReplaceableEvent(pubkey: accountID, kind: 0)?.id == metadata.id)
         #expect(try store.timelineEvents(accountID: accountID, timelineKey: "home", limit: 10).map(\.id) == [note.id])
-        #expect(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: "wss://relay.example")?.newestCreatedAt == 200)
+        #expect(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: "wss://relay.example") == nil)
+    }
+
+    @Test("Nostr event store only advances relay cursors from relay sync events")
+    func eventStoreTimelineSnapshotDoesNotInventRelayCursors() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: accountID, createdAt: 300, content: "home")
+        let state = NostrHomeTimelineState(
+            relays: ["wss://seen.example", "wss://silent.example"],
+            followedPubkeys: [accountID],
+            noteEvents: [note],
+            metadataEvents: [],
+            hasMoreOlder: true,
+            relaySyncEvents: [
+                NostrRelaySyncEventRecord(
+                    accountID: accountID,
+                    timelineKey: "home",
+                    relayURL: "wss://seen.example",
+                    kind: .eose,
+                    occurredAt: 400,
+                    subscriptionID: "home-forward",
+                    eventCount: 1,
+                    newestCreatedAt: 300,
+                    oldestCreatedAt: 300,
+                    message: "EOSE received"
+                )
+            ]
+        )
+
+        try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 500)
+
+        let seenCursor = try #require(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: "wss://seen.example"))
+        #expect(seenCursor.newestCreatedAt == 300)
+        #expect(seenCursor.oldestCreatedAt == 300)
+        #expect(seenCursor.lastEOSEAt == 400)
+        #expect(try store.syncCursor(accountID: accountID, timelineKey: "home", relayURL: "wss://silent.example") == nil)
     }
 
     @Test("Nostr event store restores home timeline state")
@@ -1568,6 +1954,83 @@ struct NostrCorePackageTests {
         #expect(calls.contains("astrenza-kind0"))
     }
 
+    @Test("Home timeline loader bootstrap resolves relays and follows without fetching home notes")
+    func homeTimelineLoaderBootstrapSkipsHomeNotes() async throws {
+        let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
+        let followed = String(repeating: "2", count: 64)
+        let relayEvent = nostrEvent(kind: 10002, pubkey: account.pubkey, tags: [["r", "wss://read.example", "read"]])
+        let contacts = nostrEvent(kind: 3, pubkey: account.pubkey, tags: [["p", followed]])
+        let fake = FakeRelayClient(eventsBySubscriptionID: [
+            "astrenza-nip65": [relayEvent],
+            "astrenza-kind3": [contacts],
+            "astrenza-home": [signedShapeOnlyEvent(kind: 1, pubkey: followed, createdAt: 300, content: "should not fetch")],
+            "astrenza-kind0": [nostrEvent(kind: 0, pubkey: followed, content: #"{"name":"Should Not Fetch"}"#)]
+        ])
+        let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+
+        let state = try await loader.bootstrapState(account: account)
+
+        #expect(state.relays == ["wss://read.example"])
+        #expect(state.followedPubkeys == [followed])
+        #expect(state.noteEvents.isEmpty)
+        #expect(state.metadataEvents.isEmpty)
+        #expect(state.relaySyncEvents.map(\.subscriptionID).contains("astrenza-nip65"))
+        #expect(state.relaySyncEvents.map(\.subscriptionID).contains("astrenza-kind3"))
+        let calls = await fake.fetchSubscriptionIDs()
+        #expect(calls.contains("astrenza-nip65"))
+        #expect(calls.contains("astrenza-kind3"))
+        #expect(!calls.contains("astrenza-home"))
+        #expect(!calls.contains("astrenza-kind0"))
+    }
+
+    @Test("Home timeline loader uses NIP-05 discovery relays for NIP-65")
+    func homeTimelineLoaderUsesNIP05DiscoveryRelays() async throws {
+        let account = NostrAccount(
+            pubkey: String(repeating: "1", count: 64),
+            displayIdentifier: "_@example.test",
+            readOnly: true,
+            discoveryRelays: ["hint.example"]
+        )
+        let relayEvent = nostrEvent(kind: 10002, pubkey: account.pubkey, tags: [["r", "wss://read.example", "read"]])
+        let fake = FakeRelayClient(eventsByRelayAndSubscriptionID: [
+            "wss://hint.example": ["astrenza-nip65": [relayEvent]]
+        ])
+        let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+
+        let state = try await loader.initialState(account: account)
+        let relayURLs = await fake.fetchRelayURLs()
+
+        #expect(state.relays == ["wss://read.example"])
+        #expect(relayURLs.contains("wss://hint.example"))
+        #expect(relayURLs.contains("wss://read.example"))
+    }
+
+    @Test("Home timeline loader returns after the first NIP-65 relay responds")
+    func homeTimelineLoaderReturnsAfterFirstNIP65RelayResponds() async throws {
+        let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
+        let relayEvent = nostrEvent(kind: 10002, pubkey: account.pubkey, tags: [["r", "wss://read.example", "read"]])
+        let fake = FakeRelayClient(
+            eventsByRelayAndSubscriptionID: [
+                "wss://fast.example": ["astrenza-nip65": [relayEvent]],
+                "wss://slow.example": ["astrenza-nip65": [relayEvent]]
+            ],
+            delayNanosecondsByRelayAndSubscriptionID: [
+                "wss://slow.example": ["astrenza-nip65": 2_000_000_000]
+            ]
+        )
+        let loader = NostrHomeTimelineLoader(
+            relayClient: fake,
+            bootstrapRelays: ["wss://fast.example", "wss://slow.example"],
+            pageLimit: 10
+        )
+        let started = Date()
+
+        let state = try await loader.initialState(account: account)
+
+        #expect(state.relays == ["wss://read.example"])
+        #expect(Date().timeIntervalSince(started) < 1)
+    }
+
     @Test("Home timeline loader stops after kind:3 when follow list is empty")
     func homeTimelineLoaderEmptyFollows() async throws {
         let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
@@ -1678,6 +2141,819 @@ struct NostrCorePackageTests {
         #expect(await fake.missingLocalEventIDs() == [cachedOlder.id])
     }
 
+    @Test("Relay runtime forward packets keep a stable subscription id")
+    func relayRuntimeForwardPacketStableSubID() {
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "astrenza-home-forward",
+            filters: [
+                [
+                    "kinds": .ints([1]),
+                    "authors": .strings([String(repeating: "a", count: 64)]),
+                    "since": .int(100)
+                ]
+            ],
+            relayURLs: ["wss://relay.example"]
+        )
+
+        #expect(packet.strategy == .forward)
+        #expect(packet.subscriptionID == "astrenza-home-forward")
+        #expect(packet.groupID == "astrenza-home-forward")
+        #expect(packet.relayRequest.subscriptionID == "astrenza-home-forward")
+    }
+
+    @Test("Relay runtime backward packets can create unique request subscriptions inside one group")
+    func relayRuntimeBackwardPacketUniqueSubIDs() {
+        let first = NostrREQPacket.backward(
+            purpose: "kind0",
+            filters: [["kinds": .ints([0]), "authors": .strings(["a"])]],
+            groupID: "profiles-burst",
+            subscriptionID: "profiles-burst-1"
+        )
+        let second = NostrREQPacket.backward(
+            purpose: "kind0",
+            filters: [["kinds": .ints([0]), "authors": .strings(["b"])]],
+            groupID: "profiles-burst",
+            subscriptionID: "profiles-burst-2"
+        )
+
+        #expect(first.strategy == .backward)
+        #expect(second.strategy == .backward)
+        #expect(first.groupID == second.groupID)
+        #expect(first.subscriptionID != second.subscriptionID)
+    }
+
+    @Test("Relay runtime batches compatible kind0 author requests")
+    func relayRuntimeBatchesKind0Authors() {
+        let firstAuthor = String(repeating: "a", count: 64)
+        let secondAuthor = String(repeating: "b", count: 64)
+        let first = NostrREQPacket.backward(
+            purpose: "kind0",
+            filters: [["kinds": .ints([0]), "authors": .strings([firstAuthor])]],
+            relayURLs: ["wss://relay.example"],
+            groupID: "profiles",
+            subscriptionID: "profiles-1"
+        )
+        let second = NostrREQPacket.backward(
+            purpose: "kind0",
+            filters: [["kinds": .ints([0]), "authors": .strings([secondAuthor, firstAuthor])]],
+            relayURLs: ["wss://relay.example"],
+            groupID: "profiles",
+            subscriptionID: "profiles-2"
+        )
+
+        let batched = NostrREQScheduler.batch([first, second], mergeField: .authors)
+
+        #expect(batched.count == 1)
+        #expect(batched[0].filters == [
+            ["kinds": .ints([0]), "authors": .strings([firstAuthor, secondAuthor])]
+        ])
+    }
+
+    @Test("Relay runtime chunks large id requests without dropping ids")
+    func relayRuntimeChunksLargeIDRequests() {
+        let ids = (0..<7).map { String(repeating: String($0), count: 64) }
+        let packet = NostrREQPacket.backward(
+            purpose: "sources",
+            filters: [["ids": .strings(ids), "kinds": .ints([1])]],
+            groupID: "source-events",
+            subscriptionID: "source-events-1"
+        )
+
+        let chunks = NostrREQScheduler.chunk(
+            packet,
+            mergeField: .ids,
+            policy: NostrREQChunkPolicy(maxIDsPerFilter: 3, maxAuthorsPerFilter: 3, maxFiltersPerRequest: 2)
+        )
+
+        let chunkIDs = chunks
+            .flatMap(\.filters)
+            .flatMap { filter -> [String] in
+                guard case .strings(let values)? = filter["ids"] else { return [] }
+                return values
+            }
+
+        #expect(chunks.count == 2)
+        #expect(Set(chunkIDs) == Set(ids))
+        #expect(chunkIDs.count == ids.count)
+        #expect(chunks.map(\.groupID) == ["source-events", "source-events"])
+        #expect(chunks.map(\.subscriptionID) == ["source-events-1-chunk1", "source-events-1-chunk2"])
+    }
+
+    @Test("Relay runtime extracts profile and source dependencies from timeline events")
+    func relayRuntimeExtractsTimelineDependencies() {
+        let author = String(repeating: "a", count: 64)
+        let mentioned = String(repeating: "b", count: 64)
+        let replyID = String(repeating: "c", count: 64)
+        let quoteID = String(repeating: "d", count: 64)
+        let event = nostrEvent(
+            kind: 1,
+            pubkey: author,
+            content: "reply with quote",
+            tags: [
+                ["p", mentioned],
+                ["e", replyID, "", "reply"],
+                ["q", quoteID]
+            ]
+        )
+
+        let dependencies = NostrEventDependencies.extract(from: event)
+
+        #expect(dependencies.profilePubkeys == [author, mentioned])
+        #expect(dependencies.sourceEventIDs == [replyID, quoteID])
+    }
+
+    @Test("Relay runtime extracts dependency relay hints from tags")
+    func relayRuntimeExtractsDependencyRelayHints() {
+        let author = String(repeating: "a", count: 64)
+        let mentioned = String(repeating: "b", count: 64)
+        let replyID = String(repeating: "c", count: 64)
+        let quoteID = String(repeating: "d", count: 64)
+        let event = nostrEvent(
+            kind: 1,
+            pubkey: author,
+            content: "reply with hinted quote",
+            tags: [
+                ["p", mentioned, "WSS://Profile.Example"],
+                ["e", replyID, "wss://Reply.Example", "reply"],
+                ["q", quoteID, "wss://quote.example"]
+            ]
+        )
+
+        let dependencies = NostrEventDependencies.extract(from: event)
+
+        #expect(dependencies.profileRelayURLsByPubkey[mentioned] == ["wss://profile.example"])
+        #expect(dependencies.sourceRelayURLsByEventID[replyID] == ["wss://reply.example"])
+        #expect(dependencies.sourceRelayURLsByEventID[quoteID] == ["wss://quote.example"])
+    }
+
+    @Test("Relay filter matcher applies standard NIP-01 fields")
+    func relayFilterMatcherAppliesStandardFields() {
+        let author = String(repeating: "a", count: 64)
+        let eventID = String(repeating: "b", count: 64)
+        let event = NostrEvent(
+            id: eventID,
+            pubkey: author,
+            createdAt: 200,
+            kind: 1,
+            tags: [["e", String(repeating: "c", count: 64)], ["t", "nostr"]],
+            content: "tagged",
+            sig: String(repeating: "d", count: 128)
+        )
+
+        #expect(NostrRelayFilterMatcher.matches(event: event, filters: [[
+            "ids": .strings([eventID]),
+            "authors": .strings([author]),
+            "kinds": .ints([1]),
+            "since": .int(100),
+            "until": .int(300),
+            "#t": .strings(["nostr"])
+        ]]))
+        #expect(!NostrRelayFilterMatcher.matches(event: event, filters: [["kinds": .ints([0])]]))
+        #expect(!NostrRelayFilterMatcher.matches(event: event, filters: [["#t": .strings(["swift"])]]))
+    }
+
+    @Test("Relay runtime installs batched backward profile requests on default relays")
+    func relayRuntimeInstallsBatchedBackwardProfiles() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(transportFactory: { _ in transport }, autoReceive: false)
+        let firstAuthor = String(repeating: "a", count: 64)
+        let secondAuthor = String(repeating: "b", count: 64)
+        let first = try #require(NostrBackwardREQBuilder.profiles(authors: [firstAuthor], requestID: "profiles"))
+        let second = try #require(NostrBackwardREQBuilder.profiles(authors: [secondAuthor, firstAuthor], requestID: "profiles"))
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installBackward([first, second], mergeField: .authors)
+
+        let sent = await connection.sentFrames()
+        #expect(sent.count == 1)
+        #expect(sent[0].contains(#""REQ""#))
+        #expect(sent[0].contains(#""authors":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]"#))
+    }
+
+    @Test("Relay runtime older notes backward builder preserves author window")
+    func relayRuntimeOlderNotesBackwardBuilder() throws {
+        let firstAuthor = String(repeating: "b", count: 64)
+        let secondAuthor = String(repeating: "a", count: 64)
+
+        let packet = try #require(NostrBackwardREQBuilder.olderNotes(
+            authors: [firstAuthor, secondAuthor, secondAuthor],
+            until: 500,
+            limit: 40,
+            relayURLs: ["wss://relay.example"],
+            requestID: "older"
+        ))
+
+        #expect(packet.strategy == .backward)
+        #expect(packet.groupID == "astrenza-older-notes-older")
+        #expect(packet.subscriptionID == "astrenza-older-notes-older-req")
+        #expect(packet.relayURLs == ["wss://relay.example"])
+        #expect(packet.filters == [[
+            "kinds": .ints([1, 5, 6]),
+            "authors": .strings([secondAuthor, firstAuthor]),
+            "until": .int(500),
+            "limit": .int(40)
+        ]])
+    }
+
+    @Test("Relay runtime gap notes backward builder creates bounded since until windows")
+    func relayRuntimeGapNotesBackwardBuilder() throws {
+        let firstAuthor = String(repeating: "b", count: 64)
+        let secondAuthor = String(repeating: "a", count: 64)
+
+        let packet = try #require(NostrBackwardREQBuilder.notesWindow(
+            authors: [firstAuthor, secondAuthor, secondAuthor],
+            since: 101,
+            until: 299,
+            limit: 25,
+            relayURLs: ["wss://relay.example"],
+            requestID: "gap"
+        ))
+
+        #expect(packet.strategy == .backward)
+        #expect(packet.groupID == "astrenza-gap-notes-gap")
+        #expect(packet.subscriptionID == "astrenza-gap-notes-gap-req")
+        #expect(packet.relayURLs == ["wss://relay.example"])
+        #expect(packet.filters == [[
+            "kinds": .ints([1, 5, 6]),
+            "authors": .strings([secondAuthor, firstAuthor]),
+            "since": .int(101),
+            "until": .int(299),
+            "limit": .int(25)
+        ]])
+    }
+
+    @Test("Relay runtime closes idle backward subscriptions with a timeout packet")
+    func relayRuntimeClosesIdleBackwardSubscriptionsWithTimeout() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: NostrRelayRuntimeBackwardPolicy(idleTimeoutMilliseconds: 20)
+        )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+
+        let packet = try #require(NostrBackwardREQBuilder.profiles(
+            authors: [String(repeating: "a", count: 64)],
+            relayURLs: ["wss://relay.example"],
+            requestID: "idle"
+        ))
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installBackward([packet], mergeField: .authors)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        let sent = await connection.sentFrames()
+        let packets = await collector.packets()
+        #expect(sent.count == 2)
+        #expect(sent[0].contains(#""REQ""#))
+        #expect(sent[1] == #"["CLOSE","astrenza-kind0-idle-req"]"#)
+        #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://relay.example").isEmpty)
+        #expect(packets.contains { packet in
+            if case .timeout("wss://relay.example", "astrenza-kind0-idle-req", "backward idle timeout") = packet {
+                return true
+            }
+            return false
+        })
+        #expect(packets.contains { packet in
+            guard case .backwardCompleted(let completion) = packet else { return false }
+            return completion.groupID == "astrenza-kind0-idle"
+                && completion.status == .timedOut
+                && completion.timeoutCount == 1
+                && completion.eventCount == 0
+        })
+    }
+
+    @Test("Relay runtime emits one backward completion for a chunked group")
+    func relayRuntimeEmitsBackwardCompletionForChunkedGroup() async throws {
+        let firstAuthor = String(repeating: "a", count: 64)
+        let secondAuthor = String(repeating: "b", count: 64)
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-kind0-grouped-req-chunk1"]"#,
+            #"["EOSE","astrenza-kind0-grouped-req-chunk2"]"#
+        ])
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+        let packet = try #require(NostrBackwardREQBuilder.profiles(
+            authors: [firstAuthor, secondAuthor],
+            relayURLs: ["wss://relay.example"],
+            requestID: "grouped"
+        ))
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installBackward(
+            [packet],
+            mergeField: .authors,
+            chunkPolicy: NostrREQChunkPolicy(maxAuthorsPerFilter: 1, maxFiltersPerRequest: 1)
+        )
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let sent = await connection.sentFrames()
+        let completions = await collector.packets().compactMap { packet -> NostrBackwardREQCompletion? in
+            guard case .backwardCompleted(let completion) = packet else { return nil }
+            return completion
+        }
+        #expect(sent.count == 4)
+        #expect(sent[0].contains(#""REQ""#))
+        #expect(sent[1].contains(#""REQ""#))
+        #expect(sent[2] == #"["CLOSE","astrenza-kind0-grouped-req-chunk1"]"#)
+        #expect(sent[3] == #"["CLOSE","astrenza-kind0-grouped-req-chunk2"]"#)
+        #expect(completions.count == 1)
+        let completion = try #require(completions.first)
+        #expect(completion.groupID == "astrenza-kind0-grouped")
+        #expect(completion.status == .completed)
+        #expect(completion.relayURLs == ["wss://relay.example"])
+        #expect(completion.subscriptionIDs == [
+            "astrenza-kind0-grouped-req-chunk1",
+            "astrenza-kind0-grouped-req-chunk2"
+        ])
+        #expect(completion.eoseCount == 2)
+        #expect(completion.closedCount == 0)
+        #expect(completion.timeoutCount == 0)
+    }
+
+    @Test("Relay runtime reports partial backward completion when some relays answer")
+    func relayRuntimeReportsPartialBackwardCompletion() async throws {
+        let answeredConnection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-kind0-partial-req"]"#
+        ])
+        let timedOutConnection = FakeRelayRuntimeConnection()
+        let transports = [
+            "wss://answered.example": FakeRelayRuntimeTransport(connection: answeredConnection),
+            "wss://timeout.example": FakeRelayRuntimeTransport(connection: timedOutConnection)
+        ]
+        let runtime = NostrRelayRuntime(
+            transportFactory: { relayURL in
+                transports[relayURL] ?? FakeRelayRuntimeTransport(connection: FakeRelayRuntimeConnection())
+            },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: NostrRelayRuntimeBackwardPolicy(idleTimeoutMilliseconds: 20)
+        )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+        let packet = try #require(NostrBackwardREQBuilder.profiles(
+            authors: [String(repeating: "c", count: 64)],
+            relayURLs: ["wss://answered.example", "wss://timeout.example"],
+            requestID: "partial"
+        ))
+
+        try await runtime.setDefaultRelays(["wss://answered.example", "wss://timeout.example"])
+        try await runtime.installBackward([packet], mergeField: .authors)
+        try await runtime.receiveNext(relayURL: "wss://answered.example")
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        let packets = await collector.packets()
+        let completion = try #require(packets.compactMap { packet -> NostrBackwardREQCompletion? in
+            guard case .backwardCompleted(let completion) = packet else { return nil }
+            return completion.groupID == "astrenza-kind0-partial" ? completion : nil
+        }.first)
+        #expect(completion.status == .partial)
+        #expect(completion.eoseCount == 1)
+        #expect(completion.timeoutCount == 1)
+    }
+
+    @Test("Relay runtime heartbeat uses an impossible id filter")
+    func relayRuntimeHeartbeatUsesImpossibleIDFilter() {
+        let packet = NostrBackwardREQBuilder.heartbeat(relayURLs: ["wss://relay.example"], requestID: "probe")
+
+        #expect(packet.strategy == .backward)
+        #expect(packet.subscriptionID == "astrenza-heartbeat-probe-req")
+        #expect(packet.relayURLs == ["wss://relay.example"])
+        #expect(packet.filters == [["ids": .strings([String(repeating: "0", count: 64)])]])
+    }
+
+    @Test("Relay runtime can send heartbeat without closing the relay session")
+    func relayRuntimeCanSendHeartbeat() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.sendHeartbeat(relayURL: "wss://relay.example")
+
+        let sent = await connection.sentFrames()
+        #expect(await transport.connectCallCount() == 1)
+        #expect(await !connection.closed())
+        #expect(sent.count == 1)
+        #expect(sent[0].contains(#""REQ""#))
+        #expect(sent[0].contains(#""ids":["0000000000000000000000000000000000000000000000000000000000000000"]"#))
+    }
+
+    @Test("Relay runtime heartbeat participates in backward timeout completion")
+    func relayRuntimeHeartbeatParticipatesInBackwardTimeoutCompletion() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: NostrRelayRuntimeBackwardPolicy(idleTimeoutMilliseconds: 20)
+        )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.sendHeartbeat(relayURL: "wss://relay.example")
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        let sent = await connection.sentFrames()
+        let packets = await collector.packets()
+        #expect(sent.count == 2)
+        #expect(sent[0].contains(#""REQ""#))
+        #expect(sent[0].contains(#""ids":["0000000000000000000000000000000000000000000000000000000000000000"]"#))
+        #expect(sent[1].contains(#"["CLOSE","astrenza-heartbeat-"#))
+        #expect(packets.contains { packet in
+            guard case .timeout("wss://relay.example", let subscriptionID, "backward idle timeout") = packet else {
+                return false
+            }
+            return subscriptionID.hasPrefix("astrenza-heartbeat-")
+        })
+        #expect(packets.contains { packet in
+            guard case .backwardCompleted(let completion) = packet else { return false }
+            return completion.groupID.hasPrefix("astrenza-heartbeat-")
+                && completion.status == .timedOut
+                && completion.timeoutCount == 1
+        })
+    }
+
+    @Test("Relay runtime reconnects and restores forward subscriptions after heartbeat misses")
+    func relayRuntimeReconnectsAfterHeartbeatMisses() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy(isEnabled: false, reconnectAfterMisses: 1),
+            backwardPolicy: NostrRelayRuntimeBackwardPolicy(idleTimeoutMilliseconds: 20)
+        )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+
+        let forward = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1])]]
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installForward(forward)
+        try await runtime.sendHeartbeat(relayURL: "wss://relay.example")
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let sent = await connection.sentFrames()
+        let packets = await collector.packets()
+        #expect(await transport.connectCallCount() == 2)
+        #expect(await connection.closed())
+        #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .connected)
+        #expect(sent.count == 4)
+        #expect(sent[0].contains(#""REQ""#))
+        #expect(sent[0].contains(#""home-forward""#))
+        #expect(sent[1].contains(#""ids":["0000000000000000000000000000000000000000000000000000000000000000"]"#))
+        #expect(sent[2].contains(#"["CLOSE","astrenza-heartbeat-"#))
+        #expect(sent[3] == sent[0])
+        #expect(packets.contains { packet in
+            if case .stateChanged("wss://relay.example", .waitingForRetry) = packet {
+                return true
+            }
+            return false
+        })
+        #expect(packets.contains { packet in
+            if case .stateChanged("wss://relay.example", .retrying) = packet {
+                return true
+            }
+            return false
+        })
+        #expect(packets.contains { packet in
+            if case .stateChanged("wss://relay.example", .connected) = packet {
+                return true
+            }
+            return false
+        })
+    }
+
+    @Test("Relay session emits state changes only when the state actually changes")
+    func relaySessionEmitsDistinctStateChanges() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let session = NostrRelaySession(relayURL: "wss://relay.example", transport: transport)
+        let collector = RelayRuntimePacketCollector()
+        let stream = await session.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+
+        try await session.connect()
+        await session.markWaitingForRetry(message: "first timeout")
+        await session.markWaitingForRetry(message: "second timeout")
+        await session.markSuspended(message: "retry attempts exhausted")
+        await session.markSuspended(message: "still suspended")
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let states = await collector.packets().compactMap { packet -> NostrRelayConnectionState? in
+            guard case .stateChanged("wss://relay.example", let state) = packet else { return nil }
+            return state
+        }
+
+        #expect(states == [.connecting, .connected, .waitingForRetry, .suspended])
+    }
+
+    @Test("Relay runtime heartbeat loop starts for auto receive sessions")
+    func relayRuntimeHeartbeatLoopStartsForAutoReceiveSessions() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: true,
+            retryPolicy: NostrRelayRuntimeRetryPolicy(maxAttempts: 0, initialDelayMilliseconds: 0, delayStepMilliseconds: 0),
+            heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy(initialDelayMilliseconds: 0, intervalMilliseconds: 1_000)
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let sent = await connection.sentFrames()
+        #expect(sent.contains { $0.contains("astrenza-heartbeat-") })
+        #expect(sent.contains { $0.contains(#""ids":["0000000000000000000000000000000000000000000000000000000000000000"]"#) })
+    }
+
+    @Test("Relay session keeps forward subscriptions active after EOSE")
+    func relaySessionKeepsForwardSubscriptionAfterEOSE() async throws {
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [#"["EOSE","home-forward"]"#])
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let session = NostrRelaySession(relayURL: "wss://relay.example", transport: transport)
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1]), "since": .int(100)]]
+        )
+
+        try await session.install(packet)
+        try await session.receiveNext()
+
+        #expect(await transport.connectCallCount() == 1)
+        #expect(await session.activeSubscriptionIDs() == ["home-forward"])
+        #expect(await connection.sentFrames().count == 1)
+    }
+
+    @Test("Relay session ignores signed events that do not match subscription filters")
+    func relaySessionIgnoresFilterMismatchedEvents() async throws {
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "41", count: 32))
+        let event = try await signer.sign(
+            NostrPublishInput.post(content: "valid but wrong kind filter")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 200)
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            try relayRuntimeEventFrame(subscriptionID: "home-forward", event: event)
+        ])
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let session = NostrRelaySession(relayURL: "wss://relay.example", transport: transport)
+        let collector = RelayRuntimePacketCollector()
+        let collectTask = Task {
+            for await packet in await session.events() {
+                await collector.append(packet)
+            }
+        }
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([0]), "authors": .strings([signer.pubkey])]]
+        )
+
+        try await session.install(packet)
+        try await session.receiveNext()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        collectTask.cancel()
+
+        #expect(await collector.packets().contains { packet in
+            if case .event = packet { return true }
+            return false
+        } == false)
+    }
+
+    @Test("Relay session ignores events with invalid signatures")
+    func relaySessionIgnoresInvalidSignatures() async throws {
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "42", count: 32))
+        let event = try await signer.sign(
+            NostrPublishInput.post(content: "valid original")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 210)
+        )
+        let tampered = NostrEvent(
+            id: event.id,
+            pubkey: event.pubkey,
+            createdAt: event.createdAt,
+            kind: event.kind,
+            tags: event.tags,
+            content: "tampered body",
+            sig: event.sig
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            try relayRuntimeEventFrame(subscriptionID: "home-forward", event: tampered)
+        ])
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let session = NostrRelaySession(relayURL: "wss://relay.example", transport: transport)
+        let collector = RelayRuntimePacketCollector()
+        let collectTask = Task {
+            for await packet in await session.events() {
+                await collector.append(packet)
+            }
+        }
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1]), "authors": .strings([signer.pubkey])]]
+        )
+
+        try await session.install(packet)
+        try await session.receiveNext()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        collectTask.cancel()
+
+        #expect(await collector.packets().contains { packet in
+            if case .event = packet { return true }
+            return false
+        } == false)
+    }
+
+    @Test("Relay session closes backward subscriptions after EOSE")
+    func relaySessionClosesBackwardSubscriptionAfterEOSE() async throws {
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [#"["EOSE","profile-backward"]"#])
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let session = NostrRelaySession(relayURL: "wss://relay.example", transport: transport)
+        let packet = NostrREQPacket.backward(
+            purpose: "kind0",
+            filters: [["kinds": .ints([0]), "authors": .strings([String(repeating: "a", count: 64)])]],
+            groupID: "profile-backward",
+            subscriptionID: "profile-backward"
+        )
+
+        try await session.install(packet)
+        try await session.receiveNext()
+
+        let sent = await connection.sentFrames()
+        #expect(await transport.connectCallCount() == 1)
+        #expect(await session.activeSubscriptionIDs().isEmpty)
+        #expect(sent.count == 2)
+        #expect(sent[1] == #"["CLOSE","profile-backward"]"#)
+    }
+
+    @Test("Relay session reconnect restores active forward subscriptions")
+    func relaySessionReconnectRestoresActiveForwardSubscriptions() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let session = NostrRelaySession(relayURL: "wss://relay.example", transport: transport)
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1])]]
+        )
+
+        try await session.install(packet)
+        try await session.reconnectRestoringSubscriptions()
+
+        let sent = await connection.sentFrames()
+        #expect(await transport.connectCallCount() == 2)
+        #expect(await connection.closed())
+        #expect(await session.state() == .connected)
+        #expect(await session.activeSubscriptionIDs() == ["home-forward"])
+        #expect(sent.count == 2)
+        #expect(sent[0] == sent[1])
+    }
+
+    @Test("Home forward REQ builder creates stable reconnect filters with overlap")
+    func homeForwardREQBuilderCreatesReconnectFilter() {
+        let firstAuthor = String(repeating: "b", count: 64)
+        let secondAuthor = String(repeating: "a", count: 64)
+
+        let packet = NostrHomeForwardREQBuilder.reconnectPacket(
+            authors: [firstAuthor, secondAuthor, secondAuthor],
+            newestCreatedAt: 1_800_000_100,
+            overlapSeconds: 15,
+            relayURLs: ["wss://relay.example"]
+        )
+
+        #expect(packet.strategy == .forward)
+        #expect(packet.subscriptionID == "astrenza-home-forward")
+        #expect(packet.relayURLs == ["wss://relay.example"])
+        #expect(packet.filters == [
+            [
+                "kinds": .ints([1, 5, 6]),
+                "authors": .strings([secondAuthor, firstAuthor]),
+                "since": .int(1_800_000_085)
+            ]
+        ])
+    }
+
+    @Test("Relay runtime restores active forward REQs on newly added default relays")
+    func relayRuntimeRestoresForwardREQOnAddedRelay() async throws {
+        let firstConnection = FakeRelayRuntimeConnection()
+        let secondConnection = FakeRelayRuntimeConnection()
+        let transports = [
+            "wss://one.example": FakeRelayRuntimeTransport(connection: firstConnection),
+            "wss://two.example": FakeRelayRuntimeTransport(connection: secondConnection)
+        ]
+        let runtime = NostrRelayRuntime(transportFactory: { relayURL in
+            transports[relayURL] ?? FakeRelayRuntimeTransport(connection: FakeRelayRuntimeConnection())
+        }, autoReceive: false)
+        let packet = NostrHomeForwardREQBuilder.packet(
+            authors: [String(repeating: "a", count: 64)],
+            since: 100
+        )
+
+        try await runtime.setDefaultRelays(["wss://one.example"])
+        try await runtime.installForward(packet)
+        try await runtime.setDefaultRelays(["wss://one.example", "wss://two.example"])
+
+        #expect(await runtime.defaultRelayURLs() == ["wss://one.example", "wss://two.example"])
+        #expect(await runtime.activeForwardSubscriptionIDs() == ["astrenza-home-forward"])
+        #expect(await firstConnection.sentFrames().count == 1)
+        #expect(await secondConnection.sentFrames().count == 1)
+        #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://two.example") == ["astrenza-home-forward"])
+    }
+
+    @Test("Relay runtime terminates sessions removed from default relays")
+    func relayRuntimeTerminatesRemovedDefaultRelay() async throws {
+        let firstConnection = FakeRelayRuntimeConnection()
+        let secondConnection = FakeRelayRuntimeConnection()
+        let transports = [
+            "wss://one.example": FakeRelayRuntimeTransport(connection: firstConnection),
+            "wss://two.example": FakeRelayRuntimeTransport(connection: secondConnection)
+        ]
+        let runtime = NostrRelayRuntime(transportFactory: { relayURL in
+            transports[relayURL] ?? FakeRelayRuntimeTransport(connection: FakeRelayRuntimeConnection())
+        }, autoReceive: false)
+
+        try await runtime.setDefaultRelays(["wss://one.example", "wss://two.example"])
+        try await runtime.setDefaultRelays(["wss://two.example"])
+
+        #expect(await runtime.defaultRelayURLs() == ["wss://two.example"])
+        #expect(await firstConnection.closed())
+        #expect(await !secondConnection.closed())
+        #expect(await runtime.connectionState(relayURL: "wss://one.example") == .initialized)
+        #expect(await runtime.connectionState(relayURL: "wss://two.example") == .connected)
+    }
+
+    @Test("Relay runtime suspends auto receive after retry exhaustion")
+    func relayRuntimeSuspendsAutoReceiveAfterRetryExhaustion() async throws {
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: true,
+            retryPolicy: NostrRelayRuntimeRetryPolicy(maxAttempts: 1, initialDelayMilliseconds: 0, delayStepMilliseconds: 0)
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        #expect(await transport.connectCallCount() >= 2)
+        #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .suspended)
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,
@@ -1785,6 +3061,25 @@ private func httpResponse(url: URL?, statusCode: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url ?? URL(string: "https://example.test")!, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
 }
 
+private func relayRuntimeEventFrame(subscriptionID: String, event: NostrEvent) throws -> String {
+    let eventData = try JSONEncoder().encode(event)
+    let eventObject = try JSONSerialization.jsonObject(with: eventData)
+    let frameData = try JSONSerialization.data(withJSONObject: ["EVENT", subscriptionID, eventObject], options: [.sortedKeys])
+    return String(data: frameData, encoding: .utf8) ?? "[]"
+}
+
+private actor RelayRuntimePacketCollector {
+    private var collected: [NostrRelayRuntimePacket] = []
+
+    func append(_ packet: NostrRelayRuntimePacket) {
+        collected.append(packet)
+    }
+
+    func packets() -> [NostrRelayRuntimePacket] {
+        collected
+    }
+}
+
 private enum SHA256Digest {
     static func hex(for value: String) -> String {
         let digest = SHA256.hash(data: Data(value.utf8))
@@ -1794,26 +3089,43 @@ private enum SHA256Digest {
 
 private actor FakeRelayClient: NostrRelayFetching {
     private let eventsBySubscriptionID: [String: [NostrEvent]]
+    private let eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]]
     private let missingIDsBySubscriptionID: [String: [String]]
     private let failingSubscriptionIDs: Set<String>
+    private let delayNanosecondsByRelay: [String: UInt64]
+    private let delayNanosecondsByRelayAndSubscriptionID: [String: [String: UInt64]]
     private var fetchCalls: [String] = []
+    private var fetchRelayCalls: [String] = []
     private var missingCalls: [String] = []
     private var latestMissingLocalEventIDs: [String] = []
 
     init(
-        eventsBySubscriptionID: [String: [NostrEvent]],
+        eventsBySubscriptionID: [String: [NostrEvent]] = [:],
+        eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]] = [:],
         missingIDsBySubscriptionID: [String: [String]] = [:],
-        failingSubscriptionIDs: Set<String> = []
+        failingSubscriptionIDs: Set<String> = [],
+        delayNanosecondsByRelay: [String: UInt64] = [:],
+        delayNanosecondsByRelayAndSubscriptionID: [String: [String: UInt64]] = [:]
     ) {
         self.eventsBySubscriptionID = eventsBySubscriptionID
+        self.eventsByRelayAndSubscriptionID = eventsByRelayAndSubscriptionID
         self.missingIDsBySubscriptionID = missingIDsBySubscriptionID
         self.failingSubscriptionIDs = failingSubscriptionIDs
+        self.delayNanosecondsByRelay = delayNanosecondsByRelay
+        self.delayNanosecondsByRelayAndSubscriptionID = delayNanosecondsByRelayAndSubscriptionID
     }
 
     func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
         fetchCalls.append(request.subscriptionID)
+        fetchRelayCalls.append(relayURL)
+        if let delay = delayNanosecondsByRelayAndSubscriptionID[relayURL]?[request.subscriptionID] ?? delayNanosecondsByRelay[relayURL] {
+            try await Task.sleep(nanoseconds: delay)
+        }
         if failingSubscriptionIDs.contains(request.subscriptionID) {
             throw NostrRelayClientError.timeout
+        }
+        if let events = eventsByRelayAndSubscriptionID[relayURL]?[request.subscriptionID] {
+            return events
         }
         return eventsBySubscriptionID[request.subscriptionID] ?? []
     }
@@ -1833,11 +3145,66 @@ private actor FakeRelayClient: NostrRelayFetching {
         fetchCalls
     }
 
+    func fetchRelayURLs() -> [String] {
+        fetchRelayCalls
+    }
+
     func missingSubscriptionIDs() -> [String] {
         missingCalls
     }
 
     func missingLocalEventIDs() -> [String] {
         latestMissingLocalEventIDs
+    }
+}
+
+private actor FakeRelayRuntimeTransport: NostrRelayTransport {
+    private let connection: FakeRelayRuntimeConnection
+    private var callCount = 0
+
+    init(connection: FakeRelayRuntimeConnection) {
+        self.connection = connection
+    }
+
+    func connect(relayURL: String) async throws -> any NostrRelayTransportConnection {
+        callCount += 1
+        return connection
+    }
+
+    func connectCallCount() -> Int {
+        callCount
+    }
+}
+
+private actor FakeRelayRuntimeConnection: NostrRelayTransportConnection {
+    private var inboundFrames: [String]
+    private var outboundFrames: [String] = []
+    private var isClosed = false
+
+    init(inboundFrames: [String] = []) {
+        self.inboundFrames = inboundFrames
+    }
+
+    func send(_ textFrame: String) async throws {
+        outboundFrames.append(textFrame)
+    }
+
+    func receive() async throws -> String {
+        guard !inboundFrames.isEmpty else {
+            throw NostrRelayClientError.timeout
+        }
+        return inboundFrames.removeFirst()
+    }
+
+    func close() async {
+        isClosed = true
+    }
+
+    func sentFrames() -> [String] {
+        outboundFrames
+    }
+
+    func closed() -> Bool {
+        isClosed
     }
 }

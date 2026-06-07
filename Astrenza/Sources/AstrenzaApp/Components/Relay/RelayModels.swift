@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 
 struct RelayMockStore {
@@ -168,6 +169,59 @@ struct RelayDescriptor: Identifiable, Equatable {
     let limitation: String
     let contact: String?
     let lastMessage: String
+    let newestCreatedAt: Int?
+    let oldestCreatedAt: Int?
+    let lastEOSEAt: Int?
+    let runtimeState: NostrRelayConnectionState?
+    let lifecycle: RelayLifecycleCounts
+
+    init(
+        url: String,
+        displayName: String,
+        status: RelayConnectionStatus,
+        usage: [RelayUsage],
+        source: RelaySource,
+        pingMilliseconds: Int?,
+        receivedBytes: String,
+        sentBytes: String,
+        eventCount: String,
+        errorCount: Int,
+        supportedNIPs: [Int],
+        software: String,
+        version: String?,
+        description: String,
+        limitation: String,
+        contact: String?,
+        lastMessage: String,
+        newestCreatedAt: Int? = nil,
+        oldestCreatedAt: Int? = nil,
+        lastEOSEAt: Int? = nil,
+        runtimeState: NostrRelayConnectionState? = nil,
+        lifecycle: RelayLifecycleCounts = RelayLifecycleCounts()
+    ) {
+        self.url = url
+        self.displayName = displayName
+        self.status = status
+        self.usage = usage
+        self.source = source
+        self.pingMilliseconds = pingMilliseconds
+        self.receivedBytes = receivedBytes
+        self.sentBytes = sentBytes
+        self.eventCount = eventCount
+        self.errorCount = errorCount
+        self.supportedNIPs = supportedNIPs
+        self.software = software
+        self.version = version
+        self.description = description
+        self.limitation = limitation
+        self.contact = contact
+        self.lastMessage = lastMessage
+        self.newestCreatedAt = newestCreatedAt
+        self.oldestCreatedAt = oldestCreatedAt
+        self.lastEOSEAt = lastEOSEAt
+        self.runtimeState = runtimeState
+        self.lifecycle = lifecycle
+    }
 
     var host: String {
         url
@@ -195,6 +249,35 @@ struct RelayDescriptor: Identifiable, Equatable {
             contact: nil,
             lastMessage: "NIP-11 request in flight"
         )
+    }
+}
+
+struct RelayLifecycleCounts: Equatable {
+    var reconnects = 0
+    var timeouts = 0
+    var closed = 0
+    var partialFailures = 0
+    var authRequired = 0
+    var paymentRequired = 0
+    var rejected = 0
+    var suspended = 0
+
+    var totalProblems: Int {
+        timeouts + closed + partialFailures + authRequired + paymentRequired + rejected + suspended
+    }
+
+    var summary: String {
+        let parts = [
+            reconnects > 0 ? "reconnect \(reconnects)" : nil,
+            timeouts > 0 ? "timeout \(timeouts)" : nil,
+            closed > 0 ? "closed \(closed)" : nil,
+            partialFailures > 0 ? "partial \(partialFailures)" : nil,
+            authRequired > 0 ? "auth \(authRequired)" : nil,
+            paymentRequired > 0 ? "payment \(paymentRequired)" : nil,
+            rejected > 0 ? "rejected \(rejected)" : nil,
+            suspended > 0 ? "suspended \(suspended)" : nil
+        ].compactMap { $0 }
+        return parts.isEmpty ? "No lifecycle issues" : parts.joined(separator: " / ")
     }
 }
 

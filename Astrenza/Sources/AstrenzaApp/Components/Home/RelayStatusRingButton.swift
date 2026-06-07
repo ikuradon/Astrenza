@@ -84,6 +84,6 @@ struct RelayStatusRingButton: View {
         .contentShape(Capsule())
         .animation(.spring(duration: 0.36, bounce: 0.16), value: collapseProgress)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Show relay information, \(connected) of \(planned) connected")
+        .accessibilityLabel("Show relay information, \(connected) of \(planned) recently reachable")
     }
 }

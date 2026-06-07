@@ -44,11 +44,10 @@ public struct NostrHomeTimelineLoader: Sendable {
         relayClient: any NostrRelayFetching = NostrRelayClient(),
         nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver(),
         bootstrapRelays: [String] = [
-            "wss://relay.damus.io",
             "wss://nos.lol",
-            "wss://relay.primal.net",
-            "wss://relay.nostr.band",
-            "wss://nostr.wine"
+            "wss://purplepag.es",
+            "wss://directory.yabu.me",
+            "wss://relay.damus.io"
         ],
         pageLimit: Int = 100
     ) {
@@ -58,10 +57,11 @@ public struct NostrHomeTimelineLoader: Sendable {
         self.pageLimit = max(1, min(pageLimit, 250))
     }
 
-    public func initialState(account: NostrAccount) async throws -> NostrHomeTimelineState {
+    public func bootstrapState(account: NostrAccount) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let relayListResult = try await latestEvent(
-            relays: bootstrapRelays,
+        let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
+        let relayListResult = try await firstAvailableEvent(
+            relays: discoveryRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-nip65",
                 filters: [[
@@ -77,7 +77,58 @@ public struct NostrHomeTimelineLoader: Sendable {
 
         let relayList = NostrRelayList.parse(from: relayListEvent)
         let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
-        let contactRelays = Array((readRelays + bootstrapRelays).uniqued().prefix(10))
+        let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
+
+        let contactResult = try await latestEvent(
+            relays: contactRelays,
+            request: NostrRelayRequest(
+                subscriptionID: "astrenza-kind3",
+                filters: [[
+                    "authors": .strings([account.pubkey]),
+                    "kinds": .ints([3]),
+                    "limit": .int(1)
+                ]]
+            ),
+            accountID: account.pubkey
+        )
+        relaySyncEvents.append(contentsOf: contactResult.syncEvents)
+        let contactEvent = contactResult.event
+        let contacts = Array(NostrContactList.pubkeys(from: contactEvent).prefix(256))
+
+        return NostrHomeTimelineState(
+            relays: readRelays,
+            followedPubkeys: contacts,
+            noteEvents: [],
+            metadataEvents: [],
+            relayListEvent: relayListEvent,
+            contactListEvent: contactEvent,
+            nip05Resolutions: [:],
+            hasMoreOlder: true,
+            relaySyncEvents: relaySyncEvents
+        )
+    }
+
+    public func initialState(account: NostrAccount) async throws -> NostrHomeTimelineState {
+        var relaySyncEvents: [NostrRelaySyncEventRecord] = []
+        let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
+        let relayListResult = try await firstAvailableEvent(
+            relays: discoveryRelays,
+            request: NostrRelayRequest(
+                subscriptionID: "astrenza-nip65",
+                filters: [[
+                    "authors": .strings([account.pubkey]),
+                    "kinds": .ints([10002]),
+                    "limit": .int(1)
+                ]]
+            ),
+            accountID: account.pubkey
+        )
+        relaySyncEvents.append(contentsOf: relayListResult.syncEvents)
+        let relayListEvent = relayListResult.event
+
+        let relayList = NostrRelayList.parse(from: relayListEvent)
+        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
+        let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
 
         let contactResult = try await latestEvent(
             relays: contactRelays,
@@ -372,6 +423,55 @@ public struct NostrHomeTimelineLoader: Sendable {
         return (event, result.syncEvents)
     }
 
+    private func firstAvailableEvent(
+        relays: [String],
+        request: NostrRelayRequest,
+        accountID: String
+    ) async throws -> (event: NostrEvent?, syncEvents: [NostrRelaySyncEventRecord]) {
+        let relayClient = relayClient
+        return try await withThrowingTaskGroup(of: (String, Result<[NostrEvent], Error>, Int, Int).self) { group in
+            for relay in relays {
+                group.addTask {
+                    let started = Date()
+                    do {
+                        let events = try await relayClient.fetch(relayURL: relay, request: request)
+                        let latency = Int(Date().timeIntervalSince(started) * 1_000)
+                        return (relay, .success(events), Int(started.timeIntervalSince1970), latency)
+                    } catch {
+                        let latency = Int(Date().timeIntervalSince(started) * 1_000)
+                        return (relay, .failure(error), Int(started.timeIntervalSince1970), latency)
+                    }
+                }
+            }
+
+            var syncEvents: [NostrRelaySyncEventRecord] = []
+            for try await (relay, result, startedAt, latency) in group {
+                let syncEvent = relaySyncEvent(
+                    relay: relay,
+                    result: result,
+                    startedAt: startedAt,
+                    latency: latency,
+                    request: request,
+                    accountID: accountID
+                )
+                syncEvents.append(syncEvent)
+
+                if case .success(let relayEvents) = result,
+                   let event = relayEvents.max(by: { lhs, rhs in
+                       if lhs.createdAt == rhs.createdAt {
+                           return lhs.id > rhs.id
+                       }
+                       return lhs.createdAt < rhs.createdAt
+                   }) {
+                    group.cancelAll()
+                    return (event, syncEvents)
+                }
+            }
+
+            return (nil, syncEvents)
+        }
+    }
+
     private func mergedEvents(
         relays: [String],
         request: NostrRelayRequest,
@@ -396,59 +496,83 @@ public struct NostrHomeTimelineLoader: Sendable {
             var eventsByID: [String: NostrEvent] = [:]
             var syncEvents: [NostrRelaySyncEventRecord] = []
             for try await (relay, result, startedAt, latency) in group {
+                syncEvents.append(relaySyncEvent(
+                    relay: relay,
+                    result: result,
+                    startedAt: startedAt,
+                    latency: latency,
+                    request: request,
+                    accountID: accountID
+                ))
+
                 switch result {
                 case .success(let relayEvents):
                     for event in relayEvents {
                         eventsByID[event.id] = event
                     }
-                    syncEvents.append(NostrRelaySyncEventRecord(
-                        accountID: accountID,
-                        timelineKey: "home",
-                        relayURL: relay,
-                        kind: .eose,
-                        occurredAt: startedAt + max(0, latency / 1_000),
-                        subscriptionID: request.subscriptionID,
-                        eventCount: relayEvents.count,
-                        newestCreatedAt: relayEvents.map(\.createdAt).max(),
-                        oldestCreatedAt: relayEvents.map(\.createdAt).min(),
-                        latencyMilliseconds: latency,
-                        message: "EOSE received"
-                    ))
-                case .failure(let error):
-                    let kind: NostrRelaySyncEventKind
-                    let message: String
-                    switch error as? NostrRelayClientError {
-                    case .timeout:
-                        kind = .timeout
-                        message = "timeout"
-                    case .authRequired(let challenge):
-                        kind = .authRequired
-                        message = challenge
-                    case .paymentRequired(let reason):
-                        kind = .paymentRequired
-                        message = reason
-                    case .relayClosed(let reason):
-                        kind = .closed
-                        message = reason
-                    default:
-                        kind = .partialFailure
-                        message = String(describing: error)
-                    }
-                    syncEvents.append(NostrRelaySyncEventRecord(
-                        accountID: accountID,
-                        timelineKey: "home",
-                        relayURL: relay,
-                        kind: kind,
-                        occurredAt: startedAt + max(0, latency / 1_000),
-                        subscriptionID: request.subscriptionID,
-                        eventCount: 0,
-                        latencyMilliseconds: latency,
-                        message: message
-                    ))
+                case .failure:
+                    break
                 }
             }
 
             return (sortedUnique(Array(eventsByID.values)), syncEvents)
+        }
+    }
+
+    private func relaySyncEvent(
+        relay: String,
+        result: Result<[NostrEvent], Error>,
+        startedAt: Int,
+        latency: Int,
+        request: NostrRelayRequest,
+        accountID: String
+    ) -> NostrRelaySyncEventRecord {
+        switch result {
+        case .success(let relayEvents):
+            return NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relay,
+                kind: .eose,
+                occurredAt: startedAt + max(0, latency / 1_000),
+                subscriptionID: request.subscriptionID,
+                eventCount: relayEvents.count,
+                newestCreatedAt: relayEvents.map(\.createdAt).max(),
+                oldestCreatedAt: relayEvents.map(\.createdAt).min(),
+                latencyMilliseconds: latency,
+                message: "EOSE received"
+            )
+        case .failure(let error):
+            let kind: NostrRelaySyncEventKind
+            let message: String
+            switch error as? NostrRelayClientError {
+            case .timeout:
+                kind = .timeout
+                message = "timeout"
+            case .authRequired(let challenge):
+                kind = .authRequired
+                message = challenge
+            case .paymentRequired(let reason):
+                kind = .paymentRequired
+                message = reason
+            case .relayClosed(let reason):
+                kind = .closed
+                message = reason
+            default:
+                kind = .partialFailure
+                message = String(describing: error)
+            }
+            return NostrRelaySyncEventRecord(
+                accountID: accountID,
+                timelineKey: "home",
+                relayURL: relay,
+                kind: kind,
+                occurredAt: startedAt + max(0, latency / 1_000),
+                subscriptionID: request.subscriptionID,
+                eventCount: 0,
+                latencyMilliseconds: latency,
+                message: message
+            )
         }
     }
 
@@ -462,6 +586,23 @@ public struct NostrHomeTimelineLoader: Sendable {
                 return lhs.id < rhs.id
             }
             return lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    private func normalizedRelayURLs(_ relays: [String]) -> [String] {
+        relays.compactMap { raw in
+            var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasPrefix("https://") {
+                value = "wss://" + value.dropFirst("https://".count)
+            } else if value.hasPrefix("http://") {
+                value = "ws://" + value.dropFirst("http://".count)
+            } else if !value.hasPrefix("wss://") && !value.hasPrefix("ws://") {
+                value = "wss://\(value)"
+            }
+            guard let url = URL(string: value), url.scheme == "wss" || url.scheme == "ws", url.host != nil else {
+                return nil
+            }
+            return value
         }
     }
 }

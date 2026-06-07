@@ -110,14 +110,14 @@ struct HomeTimelineView: View {
         guard sessionStore.account != nil else {
             return RelayMockStore.connectedCount
         }
-        return liveTimelineStore.resolvedRelays.count
+        return liveTimelineStore.relayStatusCounts.connected
     }
 
     private var relayPlannedCount: Int {
         guard sessionStore.account != nil else {
             return RelayMockStore.plannedCount
         }
-        return max(liveTimelineStore.resolvedRelays.count, 1)
+        return liveTimelineStore.relayStatusCounts.planned
     }
 
     var body: some View {
@@ -142,7 +142,7 @@ struct HomeTimelineView: View {
                         onSettingsTap: presentSettings,
                         relayConnectedCount: relayConnectedCount,
                         relayPlannedCount: relayPlannedCount,
-                        isRelayProcessing: liveTimelineStore.phase.isProcessing
+                        isRelayProcessing: liveTimelineStore.isRelayProcessing
                     )
                     .zIndex(30)
 
@@ -153,8 +153,8 @@ struct HomeTimelineView: View {
             if visibleTab == .home && !isPostDetailPresented {
                 HomeUnreadBadge(onTap: dismissFloatingMenus)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, 70)
-                    .padding(.trailing, 16)
+                    .padding(.top, 88)
+                    .padding(.trailing, 22)
             }
 
             if visibleTab == .home && !isPostDetailPresented && liveTimelineStore.filterStatus.isVisible {
@@ -205,6 +205,7 @@ struct HomeTimelineView: View {
             browserDestination: $browserDestination,
             swipeSettings: $swipeSettings,
             relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays,
+            relayRuntimeStates: sessionStore.account == nil ? [:] : liveTimelineStore.relayRuntimeStates,
             accountID: sessionStore.account?.pubkey,
             eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore,
             isComposeSubmitAvailable: isComposeSubmitAvailable,
@@ -247,7 +248,8 @@ private extension HomeTimelineView {
                 onOpenURL: openURL,
                 onPostActionChoice: handlePostActionChoice,
                 onRefresh: refreshVisibleTimeline,
-                onLoadOlderPost: loadOlderVisibleTimeline
+                onLoadOlderPost: loadOlderVisibleTimeline,
+                onBackfillGap: backfillVisibleTimelineGap
             ) { offset in
                 handleTimelineScrollOffset(offset)
             } onViewportStateChanged: { state in
@@ -421,6 +423,9 @@ private extension HomeTimelineView {
             }
         }
         timelineScrollOffset = offset
+        if sessionStore.account != nil, selectedTimeline == .home {
+            liveTimelineStore.setTimelineAtNewestWindow(offset <= 6)
+        }
     }
 
     func openPost(_ post: TimelinePost) {
@@ -528,12 +533,21 @@ private extension HomeTimelineView {
 
     func refreshVisibleTimeline() async {
         guard sessionStore.account != nil, selectedTimeline == .home else { return }
+        if liveTimelineStore.pendingNewCount > 0 {
+            await liveTimelineStore.applyPendingNewEvents()
+            return
+        }
         await liveTimelineStore.refreshLatest()
     }
 
     func loadOlderVisibleTimeline(_ postID: TimelinePost.ID) {
         guard sessionStore.account != nil, selectedTimeline == .home else { return }
         liveTimelineStore.loadOlder()
+    }
+
+    func backfillVisibleTimelineGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
+        guard sessionStore.account != nil, selectedTimeline == .home else { return false }
+        return await liveTimelineStore.backfillGap(gap, direction: direction)
     }
 
     func handlePostActionChoice(_ post: TimelinePost, choice: PostActionChoice) {

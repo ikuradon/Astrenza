@@ -5,9 +5,21 @@ struct RelayStatusSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store: RelayStatusSheetStore
     @State private var selectedRelayURL: String?
+    private var relayRuntimeStates: [String: NostrRelayConnectionState]
 
-    init(relayURLs: [String] = [], accountID: String? = nil, eventStore: NostrEventStore? = nil) {
-        _store = StateObject(wrappedValue: RelayStatusSheetStore(relayURLs: relayURLs, accountID: accountID, eventStore: eventStore))
+    init(
+        relayURLs: [String] = [],
+        relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
+        accountID: String? = nil,
+        eventStore: NostrEventStore? = nil
+    ) {
+        _store = StateObject(wrappedValue: RelayStatusSheetStore(
+            relayURLs: relayURLs,
+            relayRuntimeStates: relayRuntimeStates,
+            accountID: accountID,
+            eventStore: eventStore
+        ))
+        self.relayRuntimeStates = relayRuntimeStates
         _selectedRelayURL = State(initialValue: relayURLs.first ?? RelayMockStore.relays.first?.url)
     }
 
@@ -27,7 +39,11 @@ struct RelayStatusSheetView: View {
 
                     OutboxStatusCard(summary: store.outboxSummary)
 
-                    RelayConnectionLogCard(relays: store.relays, isLive: store.isLive)
+                    RelayConnectionLogCard(
+                        activities: store.recentActivity,
+                        relays: store.relays,
+                        isLive: store.isLive
+                    )
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("RELAYS")
@@ -69,34 +85,55 @@ struct RelayStatusSheetView: View {
         .task {
             await store.refresh()
         }
+        .onChange(of: relayRuntimeStates) { _, states in
+            store.updateRuntimeStates(states)
+        }
     }
 }
 
 @MainActor
-private final class RelayStatusSheetStore: ObservableObject {
+final class RelayStatusSheetStore: ObservableObject {
     @Published private(set) var relays: [RelayDescriptor]
-    @Published private(set) var outboxSummary: OutboxStatusSummary
+    @Published fileprivate var outboxSummary: OutboxStatusSummary
+    @Published fileprivate var recentActivity: [RelayActivityItem]
 
     let isLive: Bool
-    private let client: NostrRelayInformationClient
+    private let client: any NostrRelayInformationFetching
     private let accountID: String?
     private let eventStore: NostrEventStore?
+    private var relayRuntimeStates: [String: NostrRelayConnectionState]
 
     init(
         relayURLs: [String],
+        relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
         accountID: String?,
         eventStore: NostrEventStore?,
-        client: NostrRelayInformationClient = NostrRelayInformationClient()
+        client: any NostrRelayInformationFetching = NostrRelayInformationClient()
     ) {
         isLive = !relayURLs.isEmpty
         self.client = client
         self.accountID = accountID
         self.eventStore = eventStore
+        self.relayRuntimeStates = relayRuntimeStates
         let summaries = Self.loadSummaries(accountID: accountID, eventStore: eventStore)
-        relays = relayURLs.isEmpty
+        let cursors = Self.loadCursors(accountID: accountID, eventStore: eventStore, relayURLs: relayURLs)
+        let initialRelays = relayURLs.isEmpty
             ? RelayMockStore.relays
-            : relayURLs.map { RelayDescriptor.livePlaceholder(url: $0).applying(summary: summaries[$0]) }
+            : relayURLs.map { relayURL in
+                RelayDescriptor.livePlaceholder(url: relayURL)
+                    .applying(summary: summaries[relayURL], cursor: cursors[relayURL])
+                    .withRuntimeState(relayRuntimeStates[relayURL])
+            }
+        relays = initialRelays
         outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
+        recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: initialRelays)
+    }
+
+    func updateRuntimeStates(_ states: [String: NostrRelayConnectionState]) {
+        relayRuntimeStates = states
+        relays = relays.map { relay in
+            relay.withRuntimeState(states[relay.url])
+        }
     }
 
     var connectedCount: Int {
@@ -110,6 +147,7 @@ private final class RelayStatusSheetStore: ObservableObject {
     func refresh() async {
         guard isLive else { return }
         outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
+        recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: relays)
         for relay in relays {
             let startedAt = Int(Date().timeIntervalSince1970)
             let descriptor: RelayDescriptor
@@ -125,45 +163,19 @@ private final class RelayStatusSheetStore: ObservableObject {
                     authRequired: info.limitation?.authRequired == true,
                     paymentRequired: info.limitation?.paymentRequired == true
                 ))
-                recordRelaySyncEvent(
-                    relayURL: relay.url,
-                    kind: .connected,
-                    occurredAt: startedAt,
-                    message: "NIP-11 info fetched"
-                )
             } catch {
                 descriptor = RelayDescriptor.liveFailure(url: relay.url, error: error)
-                recordRelaySyncEvent(
-                    relayURL: relay.url,
-                    kind: .partialFailure,
-                    occurredAt: startedAt,
-                    message: error.localizedDescription
-                )
             }
 
             guard let index = relays.firstIndex(where: { $0.url == relay.url }) else { continue }
             let summary = Self.loadSummaries(accountID: accountID, eventStore: eventStore)[relay.url]
-            relays[index] = descriptor.applying(summary: summary)
+            let cursor = Self.loadCursor(accountID: accountID, eventStore: eventStore, relayURL: relay.url)
+            let appliedDescriptor = descriptor.applying(summary: summary, cursor: cursor)
+            relays[index] = summary == nil
+                ? appliedDescriptor.preservingConnectionState(from: relay).withRuntimeState(relayRuntimeStates[relay.url])
+                : appliedDescriptor.withRuntimeState(relayRuntimeStates[relay.url])
+            recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: relays)
         }
-    }
-
-    private func recordRelaySyncEvent(
-        relayURL: String,
-        kind: NostrRelaySyncEventKind,
-        occurredAt: Int,
-        message: String
-    ) {
-        guard let accountID else { return }
-        try? eventStore?.saveRelaySyncEvents([NostrRelaySyncEventRecord(
-            accountID: accountID,
-            timelineKey: "home",
-            relayURL: relayURL,
-            kind: kind,
-            occurredAt: occurredAt,
-            subscriptionID: "astrenza-nip11",
-            eventCount: 0,
-            message: message
-        )])
     }
 
     private static func loadSummaries(
@@ -178,6 +190,43 @@ private final class RelayStatusSheetStore: ObservableObject {
         return Dictionary(uniqueKeysWithValues: summaries.map { ($0.relayURL, $0) })
     }
 
+    private static func loadCursors(
+        accountID: String?,
+        eventStore: NostrEventStore?,
+        relayURLs: [String]
+    ) -> [String: NostrSyncCursorRecord] {
+        Dictionary(uniqueKeysWithValues: relayURLs.compactMap { relayURL in
+            guard let cursor = loadCursor(accountID: accountID, eventStore: eventStore, relayURL: relayURL) else {
+                return nil
+            }
+            return (relayURL, cursor)
+        })
+    }
+
+    private static func loadCursor(
+        accountID: String?,
+        eventStore: NostrEventStore?,
+        relayURL: String
+    ) -> NostrSyncCursorRecord? {
+        guard let accountID else { return nil }
+        return try? eventStore?.syncCursor(accountID: accountID, timelineKey: "home", relayURL: relayURL)
+    }
+
+    private static func loadRecentActivity(
+        accountID: String?,
+        eventStore: NostrEventStore?,
+        relays: [RelayDescriptor]
+    ) -> [RelayActivityItem] {
+        guard let accountID,
+              let records = try? eventStore?.relaySyncEvents(accountID: accountID, timelineKey: "home", limit: 12),
+              !records.isEmpty
+        else {
+            return relays.prefix(3).map { RelayActivityItem(relay: $0) }
+        }
+
+        return records.map(RelayActivityItem.init(record:))
+    }
+
     private static func loadOutboxSummary(
         accountID: String?,
         eventStore: NostrEventStore?
@@ -188,6 +237,69 @@ private final class RelayStatusSheetStore: ObservableObject {
             return .empty
         }
         return OutboxStatusSummary(records: records)
+    }
+}
+
+private struct RelayActivityItem: Identifiable, Equatable {
+    let id: String
+    let relayURL: String
+    let host: String
+    let kind: NostrRelaySyncEventKind?
+    let occurredAt: Int?
+    let message: String
+    let eventCount: Int
+
+    init(record: NostrRelaySyncEventRecord) {
+        id = "\(record.relayURL)-\(record.occurredAt)-\(record.kind.rawValue)-\(record.subscriptionID ?? "")-\(record.message ?? "")"
+        relayURL = record.relayURL
+        host = Self.host(from: record.relayURL)
+        kind = record.kind
+        occurredAt = record.occurredAt
+        eventCount = record.eventCount
+        message = Self.message(for: record)
+    }
+
+    init(relay: RelayDescriptor) {
+        id = relay.url
+        relayURL = relay.url
+        host = relay.host
+        kind = nil
+        occurredAt = nil
+        eventCount = 0
+        message = relay.lastMessage
+    }
+
+    var tint: Color {
+        switch kind {
+        case .connected, .eose:
+            .green
+        case .reconnect:
+            .orange
+        case .authRequired:
+            .purple
+        case .paymentRequired:
+            .yellow
+        case .closed, .timeout, .partialFailure, .rejected, .suspended:
+            .red
+        default:
+            .secondary
+        }
+    }
+
+    private static func message(for record: NostrRelaySyncEventRecord) -> String {
+        if let message = record.message, !message.isEmpty {
+            return message
+        }
+        if record.eventCount > 0 {
+            return "\(record.eventCount) events"
+        }
+        return record.kind.rawValue
+    }
+
+    private static func host(from relayURL: String) -> String {
+        relayURL
+            .replacingOccurrences(of: "wss://", with: "")
+            .replacingOccurrences(of: "ws://", with: "")
     }
 }
 
@@ -329,6 +441,7 @@ private struct RelayCountPill: View {
 }
 
 private struct RelayConnectionLogCard: View {
+    let activities: [RelayActivityItem]
     let relays: [RelayDescriptor]
     let isLive: Bool
 
@@ -338,24 +451,29 @@ private struct RelayConnectionLogCard: View {
                 Label("Recent Activity", systemImage: "waveform.path.ecg")
                     .font(.system(size: 16, weight: .black, design: .rounded))
                 Spacer()
-                Text(isLive ? "NIP-11 live" : "mock live")
+                Text(isLive ? "DB history" : "mock live")
                     .font(.system(size: 12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(relays.prefix(3)) { relay in
+            ForEach(activities.prefix(5)) { activity in
                 HStack(spacing: 10) {
                     Circle()
-                        .fill(relay.status.tint)
+                        .fill(activity.tint)
                         .frame(width: 8, height: 8)
-                    Text(relay.host)
+                    Text(activity.host)
                         .font(.system(size: 13, weight: .black, design: .rounded))
                         .lineLimit(1)
-                    Text(relay.lastMessage)
+                    Text(activity.message)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    if activity.eventCount > 0 {
+                        Text("+\(activity.eventCount)")
+                            .font(.system(size: 11, weight: .black, design: .rounded))
+                            .foregroundStyle(.green)
+                    }
                 }
             }
         }
@@ -448,6 +566,12 @@ private struct RelayStatusRow: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let runtimeState = relay.runtimeState {
+                    Text("Runtime: \(runtimeState.displayText)")
+                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .foregroundStyle(runtimeState.tint)
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: 0)
@@ -506,10 +630,14 @@ private struct RelayInfoPanel: View {
                 RelayMetricTile(title: "Received", value: relay.receivedBytes, icon: "arrow.down")
                 RelayMetricTile(title: "Sent", value: relay.sentBytes, icon: "arrow.up")
                 RelayMetricTile(title: "Events", value: relay.eventCount, icon: "number")
-                RelayMetricTile(title: "Errors", value: "\(relay.errorCount)", icon: "exclamationmark.triangle")
+                RelayMetricTile(title: "Lifecycle", value: "\(relay.lifecycle.totalProblems)", icon: "exclamationmark.triangle")
             }
 
             VStack(spacing: 8) {
+                RelayInfoLine(title: "Sync Range", value: relay.syncRangeDescription)
+                RelayInfoLine(title: "Last EOSE", value: relay.lastEOSEDescription)
+                RelayInfoLine(title: "Runtime", value: relay.runtimeStateDescription)
+                RelayInfoLine(title: "Lifecycle", value: relay.lifecycle.summary)
                 RelayInfoLine(title: "Software", value: [relay.software, relay.version].compactMap { $0 }.joined(separator: " "))
                 RelayInfoLine(title: "Limitation", value: relay.limitation)
                 RelayInfoLine(title: "Contact", value: relay.contact ?? "N/A")
@@ -578,20 +706,78 @@ private struct RelayInfoLine: View {
 }
 
 private extension RelayDescriptor {
-    func applying(summary: NostrRelaySyncSummaryRecord?) -> RelayDescriptor {
-        guard let summary else { return self }
+    var syncRangeDescription: String {
+        switch (newestCreatedAt, oldestCreatedAt) {
+        case let (newest?, oldest?):
+            "newest \(Self.shortTimestamp(newest)) / oldest \(Self.shortTimestamp(oldest))"
+        case let (newest?, nil):
+            "newest \(Self.shortTimestamp(newest))"
+        case let (nil, oldest?):
+            "oldest \(Self.shortTimestamp(oldest))"
+        case (nil, nil):
+            "No cursor yet"
+        }
+    }
 
-        let errors = summary.closedCount + summary.timeoutCount + summary.partialFailureCount + summary.authRequiredCount + summary.paymentRequiredCount
+    var lastEOSEDescription: String {
+        lastEOSEAt.map(Self.shortTimestamp) ?? "Not reached"
+    }
+
+    private static func shortTimestamp(_ timestamp: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+    }
+
+    func applying(summary: NostrRelaySyncSummaryRecord?, cursor: NostrSyncCursorRecord? = nil) -> RelayDescriptor {
+        guard let summary else {
+            return RelayDescriptor(
+                url: url,
+                displayName: displayName,
+                status: status,
+                usage: usage,
+                source: source,
+                pingMilliseconds: pingMilliseconds,
+                receivedBytes: receivedBytes,
+                sentBytes: sentBytes,
+                eventCount: eventCount,
+                errorCount: errorCount,
+                supportedNIPs: supportedNIPs,
+                software: software,
+                version: version,
+                description: description,
+                limitation: limitation,
+                contact: contact,
+                lastMessage: lastMessage,
+                newestCreatedAt: cursor?.newestCreatedAt ?? newestCreatedAt,
+                oldestCreatedAt: cursor?.oldestCreatedAt ?? oldestCreatedAt,
+                lastEOSEAt: cursor?.lastEOSEAt ?? lastEOSEAt,
+                runtimeState: runtimeState,
+                lifecycle: lifecycle
+            )
+        }
+
+        let errors = summary.closedCount
+            + summary.timeoutCount
+            + summary.partialFailureCount
+            + summary.authRequiredCount
+            + summary.paymentRequiredCount
+            + summary.rejectedCount
+            + summary.suspendedCount
         let status: RelayConnectionStatus
         if summary.lastEventKind == .authRequired {
-            status = .authRequired
+            status = summary.isRecentlyReachable() ? .authRequired : .connecting
         } else if summary.lastEventKind == .paymentRequired {
-            status = .paymentRequired
+            status = summary.isRecentlyReachable() ? .paymentRequired : .connecting
+        } else if summary.lastEventKind == .rejected || summary.lastEventKind == .suspended {
+            status = .offline
         } else if summary.timeoutCount > 0 && summary.lastEventKind == .timeout {
             status = .offline
         } else if summary.closedCount > 0 && summary.lastEventKind == .closed {
             status = .offline
         } else if summary.partialFailureCount > 0 && summary.lastEventKind == .partialFailure {
+            status = .connecting
+        } else if !summary.isRecentlyReachable() {
             status = .connecting
         } else {
             status = self.status == .connecting ? .online : self.status
@@ -614,7 +800,70 @@ private extension RelayDescriptor {
             description: description,
             limitation: limitation,
             contact: contact,
-            lastMessage: summary.lastMessage
+            lastMessage: summary.lastMessage,
+            newestCreatedAt: cursor?.newestCreatedAt ?? newestCreatedAt,
+            oldestCreatedAt: cursor?.oldestCreatedAt ?? oldestCreatedAt,
+            lastEOSEAt: cursor?.lastEOSEAt ?? summary.lastEOSEAt ?? lastEOSEAt,
+            runtimeState: runtimeState,
+            lifecycle: RelayLifecycleCounts(summary: summary)
+        )
+    }
+
+    var runtimeStateDescription: String {
+        runtimeState?.displayText ?? "No live session"
+    }
+
+    func withRuntimeState(_ runtimeState: NostrRelayConnectionState?) -> RelayDescriptor {
+        RelayDescriptor(
+            url: url,
+            displayName: displayName,
+            status: status,
+            usage: usage,
+            source: source,
+            pingMilliseconds: pingMilliseconds,
+            receivedBytes: receivedBytes,
+            sentBytes: sentBytes,
+            eventCount: eventCount,
+            errorCount: errorCount,
+            supportedNIPs: supportedNIPs,
+            software: software,
+            version: version,
+            description: description,
+            limitation: limitation,
+            contact: contact,
+            lastMessage: lastMessage,
+            newestCreatedAt: newestCreatedAt,
+            oldestCreatedAt: oldestCreatedAt,
+            lastEOSEAt: lastEOSEAt,
+            runtimeState: runtimeState,
+            lifecycle: lifecycle
+        )
+    }
+
+    func preservingConnectionState(from relay: RelayDescriptor) -> RelayDescriptor {
+        RelayDescriptor(
+            url: url,
+            displayName: displayName,
+            status: relay.status,
+            usage: usage,
+            source: source,
+            pingMilliseconds: relay.pingMilliseconds,
+            receivedBytes: receivedBytes,
+            sentBytes: sentBytes,
+            eventCount: eventCount,
+            errorCount: relay.errorCount,
+            supportedNIPs: supportedNIPs,
+            software: software,
+            version: version,
+            description: description,
+            limitation: limitation,
+            contact: contact,
+            lastMessage: lastMessage,
+            newestCreatedAt: relay.newestCreatedAt,
+            oldestCreatedAt: relay.oldestCreatedAt,
+            lastEOSEAt: relay.lastEOSEAt,
+            runtimeState: runtimeState ?? relay.runtimeState,
+            lifecycle: lifecycle
         )
     }
 
@@ -686,12 +935,71 @@ private extension NostrRelaySyncSummaryRecord {
             return "AUTH challenge required"
         case .paymentRequired:
             return "Payment required"
+        case .rejected:
+            return lastPartialFailureReason ?? "Relay rejected the subscription"
+        case .suspended:
+            return lastPartialFailureReason ?? "Relay suspended for this session"
         case .reconnect:
             return "Reconnect recorded"
         case .negentropy:
             return "NIP-77 sync recorded"
         case nil:
             return "No relay history"
+        }
+    }
+}
+
+private extension RelayLifecycleCounts {
+    init(summary: NostrRelaySyncSummaryRecord) {
+        self.init(
+            reconnects: summary.reconnectCount,
+            timeouts: summary.timeoutCount,
+            closed: summary.closedCount,
+            partialFailures: summary.partialFailureCount,
+            authRequired: summary.authRequiredCount,
+            paymentRequired: summary.paymentRequiredCount,
+            rejected: summary.rejectedCount,
+            suspended: summary.suspendedCount
+        )
+    }
+}
+
+private extension NostrRelayConnectionState {
+    var displayText: String {
+        switch self {
+        case .initialized:
+            "initialized"
+        case .connecting:
+            "connecting"
+        case .connected:
+            "connected"
+        case .waitingForRetry:
+            "waiting retry"
+        case .retrying:
+            "retrying"
+        case .dormant:
+            "dormant"
+        case .error:
+            "error"
+        case .rejected:
+            "rejected"
+        case .suspended:
+            "suspended"
+        case .terminated:
+            "terminated"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .connected:
+            .green
+        case .connecting, .retrying, .waitingForRetry:
+            .orange
+        case .initialized, .dormant:
+            .secondary
+        case .error, .rejected, .suspended, .terminated:
+            .red
         }
     }
 }

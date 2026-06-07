@@ -17,6 +17,7 @@ struct TimelineFeedView: View {
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
     let onRefresh: (() async -> Void)?
     let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
+    let onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
@@ -57,6 +58,7 @@ struct TimelineFeedView: View {
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
+        onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
@@ -78,6 +80,7 @@ struct TimelineFeedView: View {
             onPostActionChoice: onPostActionChoice,
             onRefresh: onRefresh,
             onLoadOlderPost: onLoadOlderPost,
+            onBackfillGap: onBackfillGap,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onViewportStateChanged: onViewportStateChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
@@ -101,6 +104,7 @@ struct TimelineFeedView: View {
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
+        onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
@@ -121,6 +125,7 @@ struct TimelineFeedView: View {
         self.onPostActionChoice = onPostActionChoice
         self.onRefresh = onRefresh
         self.onLoadOlderPost = onLoadOlderPost
+        self.onBackfillGap = onBackfillGap
         self.onScrollOffsetChanged = onScrollOffsetChanged
         self.onViewportStateChanged = onViewportStateChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
@@ -406,7 +411,14 @@ private extension TimelineFeedView {
     }
 
     func syncDisplayedEntriesFromSource() {
-        guard fetchingGapDirections.isEmpty else { return }
+        if !fetchingGapDirections.isEmpty {
+            let sourceGapIDs = Set(entries.compactMap { entry -> TimelineGap.ID? in
+                guard case .gap(let gap) = entry else { return nil }
+                return gap.id
+            })
+            fetchingGapDirections = fetchingGapDirections.filter { sourceGapIDs.contains($0.key) }
+            guard fetchingGapDirections.isEmpty else { return }
+        }
 
         let oldIDs = displayedEntries.map(\.id)
         let newIDs = entries.map(\.id)
@@ -605,6 +617,22 @@ private extension TimelineFeedView {
 
         withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
             fetchingGapDirections[gap.id] = direction
+        }
+
+        if let onBackfillGap {
+            Task {
+                let didStartBackfill = await onBackfillGap(gap, direction)
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                await MainActor.run {
+                    if didStartBackfill {
+                        fetchingGapDirections[gap.id] = nil
+                        syncDisplayedEntriesFromSource()
+                    } else {
+                        fetchingGapDirections[gap.id] = nil
+                    }
+                }
+            }
+            return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {

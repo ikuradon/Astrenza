@@ -108,12 +108,12 @@ struct HomeUnreadBadge: View {
     var body: some View {
         Button(action: onTap) {
             Text("3996")
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
                 .foregroundStyle(.black)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
                 .background(Color.astrenzaAccent, in: Capsule())
                 .shadow(color: Color.astrenzaAccent.opacity(0.18), radius: 7, y: 3)
         }

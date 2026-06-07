@@ -184,6 +184,8 @@ public enum NostrRelaySyncEventKind: String, Codable, Equatable, Sendable {
     case partialFailure
     case authRequired
     case paymentRequired
+    case rejected
+    case suspended
     case negentropy
 }
 
@@ -247,6 +249,8 @@ public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
     public let partialFailureCount: Int
     public let authRequiredCount: Int
     public let paymentRequiredCount: Int
+    public let rejectedCount: Int
+    public let suspendedCount: Int
     public let lastPartialFailureReason: String?
     public let totalEventCount: Int
     public let averageEOSELatencyMilliseconds: Int?
@@ -265,6 +269,8 @@ public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
         partialFailureCount: Int,
         authRequiredCount: Int,
         paymentRequiredCount: Int,
+        rejectedCount: Int = 0,
+        suspendedCount: Int = 0,
         lastPartialFailureReason: String?,
         totalEventCount: Int,
         averageEOSELatencyMilliseconds: Int?
@@ -282,9 +288,29 @@ public struct NostrRelaySyncSummaryRecord: Codable, Equatable, Sendable {
         self.partialFailureCount = partialFailureCount
         self.authRequiredCount = authRequiredCount
         self.paymentRequiredCount = paymentRequiredCount
+        self.rejectedCount = rejectedCount
+        self.suspendedCount = suspendedCount
         self.lastPartialFailureReason = lastPartialFailureReason
         self.totalEventCount = totalEventCount
         self.averageEOSELatencyMilliseconds = averageEOSELatencyMilliseconds
+    }
+
+    public func isRecentlyReachable(
+        now: Int = Int(Date().timeIntervalSince1970),
+        freshnessWindowSeconds: Int = 180
+    ) -> Bool {
+        guard let lastEventAt,
+              now - lastEventAt <= freshnessWindowSeconds
+        else {
+            return false
+        }
+
+        switch lastEventKind {
+        case .eose, .connected, .authRequired, .paymentRequired:
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -380,21 +406,7 @@ public final class NostrEventStore {
             )
         })
 
-        let newestCreatedAt = state.noteEvents.map(\.createdAt).max()
-        let oldestCreatedAt = state.noteEvents.map(\.createdAt).min()
-        for relayURL in state.relays {
-            try saveSyncCursor(NostrSyncCursorRecord(
-                accountID: accountID,
-                timelineKey: timelineKey,
-                relayURL: relayURL,
-                newestCreatedAt: newestCreatedAt,
-                oldestCreatedAt: oldestCreatedAt,
-                lastEOSEAt: savedAt,
-                lastNegentropyAt: nil
-            ))
-        }
         try saveRelaySyncEvents(state.relaySyncEvents)
-        try updateSyncCursors(from: state.relaySyncEvents)
 
         try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
     }
@@ -441,6 +453,33 @@ public final class NostrEventStore {
     public func event(id: String) throws -> NostrEvent? {
         try database.read { db in
             try fetchEvent(id: id, db: db)
+        }
+    }
+
+    public func events(ids: [String], now: Int = Int(Date().timeIntervalSince1970)) throws -> [NostrEvent] {
+        guard !ids.isEmpty else { return [] }
+
+        return try database.read { db in
+            let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
+            var arguments: StatementArguments = [now]
+            for id in ids {
+                arguments += [id]
+            }
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
+                FROM events
+                WHERE \(Self.visibleEventPredicate()) AND event_id IN (\(placeholders))
+                """,
+                arguments: arguments
+            )
+            let eventsByID = Dictionary(uniqueKeysWithValues: try rows.map { row in
+                let event = try decodeEvent(row)
+                return (event.id, event)
+            })
+            return ids.compactMap { eventsByID[$0] }
         }
     }
 
@@ -638,6 +677,25 @@ public final class NostrEventStore {
                 let preview = decodeLinkPreview(row)
                 return (preview.normalizedURL, preview)
             })
+        }
+    }
+
+    public func unresolvedLinkPreviews(limit: Int = 20, now: Int = Int(Date().timeIntervalSince1970)) throws -> [NostrLinkPreviewRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT url, normalized_url, status, title, summary, site_name,
+                       image_url, fetched_at, expires_at, error
+                FROM link_previews
+                WHERE status = 'unresolved'
+                   OR (status = 'failed' AND (expires_at IS NULL OR expires_at <= ?))
+                ORDER BY fetched_at IS NOT NULL ASC, fetched_at ASC, normalized_url ASC
+                LIMIT ?
+                """,
+                arguments: [now, max(0, limit)]
+            )
+            return rows.map(decodeLinkPreview)
         }
     }
 
@@ -982,6 +1040,151 @@ public final class NostrEventStore {
                 arguments: [accountID, timelineKey, limit]
             )
             return rows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func timelineEntries(
+        accountID: String,
+        timelineKey: String,
+        newerThan sortTimestamp: Int,
+        limit: Int
+    ) throws -> [NostrTimelineEntryRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ? AND sort_ts > ?
+                ORDER BY sort_ts DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: [accountID, timelineKey, sortTimestamp, limit]
+            )
+            return rows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func timelineEntries(
+        accountID: String,
+        timelineKey: String,
+        olderThan sortTimestamp: Int,
+        limit: Int
+    ) throws -> [NostrTimelineEntryRecord] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ? AND sort_ts < ?
+                ORDER BY sort_ts DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: [accountID, timelineKey, sortTimestamp, limit]
+            )
+            return rows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func timelineEntries(
+        accountID: String,
+        timelineKey: String,
+        aroundEventID eventID: String,
+        leadingLimit: Int,
+        trailingLimit: Int
+    ) throws -> [NostrTimelineEntryRecord] {
+        try database.read { db in
+            guard let anchorRow = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ? AND event_id = ?
+                """,
+                arguments: [accountID, timelineKey, eventID]
+            ) else {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                    FROM timeline_entries
+                    WHERE account_id = ? AND timeline_key = ?
+                    ORDER BY sort_ts DESC, event_id ASC
+                    LIMIT ?
+                    """,
+                    arguments: [accountID, timelineKey, max(0, leadingLimit + trailingLimit + 1)]
+                )
+                return rows.map(decodeTimelineEntry)
+            }
+
+            let anchor = decodeTimelineEntry(anchorRow)
+            let newerRows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ?
+                    AND (sort_ts > ? OR (sort_ts = ? AND event_id < ?))
+                ORDER BY sort_ts ASC, event_id DESC
+                LIMIT ?
+                """,
+                arguments: [
+                    accountID,
+                    timelineKey,
+                    anchor.sortTimestamp,
+                    anchor.sortTimestamp,
+                    anchor.eventID,
+                    max(0, leadingLimit)
+                ]
+            )
+            let olderRows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ?
+                    AND (sort_ts < ? OR (sort_ts = ? AND event_id > ?))
+                ORDER BY sort_ts DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: [
+                    accountID,
+                    timelineKey,
+                    anchor.sortTimestamp,
+                    anchor.sortTimestamp,
+                    anchor.eventID,
+                    max(0, trailingLimit)
+                ]
+            )
+
+            return newerRows.reversed().map(decodeTimelineEntry) + [anchor] + olderRows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func markTimelineGapResolved(
+        accountID: String,
+        timelineKey: String,
+        newerEventID: String,
+        olderEventID: String
+    ) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                UPDATE timeline_entries
+                SET gap_after = 0
+                WHERE account_id = ? AND timeline_key = ? AND event_id = ?
+                """,
+                arguments: [accountID, timelineKey, newerEventID]
+            )
+            try db.execute(
+                sql: """
+                UPDATE timeline_entries
+                SET gap_before = 0
+                WHERE account_id = ? AND timeline_key = ? AND event_id = ?
+                """,
+                arguments: [accountID, timelineKey, olderEventID]
+            )
         }
     }
 
@@ -1360,6 +1563,7 @@ public final class NostrEventStore {
             }
             try pruneRelaySyncEvents(for: events, keeping: 200, db: db)
         }
+        try updateSyncCursors(from: events)
     }
 
     public func relaySyncEvents(
@@ -1435,6 +1639,8 @@ public final class NostrEventStore {
                 let partialFailureCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .partialFailure, db: db)
                 let authRequiredCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .authRequired, db: db)
                 let paymentRequiredCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .paymentRequired, db: db)
+                let rejectedCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .rejected, db: db)
+                let suspendedCount = try relaySyncEventCount(accountID: accountID, timelineKey: timelineKey, relayURL: relayURL, kind: .suspended, db: db)
                 let lastPartialFailureReason = try String.fetchOne(
                     db,
                     sql: """
@@ -1480,6 +1686,8 @@ public final class NostrEventStore {
                     partialFailureCount: partialFailureCount,
                     authRequiredCount: authRequiredCount,
                     paymentRequiredCount: paymentRequiredCount,
+                    rejectedCount: rejectedCount,
+                    suspendedCount: suspendedCount,
                     lastPartialFailureReason: lastPartialFailureReason,
                     totalEventCount: totalEventCount,
                     averageEOSELatencyMilliseconds: averageEOSELatency
@@ -2245,7 +2453,10 @@ public final class NostrEventStore {
 
     private func updateSyncCursors(from events: [NostrRelaySyncEventRecord]) throws {
         let cursorEvents = events.filter { event in
-            event.kind == .eose || event.kind == .negentropy
+            event.kind == .eose
+                || event.kind == .negentropy
+                || event.newestCreatedAt != nil
+                || event.oldestCreatedAt != nil
         }
         guard !cursorEvents.isEmpty else { return }
 
@@ -2473,7 +2684,7 @@ public final class NostrEventStore {
             SELECT MAX(occurred_at)
             FROM relay_sync_events
             WHERE account_id = ? AND timeline_key = ? AND relay_url = ?
-                AND event_kind IN (?, ?, ?, ?, ?)
+                AND event_kind IN (?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 accountID,
@@ -2483,7 +2694,9 @@ public final class NostrEventStore {
                 NostrRelaySyncEventKind.timeout.rawValue,
                 NostrRelaySyncEventKind.partialFailure.rawValue,
                 NostrRelaySyncEventKind.authRequired.rawValue,
-                NostrRelaySyncEventKind.paymentRequired.rawValue
+                NostrRelaySyncEventKind.paymentRequired.rawValue,
+                NostrRelaySyncEventKind.rejected.rawValue,
+                NostrRelaySyncEventKind.suspended.rawValue
             ]
         )
     }

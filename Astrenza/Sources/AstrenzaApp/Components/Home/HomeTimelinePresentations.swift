@@ -11,6 +11,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var browserDestination: TimelineBrowserDestination?
     @Binding var swipeSettings: TimelineSwipeSettings
     let relayURLs: [String]
+    let relayRuntimeStates: [String: NostrRelayConnectionState]
     let accountID: String?
     let eventStore: NostrEventStore?
     let isComposeSubmitAvailable: Bool
@@ -50,7 +51,12 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                 .presentationCornerRadius(26)
             }
             .sheet(isPresented: $isRelayStatusPresented) {
-                RelayStatusSheetView(relayURLs: relayURLs, accountID: accountID, eventStore: eventStore)
+                RelayStatusSheetView(
+                    relayURLs: relayURLs,
+                    relayRuntimeStates: relayRuntimeStates,
+                    accountID: accountID,
+                    eventStore: eventStore
+                )
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(26)
@@ -91,6 +97,7 @@ extension View {
         browserDestination: Binding<TimelineBrowserDestination?>,
         swipeSettings: Binding<TimelineSwipeSettings>,
         relayURLs: [String],
+        relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
         accountID: String?,
         eventStore: NostrEventStore?,
         isComposeSubmitAvailable: Bool = true,
@@ -107,6 +114,7 @@ extension View {
                 browserDestination: browserDestination,
                 swipeSettings: swipeSettings,
                 relayURLs: relayURLs,
+                relayRuntimeStates: relayRuntimeStates,
                 accountID: accountID,
                 eventStore: eventStore,
                 isComposeSubmitAvailable: isComposeSubmitAvailable,

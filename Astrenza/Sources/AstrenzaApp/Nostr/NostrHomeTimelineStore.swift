@@ -63,11 +63,27 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var isLoadingOlder = false
     @Published private(set) var hasMoreOlder = true
     @Published private(set) var filterStatus = TimelineFilterStatus()
+    @Published private(set) var relayStatusRevision = 0
+    @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
+    @Published private(set) var pendingNewCount = 0
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
+    private let relayRuntime: NostrRelayRuntime?
+    private let linkPreviewResolver: NostrLinkPreviewResolver?
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
+    private var runtimeTask: Task<Void, Never>?
+    private var linkPreviewTask: Task<Void, Never>?
+    private var resolvingLinkPreviewURLs = Set<String>()
+    private var pendingProfilePubkeys = Set<String>()
+    private var pendingSourceEventIDs = Set<String>()
+    private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
+    private var runtimeSyncWindows: [RuntimeSubscriptionKey: RuntimeSyncWindow] = [:]
+    private var bufferedProfilePubkeysByRelay: [RelaySelectionKey: Set<String>] = [:]
+    private var bufferedSourceEventIDsByRelay: [RelaySelectionKey: Set<String>] = [:]
+    private var backwardFlushTask: Task<Void, Never>?
+    private var installedHomeForwardPacket: NostrREQPacket?
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
     private var relayListEvent: NostrEvent?
@@ -75,21 +91,72 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     private var relaySyncEvents: [NostrRelaySyncEventRecord] = []
     private var areTimelineFiltersSuspended = false
+    private var pendingNewEventIDs = Set<String>()
+    private var isTimelineAtNewestWindow = true
+    private let projectionWindowLimit = 240
+    private let projectionAnchorLeadingLimit = 80
+    private let projectionAnchorTrailingLimit = 160
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
     }
+
+    var relayStatusCounts: (connected: Int, planned: Int) {
+        let planned = resolvedRelays.count
+        guard planned > 0 else {
+            return (connected: 0, planned: max(planned, 1))
+        }
+
+        let summaries = if let account, let eventStore {
+            Dictionary(
+                uniqueKeysWithValues: ((try? eventStore.relaySyncSummaries(accountID: account.pubkey, timelineKey: "home")) ?? [])
+                    .filter { resolvedRelays.contains($0.relayURL) }
+                    .map { ($0.relayURL, $0) }
+            )
+        } else {
+            [String: NostrRelaySyncSummaryRecord]()
+        }
+        let connected = resolvedRelays.filter { relayURL in
+            if let runtimeState = relayRuntimeStates[relayURL] {
+                return Self.isRuntimeReachable(runtimeState)
+            }
+            return summaries[relayURL]?.isRecentlyReachable() == true
+        }.count
+        return (connected: connected, planned: planned)
+    }
+
+    private static func isRuntimeReachable(_ state: NostrRelayConnectionState) -> Bool {
+        state == .connected
+    }
+
+    var isRelayProcessing: Bool {
+        phase.isProcessing ||
+            !pendingProfilePubkeys.isEmpty ||
+            !pendingSourceEventIDs.isEmpty ||
+            !pendingBackwardRequests.isEmpty
+    }
+
     init(
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
-        eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza")
+        eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza"),
+        relayRuntime: NostrRelayRuntime? = nil,
+        linkPreviewResolver: NostrLinkPreviewResolver? = nil
     ) {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
+        self.relayRuntime = relayRuntime
+        self.linkPreviewResolver = linkPreviewResolver
     }
 
     func start(account: NostrAccount) {
         self.account = account
+        startRuntimeEventPump()
         restoreCachedSnapshot(account: account)
+        if !resolvedRelays.isEmpty {
+            Task {
+                await configureRelayRuntime(account: account)
+            }
+        }
         if entries.isEmpty {
             phase = .resolvingRelays
         }
@@ -112,6 +179,19 @@ final class NostrHomeTimelineStore: ObservableObject {
         await refreshLatest(account: account)
     }
 
+    func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
+        isTimelineAtNewestWindow = isAtNewestWindow
+    }
+
+    func applyPendingNewEvents() async {
+        guard let account else { return }
+        reloadNewestProjectionWindow(account: account)
+        pendingNewEventIDs.removeAll()
+        pendingNewCount = 0
+        materializeEntries()
+        scheduleLinkPreviewResolution()
+    }
+
     func loadOlder() {
         guard let account,
               !isLoadingOlder,
@@ -125,6 +205,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         paginationTask = Task {
             await loadOlder(account: account)
         }
+    }
+
+    func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
+        guard let account,
+              relayRuntime != nil,
+              !resolvedRelays.isEmpty
+        else { return false }
+
+        return await requestGapNotesThroughRuntime(account: account, gap: gap, direction: direction)
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
@@ -147,6 +236,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
 
         try eventStore.save(events: [record.event])
+        saveHomeTimelineIndex(events: [record.event], account: account, source: "outbox")
         noteEvents.removeAll { $0.id == record.event.id }
         noteEvents.insert(record.event, at: 0)
         if !followedPubkeys.contains(account.pubkey) {
@@ -232,9 +322,28 @@ final class NostrHomeTimelineStore: ObservableObject {
     func cancel() {
         loadTask?.cancel()
         paginationTask?.cancel()
+        runtimeTask?.cancel()
+        linkPreviewTask?.cancel()
+        backwardFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
+        runtimeTask = nil
+        linkPreviewTask = nil
+        backwardFlushTask = nil
+        pendingProfilePubkeys.removeAll()
+        pendingSourceEventIDs.removeAll()
+        pendingBackwardRequests.removeAll()
+        pendingNewEventIDs.removeAll()
+        pendingNewCount = 0
+        runtimeSyncWindows.removeAll()
+        bufferedProfilePubkeysByRelay.removeAll()
+        bufferedSourceEventIDsByRelay.removeAll()
+        relayRuntimeStates = [:]
+        relayStatusRevision &+= 1
         phase = .idle
+        Task { [relayRuntime] in
+            await relayRuntime?.terminate()
+        }
     }
 
     func post(eventID: String) -> TimelinePost? {
@@ -317,16 +426,37 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func load(account: NostrAccount) async {
         do {
-            let state = try await timelineLoader.initialState(account: account)
+            let state = if relayRuntime != nil {
+                runtimeBootstrapState(
+                    from: try await timelineLoader.bootstrapState(account: account)
+                )
+            } else {
+                try await timelineLoader.initialState(account: account)
+            }
             guard Task.isCancelled == false else { return }
             apply(state)
             materializeEntries()
             persistDatabase(account: account)
+            await configureRelayRuntime(account: account)
             phase = .loaded
         } catch {
             guard Task.isCancelled == false else { return }
             phase = .failed("Home timeline failed: \(error.localizedDescription)")
         }
+    }
+
+    private func runtimeBootstrapState(from bootstrapState: NostrHomeTimelineState) -> NostrHomeTimelineState {
+        NostrHomeTimelineState(
+            relays: bootstrapState.relays,
+            followedPubkeys: bootstrapState.followedPubkeys,
+            noteEvents: noteEvents,
+            metadataEvents: metadataEvents,
+            relayListEvent: bootstrapState.relayListEvent,
+            contactListEvent: bootstrapState.contactListEvent,
+            nip05Resolutions: nip05Resolutions,
+            hasMoreOlder: hasMoreOlder,
+            relaySyncEvents: bootstrapState.relaySyncEvents
+        )
     }
 
     private func refreshLatest(account: NostrAccount) async {
@@ -339,12 +469,19 @@ final class NostrHomeTimelineStore: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
+        if relayRuntime != nil {
+            await configureRelayRuntime(account: account, forceInstall: true)
+            phase = .loaded
+            return
+        }
+
         do {
             let state = try await timelineLoader.refreshedState(account: account, current: loaderState())
             guard Task.isCancelled == false else { return }
             apply(state)
             materializeEntries()
             persistDatabase(account: account)
+            await configureRelayRuntime(account: account)
             phase = .loaded
         } catch {
             guard Task.isCancelled == false else { return }
@@ -355,6 +492,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func loadOlder(account: NostrAccount) async {
         isLoadingOlder = true
         defer { isLoadingOlder = false }
+
+        if relayRuntime != nil {
+            await requestOlderNotesThroughRuntime(account: account)
+            phase = .loaded
+            return
+        }
 
         do {
             let current = loaderState()
@@ -372,11 +515,95 @@ final class NostrHomeTimelineStore: ObservableObject {
 
             materializeEntries()
             persistDatabase(account: account)
+            await configureRelayRuntime(account: account)
             phase = .loaded
         } catch {
             guard Task.isCancelled == false else { return }
             phase = .failed("Older notes failed: \(error.localizedDescription)")
         }
+    }
+
+    private func requestOlderNotesThroughRuntime(account: NostrAccount) async {
+        guard let relayRuntime,
+              let oldestCreatedAt = noteEvents.map(\.createdAt).min()
+        else { return }
+
+        let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
+        guard let packet = NostrBackwardREQBuilder.olderNotes(
+            authors: authors,
+            until: oldestCreatedAt - 1,
+            limit: 100,
+            relayURLs: resolvedRelays
+        ) else { return }
+
+        pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
+            profilePubkeys: [],
+            sourceEventIDs: [],
+            isOlderPage: true
+        )
+
+        do {
+            try await relayRuntime.installBackward([packet], mergeField: .authors)
+        } catch {
+            pendingBackwardRequests.removeValue(forKey: packet.groupID)
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: packet.subscriptionID,
+                message: "older enqueue failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func requestGapNotesThroughRuntime(
+        account: NostrAccount,
+        gap: TimelineGap,
+        direction: TimelineGapFillDirection
+    ) async -> Bool {
+        guard let relayRuntime,
+              let newerEvent = timelineEvent(id: gap.newerPostID),
+              let olderEvent = timelineEvent(id: gap.olderPostID)
+        else { return false }
+
+        let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
+        guard let packet = NostrBackwardREQBuilder.notesWindow(
+            authors: authors,
+            since: olderEvent.createdAt + 1,
+            until: newerEvent.createdAt - 1,
+            limit: max(1, min(gap.missingEstimate, 250)),
+            relayURLs: resolvedRelays
+        ) else { return false }
+
+        pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
+            profilePubkeys: [],
+            sourceEventIDs: [],
+            gap: PendingGapBackfill(
+                newerPostID: gap.newerPostID,
+                olderPostID: gap.olderPostID,
+                direction: direction
+            )
+        )
+
+        do {
+            try await relayRuntime.installBackward([packet], mergeField: .authors)
+            return true
+        } catch {
+            pendingBackwardRequests.removeValue(forKey: packet.groupID)
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: packet.subscriptionID,
+                message: "gap enqueue failed: \(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func timelineEvent(id: String) -> NostrEvent? {
+        if let event = noteEvents.first(where: { $0.id == id }) {
+            return event
+        }
+        return try? eventStore?.event(id: id)
     }
 
     private func restoreCachedSnapshot(account: NostrAccount) {
@@ -400,6 +627,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         relaySyncEvents = []
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
+        pendingNewEventIDs.removeAll()
+        pendingNewCount = 0
     }
 
     private func persistDatabase(account: NostrAccount) {
@@ -408,6 +637,642 @@ final class NostrHomeTimelineStore: ObservableObject {
             try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
         } catch {
             // Live networking can still populate the timeline if the database write fails.
+        }
+    }
+
+    private func saveHomeTimelineIndex(events: [NostrEvent], account: NostrAccount, source: String) {
+        guard let eventStore, !events.isEmpty else { return }
+        let now = Int(Date().timeIntervalSince1970)
+        do {
+            try eventStore.saveTimelineEntries(events.map { event in
+                NostrTimelineEntryRecord(
+                    accountID: account.pubkey,
+                    timelineKey: "home",
+                    eventID: event.id,
+                    sortTimestamp: event.createdAt,
+                    source: source,
+                    insertedAt: now
+                )
+            })
+        } catch {
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "database",
+                kind: .partialFailure,
+                subscriptionID: nil,
+                message: "timeline index save failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func reloadNewestProjectionWindow(account: NostrAccount) {
+        guard let eventStore,
+              let timelineEntries = try? eventStore.timelineEntries(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                limit: projectionWindowLimit
+              )
+        else { return }
+        noteEvents = projectedTimelineEvents(entries: timelineEntries)
+    }
+
+    private func reloadProjectionWindow(account: NostrAccount, around anchorEventID: String?) {
+        guard let eventStore else { return }
+        let timelineEntries: [NostrTimelineEntryRecord]
+        if let anchorEventID,
+           let anchoredEntries = try? eventStore.timelineEntries(
+            accountID: account.pubkey,
+            timelineKey: "home",
+            aroundEventID: anchorEventID,
+            leadingLimit: projectionAnchorLeadingLimit,
+            trailingLimit: projectionAnchorTrailingLimit
+           ) {
+            timelineEntries = anchoredEntries
+        } else {
+            timelineEntries = (try? eventStore.timelineEntries(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                limit: projectionWindowLimit
+            )) ?? []
+        }
+        noteEvents = projectedTimelineEvents(entries: timelineEntries)
+    }
+
+    private func projectedTimelineEvents(entries timelineEntries: [NostrTimelineEntryRecord]) -> [NostrEvent] {
+        guard let eventStore else { return [] }
+        let eventIDs = timelineEntries.map(\.eventID)
+        let events = (try? eventStore.events(ids: eventIDs)) ?? []
+        let eventsByID = Dictionary(uniqueKeysWithValues: events.map { ($0.id, $0) })
+        return eventIDs.compactMap { eventsByID[$0] }
+    }
+
+    private func contextEventsForCurrentProjection() -> [NostrEvent] {
+        guard let eventStore else { return [] }
+        let sourceIDs = Array(Set(noteEvents.flatMap { event in
+            NostrEventDependencies.extract(from: event).sourceEventIDs
+        })).sorted()
+        guard !sourceIDs.isEmpty else { return [] }
+        let visibleIDs = Set(noteEvents.map(\.id))
+        return ((try? eventStore.events(ids: sourceIDs)) ?? []).filter { !visibleIDs.contains($0.id) }
+    }
+
+    private func startRuntimeEventPump() {
+        guard let relayRuntime, runtimeTask == nil else { return }
+        runtimeTask = Task { [weak self] in
+            for await packet in await relayRuntime.events() {
+                self?.handleRuntimePacket(packet)
+            }
+        }
+    }
+
+    private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
+        guard let relayRuntime, !resolvedRelays.isEmpty else { return }
+
+        do {
+            try await relayRuntime.setDefaultRelays(resolvedRelays)
+            let authors = followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
+            let newestCreatedAt = noteEvents.map(\.createdAt).max()
+            let packet = NostrHomeForwardREQBuilder.reconnectPacket(
+                authors: authors,
+                newestCreatedAt: newestCreatedAt,
+                relayURLs: resolvedRelays
+            )
+            guard forceInstall || installedHomeForwardPacket != packet else { return }
+            try await relayRuntime.installForward(packet)
+            installedHomeForwardPacket = packet
+        } catch {
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
+                message: String(describing: error)
+            )
+        }
+    }
+
+    private func handleRuntimePacket(_ packet: NostrRelayRuntimePacket) {
+        switch packet {
+        case .stateChanged(let relayURL, let state):
+            handleRuntimeStateChange(relayURL: relayURL, state: state)
+        case .event(let relayURL, let subscriptionID, let event):
+            handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        case .eose(let relayURL, let subscriptionID):
+            let window = finishRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID)
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: .eose,
+                subscriptionID: subscriptionID,
+                newestCreatedAt: window.newestCreatedAt,
+                oldestCreatedAt: window.oldestCreatedAt,
+                message: "EOSE received"
+            )
+        case .closed(let relayURL, let subscriptionID, let message):
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: Self.syncEventKind(forClosedMessage: message),
+                subscriptionID: subscriptionID,
+                message: message
+            )
+        case .timeout(let relayURL, let subscriptionID, let message):
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: .timeout,
+                subscriptionID: subscriptionID,
+                message: message
+            )
+        case .backwardCompleted(let completion):
+            handleBackwardCompletion(completion)
+        case .notice(let relayURL, let message):
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: message.lowercased().contains("timeout") ? .timeout : .partialFailure,
+                subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
+                message: message
+            )
+        case .auth(let relayURL, let challenge):
+            guard !hasRecentRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: .authRequired,
+                message: challenge
+            ) else { return }
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: .authRequired,
+                subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
+                message: challenge
+            )
+        }
+    }
+
+    private func handleRuntimeStateChange(relayURL: String, state: NostrRelayConnectionState) {
+        relayRuntimeStates[relayURL] = state
+        switch state {
+        case .connected:
+            recordRuntimeSyncEvent(relayURL: relayURL, kind: .connected, subscriptionID: nil, message: "connected")
+        case .waitingForRetry, .retrying:
+            recordRuntimeSyncEvent(relayURL: relayURL, kind: .reconnect, subscriptionID: nil, message: state.rawValue)
+        case .error:
+            recordRuntimeSyncEvent(relayURL: relayURL, kind: .partialFailure, subscriptionID: nil, message: state.rawValue)
+        case .rejected:
+            recordRuntimeSyncEvent(relayURL: relayURL, kind: .rejected, subscriptionID: nil, message: state.rawValue)
+        case .suspended:
+            recordRuntimeSyncEvent(relayURL: relayURL, kind: .suspended, subscriptionID: nil, message: state.rawValue)
+        case .initialized, .connecting, .dormant, .terminated:
+            break
+        }
+    }
+
+    private static func syncEventKind(forClosedMessage message: String) -> NostrRelaySyncEventKind {
+        let normalized = message.lowercased()
+        if normalized.contains("auth-required") || normalized.contains("auth required") {
+            return .authRequired
+        }
+        if normalized.contains("payment-required") || normalized.contains("payment required") {
+            return .paymentRequired
+        }
+        return .closed
+    }
+
+    private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) {
+        if subscriptionID == NostrHomeForwardREQBuilder.subscriptionID {
+            handleHomeForwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+            return
+        }
+
+        handleBackwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+    }
+
+    private func pendingBackwardRequest(for subscriptionID: String) -> PendingBackwardRequest? {
+        pendingBackwardRequestKey(for: subscriptionID).flatMap { pendingBackwardRequests[$0] }
+    }
+
+    private func pendingBackwardRequestKey(for subscriptionID: String) -> String? {
+        if let exactOrPrefixed = pendingBackwardRequests.first(where: { entry in
+            subscriptionID == entry.key || subscriptionID.hasPrefix(entry.key + "-")
+        })?.key {
+            return exactOrPrefixed
+        }
+        if subscriptionID.contains("astrenza-gap-notes") {
+            return pendingBackwardRequests.first { $0.value.gap != nil }?.key
+        }
+        if subscriptionID.contains("astrenza-older-notes") {
+            return pendingBackwardRequests.first { $0.value.isOlderPage }?.key
+        }
+        if subscriptionID.contains("astrenza-source-events") {
+            return pendingBackwardRequests.first { !$0.value.sourceEventIDs.isEmpty }?.key
+        }
+        if subscriptionID.contains("astrenza-kind0") {
+            return pendingBackwardRequests.first { !$0.value.profilePubkeys.isEmpty }?.key
+        }
+        return nil
+    }
+
+    private func handleHomeForwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) {
+        guard event.kind == 1 || event.kind == 5 || event.kind == 6,
+              let account
+        else { return }
+        guard followedPubkeys.isEmpty || followedPubkeys.contains(event.pubkey) else { return }
+
+        do {
+            try eventStore?.save(events: [event])
+            try eventStore?.recordEventSources(eventIDs: [event.id], relayURL: relayURL)
+        } catch {
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: .partialFailure,
+                subscriptionID: subscriptionID,
+                message: "event save failed: \(error.localizedDescription)"
+            )
+            return
+        }
+
+        if event.kind == 5 {
+            let deletedIDs = event.tags.compactMap { tag in
+                tag.count >= 2 && tag[0] == "e" ? tag[1] : nil
+            }
+            noteEvents.removeAll { deletedIDs.contains($0.id) }
+            materializeEntries()
+        } else {
+            saveHomeTimelineIndex(events: [event], account: account, source: "forward")
+            enqueueBackwardDependencies(for: event)
+            if isTimelineAtNewestWindow && pendingNewEventIDs.isEmpty {
+                reloadNewestProjectionWindow(account: account)
+                materializeEntries()
+            } else if pendingNewEventIDs.insert(event.id).inserted {
+                pendingNewCount = pendingNewEventIDs.count
+            }
+        }
+        scheduleLinkPreviewResolution()
+        trackRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        recordRuntimeSyncEvent(
+            relayURL: relayURL,
+            kind: .connected,
+            subscriptionID: subscriptionID,
+            eventCount: 1,
+            newestCreatedAt: event.createdAt,
+            oldestCreatedAt: event.createdAt,
+            message: "EVENT received",
+            publishesStatusChange: false
+        )
+    }
+
+    private func handleBackwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) {
+        guard let account else { return }
+        let requestKey = pendingBackwardRequestKey(for: subscriptionID)
+        let request = requestKey.flatMap { pendingBackwardRequests[$0] }
+
+        do {
+            try eventStore?.save(events: [event])
+            try eventStore?.recordEventSources(eventIDs: [event.id], relayURL: relayURL)
+        } catch {
+            recordRuntimeSyncEvent(
+                relayURL: relayURL,
+                kind: .partialFailure,
+                subscriptionID: subscriptionID,
+                message: "backward event save failed: \(error.localizedDescription)"
+            )
+            return
+        }
+
+        switch event.kind {
+        case 0:
+            metadataEvents.removeAll { $0.pubkey == event.pubkey }
+            metadataEvents.append(event)
+            pendingProfilePubkeys.remove(event.pubkey)
+            materializeEntries()
+        case 1, 6:
+            if request?.isOlderPage == true || request?.gap != nil {
+                saveHomeTimelineIndex(
+                    events: [event],
+                    account: account,
+                    source: request?.isOlderPage == true ? "older" : "gap"
+                )
+                if let requestKey {
+                    pendingBackwardRequests[requestKey]?.receivedTimelineEventCount += 1
+                }
+            }
+            pendingSourceEventIDs.remove(event.id)
+            enqueueBackwardDependencies(for: event)
+            materializeEntries()
+        case 5:
+            let deletedIDs = event.tags.compactMap { tag in
+                tag.count >= 2 && tag[0] == "e" ? tag[1] : nil
+            }
+            noteEvents.removeAll { deletedIDs.contains($0.id) }
+            materializeEntries()
+        default:
+            break
+        }
+
+        scheduleLinkPreviewResolution()
+        trackRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        recordRuntimeSyncEvent(
+            relayURL: relayURL,
+            kind: .connected,
+            subscriptionID: subscriptionID,
+            eventCount: 1,
+            newestCreatedAt: event.createdAt,
+            oldestCreatedAt: event.createdAt,
+            message: "backward EVENT received",
+            publishesStatusChange: false
+        )
+    }
+
+    private func enqueueBackwardDependencies(for event: NostrEvent) {
+        guard relayRuntime != nil, !resolvedRelays.isEmpty else { return }
+        let dependencies = NostrEventDependencies.extract(from: event)
+        ingestCachedDependencies(dependencies)
+        let knownProfilePubkeys = Set(metadataEvents.map(\.pubkey))
+        let cachedSourceEventIDs = Set(((try? eventStore?.events(ids: dependencies.sourceEventIDs)) ?? []).map(\.id))
+        let knownEventIDs = Set(noteEvents.map(\.id)).union(cachedSourceEventIDs)
+        let missingProfiles = dependencies.profilePubkeys.filter { !knownProfilePubkeys.contains($0) && pendingProfilePubkeys.insert($0).inserted }
+        let missingSourceIDs = dependencies.sourceEventIDs.filter { !knownEventIDs.contains($0) && pendingSourceEventIDs.insert($0).inserted }
+
+        guard !missingProfiles.isEmpty || !missingSourceIDs.isEmpty else { return }
+
+        queueBackwardDependencies(
+            missingProfiles: missingProfiles,
+            missingSourceIDs: missingSourceIDs,
+            dependencies: dependencies
+        )
+    }
+
+    private func queueBackwardDependencies(
+        missingProfiles: [String],
+        missingSourceIDs: [String],
+        dependencies: NostrEventDependencies
+    ) {
+        for (relayURLs, pubkeys) in groupedProfileDependencies(missingProfiles, dependencies: dependencies) {
+            bufferedProfilePubkeysByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(pubkeys)
+        }
+        for (relayURLs, ids) in groupedSourceDependencies(missingSourceIDs, dependencies: dependencies) {
+            bufferedSourceEventIDsByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(ids)
+        }
+        scheduleBackwardDependencyFlush()
+    }
+
+    private func scheduleBackwardDependencyFlush() {
+        guard backwardFlushTask == nil else { return }
+        backwardFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            await MainActor.run {
+                self?.flushBackwardDependencies()
+            }
+        }
+    }
+
+    private func flushBackwardDependencies() {
+        guard let relayRuntime else { return }
+        backwardFlushTask = nil
+
+        let profileGroups = bufferedProfilePubkeysByRelay
+            .map { (relayURLs: $0.key.relayURLs, pubkeys: Array($0.value).sorted()) }
+            .filter { !$0.pubkeys.isEmpty }
+        let sourceGroups = bufferedSourceEventIDsByRelay
+            .map { (relayURLs: $0.key.relayURLs, ids: Array($0.value).sorted()) }
+            .filter { !$0.ids.isEmpty }
+        bufferedProfilePubkeysByRelay.removeAll()
+        bufferedSourceEventIDsByRelay.removeAll()
+
+        var profilePackets: [NostrREQPacket] = []
+        var sourcePackets: [NostrREQPacket] = []
+        var registeredGroupIDs: [String] = []
+        var registeredProfilePubkeys: [String] = []
+        var registeredSourceEventIDs: [String] = []
+
+        for group in profileGroups {
+            guard let packet = NostrBackwardREQBuilder.profiles(authors: group.pubkeys, relayURLs: group.relayURLs) else {
+                continue
+            }
+            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: group.pubkeys, sourceEventIDs: [])
+            registeredGroupIDs.append(packet.groupID)
+            registeredProfilePubkeys.append(contentsOf: group.pubkeys)
+            profilePackets.append(packet)
+        }
+        for group in sourceGroups {
+            guard let packet = NostrBackwardREQBuilder.sourceEvents(ids: group.ids, relayURLs: group.relayURLs) else {
+                continue
+            }
+            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: [], sourceEventIDs: group.ids)
+            registeredGroupIDs.append(packet.groupID)
+            registeredSourceEventIDs.append(contentsOf: group.ids)
+            sourcePackets.append(packet)
+        }
+
+        guard !profilePackets.isEmpty || !sourcePackets.isEmpty else { return }
+
+        Task {
+            do {
+                if !profilePackets.isEmpty {
+                    try await relayRuntime.installBackward(profilePackets, mergeField: .authors)
+                }
+                if !sourcePackets.isEmpty {
+                    try await relayRuntime.installBackward(sourcePackets, mergeField: .ids)
+                }
+            } catch {
+                await MainActor.run {
+                    registeredGroupIDs.forEach { pendingBackwardRequests.removeValue(forKey: $0) }
+                    registeredProfilePubkeys.forEach { pendingProfilePubkeys.remove($0) }
+                    registeredSourceEventIDs.forEach { pendingSourceEventIDs.remove($0) }
+                    recordRuntimeSyncEvent(
+                        relayURL: resolvedRelays.first ?? "runtime",
+                        kind: .partialFailure,
+                        subscriptionID: nil,
+                        message: "backward enqueue failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func ingestCachedDependencies(_ dependencies: NostrEventDependencies) {
+        guard let eventStore else { return }
+
+        let cachedProfiles = (try? eventStore.latestReplaceableEvents(
+            pubkeys: Set(dependencies.profilePubkeys),
+            kind: 0
+        )) ?? []
+        for profile in cachedProfiles {
+            metadataEvents.removeAll { $0.pubkey == profile.pubkey }
+            metadataEvents.append(profile)
+        }
+
+        _ = try? eventStore.events(ids: dependencies.sourceEventIDs)
+    }
+
+    private func groupedProfileDependencies(
+        _ pubkeys: [String],
+        dependencies: NostrEventDependencies
+    ) -> [(relayURLs: [String], pubkeys: [String])] {
+        groupedDependencies(pubkeys) { pubkey in
+            dependencies.profileRelayURLsByPubkey[pubkey] ?? []
+        }.map { group in
+            (relayURLs: group.relayURLs, pubkeys: group.values)
+        }
+    }
+
+    private func groupedSourceDependencies(
+        _ ids: [String],
+        dependencies: NostrEventDependencies
+    ) -> [(relayURLs: [String], ids: [String])] {
+        groupedDependencies(ids) { id in
+            dependencies.sourceRelayURLsByEventID[id] ?? []
+        }.map { group in
+            (relayURLs: group.relayURLs, ids: group.values)
+        }
+    }
+
+    private func groupedDependencies(
+        _ values: [String],
+        hintsForValue: (String) -> [String]
+    ) -> [(relayURLs: [String], values: [String])] {
+        var groups: [RelaySelectionKey: [String]] = [:]
+        for value in values {
+            let relayURLs = relaySelection(for: hintsForValue(value))
+            groups[RelaySelectionKey(relayURLs: relayURLs), default: []].append(value)
+        }
+        return groups
+            .map { key, values in (relayURLs: key.relayURLs, values: Array(Set(values)).sorted()) }
+            .sorted { lhs, rhs in lhs.relayURLs.lexicographicallyPrecedes(rhs.relayURLs) }
+    }
+
+    private func relaySelection(for hintedRelayURLs: [String]) -> [String] {
+        let hinted = Set(hintedRelayURLs)
+        let connectedHints = resolvedRelays.filter { hinted.contains($0) }
+        return connectedHints.isEmpty ? resolvedRelays : connectedHints
+    }
+
+    private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
+        guard let request = pendingBackwardRequests.removeValue(forKey: completion.groupID) else { return }
+        let priorBottomPostID = noteEvents.last?.id
+        request.profilePubkeys.forEach { pendingProfilePubkeys.remove($0) }
+        request.sourceEventIDs.forEach { pendingSourceEventIDs.remove($0) }
+        if request.isOlderPage && completion.status == .completed && completion.eventCount == 0 {
+            hasMoreOlder = false
+        }
+        let didReceiveTimelineEvents = completion.eventCount > 0 || request.receivedTimelineEventCount > 0
+        if completion.status == .completed || completion.status == .partial || didReceiveTimelineEvents {
+            if request.isOlderPage,
+               didReceiveTimelineEvents,
+               let account {
+                reloadProjectionWindow(account: account, around: priorBottomPostID)
+                materializeEntries()
+                scheduleLinkPreviewResolution()
+            }
+
+            if let gap = request.gap,
+               let account {
+                markGapResolved(gap)
+                reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
+                materializeEntries()
+                scheduleLinkPreviewResolution()
+            }
+        }
+        relayStatusRevision &+= 1
+    }
+
+    private func markGapResolved(_ gap: PendingGapBackfill) {
+        guard let account else { return }
+        do {
+            try eventStore?.markTimelineGapResolved(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                newerEventID: gap.newerPostID,
+                olderEventID: gap.olderPostID
+            )
+        } catch {
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: nil,
+                message: "gap resolve failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func scheduleLinkPreviewResolution() {
+        guard let eventStore, let linkPreviewResolver, linkPreviewTask == nil else { return }
+        let previews = ((try? eventStore.unresolvedLinkPreviews(limit: 6)) ?? [])
+            .filter { resolvingLinkPreviewURLs.insert($0.normalizedURL).inserted }
+        guard !previews.isEmpty else { return }
+
+        linkPreviewTask = Task { [weak self] in
+            for preview in previews {
+                let resolved = await linkPreviewResolver.resolve(preview)
+                do {
+                    try eventStore.saveLinkPreview(resolved)
+                } catch {
+                    await MainActor.run {
+                        self?.recordRuntimeSyncEvent(
+                            relayURL: "link-preview",
+                            kind: .partialFailure,
+                            subscriptionID: nil,
+                            message: "link preview save failed: \(error.localizedDescription)"
+                        )
+                    }
+                }
+            }
+
+            await MainActor.run {
+                guard let self else { return }
+                previews.forEach { self.resolvingLinkPreviewURLs.remove($0.normalizedURL) }
+                self.linkPreviewTask = nil
+                self.materializeEntries()
+                if let account = self.account {
+                    self.persistDatabase(account: account)
+                }
+                self.scheduleLinkPreviewResolution()
+            }
+        }
+    }
+
+    private func recordRuntimeSyncEvent(
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        subscriptionID: String?,
+        eventCount: Int = 0,
+        newestCreatedAt: Int? = nil,
+        oldestCreatedAt: Int? = nil,
+        message: String?,
+        publishesStatusChange: Bool = true
+    ) {
+        guard let account else { return }
+        let event = NostrRelaySyncEventRecord(
+            accountID: account.pubkey,
+            timelineKey: "home",
+            relayURL: relayURL,
+            kind: kind,
+            occurredAt: Int(Date().timeIntervalSince1970),
+            subscriptionID: subscriptionID,
+            eventCount: eventCount,
+            newestCreatedAt: newestCreatedAt,
+            oldestCreatedAt: oldestCreatedAt,
+            latencyMilliseconds: nil,
+            message: message
+        )
+        relaySyncEvents.append(event)
+        try? eventStore?.saveRelaySyncEvents([event])
+        if publishesStatusChange {
+            relayStatusRevision &+= 1
+        }
+    }
+
+    private func trackRuntimeSyncWindow(relayURL: String, subscriptionID: String, event: NostrEvent) {
+        let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
+        runtimeSyncWindows[key, default: RuntimeSyncWindow()].include(event)
+    }
+
+    private func finishRuntimeSyncWindow(relayURL: String, subscriptionID: String) -> RuntimeSyncWindow {
+        let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
+        return runtimeSyncWindows.removeValue(forKey: key) ?? RuntimeSyncWindow()
+    }
+
+    private func hasRecentRuntimeSyncEvent(
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        message: String?
+    ) -> Bool {
+        relaySyncEvents.reversed().prefix(8).contains { event in
+            event.relayURL == relayURL && event.kind == kind && event.message == message
         }
     }
 
@@ -431,18 +1296,26 @@ final class NostrHomeTimelineStore: ObservableObject {
         let filterRules = homeFilterRules()
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
         let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
+        let contextEvents = contextEventsForCurrentProjection()
+        let materialReferenceEvents = noteEvents + contextEvents
         let deletedEntries = account.flatMap { account in
             try? eventStore?.deletedTimelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 250)
         } ?? []
+        let timelineEntries = account.flatMap { account in
+            try? eventStore?.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 500)
+        } ?? []
         entries = NostrTimelineMaterializer.entries(
             noteEvents: noteEvents,
+            contextEvents: contextEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: Set(followedPubkeys),
-            mediaAssetsByEventID: mediaAssetsByEventID(for: noteEvents),
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: noteEvents),
+            mediaAssetsByEventID: mediaAssetsByEventID(for: materialReferenceEvents),
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: materialReferenceEvents),
             filterRules: materializerFilterRuleSet,
-            deletedEntries: deletedEntries
+            deletedEntries: deletedEntries,
+            timelineEntries: timelineEntries,
+            relayCount: max(1, resolvedRelays.count)
         )
         filterStatus = timelineFilterStatus(ruleSet: activeFilterRuleSet)
     }
@@ -694,6 +1567,7 @@ enum NostrTimelineMaterializer {
 
     static func entries(
         noteEvents: [NostrEvent],
+        contextEvents: [NostrEvent] = [],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>,
@@ -701,11 +1575,15 @@ enum NostrTimelineMaterializer {
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         filterRules: NostrFilterRuleSet? = nil,
         deletedEntries: [NostrDeletedTimelineEntryRecord] = [],
+        timelineEntries: [NostrTimelineEntryRecord] = [],
+        relayCount: Int = 1,
         timeline: NostrFilterTimelineScope = .home
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
+        let timelineEntryByEventID = Dictionary(uniqueKeysWithValues: timelineEntries.map { ($0.eventID, $0) })
         let postsByID = Dictionary(uniqueKeysWithValues: posts(
             noteEvents: noteEvents,
+            contextEvents: contextEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
             followedPubkeys: followedPubkeys,
@@ -733,18 +1611,119 @@ enum NostrTimelineMaterializer {
             )
         }
 
-        return (postEntries + deletedRows)
+        let sortedEntries = (postEntries + deletedRows)
             .sorted { lhs, rhs in
                 if lhs.sortTimestamp == rhs.sortTimestamp {
                     return lhs.id < rhs.id
                 }
                 return lhs.sortTimestamp > rhs.sortTimestamp
             }
-            .map(\.entry)
+
+        guard !timelineEntryByEventID.isEmpty else {
+            return sortedEntries.map(\.entry)
+        }
+
+        return insertingGapRows(
+            into: sortedEntries,
+            timelineEntryByEventID: timelineEntryByEventID,
+            relayCount: relayCount
+        )
+        .map(\.entry)
+    }
+
+    private static func insertingGapRows(
+        into sortedEntries: [SortableTimelineEntry],
+        timelineEntryByEventID: [String: NostrTimelineEntryRecord],
+        relayCount: Int
+    ) -> [SortableTimelineEntry] {
+        var output: [SortableTimelineEntry] = []
+
+        for index in sortedEntries.indices {
+            let entry = sortedEntries[index]
+            let isPostEntry: Bool
+            if case .post = entry.entry {
+                isPostEntry = true
+            } else {
+                isPostEntry = false
+            }
+
+            if isPostEntry,
+               let timelineEntry = timelineEntryByEventID[entry.id],
+               timelineEntry.gapBefore,
+               let previousPostID = nearestPostID(in: sortedEntries, before: index),
+               timelineEntryByEventID[previousPostID]?.gapAfter != true {
+                output.append(gapEntry(
+                    newerPostID: previousPostID,
+                    olderPostID: entry.id,
+                    sortTimestamp: entry.sortTimestamp + 1,
+                    relayCount: relayCount
+                ))
+            }
+
+            output.append(entry)
+
+            if isPostEntry,
+               let timelineEntry = timelineEntryByEventID[entry.id],
+               timelineEntry.gapAfter,
+               let nextPostID = nearestPostID(in: sortedEntries, after: index) {
+                output.append(gapEntry(
+                    newerPostID: entry.id,
+                    olderPostID: nextPostID,
+                    sortTimestamp: entry.sortTimestamp - 1,
+                    relayCount: relayCount
+                ))
+            }
+        }
+
+        return output
+    }
+
+    private static func nearestPostID(in entries: [SortableTimelineEntry], before index: Int) -> String? {
+        guard index > entries.startIndex else { return nil }
+        for candidateIndex in stride(from: index - 1, through: entries.startIndex, by: -1) {
+            if case .post = entries[candidateIndex].entry {
+                return entries[candidateIndex].id
+            }
+        }
+        return nil
+    }
+
+    private static func nearestPostID(in entries: [SortableTimelineEntry], after index: Int) -> String? {
+        let nextIndex = index + 1
+        guard nextIndex < entries.endIndex else { return nil }
+        for candidateIndex in nextIndex..<entries.endIndex {
+            if case .post = entries[candidateIndex].entry {
+                return entries[candidateIndex].id
+            }
+        }
+        return nil
+    }
+
+    private static func gapEntry(
+        newerPostID: String,
+        olderPostID: String,
+        sortTimestamp: Int,
+        relayCount: Int
+    ) -> SortableTimelineEntry {
+        let gapID = "gap-\(newerPostID)-\(olderPostID)"
+        return SortableTimelineEntry(
+            id: gapID,
+            sortTimestamp: sortTimestamp,
+            entry: .gap(TimelineGap(
+                id: gapID,
+                newerPostID: newerPostID,
+                olderPostID: olderPostID,
+                missingEstimate: 1,
+                relayCount: max(1, relayCount),
+                state: .needsBackfill,
+                backfilledPosts: []
+            ))
+        )
     }
 
     static func posts(
         noteEvents: [NostrEvent],
+        contextEvents: [NostrEvent] = [],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         followedPubkeys: Set<String>,
@@ -754,7 +1733,10 @@ enum NostrTimelineMaterializer {
         timeline: NostrFilterTimelineScope = .home,
         now: Int = Int(Date().timeIntervalSince1970)
     ) -> [TimelinePost] {
-        let eventsByID = Dictionary(uniqueKeysWithValues: noteEvents.map { ($0.id, $0) })
+        var eventsByID: [String: NostrEvent] = [:]
+        for event in contextEvents + noteEvents {
+            eventsByID[event.id] = event
+        }
         let directPosts = NostrHomeTimelineMaterializer.items(
             noteEvents: noteEvents,
             metadataEvents: metadataEvents,
@@ -773,6 +1755,9 @@ enum NostrTimelineMaterializer {
                     for: item,
                     event: event,
                     eventsByID: eventsByID,
+                    metadataEvents: metadataEvents,
+                    nip05Resolutions: nip05Resolutions,
+                    followedPubkeys: followedPubkeys,
                     mediaAssets: mediaAssetsByEventID[event.id] ?? [],
                     linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
                 )
@@ -806,6 +1791,9 @@ enum NostrTimelineMaterializer {
         for item: NostrHomeTimelineItem,
         event: NostrEvent?,
         eventsByID: [String: NostrEvent],
+        metadataEvents: [NostrEvent] = [],
+        nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        followedPubkeys: Set<String> = [],
         mediaAssets: [NostrMediaAssetRecord] = [],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         idOverride: String? = nil,
@@ -847,7 +1835,15 @@ enum NostrTimelineMaterializer {
             ),
             context: nil,
             repostedBy: repostedBy,
-            quotedPost: event.flatMap { quotedPost(from: $0, eventsByID: eventsByID) },
+            quotedPost: event.flatMap {
+                quotedPost(
+                    from: $0,
+                    eventsByID: eventsByID,
+                    metadataEvents: metadataEvents,
+                    nip05Resolutions: nip05Resolutions,
+                    followedPubkeys: followedPubkeys
+                )
+            },
             replyContext: event.flatMap { replyContext(from: $0, eventsByID: eventsByID, fallbackAuthor: author) },
             replyMention: event.flatMap { replyMention(from: $0, author: author) },
             contentWarning: contentWarning,
@@ -908,6 +1904,9 @@ enum NostrTimelineMaterializer {
                         for: targetItem,
                         event: targetEvent,
                         eventsByID: eventsByID,
+                        metadataEvents: metadataEvents,
+                        nip05Resolutions: nip05Resolutions,
+                        followedPubkeys: followedPubkeys,
                         mediaAssets: mediaAssetsByEventID[targetEvent.id] ?? [],
                         linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
                         idOverride: repostEvent.id,
@@ -1128,23 +2127,46 @@ enum NostrTimelineMaterializer {
         return TimelineReplyMention(text: String(display), isExternal: pubkey != author.pubkey)
     }
 
-    private static func quotedPost(from event: NostrEvent, eventsByID: [String: NostrEvent]) -> QuotedTimelinePost? {
+    private static func quotedPost(
+        from event: NostrEvent,
+        eventsByID: [String: NostrEvent],
+        metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution],
+        followedPubkeys: Set<String>
+    ) -> QuotedTimelinePost? {
         guard let quotedID = quotedPostID(from: event) else { return nil }
         if let quoted = eventsByID[quotedID] {
-            let item = NostrHomeTimelineItem(
+            let item = NostrHomeTimelineMaterializer.items(
+                noteEvents: [quoted],
+                metadataEvents: metadataEvents,
+                followedPubkeys: followedPubkeys,
+                nip05Resolutions: nip05Resolutions
+            ).first ?? NostrHomeTimelineItem(
                 id: quoted.id,
                 pubkey: quoted.pubkey,
                 displayName: nil,
                 nip05: nil,
                 nip05Status: .absent,
-                isFollowed: true,
+                isFollowed: followedPubkeys.contains(quoted.pubkey),
                 body: quoted.content,
                 createdAt: quoted.createdAt,
                 avatarPictureState: .metadataPending,
                 avatarImageURL: nil
             )
+            let author: TimelineAuthor
+            if let displayName = item.displayName {
+                author = .resolved(
+                    displayName: displayName,
+                    nip05: item.nip05,
+                    nip05Status: NIP05Status(item.nip05Status),
+                    pubkey: item.pubkey,
+                    isFollowed: item.isFollowed
+                )
+            } else {
+                author = .unresolved(pubkey: item.pubkey)
+            }
             return QuotedTimelinePost(
-                author: TimelineAuthor.unresolved(pubkey: quoted.pubkey),
+                author: author,
                 avatar: avatar(for: item),
                 body: quoted.content,
                 timestamp: relativeTimestamp(from: quoted.createdAt),
@@ -1252,4 +2274,46 @@ private extension NIP05Status {
             self = .invalid
         }
     }
+}
+
+private struct PendingBackwardRequest {
+    let profilePubkeys: [String]
+    let sourceEventIDs: [String]
+    var isOlderPage = false
+    var gap: PendingGapBackfill?
+    var receivedTimelineEventCount = 0
+}
+
+private struct PendingGapBackfill {
+    let newerPostID: String
+    let olderPostID: String
+    let direction: TimelineGapFillDirection
+
+    var stableAnchorPostID: String {
+        switch direction {
+        case .newer:
+            olderPostID
+        case .older:
+            newerPostID
+        }
+    }
+}
+
+private struct RuntimeSubscriptionKey: Hashable {
+    let relayURL: String
+    let subscriptionID: String
+}
+
+private struct RuntimeSyncWindow {
+    private(set) var newestCreatedAt: Int?
+    private(set) var oldestCreatedAt: Int?
+
+    mutating func include(_ event: NostrEvent) {
+        newestCreatedAt = [newestCreatedAt, event.createdAt].compactMap { $0 }.max()
+        oldestCreatedAt = [oldestCreatedAt, event.createdAt].compactMap { $0 }.min()
+    }
+}
+
+private struct RelaySelectionKey: Hashable {
+    let relayURLs: [String]
 }

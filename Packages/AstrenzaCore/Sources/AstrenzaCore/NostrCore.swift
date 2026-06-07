@@ -5,11 +5,28 @@ public struct NostrAccount: Codable, Equatable, Sendable {
     public let pubkey: String
     public let displayIdentifier: String
     public let readOnly: Bool
+    public let discoveryRelays: [String]
 
-    public init(pubkey: String, displayIdentifier: String, readOnly: Bool) {
+    public init(pubkey: String, displayIdentifier: String, readOnly: Bool, discoveryRelays: [String] = []) {
         self.pubkey = pubkey
         self.displayIdentifier = displayIdentifier
         self.readOnly = readOnly
+        self.discoveryRelays = discoveryRelays
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pubkey
+        case displayIdentifier
+        case readOnly
+        case discoveryRelays
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pubkey = try container.decode(String.self, forKey: .pubkey)
+        displayIdentifier = try container.decode(String.self, forKey: .displayIdentifier)
+        readOnly = try container.decode(Bool.self, forKey: .readOnly)
+        discoveryRelays = try container.decodeIfPresent([String].self, forKey: .discoveryRelays) ?? []
     }
 }
 
