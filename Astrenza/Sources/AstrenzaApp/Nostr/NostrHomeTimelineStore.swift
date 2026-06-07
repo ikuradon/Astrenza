@@ -66,7 +66,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var relayStatusRevision = 0
     @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
     @Published private(set) var relayStatusCounts: (connected: Int, planned: Int) = (connected: 0, planned: 1)
-    @Published private(set) var pendingNewCount = 0
+    @Published private(set) var unmaterializedNewCount = 0
+    @Published private(set) var materializedUnreadCount = 0
+    @Published private(set) var visibleUnreadBadgeCount = 0
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
@@ -90,7 +92,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
     private var relaySyncEvents: [NostrRelaySyncEventRecord] = []
     private var areTimelineFiltersSuspended = false
-    private var pendingNewEventIDs = Set<String>()
+    private var unmaterializedNewEventIDs = Set<String>()
+    private var materializedPostIDs: [TimelinePost.ID] = []
+    private var readPostIDs = Set<TimelinePost.ID>()
+    private var unreadBadgeDismissedGeneration: String?
+    private var unreadBadgeViewportHiddenGeneration: String?
     private var isTimelineAtNewestWindow = true
     private var lastEntriesRenderFingerprint: [String] = []
     private let materializeCoalescingDelayNanoseconds: UInt64 = 250_000_000
@@ -221,11 +227,30 @@ final class NostrHomeTimelineStore: ObservableObject {
         isTimelineAtNewestWindow = isAtNewestWindow
     }
 
+    func dismissUnreadBadge() {
+        unreadBadgeDismissedGeneration = currentUnreadGeneration()
+        recomputeMaterializedUnreadState()
+    }
+
+    func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
+        let knownPostIDs = Set(materializedPostIDs)
+        let readableIDs = visiblePostIDs.filter { knownPostIDs.contains($0) }
+        guard !readableIDs.isEmpty else { return }
+        let oldReadCount = readPostIDs.count
+        let oldViewportHiddenGeneration = unreadBadgeViewportHiddenGeneration
+        updateUnreadBadgeViewportVisibility(readablePostIDs: readableIDs)
+        readPostIDs.formUnion(readableIDs)
+        guard readPostIDs.count != oldReadCount ||
+            unreadBadgeViewportHiddenGeneration != oldViewportHiddenGeneration
+        else { return }
+        recomputeMaterializedUnreadState()
+    }
+
     func applyPendingNewEvents() async {
         guard let account else { return }
         reloadNewestProjectionWindow(account: account)
-        pendingNewEventIDs.removeAll()
-        pendingNewCount = 0
+        unmaterializedNewEventIDs.removeAll()
+        unmaterializedNewCount = 0
         materializeEntries()
         scheduleLinkPreviewResolution()
     }
@@ -370,8 +395,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         backwardFlushTask = nil
         dependencyFetchQueue.removeAll()
         pendingBackwardRequests.removeAll()
-        pendingNewEventIDs.removeAll()
-        pendingNewCount = 0
+        unmaterializedNewEventIDs.removeAll()
+        unmaterializedNewCount = 0
         runtimeSyncWindows.removeAll()
         relayRuntimeStates = [:]
         updateRelayStatusCounts()
@@ -666,8 +691,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         relaySyncEvents = []
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
-        pendingNewEventIDs.removeAll()
-        pendingNewCount = 0
+        unmaterializedNewEventIDs.removeAll()
+        unmaterializedNewCount = 0
+        resetUnreadTracking()
     }
 
     private func persistDatabase(account: NostrAccount) {
@@ -937,11 +963,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             saveHomeTimelineIndex(events: [event], account: account, source: "forward")
             enqueueBackwardDependencies(for: event)
             embeddedTarget.map(enqueueBackwardDependencies)
-            if isTimelineAtNewestWindow && pendingNewEventIDs.isEmpty {
+            if isTimelineAtNewestWindow && unmaterializedNewEventIDs.isEmpty {
                 reloadNewestProjectionWindow(account: account)
                 materializeEntries()
-            } else if pendingNewEventIDs.insert(event.id).inserted {
-                pendingNewCount = pendingNewEventIDs.count
+            } else if unmaterializedNewEventIDs.insert(event.id).inserted {
+                unmaterializedNewCount = unmaterializedNewEventIDs.count
             }
         }
         scheduleLinkPreviewResolution()
@@ -1386,11 +1412,73 @@ final class NostrHomeTimelineStore: ObservableObject {
             entries = nextEntries
             lastEntriesRenderFingerprint = nextFingerprint
         }
+        recomputeMaterializedUnreadState()
 
         let nextFilterStatus = timelineFilterStatus(ruleSet: activeFilterRuleSet)
         if nextFilterStatus != filterStatus {
             filterStatus = nextFilterStatus
         }
+    }
+
+    private func recomputeMaterializedUnreadState() {
+        let nextMaterializedPostIDs = entries.compactMap(\.post?.id)
+        if materializedPostIDs.isEmpty {
+            readPostIDs.formUnion(nextMaterializedPostIDs)
+        }
+        materializedPostIDs = nextMaterializedPostIDs
+        readPostIDs = readPostIDs.intersection(Set(nextMaterializedPostIDs))
+
+        let unreadIDs = materializedPostIDs.filter { !readPostIDs.contains($0) }
+        materializedUnreadCount = unreadIDs.count
+
+        let generation = unreadGeneration(from: unreadIDs)
+        if generation == nil {
+            unreadBadgeDismissedGeneration = nil
+            unreadBadgeViewportHiddenGeneration = nil
+            visibleUnreadBadgeCount = 0
+        } else if unreadBadgeDismissedGeneration == generation {
+            visibleUnreadBadgeCount = 0
+        } else if unreadBadgeViewportHiddenGeneration == generation {
+            visibleUnreadBadgeCount = 0
+        } else {
+            visibleUnreadBadgeCount = unreadIDs.count
+        }
+    }
+
+    private func updateUnreadBadgeViewportVisibility(readablePostIDs: [TimelinePost.ID]) {
+        let unreadIDs = materializedPostIDs.filter { !readPostIDs.contains($0) }
+        guard let generation = unreadGeneration(from: unreadIDs),
+              let lastUnreadIndex = materializedPostIDs.lastIndex(where: { unreadIDs.contains($0) })
+        else {
+            unreadBadgeViewportHiddenGeneration = nil
+            return
+        }
+
+        let readableIndexes = readablePostIDs.compactMap { materializedPostIDs.firstIndex(of: $0) }
+        guard let newestReadableIndex = readableIndexes.min() else { return }
+        let isPastUnreadRange = newestReadableIndex > lastUnreadIndex
+        if isPastUnreadRange {
+            unreadBadgeViewportHiddenGeneration = generation
+        } else if unreadBadgeViewportHiddenGeneration == generation {
+            unreadBadgeViewportHiddenGeneration = nil
+        }
+    }
+
+    private func currentUnreadGeneration() -> String? {
+        unreadGeneration(from: materializedPostIDs.filter { !readPostIDs.contains($0) })
+    }
+
+    private func unreadGeneration(from unreadIDs: [TimelinePost.ID]) -> String? {
+        unreadIDs.isEmpty ? nil : unreadIDs.joined(separator: "|")
+    }
+
+    private func resetUnreadTracking() {
+        materializedPostIDs = []
+        readPostIDs.removeAll()
+        unreadBadgeDismissedGeneration = nil
+        unreadBadgeViewportHiddenGeneration = nil
+        materializedUnreadCount = 0
+        visibleUnreadBadgeCount = 0
     }
 
     private func scheduleMaterializeEntries(delayNanoseconds: UInt64? = nil) {
@@ -2434,6 +2522,49 @@ enum NostrTimelineMaterializer {
         return eTags.last?[1]
     }
 }
+
+#if DEBUG
+extension NostrHomeTimelineStore {
+    func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
+        entries = ids.map { id in
+            .post(TimelinePost(
+                id: id,
+                author: .unresolved(pubkey: String(repeating: "a", count: 64)),
+                avatar: AvatarStyle(
+                    primary: .astrenzaAccent,
+                    secondary: .astrenzaAttachmentBackground,
+                    symbolName: "person.fill",
+                    pictureState: .metadataPending,
+                    placeholderSeed: id
+                ),
+                body: id,
+                timestamp: "now",
+                replyCount: nil,
+                boostCount: nil,
+                favoriteCount: nil,
+                isLocked: false,
+                media: nil,
+                context: nil
+            ))
+        }
+        lastEntriesRenderFingerprint = entries.map(\.id)
+        materializedPostIDs = ids
+        readPostIDs = readPostIDs.intersection(Set(ids))
+        recomputeMaterializedUnreadState()
+    }
+
+    func testingSetReadBoundary(postID: TimelinePost.ID) {
+        guard let boundaryIndex = materializedPostIDs.firstIndex(of: postID) else { return }
+        readPostIDs = Set(materializedPostIDs[boundaryIndex...])
+        recomputeMaterializedUnreadState()
+    }
+
+    func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
+        unmaterializedNewEventIDs = ids
+        unmaterializedNewCount = ids.count
+    }
+}
+#endif
 
 private extension NIP05Status {
     init(_ coreStatus: NostrNIP05Status) {

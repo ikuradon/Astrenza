@@ -19,6 +19,20 @@ struct TimelineViewportAnchor: Equatable {
     let offset: CGFloat
 }
 
+struct TimelineScrollCommand: Equatable, Identifiable {
+    enum Target: Equatable {
+        case top
+        case viewport(TimelineViewportState)
+    }
+
+    let id = UUID()
+    let target: Target
+
+    static func == (lhs: TimelineScrollCommand, rhs: TimelineScrollCommand) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
 struct TimelineLayoutCache: Codable, Equatable {
     var measuredHeights: [TimelinePost.ID: CGFloat] = [:]
 

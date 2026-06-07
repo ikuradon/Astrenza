@@ -6,6 +6,7 @@ struct TimelineFeedView: View {
     let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
+    let scrollCommand: TimelineScrollCommand?
     let layoutCache: TimelineLayoutCache
     let emptyState: TimelineEmptyState
     let onEmptyStatePrimaryAction: () -> Void
@@ -21,6 +22,7 @@ struct TimelineFeedView: View {
     let onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
+    let onReadablePostIDsChanged: ([TimelinePost.ID]) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     @State private var menuState = TimelinePostMenuState()
     @State private var didRestoreViewport = false
@@ -51,6 +53,7 @@ struct TimelineFeedView: View {
         actionMenuTopClearance: CGFloat,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
+        scrollCommand: TimelineScrollCommand? = nil,
         layoutCache: TimelineLayoutCache,
         emptyState: TimelineEmptyState = .home,
         onEmptyStatePrimaryAction: @escaping () -> Void = {},
@@ -66,6 +69,7 @@ struct TimelineFeedView: View {
         onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
+        onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
         self.init(
@@ -73,6 +77,7 @@ struct TimelineFeedView: View {
             actionMenuTopClearance: actionMenuTopClearance,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
+            scrollCommand: scrollCommand,
             layoutCache: layoutCache,
             emptyState: emptyState,
             onEmptyStatePrimaryAction: onEmptyStatePrimaryAction,
@@ -88,6 +93,7 @@ struct TimelineFeedView: View {
             onBackfillGap: onBackfillGap,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onViewportStateChanged: onViewportStateChanged,
+            onReadablePostIDsChanged: onReadablePostIDsChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
         )
     }
@@ -97,6 +103,7 @@ struct TimelineFeedView: View {
         actionMenuTopClearance: CGFloat,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
+        scrollCommand: TimelineScrollCommand? = nil,
         layoutCache: TimelineLayoutCache,
         emptyState: TimelineEmptyState = .home,
         onEmptyStatePrimaryAction: @escaping () -> Void = {},
@@ -112,12 +119,14 @@ struct TimelineFeedView: View {
         onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
+        onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
         self.entries = entries
         self.actionMenuTopClearance = actionMenuTopClearance
         self.swipeSettings = swipeSettings
         self.viewportState = viewportState
+        self.scrollCommand = scrollCommand
         self.layoutCache = layoutCache
         self.emptyState = emptyState
         self.onEmptyStatePrimaryAction = onEmptyStatePrimaryAction
@@ -133,6 +142,7 @@ struct TimelineFeedView: View {
         self.onBackfillGap = onBackfillGap
         self.onScrollOffsetChanged = onScrollOffsetChanged
         self.onViewportStateChanged = onViewportStateChanged
+        self.onReadablePostIDsChanged = onReadablePostIDsChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
         _displayedEntries = State(initialValue: entries)
     }
@@ -181,6 +191,7 @@ struct TimelineFeedView: View {
                             .id(post.id)
                             .transition(postInsertionTransition(for: post))
                             .zIndex(menuState.openedMenu?.postID == post.id ? 20 : 0)
+                            .background(postFrameReader(postID: post.id))
                             .onAppear {
                                 handlePostAppear(post)
                             }
@@ -219,11 +230,18 @@ struct TimelineFeedView: View {
         .onPreferenceChange(TimelineGapFramePreferenceKey.self) { frames in
             scrollRuntime.gapFrames = frames
         }
+        .onPreferenceChange(TimelinePostFramePreferenceKey.self) { frames in
+            scrollRuntime.postFrames = frames
+            notifyReadablePostIDs()
+        }
         .onPreferenceChange(TimelineViewportSizePreferenceKey.self) { size in
             scrollRuntime.viewportSize = size
         }
         .onChange(of: entries.map(\.id)) { _, _ in
             syncDisplayedEntriesFromSource()
+        }
+        .onChange(of: scrollCommand?.id) { _, _ in
+            handleScrollCommand()
         }
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
@@ -300,6 +318,15 @@ private extension TimelineFeedView {
             Color.clear.preference(
                 key: TimelineGapFramePreferenceKey.self,
                 value: [gapID: proxy.frame(in: .named("timelineFeedViewport"))]
+            )
+        }
+    }
+
+    func postFrameReader(postID: TimelinePost.ID) -> some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: TimelinePostFramePreferenceKey.self,
+                value: [postID: proxy.frame(in: .named("timelineFeedViewport"))]
             )
         }
     }
@@ -400,6 +427,47 @@ private extension TimelineFeedView {
         updatePullRefreshState(offset: offset)
         onScrollOffsetChanged(offset)
         saveViewportStateIfPossible()
+        notifyReadablePostIDs()
+    }
+
+    func notifyReadablePostIDs() {
+        let readLineY = topContentPadding + 24
+        let readableIDs = posts
+            .map(\.id)
+            .filter { postID in
+                guard let frame = scrollRuntime.postFrames[postID] else { return false }
+                return frame.minY <= readLineY && frame.maxY > 0
+            }
+        guard readableIDs != scrollRuntime.lastReadablePostIDs else { return }
+        scrollRuntime.lastReadablePostIDs = readableIDs
+        DispatchQueue.main.async {
+            onReadablePostIDsChanged(readableIDs)
+        }
+    }
+
+    func handleScrollCommand() {
+        guard let scrollCommand else { return }
+        switch scrollCommand.target {
+        case .top:
+            if let firstPostID = posts.first?.id {
+                scrollPosition.scrollTo(id: firstPostID, anchor: .top)
+            } else {
+                scrollPosition.scrollTo(y: 0)
+            }
+        case .viewport(let state):
+            let targetOffsetY = TimelineViewportResolver.restoredContentOffsetY(
+                entries: displayedEntries,
+                state: state,
+                layoutCache: measuredLayoutCache,
+                topContentPadding: topContentPadding,
+                anchorLineY: rowAnchorLineY
+            )
+            if let targetOffsetY {
+                scrollPosition.scrollTo(y: targetOffsetY)
+            } else {
+                scrollPosition.scrollTo(id: state.anchorPostID, anchor: .top)
+            }
+        }
     }
 
     func syncDisplayedEntriesFromSource() {
@@ -917,7 +985,9 @@ private final class TimelineFeedScrollRuntime {
     var currentContentOffset: CGFloat = 0
     var currentViewportAnchor: TimelineViewportAnchor?
     var layoutSnapshot: TimelineLayoutSnapshot?
+    var postFrames: [TimelinePost.ID: CGRect] = [:]
     var gapFrames: [TimelineGap.ID: CGRect] = [:]
+    var lastReadablePostIDs: [TimelinePost.ID] = []
     var viewportSize: CGSize = .zero
     var lastSavedViewportAnchor: TimelineViewportAnchor?
     var lastSavedViewportOffset: CGFloat = 0

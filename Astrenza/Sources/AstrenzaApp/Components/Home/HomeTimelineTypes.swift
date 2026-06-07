@@ -61,6 +61,13 @@ enum TimelineTab: String, CaseIterable, Identifiable {
         case .compose: "square.and.pencil"
         }
     }
+
+    func systemName(isSelected: Bool, isReturnMode: Bool) -> String {
+        if self == .home, isReturnMode {
+            return "arrow.down"
+        }
+        return systemName(isSelected: isSelected)
+    }
 }
 
 enum TabBarMinimizeDirection: Equatable {

@@ -119,11 +119,16 @@ struct HomeTimelineTopBar: View {
 }
 
 struct HomeUnreadBadge: View {
+    let count: Int
     let onTap: () -> Void
+
+    private var displayCount: String {
+        count > 999 ? "999+" : "\(count)"
+    }
 
     var body: some View {
         Button(action: onTap) {
-            Text("3996")
+            Text(displayCount)
                 .font(.system(size: 11, weight: .heavy, design: .rounded))
                 .foregroundStyle(.black)
                 .lineLimit(1)
@@ -134,7 +139,7 @@ struct HomeUnreadBadge: View {
                 .shadow(color: Color.astrenzaAccent.opacity(0.18), radius: 7, y: 3)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("3996 unread posts")
+        .accessibilityLabel("\(displayCount) unread posts")
         .background {
             GeometryReader { proxy in
                 Color.clear.preference(

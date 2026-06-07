@@ -17,6 +17,8 @@ struct HomeTimelineView: View {
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var isTimelineAtNewestWindow = true
+    @State private var homeReturnAnchor: TimelineViewportState?
+    @State private var homeScrollCommand: TimelineScrollCommand?
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
     @State private var postNavigationPath: [TimelineNavigationRoute] = []
     @State private var profileNavigationPath: [TimelineNavigationRoute] = []
@@ -164,8 +166,11 @@ struct HomeTimelineView: View {
                 }
             }
 
-            if visibleTab == .home && !isPostDetailPresented {
-                HomeUnreadBadge(onTap: dismissFloatingMenus)
+            if visibleTab == .home && !isPostDetailPresented && liveTimelineStore.visibleUnreadBadgeCount > 0 {
+                HomeUnreadBadge(count: liveTimelineStore.visibleUnreadBadgeCount) {
+                    liveTimelineStore.dismissUnreadBadge()
+                    dismissFloatingMenus()
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(.top, 88)
                     .padding(.trailing, 22)
@@ -204,9 +209,11 @@ struct HomeTimelineView: View {
             handleTabSelection(newValue)
         }
         .onChange(of: selectedTimeline) { _, _ in
+            clearHomeReturnAnchor()
             loadTimelineRestoreState()
         }
         .onChange(of: sessionStore.account?.pubkey) { _, _ in
+            clearHomeReturnAnchor()
             loadTimelineRestoreState()
         }
         .homeTimelinePresentations(
@@ -239,9 +246,12 @@ private extension HomeTimelineView {
             previousTab: $previousTab,
             minimizeDirection: tabBarMinimizeDirection,
             isTabBarHidden: isPostDetailPresented,
+            hasUnmaterializedHomeEvents: liveTimelineStore.unmaterializedNewCount > 0,
+            isHomeReturnMode: homeReturnAnchor != nil,
             timelineList: timelineList,
             profileView: profileView,
             onMinimizeDirectionChanged: updateTabBarMinimizeDirection,
+            onHomeRetap: handleHomeTabRetap,
             onComposeTap: presentComposer
         )
     }
@@ -253,6 +263,7 @@ private extension HomeTimelineView {
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: homeViewportState,
+                scrollCommand: homeScrollCommand,
                 layoutCache: homeLayoutCache,
                 emptyState: timelineEmptyState,
                 onEmptyStatePrimaryAction: handleTimelineEmptyStatePrimaryAction,
@@ -272,6 +283,9 @@ private extension HomeTimelineView {
                 handleTimelineScrollOffset(offset)
             } onViewportStateChanged: { state in
                 saveTimelineViewportState(state)
+            } onReadablePostIDsChanged: { ids in
+                guard sessionStore.account != nil, selectedTimeline == .home else { return }
+                liveTimelineStore.markMaterializedPostsRead(visiblePostIDs: ids)
             } onLayoutCacheChanged: { cache in
                 saveTimelineLayoutCache(cache)
             }
@@ -457,6 +471,7 @@ private extension HomeTimelineView {
 
     func openPost(_ post: TimelinePost) {
         dismissFloatingMenus()
+        clearHomeReturnAnchor()
         postNavigationPath.append(.post(SelectedPostRoute(post: post)))
     }
 
@@ -502,8 +517,27 @@ private extension HomeTimelineView {
             }
             presentComposer()
         } else {
+            if newValue != .home {
+                clearHomeReturnAnchor()
+            }
             previousTab = newValue
         }
+    }
+
+    func handleHomeTabRetap() {
+        guard selectedTab == .home, selectedTimeline == .home, sessionStore.account != nil else { return }
+        dismissFloatingMenus()
+        if let returnAnchor = homeReturnAnchor {
+            homeScrollCommand = TimelineScrollCommand(target: .viewport(returnAnchor))
+            homeReturnAnchor = nil
+        } else {
+            homeReturnAnchor = homeViewportState
+            homeScrollCommand = TimelineScrollCommand(target: .top)
+        }
+    }
+
+    func clearHomeReturnAnchor() {
+        homeReturnAnchor = nil
     }
 
     func presentComposer() {
@@ -570,7 +604,7 @@ private extension HomeTimelineView {
 
     func refreshVisibleTimeline() async {
         guard sessionStore.account != nil, selectedTimeline == .home else { return }
-        if liveTimelineStore.pendingNewCount > 0 {
+        if liveTimelineStore.unmaterializedNewCount > 0 {
             await liveTimelineStore.applyPendingNewEvents()
             return
         }

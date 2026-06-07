@@ -6,9 +6,12 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
     @Binding var previousTab: TimelineTab
     let minimizeDirection: TabBarMinimizeDirection
     let isTabBarHidden: Bool
+    let hasUnmaterializedHomeEvents: Bool
+    let isHomeReturnMode: Bool
     let timelineList: TimelineContent
     let profileView: ProfileContent
     let onMinimizeDirectionChanged: (TabBarMinimizeDirection) -> Void
+    let onHomeRetap: () -> Void
     let onComposeTap: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -24,6 +27,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
 
         context.coordinator.installTabs(on: controller)
         context.coordinator.installDirectionProbe(on: controller)
+        context.coordinator.updateHomeTabPresentation()
         context.coordinator.select(selectedTab, on: controller)
         context.coordinator.setTabBarHidden(isTabBarHidden, on: controller, animated: false)
         return controller
@@ -34,6 +38,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
         controller.tabBarMinimizeBehavior = minimizeDirection.uiKitBehavior
         configureAppearance(for: controller)
         context.coordinator.updateHostedViews()
+        context.coordinator.updateHomeTabPresentation()
         context.coordinator.select(selectedTab, on: controller)
         context.coordinator.setTabBarHidden(isTabBarHidden, on: controller, animated: true)
     }
@@ -61,6 +66,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
         private weak var tabBarController: UITabBarController?
         private weak var directionProbeRecognizer: TabBarDirectionProbeGestureRecognizer?
         private weak var composeTapRecognizer: UITapGestureRecognizer?
+        private var lastHomeRetapTime: TimeInterval = 0
 
         init(parent: UIKitTimelineTabView) {
             self.parent = parent
@@ -108,6 +114,17 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
             if let host = hosts[activeTab] {
                 host.rootView = rootView(for: activeTab)
             }
+        }
+
+        func updateHomeTabPresentation() {
+            guard let homeTab = tabs[.home] else { return }
+            homeTab.image = UIImage(
+                systemName: TimelineTab.home.systemName(
+                    isSelected: parent.selectedTab == .home,
+                    isReturnMode: parent.isHomeReturnMode
+                )
+            )
+            homeTab.badgeValue = parent.hasUnmaterializedHomeEvents ? " " : nil
         }
 
         func select(_ tab: TimelineTab, on controller: UITabBarController) {
@@ -186,6 +203,9 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
 
         func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
             guard let tab = timelineTab(for: selectedTab), tab != .compose else { return }
+            if tab == .home, parent.selectedTab == .home {
+                notifyHomeRetapIfNeeded()
+            }
             parent.previousTab = tab
             parent.selectedTab = tab
         }
@@ -193,8 +213,18 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
         func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
             guard let selectedTab = viewController.tab else { return }
             guard let tab = timelineTab(for: selectedTab), tab != .compose else { return }
+            if tab == .home, parent.selectedTab == .home {
+                notifyHomeRetapIfNeeded()
+            }
             parent.previousTab = tab
             parent.selectedTab = tab
+        }
+
+        private func notifyHomeRetapIfNeeded() {
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - lastHomeRetapTime > 0.2 else { return }
+            lastHomeRetapTime = now
+            parent.onHomeRetap()
         }
 
         @objc private func handleComposeTabTap(_ recognizer: UITapGestureRecognizer) {
