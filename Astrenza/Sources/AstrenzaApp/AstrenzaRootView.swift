@@ -4,6 +4,7 @@ import SwiftUI
 struct AstrenzaRootView: View {
     @StateObject private var sessionStore = NostrSessionStore()
     @StateObject private var homeTimelineStore: NostrHomeTimelineStore
+    @AppStorage(AstrenzaThemeMode.storageKey) private var selectedThemeMode = AstrenzaThemeMode.system.rawValue
     private let launchMode = AstrenzaLaunchMode()
 
     init() {
@@ -31,5 +32,10 @@ struct AstrenzaRootView: View {
                 NostrLoginView(sessionStore: sessionStore)
             }
         }
+        .preferredColorScheme(themeMode.preferredColorScheme)
+    }
+
+    private var themeMode: AstrenzaThemeMode {
+        AstrenzaThemeMode(rawValue: selectedThemeMode) ?? .system
     }
 }

@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var selectedActionButtons = "Small"
     @State private var textScale = 0.2
     @State private var usesSystemTextSize = true
+    @AppStorage(AstrenzaThemeMode.storageKey) private var selectedThemeMode = AstrenzaThemeMode.system.rawValue
 
     init(
         onClose: @escaping () -> Void,
@@ -78,7 +79,8 @@ struct SettingsView: View {
                             selectedNameLayout: $selectedNameLayout,
                             selectedActionButtons: $selectedActionButtons,
                             textScale: $textScale,
-                            usesSystemTextSize: $usesSystemTextSize
+                            usesSystemTextSize: $usesSystemTextSize,
+                            selectedThemeMode: $selectedThemeMode
                         )
                     }
                     SettingsNavigationRow(title: "Behaviors", icon: "point.3.connected.trianglepath.dotted", tint: .orange) {
@@ -148,11 +150,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbarBackground(Color.astrenzaSettingsBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -162,12 +162,19 @@ private struct DisplaySettingsView: View {
     @Binding var selectedActionButtons: String
     @Binding var textScale: Double
     @Binding var usesSystemTextSize: Bool
+    @Binding var selectedThemeMode: String
 
     var body: some View {
         SettingsList {
             SettingsSection(title: "POST PREVIEW") {
                 SettingsPostPreviewCard()
                     .padding(16)
+            }
+
+            SettingsSection(title: "APPEARANCE") {
+                ForEach(AstrenzaThemeMode.allCases) { mode in
+                    SettingsChoiceRow(title: mode.title, value: mode.rawValue, selectedValue: $selectedThemeMode)
+                }
             }
 
             SettingsSection(title: "FONT") {
@@ -835,16 +842,17 @@ private struct SettingsToggleContent: View {
 
 private struct SettingsChoiceRow: View {
     let title: String
+    var value: String?
     @Binding var selectedValue: String
 
     var body: some View {
         Button {
-            selectedValue = title
+            selectedValue = value ?? title
         } label: {
             HStack {
                 Text(title)
                 Spacer()
-                if selectedValue == title {
+                if selectedValue == (value ?? title) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.blue)
@@ -963,7 +971,6 @@ extension View {
     func settingsNavigation(title: String) -> some View {
         navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbarBackground(Color.astrenzaSettingsBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
     }
@@ -982,9 +989,4 @@ extension View {
         font(.system(size: 15, weight: .bold, design: .rounded))
             .foregroundStyle(.secondary)
     }
-}
-
-extension Color {
-    static let astrenzaSettingsBackground = Color(red: 0.095, green: 0.095, blue: 0.105)
-    static let astrenzaSettingsCard = Color(red: 0.17, green: 0.17, blue: 0.18)
 }
