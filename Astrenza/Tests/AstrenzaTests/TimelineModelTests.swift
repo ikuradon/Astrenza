@@ -3130,6 +3130,294 @@ struct TimelineModelTests {
         #expect(try eventStore.event(id: targetEvent.id)?.content == "reposted source body")
     }
 
+    @Test("Home timeline store resolves NIP-05 for runtime profile dependencies")
+    @MainActor
+    func homeTimelineStoreResolvesNIP05ForRuntimeProfileDependencies() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let authorSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "39", count: 32))
+        let mentionedSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "3a", count: 32))
+        let account = NostrAccount(pubkey: authorSigner.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let note = try await authorSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: authorSigner.pubkey,
+                createdAt: 540,
+                kind: 1,
+                tags: [["p", mentionedSigner.pubkey]],
+                content: "runtime mention profile"
+            )
+        )
+        let mentionedMetadata = try await mentionedSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: mentionedSigner.pubkey,
+                createdAt: 541,
+                kind: 0,
+                tags: [],
+                content: #"{"display_name":"Runtime Mention","nip05":"mention@example.test"}"#
+            )
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-home-forward"]"#,
+            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: note)
+        ])
+        let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
+            FakeRelayRuntimeTransport(connection: connection)
+        }, autoReceive: false)
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "runtime-nip05-relays",
+                        kind: 10002,
+                        pubkey: authorSigner.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "runtime-nip05-follows",
+                        kind: 3,
+                        pubkey: authorSigner.pubkey,
+                        createdAt: 101,
+                        tags: [["p", authorSigner.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            nip05Resolver: FakeNIP05Resolver(resolutions: [
+                "mention@example.test": NostrNIP05Resolution(
+                    identifier: "mention@example.test",
+                    pubkey: mentionedSigner.pubkey,
+                    relays: [],
+                    status: .verified
+                )
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        let profileSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: mentionedSigner.pubkey)
+
+        await connection.appendInboundFrames([
+            try relayEventFrame(subscriptionID: profileSubscriptionID, event: mentionedMetadata),
+            try relayEOSEFrame(subscriptionID: profileSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let post = try await waitForTimelinePost(in: store, id: note.id) { post in
+            post.replyMention == nil && post.body == "runtime mention profile"
+        }
+        #expect(post.body == "runtime mention profile")
+        #expect(try eventStore.latestReplaceableEvent(pubkey: mentionedSigner.pubkey, kind: 0)?.id == mentionedMetadata.id)
+        let resolution = try await waitForNIP05Resolution(
+            in: eventStore,
+            accountID: authorSigner.pubkey,
+            pubkey: mentionedSigner.pubkey
+        )
+        #expect(resolution.status == .verified)
+    }
+
+    @Test("Home timeline store materializes runtime repost metadata")
+    @MainActor
+    func homeTimelineStoreMaterializesRuntimeRepostMetadata() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let reposterSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "3b", count: 32))
+        let targetSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "3c", count: 32))
+        let account = NostrAccount(pubkey: reposterSigner.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let targetEvent = try await targetSigner.sign(
+            NostrPublishInput.post(content: "metadata repost source body")
+                .unsignedEvent(pubkey: targetSigner.pubkey, createdAt: 440)
+        )
+        let repostEvent = try await reposterSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: reposterSigner.pubkey,
+                createdAt: 520,
+                kind: 6,
+                tags: [
+                    ["e", targetEvent.id],
+                    ["p", targetSigner.pubkey]
+                ],
+                content: ""
+            )
+        )
+        let reposterMetadata = try await reposterSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: reposterSigner.pubkey,
+                createdAt: 521,
+                kind: 0,
+                tags: [],
+                content: #"{"display_name":"Runtime Reposter"}"#
+            )
+        )
+        let targetMetadata = try await targetSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: targetSigner.pubkey,
+                createdAt: 522,
+                kind: 0,
+                tags: [],
+                content: #"{"display_name":"Runtime Target"}"#
+            )
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-home-forward"]"#,
+            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: repostEvent)
+        ])
+        let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
+            FakeRelayRuntimeTransport(connection: connection)
+        }, autoReceive: false)
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "repost-metadata-relays",
+                        kind: 10002,
+                        pubkey: reposterSigner.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "repost-metadata-follows",
+                        kind: 3,
+                        pubkey: reposterSigner.pubkey,
+                        createdAt: 101,
+                        tags: [["p", reposterSigner.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let sourceSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: targetEvent.id)
+        await connection.appendInboundFrames([
+            try relayEventFrame(subscriptionID: sourceSubscriptionID, event: targetEvent),
+            try relayEOSEFrame(subscriptionID: sourceSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let firstProfileSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: #""kinds":[0]"#)
+        await connection.appendInboundFrames([
+            try relayEventFrame(subscriptionID: firstProfileSubscriptionID, event: reposterMetadata),
+            try relayEventFrame(subscriptionID: firstProfileSubscriptionID, event: targetMetadata),
+            try relayEOSEFrame(subscriptionID: firstProfileSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let post = try await waitForTimelinePost(in: store, id: repostEvent.id) { post in
+            post.author.primaryText == "Runtime Target"
+                && post.repostedBy?.author.primaryText == "Runtime Reposter"
+        }
+        #expect(post.body == "metadata repost source body")
+        #expect(post.author.primaryText == "Runtime Target")
+        #expect(post.repostedBy?.author.primaryText == "Runtime Reposter")
+    }
+
+    @Test("Home timeline store materializes embedded repost target events")
+    @MainActor
+    func homeTimelineStoreMaterializesEmbeddedRepostTargetEvents() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let reposterSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "3d", count: 32))
+        let targetSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "3e", count: 32))
+        let account = NostrAccount(pubkey: reposterSigner.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let targetEvent = try await targetSigner.sign(
+            NostrPublishInput.post(content: "embedded repost source body")
+                .unsignedEvent(pubkey: targetSigner.pubkey, createdAt: 440)
+        )
+        let targetJSON = String(data: try JSONEncoder().encode(targetEvent), encoding: .utf8) ?? ""
+        let repostEvent = try await reposterSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: reposterSigner.pubkey,
+                createdAt: 520,
+                kind: 6,
+                tags: [
+                    ["e", targetEvent.id],
+                    ["p", targetSigner.pubkey]
+                ],
+                content: targetJSON
+            )
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-home-forward"]"#,
+            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: repostEvent)
+        ])
+        let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
+            FakeRelayRuntimeTransport(connection: connection)
+        }, autoReceive: false)
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "embedded-repost-relays",
+                        kind: 10002,
+                        pubkey: reposterSigner.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "embedded-repost-follows",
+                        kind: 3,
+                        pubkey: reposterSigner.pubkey,
+                        createdAt: 101,
+                        tags: [["p", reposterSigner.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let post = try await waitForTimelinePost(in: store, id: repostEvent.id) { post in
+            post.body == "embedded repost source body"
+        }
+        #expect(post.body == "embedded repost source body")
+        #expect(try eventStore.event(id: targetEvent.id)?.content == "embedded repost source body")
+    }
+
     @Test("Home timeline store materializes backward reply parent events")
     @MainActor
     func homeTimelineStoreMaterializesBackwardReplyParentEvents() async throws {
@@ -4515,6 +4803,24 @@ private func waitForLinkPreview(
 }
 
 @MainActor
+private func waitForNIP05Resolution(
+    in store: NostrEventStore,
+    accountID: String,
+    pubkey: String,
+    attempts: Int = 100
+) async throws -> NostrNIP05Resolution {
+    for _ in 0..<attempts {
+        if let resolution = try store.homeTimelineState(accountID: accountID)?
+            .nip05Resolutions[pubkey] {
+            return resolution
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    return try #require(try store.homeTimelineState(accountID: accountID)?.nip05Resolutions[pubkey])
+}
+
+@MainActor
 private func waitForTimelinePost(
     in store: NostrHomeTimelineStore,
     id: String,
@@ -4615,6 +4921,32 @@ private actor FakeStoreRelayClient: NostrRelayFetching {
 
     func fetchSubscriptionIDs() -> [String] {
         fetchCalls
+    }
+}
+
+private struct FakeNIP05Resolver: NostrNIP05Resolving {
+    let resolutions: [String: NostrNIP05Resolution]
+
+    func resolve(identifier: String, expectedPubkey: String?) async -> NostrNIP05Resolution {
+        if let resolution = resolutions[identifier] {
+            if let expectedPubkey, let pubkey = resolution.pubkey, pubkey != expectedPubkey {
+                return NostrNIP05Resolution(
+                    identifier: resolution.identifier,
+                    pubkey: pubkey,
+                    relays: resolution.relays,
+                    status: .invalid,
+                    resolvedAt: resolution.resolvedAt
+                )
+            }
+            return resolution
+        }
+
+        return NostrNIP05Resolution(
+            identifier: identifier,
+            pubkey: nil,
+            relays: [],
+            status: .failed
+        )
     }
 }
 

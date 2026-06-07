@@ -919,9 +919,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         else { return }
         guard followedPubkeys.isEmpty || followedPubkeys.contains(event.pubkey) else { return }
 
+        let embeddedTarget = embeddedRepostTarget(from: event)
+        let eventsToSave = [event] + (embeddedTarget.map { [$0] } ?? [])
         do {
-            try eventStore?.save(events: [event])
-            try eventStore?.recordEventSources(eventIDs: [event.id], relayURL: relayURL)
+            try eventStore?.save(events: eventsToSave)
+            try eventStore?.recordEventSources(eventIDs: eventsToSave.map(\.id), relayURL: relayURL)
         } catch {
             recordRuntimeSyncEvent(
                 relayURL: relayURL,
@@ -941,6 +943,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         } else {
             saveHomeTimelineIndex(events: [event], account: account, source: "forward")
             enqueueBackwardDependencies(for: event)
+            embeddedTarget.map(enqueueBackwardDependencies)
             if isTimelineAtNewestWindow && pendingNewEventIDs.isEmpty {
                 reloadNewestProjectionWindow(account: account)
                 materializeEntries()
@@ -967,9 +970,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         let requestKey = pendingBackwardRequestKey(for: subscriptionID)
         let request = requestKey.flatMap { pendingBackwardRequests[$0] }
 
+        let embeddedTarget = embeddedRepostTarget(from: event)
+        let eventsToSave = [event] + (embeddedTarget.map { [$0] } ?? [])
         do {
-            try eventStore?.save(events: [event])
-            try eventStore?.recordEventSources(eventIDs: [event.id], relayURL: relayURL)
+            try eventStore?.save(events: eventsToSave)
+            try eventStore?.recordEventSources(eventIDs: eventsToSave.map(\.id), relayURL: relayURL)
         } catch {
             recordRuntimeSyncEvent(
                 relayURL: relayURL,
@@ -985,6 +990,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents.removeAll { $0.pubkey == event.pubkey }
             metadataEvents.append(event)
             pendingProfilePubkeys.remove(event.pubkey)
+            resolveNIP05IfNeeded(for: event)
             scheduleMaterializeEntries()
         case 1, 6:
             if request?.isOlderPage == true || request?.gap != nil {
@@ -999,6 +1005,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
             pendingSourceEventIDs.remove(event.id)
             enqueueBackwardDependencies(for: event)
+            embeddedTarget.map(enqueueBackwardDependencies)
             if request?.isOlderPage == true || request?.gap != nil {
                 scheduleMaterializeEntries()
             } else {
@@ -1059,6 +1066,54 @@ final class NostrHomeTimelineStore: ObservableObject {
             bufferedSourceEventIDsByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(ids)
         }
         scheduleBackwardDependencyFlush()
+    }
+
+    private func embeddedRepostTarget(from event: NostrEvent) -> NostrEvent? {
+        guard event.kind == 6,
+              let data = event.content.data(using: .utf8),
+              let embedded = try? JSONDecoder().decode(NostrEvent.self, from: data),
+              embedded.kind == 1,
+              embedded.hasValidShape
+        else {
+            return nil
+        }
+        return embedded
+    }
+
+    private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
+        guard let metadata = Self.profileMetadata(from: metadataEvent) else { return }
+        let identifier = metadata.nip05?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !identifier.isEmpty else {
+            nip05Resolutions.removeValue(forKey: metadataEvent.pubkey)
+            if let account {
+                persistDatabase(account: account)
+            }
+            return
+        }
+        guard nip05Resolutions[metadataEvent.pubkey]?.identifier != identifier else {
+            if let account {
+                persistDatabase(account: account)
+            }
+            return
+        }
+
+        let resolver = timelineLoader.nip05Resolver
+        Task { [weak self] in
+            let resolution = await resolver.resolve(identifier: identifier, expectedPubkey: metadataEvent.pubkey)
+            await MainActor.run {
+                guard let self else { return }
+                let latestMetadata = NostrHomeTimelineMaterializer
+                    .latestMetadataByPubkey(self.metadataEvents)[metadataEvent.pubkey]
+                guard latestMetadata?.nip05?.trimmingCharacters(in: .whitespacesAndNewlines) == resolution.identifier else {
+                    return
+                }
+                self.nip05Resolutions[metadataEvent.pubkey] = resolution
+                self.scheduleMaterializeEntries()
+                if let account = self.account {
+                    self.persistDatabase(account: account)
+                }
+            }
+        }
     }
 
     private func scheduleBackwardDependencyFlush() {
@@ -2024,7 +2079,12 @@ enum NostrTimelineMaterializer {
             .compactMap { repostEvent in
                 guard let targetID = repostTargetID(from: repostEvent) else { return nil }
 
-                let attribution = repostAttribution(for: repostEvent, followedPubkeys: followedPubkeys)
+                let attribution = repostAttribution(
+                    for: repostEvent,
+                    metadataEvents: metadataEvents,
+                    nip05Resolutions: nip05Resolutions,
+                    followedPubkeys: followedPubkeys
+                )
                 guard let targetEvent = eventsByID[targetID],
                       targetEvent.kind == 1
                 else {
@@ -2064,22 +2124,37 @@ enum NostrTimelineMaterializer {
 
     private static func repostAttribution(
         for repostEvent: NostrEvent,
+        metadataEvents: [NostrEvent],
+        nip05Resolutions: [String: NostrNIP05Resolution],
         followedPubkeys: Set<String>
     ) -> TimelineRepostAttribution {
+        let metadata = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)[repostEvent.pubkey]
         let repostItem = NostrHomeTimelineItem(
             id: repostEvent.id,
             pubkey: repostEvent.pubkey,
-            displayName: nil,
-            nip05: nil,
-            nip05Status: .absent,
+            displayName: metadata?.bestName,
+            nip05: metadata?.nip05,
+            nip05Status: coreNIP05Status(metadata: metadata, resolution: nip05Resolutions[repostEvent.pubkey]),
             isFollowed: followedPubkeys.contains(repostEvent.pubkey),
             body: "",
             createdAt: repostEvent.createdAt,
-            avatarPictureState: .metadataPending,
-            avatarImageURL: nil
+            avatarPictureState: avatarPictureState(for: metadata),
+            avatarImageURL: metadata?.pictureURL
         )
+        let author: TimelineAuthor
+        if let displayName = repostItem.displayName {
+            author = .resolved(
+                displayName: displayName,
+                nip05: repostItem.nip05,
+                nip05Status: NIP05Status(repostItem.nip05Status),
+                pubkey: repostItem.pubkey,
+                isFollowed: repostItem.isFollowed
+            )
+        } else {
+            author = .unresolved(pubkey: repostEvent.pubkey)
+        }
         return TimelineRepostAttribution(
-            author: .unresolved(pubkey: repostEvent.pubkey),
+            author: author,
             avatar: avatar(for: repostItem),
             timestamp: relativeTimestamp(from: repostEvent.createdAt)
         )
@@ -2130,6 +2205,20 @@ enum NostrTimelineMaterializer {
             placeholderSeed: item.pubkey,
             imageURL: item.avatarImageURL
         )
+    }
+
+    private static func avatarPictureState(for metadata: NostrProfileMetadata?) -> NostrAvatarPictureState {
+        guard let metadata else { return .metadataPending }
+        return metadata.pictureURL == nil ? .missing : .resolved
+    }
+
+    private static func coreNIP05Status(
+        metadata: NostrProfileMetadata?,
+        resolution: NostrNIP05Resolution?
+    ) -> NostrNIP05Status {
+        guard let identifier = metadata?.nip05, !identifier.isEmpty else { return .absent }
+        guard let resolution, resolution.identifier == identifier else { return .unchecked }
+        return resolution.status
     }
 
     static func avatarPalette(for pubkey: String) -> (primary: Color, secondary: Color) {
