@@ -19,6 +19,7 @@ public struct NostrRichContent: Equatable, Sendable {
 public enum NostrRichContentToken: Equatable, Sendable {
     case text(String)
     case url(url: URL)
+    case hashtag(String)
     case profile(pubkey: String, relays: [String])
     case event(eventID: String, relays: [String], author: String?, kind: Int?)
     case customEmoji(shortcode: String, url: URL)
@@ -29,6 +30,8 @@ public enum NostrRichContentToken: Equatable, Sendable {
             text
         case .url(let url):
             url.absoluteString
+        case .hashtag(let value):
+            "#\(value)"
         case .profile(let pubkey, _):
             profileDisplay(pubkey: pubkey)
         case .event(let eventID, _, _, _):
@@ -67,7 +70,12 @@ public enum NostrRichContentParser {
         var tokens: [NostrRichContentToken] = []
         var references: [NostrRichContentReference] = []
 
-        for rawToken in event.content.split(whereSeparator: \.isWhitespace).map(String.init) {
+        for rawToken in lexicalTokens(from: event.content) {
+            if rawToken.allSatisfy(\.isWhitespace) {
+                appendText(rawToken, to: &tokens)
+                continue
+            }
+
             let token = trimmedToken(rawToken)
             guard !token.value.isEmpty else { continue }
 
@@ -80,14 +88,22 @@ public enum NostrRichContentParser {
                 continue
             }
 
+            if let hashtag = hashtag(from: token.value) {
+                tokens.append(.hashtag(hashtag))
+                appendTrailing(token.trailing, to: &tokens)
+                continue
+            }
+
             if let emojiToken = customEmojiToken(from: token.value, customEmojis: customEmojis, trailing: token.trailing) {
                 tokens.append(emojiToken)
+                appendTrailing(token.trailing, to: &tokens)
                 continue
             }
 
             if let profile = profileReference(from: token.value) {
                 tokens.append(.profile(pubkey: profile.pubkey, relays: profile.relays))
                 references.append(.profile(pubkey: profile.pubkey, relays: profile.relays))
+                appendTrailing(token.trailing, to: &tokens)
                 continue
             }
 
@@ -104,17 +120,45 @@ public enum NostrRichContentParser {
                     author: eventReference.author,
                     kind: eventReference.kind
                 ))
+                appendTrailing(token.trailing, to: &tokens)
                 continue
             }
 
-            tokens.append(.text(rawToken))
+            appendText(rawToken, to: &tokens)
         }
 
         return NostrRichContent(
-            displayText: tokens.map(\.displayText).joined(separator: " "),
+            displayText: displayText(from: tokens),
             tokens: tokens,
             references: references
         )
+    }
+
+    private static func lexicalTokens(from content: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        var currentIsWhitespace: Bool?
+
+        for character in content {
+            let isWhitespace = character.isWhitespace
+            if currentIsWhitespace == nil || currentIsWhitespace == isWhitespace {
+                current.append(character)
+                currentIsWhitespace = isWhitespace
+            } else {
+                result.append(current)
+                current = String(character)
+                currentIsWhitespace = isWhitespace
+            }
+        }
+
+        if !current.isEmpty {
+            result.append(current)
+        }
+        return result
+    }
+
+    private static func displayText(from tokens: [NostrRichContentToken]) -> String {
+        tokens.map(\.displayText).joined()
     }
 
     private static func customEmojiMap(from tags: [[String]]) -> [String: URL] {
@@ -144,6 +188,15 @@ public enum NostrRichContentParser {
         return .customEmoji(shortcode: shortcode, url: url)
     }
 
+    private static func hashtag(from token: String) -> String? {
+        guard token.hasPrefix("#"), token.count > 1 else { return nil }
+        let value = String(token.dropFirst())
+        guard value.unicodeScalars.allSatisfy({ scalar in
+            CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
+        }) else { return nil }
+        return value
+    }
+
     private static func profileReference(from token: String) -> NostrNIP19ProfileReference? {
         guard isNIP19Token(token, prefixes: ["npub", "nprofile"]) else { return nil }
         return try? NostrNIP19.profileReference(from: token)
@@ -170,6 +223,23 @@ public enum NostrRichContentParser {
             value.removeLast()
         }
         return (value, trailing)
+    }
+
+    private static func appendTrailing(_ trailing: String, to tokens: inout [NostrRichContentToken]) {
+        guard !trailing.isEmpty else { return }
+        appendText(trailing, to: &tokens)
+    }
+
+    private static func appendText(_ text: String, to tokens: inout [NostrRichContentToken]) {
+        guard !text.isEmpty else { return }
+        if text.allSatisfy(\.isWhitespace),
+           let last = tokens.last,
+           case .text(let previousText) = last,
+           previousText.allSatisfy(\.isWhitespace)
+        {
+            return
+        }
+        tokens.append(.text(text))
     }
 
     private static var trailingPunctuation: CharacterSet {

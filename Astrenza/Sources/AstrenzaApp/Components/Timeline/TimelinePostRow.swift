@@ -29,22 +29,22 @@ struct TimelinePostRow: View {
     }
 
     private var rowContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             if let repostedBy = post.repostedBy {
                 RepostAttributionView(attribution: repostedBy)
-                    .padding(.leading, 47)
-                    .padding(.trailing, 16)
+                    .padding(.leading, AstrenzaTimelineMetrics.avatarSize - 7)
+                    .padding(.trailing, AstrenzaTimelineMetrics.rowHorizontalPadding)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: handleRowTap)
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                AvatarView(style: post.avatar, size: 54)
+            HStack(alignment: .top, spacing: AstrenzaTimelineMetrics.rowAvatarSpacing) {
+                AvatarView(style: post.avatar, size: AstrenzaTimelineMetrics.avatarSize)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: handleAvatarTap)
                     .accessibilityIdentifier("timeline.avatar.\(post.id)")
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: AstrenzaTimelineMetrics.rowContentSpacing) {
                     if let replyContext = post.replyContext {
                         TimelineReplyContextView(context: replyContext, style: .timeline)
                             .padding(.bottom, -2)
@@ -62,12 +62,12 @@ struct TimelinePostRow: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, AstrenzaTimelineMetrics.rowHorizontalPadding)
+        .padding(.vertical, AstrenzaTimelineMetrics.rowVerticalPadding)
         .overlay(alignment: .bottom) {
             Divider()
                 .overlay(Color.astrenzaSeparator)
-                .padding(.leading, 82)
+                .padding(.leading, AstrenzaTimelineMetrics.rowHorizontalPadding + AstrenzaTimelineMetrics.avatarSize + AstrenzaTimelineMetrics.rowAvatarSpacing)
         }
         .contentShape(Rectangle())
     }
@@ -86,7 +86,7 @@ struct TimelinePostRow: View {
             }
 
             Text(post.timestamp)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .font(.system(size: AstrenzaTimelineMetrics.timestampFontSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .fixedSize()
@@ -107,7 +107,7 @@ struct TimelinePostRow: View {
     }
 
     private var postContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             textContent
 
             bodySummaryContent
@@ -130,6 +130,7 @@ struct TimelinePostRow: View {
         if post.richBody != nil {
             bodyText
                 .environment(\.openURL, OpenURLAction(handler: handleRichTextURL))
+                .onTapGesture(perform: handleRowTap)
         } else {
             bodyText
                 .onTapGesture(perform: handleRowTap)
@@ -162,7 +163,7 @@ struct TimelinePostRow: View {
     }
 
     private var attachmentContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if let quotedPost = post.quotedPost {
                 Button {
                     openEmbeddedPost(quotedPost.timelinePost())
@@ -274,7 +275,7 @@ struct TimelinePostRow: View {
             )
             .floatingActionAnchor(postID: post.id, kind: .more, isEnabled: needsFloatingActionAnchors)
         }
-        .padding(.top, 4)
+        .padding(.top, 2)
     }
 }
 
@@ -322,6 +323,8 @@ private extension TimelinePostRow {
     }
 
     func handleRichTextURL(_ url: URL) -> OpenURLAction.Result {
+        didHandleActionGesture = true
+
         guard url.scheme == "astrenza" else {
             onOpenURL(url)
             return .handled
@@ -334,6 +337,10 @@ private extension TimelinePostRow {
 
         if url.host == "event" {
             onOpenPost(post)
+            return .handled
+        }
+
+        if url.host == "hashtag" {
             return .handled
         }
 

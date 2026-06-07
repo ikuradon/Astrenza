@@ -754,6 +754,20 @@ struct NostrCorePackageTests {
         )))
     }
 
+    @Test("Rich content preserves line breaks and parses hashtags")
+    func richContentPreservesLineBreaksAndParsesHashtags() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "first line\n#nostr second line\n#swift_lang"
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+
+        #expect(rich.displayText == "first line\n#nostr second line\n#swift_lang")
+        #expect(rich.tokens.contains(.hashtag("nostr")))
+        #expect(rich.tokens.contains(.hashtag("swift_lang")))
+    }
+
     @Test("Rich content parses profile and event references")
     func richContentParsesNostrReferences() throws {
         let pubkey = String(repeating: "c", count: 64)

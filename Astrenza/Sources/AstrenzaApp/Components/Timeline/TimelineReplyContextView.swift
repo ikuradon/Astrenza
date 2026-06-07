@@ -10,7 +10,7 @@ struct TimelineReplyContextView: View {
     let style: TimelineReplyContextStyle
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 6) {
             AvatarView(style: context.avatar, size: avatarSize)
 
             Text(context.author.primaryText)
@@ -25,8 +25,8 @@ struct TimelineReplyContextView: View {
         }
         .foregroundStyle(.secondary)
         .padding(.leading, 4)
-        .padding(.trailing, 10)
-        .padding(.vertical, 4)
+        .padding(.trailing, 9)
+        .padding(.vertical, 3)
         .background(backgroundColor, in: Capsule())
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel("\(context.author.primaryText) reply context")
@@ -34,19 +34,19 @@ struct TimelineReplyContextView: View {
 
     private var avatarSize: CGFloat {
         switch style {
-        case .timeline: 24
+        case .timeline: AstrenzaTimelineMetrics.contextAvatarSize
         }
     }
 
     private var fontSize: CGFloat {
         switch style {
-        case .timeline: 13
+        case .timeline: 12
         }
     }
 
     private var iconSize: CGFloat {
         switch style {
-        case .timeline: 12
+        case .timeline: 11
         }
     }
 
@@ -61,7 +61,7 @@ struct TimelineReplyContextView: View {
 struct TimelineReplyMarker: View {
     var body: some View {
         Image(systemName: "bubble.left.and.bubble.right")
-            .font(.system(size: 14, weight: .black))
+            .font(.system(size: 12, weight: .black))
             .foregroundStyle(.secondary)
             .accessibilityLabel("Reply")
     }
@@ -79,17 +79,17 @@ struct TimelineBodySummaryPill: View {
     var prominence: TimelineBodySummaryProminence = .normal
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Image(systemName: systemName)
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: 10, weight: .black))
 
             Text(text)
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
                 .lineLimit(1)
         }
         .foregroundStyle(foregroundStyle)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
         .background(backgroundColor, in: Capsule())
         .overlay {
             Capsule()
@@ -136,13 +136,12 @@ struct TimelinePostBodyText: View {
     let text: String
     var richContent: NostrRichContent? = nil
     let mention: TimelineReplyMention?
-    var fontSize: CGFloat = 18
     var lineLimit: Int?
 
     var bodyView: some View {
         Text(attributedText)
-            .font(.system(size: fontSize, weight: .regular))
-            .lineSpacing(3)
+            .font(.system(size: AstrenzaTimelineMetrics.bodyFontSize, weight: .regular))
+            .lineSpacing(AstrenzaTimelineMetrics.bodyLineSpacing)
             .lineLimit(lineLimit)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -161,10 +160,7 @@ struct TimelinePostBodyText: View {
         }
 
         if let richContent {
-            for (index, token) in richContent.tokens.enumerated() {
-                if index > 0 {
-                    result += AttributedString(" ")
-                }
+            for token in richContent.tokens {
                 result += attributedToken(token)
             }
         } else {
@@ -184,6 +180,9 @@ struct TimelinePostBodyText: View {
         case .url(let url):
             part.foregroundColor = Color.astrenzaAccent
             part.link = url
+        case .hashtag(let hashtag):
+            part.foregroundColor = Color.astrenzaAccent
+            part.link = URL(string: "astrenza://hashtag/\(hashtag)")
         case .profile(let pubkey, _):
             part.foregroundColor = Color.astrenzaAccent
             part.link = URL(string: "astrenza://profile/\(pubkey)")
