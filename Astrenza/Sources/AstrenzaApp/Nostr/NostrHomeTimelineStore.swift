@@ -2404,7 +2404,10 @@ enum NostrTimelineMaterializer {
                     colors: [palette.primary, palette.secondary],
                     symbolName: asset.mimeType?.hasPrefix("video/") == true ? "play.rectangle" : "photo",
                     url: url,
-                    altText: asset.alt
+                    altText: asset.alt,
+                    width: asset.width,
+                    height: asset.height,
+                    blurhash: asset.blurhash
                 )
             }
             if !tiles.isEmpty {
@@ -2421,7 +2424,10 @@ enum NostrTimelineMaterializer {
                     colors: [palette.primary, palette.secondary],
                     symbolName: attachment.mimeType?.hasPrefix("video/") == true ? "play.rectangle" : "photo",
                     url: url,
-                    altText: attachment.alt
+                    altText: attachment.alt,
+                    width: attachment.width,
+                    height: attachment.height,
+                    blurhash: attachment.blurhash
                 )
             }
             return .gallery(Array(tiles))

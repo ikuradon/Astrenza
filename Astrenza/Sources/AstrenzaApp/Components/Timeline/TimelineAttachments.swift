@@ -1,5 +1,7 @@
 import SwiftUI
 import SafariServices
+import UIKit
+import simd
 
 struct TimelineMediaView: View {
     let media: TimelineMedia
@@ -365,7 +367,8 @@ struct TimelineInAppBrowserView: UIViewControllerRepresentable {
 private struct GalleryAttachmentView: View {
     let tiles: [MediaTile]
 
-    private let aspectRatio: CGFloat = 1.9
+    private let landscapeAspectRatio: CGFloat = 1.9
+    private let portraitGalleryAspectRatio: CGFloat = 1 / 1.9
 
     var body: some View {
         Group {
@@ -403,8 +406,20 @@ private struct GalleryAttachmentView: View {
                 }
             }
         }
-        .aspectRatio(aspectRatio, contentMode: .fit)
+        .aspectRatio(resolvedAspectRatio, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var resolvedAspectRatio: CGFloat {
+        switch tiles.count {
+        case 1:
+            guard let aspectRatio = tiles.first?.aspectRatio else { return landscapeAspectRatio }
+            return min(max(aspectRatio, 0.72), landscapeAspectRatio)
+        case 2, 3:
+            return tiles.contains(where: \.isPortrait) ? portraitGalleryAspectRatio : landscapeAspectRatio
+        default:
+            return landscapeAspectRatio
+        }
     }
 }
 
@@ -412,22 +427,27 @@ private struct TimelineMediaTileView: View {
     let tile: MediaTile
     var overlayCount: Int?
 
+    @StateObject private var loader = RemoteMediaImageLoader()
+
     var body: some View {
         ZStack {
-            LinearGradient(colors: tile.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            mediaContent
                 .blur(radius: overlayCount == nil ? 0 : 8)
 
-            Image(systemName: tile.symbolName)
-                .font(.system(size: 42, weight: .bold))
-                .foregroundStyle(.white.opacity(0.88))
-                .blur(radius: overlayCount == nil ? 0 : 5)
+            if tile.isVideo {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 24, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(.black.opacity(0.42), in: Circle())
+                    .shadow(color: .black.opacity(0.3), radius: 14, y: 4)
+                    .blur(radius: overlayCount == nil ? 0 : 5)
+            }
 
-            Text(tile.title)
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .opacity(overlayCount == nil ? 1 : 0.35)
+            if loader.image == nil {
+                fallbackLabel
+                    .opacity(overlayCount == nil ? 1 : 0.35)
+            }
 
             if let overlayCount {
                 Rectangle()
@@ -442,6 +462,85 @@ private struct TimelineMediaTileView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .compositingGroup()
         .clipped()
+        .task(id: tile.url) {
+            await loader.load(url: tile.url)
+        }
+    }
+
+    @ViewBuilder
+    private var mediaContent: some View {
+        if let image = loader.image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            BlurHashPlaceholderView(blurhash: tile.blurhash, colors: tile.colors)
+
+            Image(systemName: tile.symbolName)
+                .font(.system(size: 42, weight: .bold))
+                .foregroundStyle(.white.opacity(0.88))
+                .blur(radius: overlayCount == nil ? 0 : 5)
+        }
+    }
+
+    private var fallbackLabel: some View {
+        Text(tile.title)
+            .font(.system(size: 14, weight: .heavy, design: .rounded))
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+    }
+}
+
+@MainActor
+private final class RemoteMediaImageLoader: ObservableObject {
+    @Published var image: UIImage?
+
+    private var currentURL: URL?
+
+    func load(url: URL?) async {
+        guard let url else {
+            currentURL = nil
+            image = nil
+            return
+        }
+
+        if currentURL == url, image != nil { return }
+        if currentURL != url {
+            image = nil
+        }
+        currentURL = url
+
+        if let cachedImage = NostrImageCache.shared.cachedImage(for: url) {
+            image = cachedImage
+            return
+        }
+
+        do {
+            let loadedImage = try await NostrImageCache.shared.image(for: url)
+            guard currentURL == url else { return }
+            image = loadedImage
+        } catch {
+            guard currentURL == url else { return }
+            image = nil
+        }
+    }
+}
+
+private struct BlurHashPlaceholderView: View {
+    let blurhash: String?
+    let colors: [Color]
+
+    var body: some View {
+        if let blurhash,
+           let image = BlurHashDecoder.image(from: blurhash, width: 32, height: 32) {
+            Image(uiImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFill()
+        } else {
+            LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
     }
 }
 
@@ -641,6 +740,141 @@ private struct UnresolvedLinkAttachmentView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        }
+    }
+}
+
+private enum BlurHashDecoder {
+    private nonisolated(unsafe) static let cache = NSCache<NSString, UIImage>()
+
+    static func image(from blurhash: String, width: Int, height: Int) -> UIImage? {
+        guard width > 0, height > 0 else { return nil }
+        let cacheKey = "\(blurhash)|\(width)x\(height)" as NSString
+        if let cachedImage = cache.object(forKey: cacheKey) {
+            return cachedImage
+        }
+
+        guard let decodedImage = decode(blurhash, width: width, height: height) else { return nil }
+        cache.setObject(decodedImage, forKey: cacheKey)
+        return decodedImage
+    }
+
+    private static func decode(_ blurhash: String, width: Int, height: Int) -> UIImage? {
+        let scalars = Array(blurhash.unicodeScalars)
+        guard scalars.count >= 6,
+              let sizeFlag = Base83.decode(scalars[0]),
+              let quantizedMaximumValue = Base83.decode(scalars[1])
+        else { return nil }
+
+        let componentX = (sizeFlag % 9) + 1
+        let componentY = (sizeFlag / 9) + 1
+        let expectedLength = 4 + (2 * componentX * componentY)
+        guard scalars.count == expectedLength else { return nil }
+
+        let maximumValue = Double(quantizedMaximumValue + 1) / 166.0
+        var colors: [SIMD3<Double>] = []
+        colors.reserveCapacity(componentX * componentY)
+
+        guard let dcValue = Base83.decode(String(String.UnicodeScalarView(scalars[2..<6]))) else {
+            return nil
+        }
+        colors.append(decodeDC(dcValue))
+
+        for index in 1..<(componentX * componentY) {
+            let start = 4 + (index * 2)
+            guard let acValue = Base83.decode(String(String.UnicodeScalarView(scalars[start..<(start + 2)]))) else {
+                return nil
+            }
+            colors.append(decodeAC(acValue, maximumValue: maximumValue))
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
+        return renderer.image { context in
+            for y in 0..<height {
+                for x in 0..<width {
+                    var linearRGB = SIMD3<Double>(repeating: 0)
+
+                    for componentIndexY in 0..<componentY {
+                        for componentIndexX in 0..<componentX {
+                            let basis = cos(Double.pi * Double(x) * Double(componentIndexX) / Double(width))
+                                * cos(Double.pi * Double(y) * Double(componentIndexY) / Double(height))
+                            let color = colors[componentIndexX + componentIndexY * componentX]
+                            linearRGB += color * basis
+                        }
+                    }
+
+                    let uiColor = UIColor(
+                        red: linearToSRGB(linearRGB.x),
+                        green: linearToSRGB(linearRGB.y),
+                        blue: linearToSRGB(linearRGB.z),
+                        alpha: 1
+                    )
+                    context.cgContext.setFillColor(uiColor.cgColor)
+                    context.cgContext.fill(CGRect(x: x, y: y, width: 1, height: 1))
+                }
+            }
+        }
+    }
+
+    private static func decodeDC(_ value: Int) -> SIMD3<Double> {
+        let red = value >> 16
+        let green = (value >> 8) & 255
+        let blue = value & 255
+        return SIMD3(
+            srgbToLinear(red),
+            srgbToLinear(green),
+            srgbToLinear(blue)
+        )
+    }
+
+    private static func decodeAC(_ value: Int, maximumValue: Double) -> SIMD3<Double> {
+        let quantizedRed = value / (19 * 19)
+        let quantizedGreen = (value / 19) % 19
+        let quantizedBlue = value % 19
+        return SIMD3(
+            signedPow((Double(quantizedRed) - 9) / 9, 2) * maximumValue,
+            signedPow((Double(quantizedGreen) - 9) / 9, 2) * maximumValue,
+            signedPow((Double(quantizedBlue) - 9) / 9, 2) * maximumValue
+        )
+    }
+
+    private static func signedPow(_ value: Double, _ exponent: Double) -> Double {
+        copysign(pow(abs(value), exponent), value)
+    }
+
+    private static func srgbToLinear(_ value: Int) -> Double {
+        let normalized = Double(value) / 255.0
+        if normalized <= 0.04045 {
+            return normalized / 12.92
+        }
+        return pow((normalized + 0.055) / 1.055, 2.4)
+    }
+
+    private static func linearToSRGB(_ value: Double) -> CGFloat {
+        let clampedValue = min(max(value, 0), 1)
+        if clampedValue <= 0.0031308 {
+            return CGFloat(clampedValue * 12.92)
+        }
+        return CGFloat((1.055 * pow(clampedValue, 1.0 / 2.4)) - 0.055)
+    }
+
+    private enum Base83 {
+        private static let alphabet = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~".unicodeScalars)
+        private static let values = Dictionary(uniqueKeysWithValues: alphabet.enumerated().map { ($0.element, $0.offset) })
+
+        static func decode(_ scalar: Unicode.Scalar) -> Int? {
+            values[scalar]
+        }
+
+        static func decode(_ string: String) -> Int? {
+            var value = 0
+            for scalar in string.unicodeScalars {
+                guard let digit = values[scalar] else { return nil }
+                value = value * 83 + digit
+            }
+            return value
         }
     }
 }

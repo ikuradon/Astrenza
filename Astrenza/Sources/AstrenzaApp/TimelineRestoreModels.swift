@@ -221,13 +221,27 @@ enum TimelineLayoutEstimator {
 
     private static func mediaEstimatedHeight(_ media: TimelineMedia) -> CGFloat {
         switch media {
-        case .gallery:
-            return 218
+        case .gallery(let tiles):
+            return galleryEstimatedHeight(tiles)
         case .linkPreview(let preview):
             return preview.imageURL == nil ? 226 : 252
         case .unresolvedLink:
             return 72
         }
+    }
+
+    private static func galleryEstimatedHeight(_ tiles: [MediaTile]) -> CGFloat {
+        let estimatedWidth: CGFloat = 414
+        let aspectRatio: CGFloat
+        switch tiles.count {
+        case 1:
+            aspectRatio = min(max(tiles.first?.aspectRatio ?? 1.9, 0.72), 1.9)
+        case 2, 3:
+            aspectRatio = tiles.contains(where: \.isPortrait) ? (1 / 1.9) : 1.9
+        default:
+            aspectRatio = 1.9
+        }
+        return min(max(estimatedWidth / aspectRatio, 160), 420)
     }
 }
 

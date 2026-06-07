@@ -816,13 +816,19 @@ struct MediaTile: Identifiable {
     let symbolName: String
     let url: URL?
     let altText: String?
+    let width: Int?
+    let height: Int?
+    let blurhash: String?
 
     init(
         title: String,
         colors: [Color],
         symbolName: String,
         url: URL? = nil,
-        altText: String? = nil
+        altText: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        blurhash: String? = nil
     ) {
         self.id = url?.absoluteString ?? "\(title)|\(symbolName)|\(altText ?? "")"
         self.title = title
@@ -830,6 +836,23 @@ struct MediaTile: Identifiable {
         self.symbolName = symbolName
         self.url = url
         self.altText = altText
+        self.width = width
+        self.height = height
+        self.blurhash = blurhash
+    }
+
+    var aspectRatio: CGFloat? {
+        guard let width, let height, width > 0, height > 0 else { return nil }
+        return CGFloat(width) / CGFloat(height)
+    }
+
+    var isPortrait: Bool {
+        guard let aspectRatio else { return false }
+        return aspectRatio < 0.82
+    }
+
+    var isVideo: Bool {
+        symbolName == "play.rectangle"
     }
 }
 

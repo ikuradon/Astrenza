@@ -305,7 +305,7 @@ struct TimelineModelTests {
             eventID: note.id,
             url: "https://cdn.example.test/alt.png",
             mimeType: "image/png",
-            blurhash: nil,
+            blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
             width: 640,
             height: 480,
             alt: "Alt text from imeta",
@@ -328,6 +328,9 @@ struct TimelineModelTests {
             #expect(tiles[0].title == "Alt text from imeta")
             #expect(tiles[0].altText == "Alt text from imeta")
             #expect(tiles[0].url?.absoluteString == "https://cdn.example.test/alt.png")
+            #expect(tiles[0].width == 640)
+            #expect(tiles[0].height == 480)
+            #expect(tiles[0].blurhash == "LEHV6nWB2yk8pyo0adR*.7kCMdnj")
         } else {
             Issue.record("Expected gallery media from persisted asset")
         }
