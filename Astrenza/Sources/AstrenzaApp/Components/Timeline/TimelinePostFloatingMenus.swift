@@ -171,9 +171,14 @@ struct TimelinePostActionAnchorKey: PreferenceKey {
 }
 
 extension View {
-    func floatingActionAnchor(postID: TimelinePost.ID, kind: TimelinePostActionKind) -> some View {
-        anchorPreference(key: TimelinePostActionAnchorKey.self, value: .bounds) {
-            [TimelinePostActionAnchorID(postID: postID, kind: kind): $0]
+    @ViewBuilder
+    func floatingActionAnchor(postID: TimelinePost.ID, kind: TimelinePostActionKind, isEnabled: Bool = true) -> some View {
+        if isEnabled {
+            anchorPreference(key: TimelinePostActionAnchorKey.self, value: .bounds) {
+                [TimelinePostActionAnchorID(postID: postID, kind: kind): $0]
+            }
+        } else {
+            self
         }
     }
 }

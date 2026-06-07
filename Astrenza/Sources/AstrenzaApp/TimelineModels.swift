@@ -1,4 +1,5 @@
 import AstrenzaCore
+import Foundation
 import SwiftUI
 
 struct TimelinePost: Identifiable {
@@ -580,6 +581,7 @@ struct TimelineAuthor {
 }
 
 private enum NIP19Display {
+    private static let cache = NIP19DisplayCache()
     private static let charset = Array("qpzry9x8gf2tvdw0s3jn54khce6mua7l")
     private static let generator: [Int] = [
         0x3b6a57b2,
@@ -590,12 +592,18 @@ private enum NIP19Display {
     ]
 
     static func npub(fromHexPubkey hexPubkey: String) -> String? {
+        if let cached = cache.value(for: hexPubkey) {
+            return cached
+        }
+
         guard let bytes = bytes(fromHex: hexPubkey), bytes.count == 32 else {
             return nil
         }
 
         let data = convertBits(bytes, fromBits: 8, toBits: 5, pad: true)
-        return bech32Encode(hrp: "npub", data: data)
+        let encoded = bech32Encode(hrp: "npub", data: data)
+        cache.setValue(encoded, for: hexPubkey)
+        return encoded
     }
 
     private static func bytes(fromHex hex: String) -> [UInt8]? {
@@ -673,6 +681,23 @@ private enum NIP19Display {
         }
 
         return checksum
+    }
+}
+
+private final class NIP19DisplayCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+
+    func value(for key: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[key]
+    }
+
+    func setValue(_ value: String, for key: String) {
+        lock.lock()
+        values[key] = value
+        lock.unlock()
     }
 }
 
@@ -780,7 +805,7 @@ enum TimelineMedia {
 }
 
 struct MediaTile: Identifiable {
-    let id = UUID()
+    let id: String
     let title: String
     let colors: [Color]
     let symbolName: String
@@ -794,6 +819,7 @@ struct MediaTile: Identifiable {
         url: URL? = nil,
         altText: String? = nil
     ) {
+        self.id = url?.absoluteString ?? "\(title)|\(symbolName)|\(altText ?? "")"
         self.title = title
         self.colors = colors
         self.symbolName = symbolName

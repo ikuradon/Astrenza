@@ -34,31 +34,41 @@ struct TimelineLayoutCache: Codable, Equatable {
 }
 
 struct TimelineLayoutSnapshot {
+    private let offsets: [(postID: TimelinePost.ID, minY: CGFloat, maxY: CGFloat)]
     private let offsetsByPostID: [TimelinePost.ID: CGFloat]
 
     init(posts: [TimelinePost], layoutCache: TimelineLayoutCache, topContentPadding: CGFloat) {
-        var nextOffsets: [TimelinePost.ID: CGFloat] = [:]
+        var nextOffsets: [(postID: TimelinePost.ID, minY: CGFloat, maxY: CGFloat)] = []
+        var nextOffsetsByPostID: [TimelinePost.ID: CGFloat] = [:]
         nextOffsets.reserveCapacity(posts.count)
+        nextOffsetsByPostID.reserveCapacity(posts.count)
 
         var offset = topContentPadding
         for post in posts {
-            nextOffsets[post.id] = offset
-            offset += layoutCache.height(for: post)
+            let height = layoutCache.height(for: post)
+            nextOffsets.append((postID: post.id, minY: offset, maxY: offset + height))
+            nextOffsetsByPostID[post.id] = offset
+            offset += height
         }
 
-        offsetsByPostID = nextOffsets
+        offsets = nextOffsets
+        offsetsByPostID = nextOffsetsByPostID
     }
 
     init(entries: [TimelineFeedEntry], layoutCache: TimelineLayoutCache, topContentPadding: CGFloat) {
-        var nextOffsets: [TimelinePost.ID: CGFloat] = [:]
+        var nextOffsets: [(postID: TimelinePost.ID, minY: CGFloat, maxY: CGFloat)] = []
+        var nextOffsetsByPostID: [TimelinePost.ID: CGFloat] = [:]
         nextOffsets.reserveCapacity(entries.count)
+        nextOffsetsByPostID.reserveCapacity(entries.count)
 
         var offset = topContentPadding
         for entry in entries {
             switch entry {
             case .post(let post):
-                nextOffsets[post.id] = offset
-                offset += layoutCache.height(for: post)
+                let height = layoutCache.height(for: post)
+                nextOffsets.append((postID: post.id, minY: offset, maxY: offset + height))
+                nextOffsetsByPostID[post.id] = offset
+                offset += height
             case .gap(let gap):
                 offset += TimelineLayoutEstimator.estimatedHeight(for: gap)
             case .deleted:
@@ -66,7 +76,25 @@ struct TimelineLayoutSnapshot {
             }
         }
 
-        offsetsByPostID = nextOffsets
+        offsets = nextOffsets
+        offsetsByPostID = nextOffsetsByPostID
+    }
+
+    func anchor(at contentOffset: CGFloat, anchorLineY: CGFloat) -> TimelineViewportAnchor? {
+        let targetY = contentOffset + anchorLineY
+        let containing = offsets.first { offset in
+            offset.minY <= targetY && offset.maxY > targetY
+        }
+        if let containing {
+            return TimelineViewportAnchor(postID: containing.postID, offset: max(0, targetY - containing.minY))
+        }
+
+        if let next = offsets.first(where: { $0.minY > targetY }) {
+            return TimelineViewportAnchor(postID: next.postID, offset: 0)
+        }
+
+        guard let last = offsets.last else { return nil }
+        return TimelineViewportAnchor(postID: last.postID, offset: max(0, targetY - last.minY))
     }
 
     func offset(for postID: TimelinePost.ID) -> CGFloat? {
@@ -212,6 +240,5 @@ final class TimelineRestoreStore {
     private func encode<Value: Encodable>(_ value: Value, key: String) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         defaults.set(data, forKey: key)
-        defaults.synchronize()
     }
 }

@@ -104,9 +104,9 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
         }
 
         func updateHostedViews() {
-            let currentRootView = rootView(for: parent.selectedTab)
-            hosts.values.forEach { host in
-                host.rootView = currentRootView
+            let activeTab = parent.selectedTab == .compose ? parent.previousTab : parent.selectedTab
+            if let host = hosts[activeTab] {
+                host.rootView = rootView(for: activeTab)
             }
         }
 
@@ -149,7 +149,6 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
             recognizer.onDirectionResolved = { [weak self] direction in
                 guard let self else { return }
                 parent.onMinimizeDirectionChanged(direction)
-                tabBarController?.tabBarMinimizeBehavior = direction.uiKitBehavior
             }
             controller.view.addGestureRecognizer(recognizer)
             directionProbeRecognizer = recognizer
@@ -253,6 +252,7 @@ private final class TabBarDirectionProbeGestureRecognizer: UIGestureRecognizer {
 
     private var initialLocation: CGPoint?
     private var didResolveDirection = false
+    private var pendingDirection: TabBarMinimizeDirection?
     private var shouldIgnoreCurrentTouch = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -279,16 +279,17 @@ private final class TabBarDirectionProbeGestureRecognizer: UIGestureRecognizer {
         guard abs(deltaY) > abs(deltaX), abs(deltaY) > 3 else { return }
 
         didResolveDirection = true
-        onDirectionResolved?(deltaY < 0 ? .towardOlder : .towardNewer)
-        state = .failed
+        pendingDirection = deltaY < 0 ? .towardOlder : .towardNewer
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        notifyPendingDirectionIfNeeded()
         state = .failed
         super.touchesEnded(touches, with: event)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        pendingDirection = nil
         state = .cancelled
         super.touchesCancelled(touches, with: event)
     }
@@ -296,8 +297,17 @@ private final class TabBarDirectionProbeGestureRecognizer: UIGestureRecognizer {
     override func reset() {
         initialLocation = nil
         didResolveDirection = false
+        pendingDirection = nil
         shouldIgnoreCurrentTouch = false
         super.reset()
+    }
+
+    private func notifyPendingDirectionIfNeeded() {
+        guard let pendingDirection else { return }
+        self.pendingDirection = nil
+        DispatchQueue.main.async { [onDirectionResolved] in
+            onDirectionResolved?(pendingDirection)
+        }
     }
 
     private func touchBeginsInControl(_ touch: UITouch) -> Bool {

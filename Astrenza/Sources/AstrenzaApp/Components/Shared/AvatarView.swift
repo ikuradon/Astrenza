@@ -84,7 +84,7 @@ private final class RemoteAvatarImageLoader: ObservableObject {
         loadedURL = url
         didFail = false
 
-        if let cachedImage = NostrImageCache.shared.cachedImage(for: url) {
+        if let cachedImage = NostrImageCache.shared.memoryCachedImage(for: url) {
             image = cachedImage
             return
         }
@@ -100,13 +100,13 @@ private final class RemoteAvatarImageLoader: ObservableObject {
 private struct ProceduralAvatarPlaceholder: View {
     let style: AvatarStyle
     let size: CGFloat
+    private let design: ProceduralAvatarDesign
 
-    private var seed: String {
-        style.placeholderSeed.isEmpty ? style.symbolName : style.placeholderSeed
-    }
-
-    private var design: ProceduralAvatarDesign {
-        ProceduralAvatarDesign(seed: seed, fallbackPrimary: style.primary, fallbackSecondary: style.secondary)
+    init(style: AvatarStyle, size: CGFloat) {
+        self.style = style
+        self.size = size
+        let seed = style.placeholderSeed.isEmpty ? style.symbolName : style.placeholderSeed
+        self.design = ProceduralAvatarDesign(seed: seed, fallbackPrimary: style.primary, fallbackSecondary: style.secondary)
     }
 
     var body: some View {

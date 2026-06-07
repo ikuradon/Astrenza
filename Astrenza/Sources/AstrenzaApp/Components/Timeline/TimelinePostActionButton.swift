@@ -83,14 +83,16 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         tapRecognizer.delegate = context.coordinator
         control.addGestureRecognizer(tapRecognizer)
 
-        let longPressRecognizer = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
-        longPressRecognizer.minimumPressDuration = 0.42
-        longPressRecognizer.allowableMovement = 14
-        longPressRecognizer.cancelsTouchesInView = false
-        longPressRecognizer.delaysTouchesBegan = false
-        longPressRecognizer.delaysTouchesEnded = false
-        longPressRecognizer.delegate = context.coordinator
-        control.addGestureRecognizer(longPressRecognizer)
+        if supportsLongPressDrag {
+            let longPressRecognizer = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+            longPressRecognizer.minimumPressDuration = 0.42
+            longPressRecognizer.allowableMovement = 14
+            longPressRecognizer.cancelsTouchesInView = false
+            longPressRecognizer.delaysTouchesBegan = false
+            longPressRecognizer.delaysTouchesEnded = false
+            longPressRecognizer.delegate = context.coordinator
+            control.addGestureRecognizer(longPressRecognizer)
+        }
 
         return control
     }

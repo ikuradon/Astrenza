@@ -5,6 +5,7 @@ struct RelayStatusSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store: RelayStatusSheetStore
     @State private var selectedRelayURL: String?
+    private let relayURLs: [String]
     private var relayRuntimeStates: [String: NostrRelayConnectionState]
 
     init(
@@ -19,8 +20,9 @@ struct RelayStatusSheetView: View {
             accountID: accountID,
             eventStore: eventStore
         ))
+        self.relayURLs = relayURLs
         self.relayRuntimeStates = relayRuntimeStates
-        _selectedRelayURL = State(initialValue: relayURLs.first ?? RelayMockStore.relays.first?.url)
+        _selectedRelayURL = State(initialValue: relayURLs.first ?? (accountID == nil ? RelayMockStore.relays.first?.url : nil))
     }
 
     private var selectedRelay: RelayDescriptor? {
@@ -88,6 +90,12 @@ struct RelayStatusSheetView: View {
         .onChange(of: relayRuntimeStates) { _, states in
             store.updateRuntimeStates(states)
         }
+        .onChange(of: relayURLs) { _, urls in
+            store.updateRelayURLs(urls)
+            if selectedRelayURL == nil || !store.relays.contains(where: { $0.url == selectedRelayURL }) {
+                selectedRelayURL = store.relays.first?.url
+            }
+        }
     }
 }
 
@@ -110,23 +118,33 @@ final class RelayStatusSheetStore: ObservableObject {
         eventStore: NostrEventStore?,
         client: any NostrRelayInformationFetching = NostrRelayInformationClient()
     ) {
-        isLive = !relayURLs.isEmpty
+        isLive = accountID != nil || !relayURLs.isEmpty
         self.client = client
         self.accountID = accountID
         self.eventStore = eventStore
         self.relayRuntimeStates = relayRuntimeStates
-        let summaries = Self.loadSummaries(accountID: accountID, eventStore: eventStore)
-        let cursors = Self.loadCursors(accountID: accountID, eventStore: eventStore, relayURLs: relayURLs)
-        let initialRelays = relayURLs.isEmpty
-            ? RelayMockStore.relays
-            : relayURLs.map { relayURL in
-                RelayDescriptor.livePlaceholder(url: relayURL)
-                    .applying(summary: summaries[relayURL], cursor: cursors[relayURL])
-                    .withRuntimeState(relayRuntimeStates[relayURL])
-            }
+        let initialRelays = Self.initialRelays(
+            relayURLs: relayURLs,
+            isLive: isLive,
+            relayRuntimeStates: relayRuntimeStates,
+            accountID: accountID,
+            eventStore: eventStore
+        )
         relays = initialRelays
         outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
         recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: initialRelays)
+    }
+
+    func updateRelayURLs(_ relayURLs: [String]) {
+        guard isLive else { return }
+        relays = Self.initialRelays(
+            relayURLs: relayURLs,
+            isLive: isLive,
+            relayRuntimeStates: relayRuntimeStates,
+            accountID: accountID,
+            eventStore: eventStore
+        )
+        recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: relays)
     }
 
     func updateRuntimeStates(_ states: [String: NostrRelayConnectionState]) {
@@ -175,6 +193,25 @@ final class RelayStatusSheetStore: ObservableObject {
                 ? appliedDescriptor.preservingConnectionState(from: relay).withRuntimeState(relayRuntimeStates[relay.url])
                 : appliedDescriptor.withRuntimeState(relayRuntimeStates[relay.url])
             recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: relays)
+        }
+    }
+
+    private static func initialRelays(
+        relayURLs: [String],
+        isLive: Bool,
+        relayRuntimeStates: [String: NostrRelayConnectionState],
+        accountID: String?,
+        eventStore: NostrEventStore?
+    ) -> [RelayDescriptor] {
+        guard !relayURLs.isEmpty else {
+            return isLive ? [] : RelayMockStore.relays
+        }
+        let summaries = loadSummaries(accountID: accountID, eventStore: eventStore)
+        let cursors = loadCursors(accountID: accountID, eventStore: eventStore, relayURLs: relayURLs)
+        return relayURLs.map { relayURL in
+            RelayDescriptor.livePlaceholder(url: relayURL)
+                .applying(summary: summaries[relayURL], cursor: cursors[relayURL])
+                .withRuntimeState(relayRuntimeStates[relayURL])
         }
     }
 

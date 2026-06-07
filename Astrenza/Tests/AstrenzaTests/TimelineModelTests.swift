@@ -931,6 +931,45 @@ struct TimelineModelTests {
         #expect(try eventStore.relaySyncSummaries(accountID: accountID, timelineKey: "home").isEmpty)
     }
 
+    @Test("Relay status sheet does not fall back to mock relays while live relays are resolving")
+    @MainActor
+    func relayStatusSheetKeepsEmptyLiveRelayListOutOfMockMode() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "c1", count: 32)
+        let relayURL = "wss://relay.example"
+        let store = RelayStatusSheetStore(
+            relayURLs: [],
+            accountID: accountID,
+            eventStore: eventStore
+        )
+
+        #expect(store.isLive)
+        #expect(store.relays.isEmpty)
+        #expect(store.plannedCount == 0)
+
+        store.updateRelayURLs([relayURL])
+
+        let relay = try #require(store.relays.first)
+        #expect(store.plannedCount == 1)
+        #expect(relay.url == relayURL)
+        #expect(relay.displayName == "relay.example")
+        #expect(relay.software == "Loading")
+        #expect(relay.status == .connecting)
+    }
+
+    @Test("Relay status sheet still uses mock relays without a live account")
+    @MainActor
+    func relayStatusSheetUsesMockRelaysOnlyWithoutLiveAccount() throws {
+        let store = RelayStatusSheetStore(
+            relayURLs: [],
+            accountID: nil,
+            eventStore: nil
+        )
+
+        #expect(!store.isLive)
+        #expect(store.relays.map(\.url) == RelayMockStore.relays.map(\.url))
+    }
+
     @Test("Relay status sheet projects DB lifecycle counters into relay descriptors")
     @MainActor
     func relayStatusSheetProjectsLifecycleCounters() throws {
@@ -1982,6 +2021,9 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await Task.sleep(nanoseconds: 50_000_000)
 
+        _ = try await waitForTimelinePost(in: store, id: liveEvent.id) { post in
+            post.author.primaryText == "Live User"
+        }
         let posts = store.entries.compactMap(\.post)
         #expect(posts.map(\.id) == [liveEvent.id])
         #expect(posts.first?.author.primaryText == "Live User")
@@ -2408,7 +2450,9 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        let post = try #require(store.entries.compactMap(\.post).first { $0.id == quoteEvent.id })
+        let post = try await waitForTimelinePost(in: store, id: quoteEvent.id) { post in
+            post.quotedPost?.body == "quoted source body"
+        }
         #expect(post.body == "forward quote wrapper")
         #expect(post.quotedPost?.isAvailable == true)
         #expect(post.quotedPost?.body == "quoted source body")
@@ -2607,7 +2651,9 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://hinted.example")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        let post = try #require(store.entries.compactMap(\.post).first { $0.id == quoteEvent.id })
+        let post = try await waitForTimelinePost(in: store, id: quoteEvent.id) { post in
+            post.quotedPost?.body == "hinted quoted source"
+        }
         #expect(post.quotedPost?.body == "hinted quoted source")
     }
 
@@ -2985,7 +3031,9 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        let post = try #require(store.entries.compactMap(\.post).first { $0.id == repostEvent.id })
+        let post = try await waitForTimelinePost(in: store, id: repostEvent.id) { post in
+            post.body == "reposted source body"
+        }
         #expect(post.body == "reposted source body")
         #expect(post.author.pubkey == targetSigner.pubkey)
         #expect(post.repostedBy?.author.pubkey == reposterSigner.pubkey)
@@ -3077,7 +3125,9 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        let post = try #require(store.entries.compactMap(\.post).first { $0.id == replyEvent.id })
+        let post = try await waitForTimelinePost(in: store, id: replyEvent.id) { post in
+            post.replyContext?.bodyPreview == "parent source body"
+        }
         #expect(post.body == "runtime reply body")
         #expect(post.replyContext?.bodyPreview == "parent source body")
         #expect(post.replyMention?.isExternal == true)

@@ -65,6 +65,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var filterStatus = TimelineFilterStatus()
     @Published private(set) var relayStatusRevision = 0
     @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
+    @Published private(set) var relayStatusCounts: (connected: Int, planned: Int) = (connected: 0, planned: 1)
     @Published private(set) var pendingNewCount = 0
 
     private let timelineLoader: NostrHomeTimelineLoader
@@ -75,6 +76,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
     private var linkPreviewTask: Task<Void, Never>?
+    private var materializeTask: Task<Void, Never>?
     private var resolvingLinkPreviewURLs = Set<String>()
     private var pendingProfilePubkeys = Set<String>()
     private var pendingSourceEventIDs = Set<String>()
@@ -93,6 +95,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var areTimelineFiltersSuspended = false
     private var pendingNewEventIDs = Set<String>()
     private var isTimelineAtNewestWindow = true
+    private var lastEntriesRenderFingerprint: [String] = []
+    private let materializeCoalescingDelayNanoseconds: UInt64 = 250_000_000
     private let projectionWindowLimit = 240
     private let projectionAnchorLeadingLimit = 80
     private let projectionAnchorTrailingLimit = 160
@@ -101,32 +105,70 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventStore
     }
 
-    var relayStatusCounts: (connected: Int, planned: Int) {
+    private static func isRuntimeReachable(_ state: NostrRelayConnectionState) -> Bool {
+        state == .connected
+    }
+
+    private func updateRelayStatusCounts() {
         let planned = resolvedRelays.count
         guard planned > 0 else {
-            return (connected: 0, planned: max(planned, 1))
+            setRelayStatusCountsIfNeeded((connected: 0, planned: 1))
+            return
         }
 
-        let summaries = if let account, let eventStore {
-            Dictionary(
-                uniqueKeysWithValues: ((try? eventStore.relaySyncSummaries(accountID: account.pubkey, timelineKey: "home")) ?? [])
-                    .filter { resolvedRelays.contains($0.relayURL) }
-                    .map { ($0.relayURL, $0) }
-            )
-        } else {
-            [String: NostrRelaySyncSummaryRecord]()
-        }
+        let recentlyReachableRelayURLs = Set(
+            relaySyncEvents
+                .filter { event in
+                    event.timelineKey == "home" &&
+                        Self.isRecentlyReachableSyncEvent(event)
+                }
+                .map(\.relayURL)
+        )
+
         let connected = resolvedRelays.filter { relayURL in
             if let runtimeState = relayRuntimeStates[relayURL] {
                 return Self.isRuntimeReachable(runtimeState)
             }
-            return summaries[relayURL]?.isRecentlyReachable() == true
+            return recentlyReachableRelayURLs.contains(relayURL)
         }.count
-        return (connected: connected, planned: planned)
+        setRelayStatusCountsIfNeeded((connected: connected, planned: planned))
     }
 
-    private static func isRuntimeReachable(_ state: NostrRelayConnectionState) -> Bool {
-        state == .connected
+    private func restoreRelaySyncEventsForStatusCache(account: NostrAccount) {
+        guard let storedEvents = try? eventStore?.relaySyncEvents(
+            accountID: account.pubkey,
+            timelineKey: "home",
+            limit: 300
+        ) else {
+            updateRelayStatusCounts()
+            return
+        }
+
+        for event in storedEvents where !relaySyncEvents.contains(event) {
+            relaySyncEvents.append(event)
+        }
+        updateRelayStatusCounts()
+    }
+
+    private func setRelayStatusCountsIfNeeded(_ counts: (connected: Int, planned: Int)) {
+        guard relayStatusCounts.connected != counts.connected ||
+            relayStatusCounts.planned != counts.planned
+        else { return }
+        relayStatusCounts = counts
+    }
+
+    private static func isRecentlyReachableSyncEvent(
+        _ event: NostrRelaySyncEventRecord,
+        now: Int = Int(Date().timeIntervalSince1970),
+        freshnessWindowSeconds: Int = 180
+    ) -> Bool {
+        guard now - event.occurredAt <= freshnessWindowSeconds else { return false }
+        switch event.kind {
+        case .connected, .eose, .authRequired, .paymentRequired:
+            return true
+        case .closed, .reconnect, .timeout, .partialFailure, .rejected, .suspended, .negentropy:
+            return false
+        }
     }
 
     var isRelayProcessing: Bool {
@@ -339,6 +381,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         bufferedProfilePubkeysByRelay.removeAll()
         bufferedSourceEventIDsByRelay.removeAll()
         relayRuntimeStates = [:]
+        updateRelayStatusCounts()
         relayStatusRevision &+= 1
         phase = .idle
         Task { [relayRuntime] in
@@ -609,6 +652,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func restoreCachedSnapshot(account: NostrAccount) {
         if let databaseState = try? eventStore?.homeTimelineState(accountID: account.pubkey) {
             apply(databaseState)
+            restoreRelaySyncEventsForStatusCache(account: account)
             materializeEntries()
             if !entries.isEmpty {
                 phase = .loaded
@@ -617,7 +661,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
 
         entries = []
+        lastEntriesRenderFingerprint = []
         resolvedRelays = []
+        updateRelayStatusCounts()
         followedPubkeys = []
         noteEvents = []
         metadataEvents = []
@@ -805,6 +851,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func handleRuntimeStateChange(relayURL: String, state: NostrRelayConnectionState) {
         relayRuntimeStates[relayURL] = state
+        updateRelayStatusCounts()
         switch state {
         case .connected:
             recordRuntimeSyncEvent(relayURL: relayURL, kind: .connected, subscriptionID: nil, message: "connected")
@@ -938,7 +985,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents.removeAll { $0.pubkey == event.pubkey }
             metadataEvents.append(event)
             pendingProfilePubkeys.remove(event.pubkey)
-            materializeEntries()
+            scheduleMaterializeEntries()
         case 1, 6:
             if request?.isOlderPage == true || request?.gap != nil {
                 saveHomeTimelineIndex(
@@ -952,7 +999,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
             pendingSourceEventIDs.remove(event.id)
             enqueueBackwardDependencies(for: event)
-            materializeEntries()
+            if request?.isOlderPage == true || request?.gap != nil {
+                scheduleMaterializeEntries()
+            } else {
+                scheduleMaterializeEntries(delayNanoseconds: materializeCoalescingDelayNanoseconds * 2)
+            }
         case 5:
             let deletedIDs = event.tags.compactMap { tag in
                 tag.count >= 2 && tag[0] == "e" ? tag[1] : nil
@@ -1216,7 +1267,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 guard let self else { return }
                 previews.forEach { self.resolvingLinkPreviewURLs.remove($0.normalizedURL) }
                 self.linkPreviewTask = nil
-                self.materializeEntries()
+                self.scheduleMaterializeEntries()
                 if let account = self.account {
                     self.persistDatabase(account: account)
                 }
@@ -1251,6 +1302,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         relaySyncEvents.append(event)
         try? eventStore?.saveRelaySyncEvents([event])
+        updateRelayStatusCounts()
         if publishesStatusChange {
             relayStatusRevision &+= 1
         }
@@ -1293,6 +1345,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries() {
+        materializeTask?.cancel()
+        materializeTask = nil
         let filterRules = homeFilterRules()
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
         let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
@@ -1304,7 +1358,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let timelineEntries = account.flatMap { account in
             try? eventStore?.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 500)
         } ?? []
-        entries = NostrTimelineMaterializer.entries(
+        let nextEntries = NostrTimelineMaterializer.entries(
             noteEvents: noteEvents,
             contextEvents: contextEvents,
             metadataEvents: metadataEvents,
@@ -1317,7 +1371,98 @@ final class NostrHomeTimelineStore: ObservableObject {
             timelineEntries: timelineEntries,
             relayCount: max(1, resolvedRelays.count)
         )
-        filterStatus = timelineFilterStatus(ruleSet: activeFilterRuleSet)
+        let nextFingerprint = entriesRenderFingerprint(for: nextEntries)
+        if nextFingerprint != lastEntriesRenderFingerprint {
+            entries = nextEntries
+            lastEntriesRenderFingerprint = nextFingerprint
+        }
+
+        let nextFilterStatus = timelineFilterStatus(ruleSet: activeFilterRuleSet)
+        if nextFilterStatus != filterStatus {
+            filterStatus = nextFilterStatus
+        }
+    }
+
+    private func scheduleMaterializeEntries(delayNanoseconds: UInt64? = nil) {
+        guard materializeTask == nil else { return }
+        let delay = delayNanoseconds ?? materializeCoalescingDelayNanoseconds
+        materializeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, !Task.isCancelled else { return }
+                self.materializeTask = nil
+                self.materializeEntries()
+            }
+        }
+    }
+
+    private func entriesRenderFingerprint(for entries: [TimelineFeedEntry]) -> [String] {
+        entries.map(entryRenderFingerprint)
+    }
+
+    private func entryRenderFingerprint(_ entry: TimelineFeedEntry) -> String {
+        switch entry {
+        case .post(let post):
+            return [
+                "post",
+                post.id,
+                post.author.primaryText,
+                post.author.secondaryText,
+                "\(post.author.nip05Status)",
+                "\(post.author.isMetadataResolved)",
+                "\(post.author.isFollowed)",
+                post.avatar.imageURL?.absoluteString ?? "",
+                "\(post.avatar.pictureState)",
+                post.body,
+                post.timestamp,
+                post.repostedBy?.author.primaryText ?? "",
+                post.repostedBy?.timestamp ?? "",
+                post.replyContext?.author.primaryText ?? "",
+                post.replyContext?.bodyPreview ?? "",
+                post.quotedPost?.body ?? "",
+                post.contentWarning?.displayReason ?? "",
+                mediaRenderFingerprint(post.media),
+                post.linkSummary?.compactText ?? "",
+                "\(post.actionState.didReply)",
+                "\(post.actionState.didRepost)",
+                "\(post.actionState.didFavorite)",
+                "\(post.actionState.didZap)"
+            ].joined(separator: "\u{1f}")
+        case .gap(let gap):
+            return [
+                "gap",
+                gap.id,
+                gap.newerPostID,
+                gap.olderPostID,
+                "\(gap.missingEstimate)",
+                "\(gap.relayCount)",
+                "\(gap.state)",
+                gap.backfilledPosts.map(\.id).joined(separator: ",")
+            ].joined(separator: "\u{1f}")
+        case .deleted(let entry):
+            return "deleted\u{1f}\(entry.id)"
+        }
+    }
+
+    private func mediaRenderFingerprint(_ media: TimelineMedia?) -> String {
+        guard let media else { return "" }
+        switch media {
+        case .gallery(let tiles):
+            return tiles.map { tile in
+                [
+                    tile.id,
+                    tile.title,
+                    tile.symbolName,
+                    tile.url?.absoluteString ?? "",
+                    tile.altText ?? ""
+                ].joined(separator: "\u{1e}")
+            }.joined(separator: "\u{1d}")
+        case .linkPreview(let preview):
+            return ["link", preview.title, preview.subtitle, preview.host, preview.url].joined(separator: "\u{1e}")
+        case .unresolvedLink(let preview):
+            return ["unresolved", preview.host, preview.url].joined(separator: "\u{1e}")
+        }
     }
 
     private func materializedPosts(from events: [NostrEvent]) -> [TimelinePost] {
@@ -1555,6 +1700,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         nip05Resolutions = state.nip05Resolutions
         relaySyncEvents = state.relaySyncEvents
         hasMoreOlder = state.hasMoreOlder
+        updateRelayStatusCounts()
     }
 }
 

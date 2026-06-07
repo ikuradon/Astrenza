@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct TimelineFeedView: View {
@@ -23,20 +24,19 @@ struct TimelineFeedView: View {
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     @State private var menuState = TimelinePostMenuState()
     @State private var didRestoreViewport = false
-    @State private var currentContentOffset: CGFloat = 0
     @State private var measuredLayoutCache = TimelineLayoutCache()
     @State private var scrollPosition = ScrollPosition(idType: TimelinePost.ID.self)
     @State private var isRestoringViewport = false
-    @State private var currentViewportAnchor: TimelineViewportAnchor?
     @State private var displayedEntries: [TimelineFeedEntry]
     @State private var fetchingGapDirections: [TimelineGap.ID: TimelineGapFillDirection] = [:]
     @State private var insertedPostDirections: [TimelinePost.ID: TimelineGapFillDirection] = [:]
-    @State private var gapFrames: [TimelineGap.ID: CGRect] = [:]
-    @State private var viewportSize: CGSize = .zero
+    @State private var scrollRuntime = TimelineFeedScrollRuntime()
     private let actionMenuGap: CGFloat = 12
     private let bottomChromeClearance: CGFloat = 116
     private let rowAnchorLineY: CGFloat = 72
     private let topContentPadding: CGFloat = 72
+    private let viewportSaveInterval: TimeInterval = 0.25
+    private let viewportSaveOffsetThreshold: CGFloat = 48
     private var posts: [TimelinePost] {
         displayedEntries.compactMap(\.post)
     }
@@ -174,7 +174,6 @@ struct TimelineFeedView: View {
                                 }
                             )
                             .id(post.id)
-                            .background(rowFrameReader(postID: post.id))
                             .transition(postInsertionTransition(for: post))
                             .zIndex(menuState.openedMenu?.postID == post.id ? 20 : 0)
                             .onAppear {
@@ -208,14 +207,14 @@ struct TimelineFeedView: View {
         .background(viewportSizeReader)
         .onAppear {
             measuredLayoutCache = layoutCache
+            updateLayoutSnapshot()
             restoreViewportIfNeeded()
         }
-        .onPreferenceChange(TimelinePostFramePreferenceKey.self, perform: handleRowFrames)
         .onPreferenceChange(TimelineGapFramePreferenceKey.self) { frames in
-            gapFrames = frames
+            scrollRuntime.gapFrames = frames
         }
         .onPreferenceChange(TimelineViewportSizePreferenceKey.self) { size in
-            viewportSize = size
+            scrollRuntime.viewportSize = size
         }
         .onChange(of: entries.map(\.id)) { _, _ in
             syncDisplayedEntriesFromSource()
@@ -287,15 +286,6 @@ private extension TimelineFeedView {
         }
     }
 
-    func rowFrameReader(postID: TimelinePost.ID) -> some View {
-        GeometryReader { proxy in
-            Color.clear.preference(
-                key: TimelinePostFramePreferenceKey.self,
-                value: [postID: proxy.frame(in: .named("timelineFeedViewport"))]
-            )
-        }
-    }
-
     func gapFrameReader(gapID: TimelineGap.ID) -> some View {
         GeometryReader { proxy in
             Color.clear.preference(
@@ -345,67 +335,59 @@ private extension TimelineFeedView {
         }
     }
 
-    func handleRowFrames(_ frames: [TimelinePost.ID: CGRect]) {
-        guard !frames.isEmpty else { return }
-
-        var nextCache = measuredLayoutCache
-        nextCache.merge(measuredFrames: frames)
-
-        if nextCache != measuredLayoutCache {
-            measuredLayoutCache = nextCache
-            onLayoutCacheChanged(nextCache)
-        }
-
-        guard let anchor = viewportAnchor(from: frames) else { return }
-        currentViewportAnchor = anchor
-
-        guard !isRestoringViewport
-        else { return }
-
-        saveViewportStateIfPossible()
+    func estimatedViewportAnchor(at contentOffset: CGFloat) -> TimelineViewportAnchor? {
+        scrollRuntime.layoutSnapshot?.anchor(at: contentOffset, anchorLineY: rowAnchorLineY)
     }
 
-    func viewportAnchor(from frames: [TimelinePost.ID: CGRect]) -> TimelineViewportAnchor? {
-        let containingAnchorLine = frames.filter { _, frame in
-            frame.minY <= rowAnchorLineY && frame.maxY > rowAnchorLineY
-        }
-
-        if let anchor = containingAnchorLine.max(by: { lhs, rhs in lhs.value.minY < rhs.value.minY }) {
-            return TimelineViewportAnchor(postID: anchor.key, offset: max(0, rowAnchorLineY - anchor.value.minY))
-        }
-
-        if let nextVisible = frames
-            .filter({ _, frame in frame.minY > rowAnchorLineY })
-            .min(by: { lhs, rhs in lhs.value.minY < rhs.value.minY }) {
-            return TimelineViewportAnchor(postID: nextVisible.key, offset: 0)
-        }
-
-        return frames
-            .max(by: { lhs, rhs in lhs.value.maxY < rhs.value.maxY })
-            .map { postID, frame in
-                TimelineViewportAnchor(postID: postID, offset: max(0, rowAnchorLineY - frame.minY))
-            }
+    func updateLayoutSnapshot() {
+        scrollRuntime.layoutSnapshot = TimelineLayoutSnapshot(
+            entries: displayedEntries,
+            layoutCache: measuredLayoutCache,
+            topContentPadding: topContentPadding
+        )
     }
 
-    func saveViewportStateIfPossible() {
-        guard !isRestoringViewport,
-              let currentViewportAnchor
+    func saveViewportStateIfPossible(force: Bool = false) {
+        guard !isRestoringViewport else { return }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let offsetDelta = abs(scrollRuntime.currentContentOffset - scrollRuntime.lastSavedViewportOffset)
+        if !force,
+           offsetDelta < viewportSaveOffsetThreshold,
+           now - scrollRuntime.lastViewportSaveTime < viewportSaveInterval {
+            return
+        }
+
+        guard let currentViewportAnchor = estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
         else { return }
 
+        let isSameAnchor = scrollRuntime.lastSavedViewportAnchor?.postID == currentViewportAnchor.postID
+        let anchorDelta = abs((scrollRuntime.lastSavedViewportAnchor?.offset ?? currentViewportAnchor.offset) - currentViewportAnchor.offset)
+        if !force,
+           isSameAnchor,
+           anchorDelta < 1,
+           offsetDelta < viewportSaveOffsetThreshold {
+            return
+        }
+
+        scrollRuntime.currentViewportAnchor = currentViewportAnchor
+        scrollRuntime.lastSavedViewportAnchor = currentViewportAnchor
+        scrollRuntime.lastSavedViewportOffset = scrollRuntime.currentContentOffset
+        scrollRuntime.lastViewportSaveTime = now
         onViewportStateChanged(
             TimelineViewportState(
                 accountID: viewportState?.accountID ?? "mock-account",
                 timelineKey: viewportState?.timelineKey ?? "home",
                 anchorPostID: currentViewportAnchor.postID,
                 anchorOffset: currentViewportAnchor.offset,
-                contentOffset: currentContentOffset,
+                contentOffset: scrollRuntime.currentContentOffset,
                 updatedAt: Date()
             )
         )
     }
 
     func handleObservedContentOffset(_ offset: CGFloat) {
-        currentContentOffset = offset
+        scrollRuntime.currentContentOffset = offset
         onScrollOffsetChanged(offset)
         saveViewportStateIfPossible()
     }
@@ -427,6 +409,7 @@ private extension TimelineFeedView {
         withAnimation(.spring(duration: 0.26, bounce: 0.08)) {
             displayedEntries = entries
         }
+        updateLayoutSnapshot()
 
         restoreViewportIfNeeded()
     }
@@ -598,11 +581,11 @@ private extension TimelineFeedView {
     }
 
     func fillDirection(for gap: TimelineGap) -> TimelineGapFillDirection {
-        guard viewportSize.height > 0,
-              let frame = gapFrames[gap.id]
+        guard scrollRuntime.viewportSize.height > 0,
+              let frame = scrollRuntime.gapFrames[gap.id]
         else { return .older }
 
-        return frame.midY < viewportSize.height / 2 ? .newer : .older
+        return frame.midY < scrollRuntime.viewportSize.height / 2 ? .newer : .older
     }
 
     func requestBackfill(for gap: TimelineGap) {
@@ -661,7 +644,7 @@ private extension TimelineFeedView {
             return currentGap.id == gap.id
         }) else { return }
 
-        let targetOffset = currentContentOffset + TimelineLayoutEstimator.estimatedReplacementDelta(
+        let targetOffset = scrollRuntime.currentContentOffset + TimelineLayoutEstimator.estimatedReplacementDelta(
             for: gap,
             layoutCache: measuredLayoutCache
         )
@@ -673,7 +656,7 @@ private extension TimelineFeedView {
         withTransaction(transaction) {
             fetchingGapDirections[gap.id] = nil
             displayedEntries.replaceSubrange(index...index, with: insertedEntries)
-            if targetOffset > currentContentOffset {
+            if targetOffset > scrollRuntime.currentContentOffset {
                 scrollPosition.scrollTo(y: targetOffset)
             }
         }
@@ -798,6 +781,17 @@ private struct TimelineViewportSizePreferenceKey: PreferenceKey {
             value = next
         }
     }
+}
+
+private final class TimelineFeedScrollRuntime {
+    var currentContentOffset: CGFloat = 0
+    var currentViewportAnchor: TimelineViewportAnchor?
+    var layoutSnapshot: TimelineLayoutSnapshot?
+    var gapFrames: [TimelineGap.ID: CGRect] = [:]
+    var viewportSize: CGSize = .zero
+    var lastSavedViewportAnchor: TimelineViewportAnchor?
+    var lastSavedViewportOffset: CGFloat = 0
+    var lastViewportSaveTime: TimeInterval = 0
 }
 
 private struct ActionMenuPlacement {

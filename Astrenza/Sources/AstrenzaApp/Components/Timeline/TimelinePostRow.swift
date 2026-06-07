@@ -11,6 +11,9 @@ struct TimelinePostRow: View {
     let onOpenMedia: (TimelineMedia) -> Void
     let onOpenURL: (URL) -> Void
     let onDismissActionMenu: () -> Void
+    private var needsFloatingActionAnchors: Bool {
+        isActionMenuPresented || isActionLongPressActive
+    }
     @State private var didHandleActionGesture = false
     @State private var isActionLongPressActive = false
 
@@ -207,7 +210,7 @@ struct TimelinePostRow: View {
                     sendActionEvent(.repost, phase: .dragEnded(location))
                 }
             )
-            .floatingActionAnchor(postID: post.id, kind: .repost)
+            .floatingActionAnchor(postID: post.id, kind: .repost, isEnabled: needsFloatingActionAnchors)
             TimelinePostActionButton(
                 inactiveSystemName: "star",
                 activeSystemName: "star.fill",
@@ -230,7 +233,7 @@ struct TimelinePostRow: View {
                     sendActionEvent(.favorite, phase: .dragEnded(location))
                 }
             )
-            .floatingActionAnchor(postID: post.id, kind: .favorite)
+            .floatingActionAnchor(postID: post.id, kind: .favorite, isEnabled: needsFloatingActionAnchors)
             TimelinePostActionButton(
                 inactiveSystemName: "bolt",
                 activeSystemName: "bolt.fill",
@@ -260,7 +263,7 @@ struct TimelinePostRow: View {
                     sendActionEvent(.more, phase: .dragEnded(location))
                 }
             )
-            .floatingActionAnchor(postID: post.id, kind: .more)
+            .floatingActionAnchor(postID: post.id, kind: .more, isEnabled: needsFloatingActionAnchors)
         }
         .padding(.top, 4)
     }

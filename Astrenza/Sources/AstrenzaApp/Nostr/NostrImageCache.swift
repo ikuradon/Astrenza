@@ -6,6 +6,7 @@ final class NostrImageCache: @unchecked Sendable {
     static let shared = NostrImageCache()
 
     private let dataCache: NostrRemoteDataCache
+    private let imageCache = NSCache<NSURL, UIImage>()
 
     init(dataCache: NostrRemoteDataCache = NostrRemoteDataCache()) {
         self.dataCache = dataCache
@@ -27,18 +28,38 @@ final class NostrImageCache: @unchecked Sendable {
     }
 
     func cachedImage(for url: URL) -> UIImage? {
-        cachedImageData(for: url).flatMap(UIImage.init(data:))
+        let cacheKey = url as NSURL
+        if let image = imageCache.object(forKey: cacheKey) {
+            return image
+        }
+
+        guard let data = cachedImageData(for: url),
+              let image = UIImage(data: data)
+        else { return nil }
+        imageCache.setObject(image, forKey: cacheKey)
+        return image
+    }
+
+    func memoryCachedImage(for url: URL) -> UIImage? {
+        imageCache.object(forKey: url as NSURL)
     }
 
     func image(for url: URL) async throws -> UIImage {
-        if let cachedImage = cachedImage(for: url) {
+        if let cachedImage = memoryCachedImage(for: url) {
             return cachedImage
         }
 
-        let data = try await dataCache.data(for: url)
-        guard let image = UIImage(data: data) else {
+        let data: Data
+        if let cachedData = cachedImageData(for: url) {
+            data = cachedData
+        } else {
+            data = try await dataCache.data(for: url)
+        }
+
+        guard let image = await Self.decodedImage(from: data) else {
             throw NostrImageCacheError.invalidImageData
         }
+        imageCache.setObject(image, forKey: url as NSURL)
         return image
     }
 
@@ -48,6 +69,12 @@ final class NostrImageCache: @unchecked Sendable {
 
     func request(for url: URL, cachePolicy: URLRequest.CachePolicy) -> URLRequest {
         dataCache.request(for: url, cachePolicy: cachePolicy)
+    }
+
+    private static func decodedImage(from data: Data) async -> UIImage? {
+        await Task.detached(priority: .utility) {
+            UIImage(data: data)
+        }.value
     }
 }
 

@@ -16,6 +16,7 @@ struct HomeTimelineView: View {
     @State private var composeSheetMode: ComposeSheetMode = .post
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
+    @State private var isTimelineAtNewestWindow = true
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
     @State private var postNavigationPath: [TimelineNavigationRoute] = []
     @State private var profileNavigationPath: [TimelineNavigationRoute] = []
@@ -422,9 +423,18 @@ private extension HomeTimelineView {
                 dismissFloatingMenus()
             }
         }
-        timelineScrollOffset = offset
+        let oldChromeOffset = min(max(timelineScrollOffset, 0), 72)
+        let newChromeOffset = min(max(offset, 0), 72)
+        if abs(newChromeOffset - oldChromeOffset) >= 2 || (timelineScrollOffset <= 72) != (offset <= 72) {
+            timelineScrollOffset = newChromeOffset
+        }
+
         if sessionStore.account != nil, selectedTimeline == .home {
-            liveTimelineStore.setTimelineAtNewestWindow(offset <= 6)
+            let nextIsNewestWindow = offset <= 6
+            if isTimelineAtNewestWindow != nextIsNewestWindow {
+                isTimelineAtNewestWindow = nextIsNewestWindow
+                liveTimelineStore.setTimelineAtNewestWindow(nextIsNewestWindow)
+            }
         }
     }
 

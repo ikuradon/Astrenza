@@ -56,27 +56,26 @@ struct TimelineAttachmentButton: View {
     }
 
     var body: some View {
-        Button {
-            if isObscured {
-                withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
-                    isRevealed = true
-                }
-            } else {
-                onOpen(media)
-            }
-        } label: {
-            TimelineMediaView(media: media, isObscured: isObscured)
-        }
-        .buttonStyle(.plain)
+        TimelineMediaView(media: media, isObscured: isObscured)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .onTapGesture(perform: activate)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(isObscured ? "\(accessibilityLabel), protected" : accessibilityLabel)
         .accessibilityIdentifier("timeline.attachment")
         .accessibilityHint(isObscured ? "Reveals the attachment without opening it" : "Opens the attachment")
+        .accessibilityAddTraits(.isButton)
         .accessibilityAction {
-            if isObscured {
+            activate()
+        }
+    }
+
+    private func activate() {
+        if isObscured {
+            withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
                 isRevealed = true
-            } else {
-                onOpen(media)
             }
+        } else {
+            onOpen(media)
         }
     }
 }
