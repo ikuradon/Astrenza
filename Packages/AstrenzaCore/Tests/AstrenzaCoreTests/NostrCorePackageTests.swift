@@ -3698,6 +3698,23 @@ struct NostrCorePackageTests {
         })
     }
 
+    @Test("Sync policy defaults to own relay list and tap-to-load on cellular")
+    func syncPolicyDefaults() {
+        let wifi = NostrSyncPolicy.default(networkType: .wifi, lowPowerMode: false)
+        #expect(wifi.mode == .ownRelayList)
+        #expect(!wifi.tapToLoadMedia)
+        #expect(wifi.queueOGPPreviews)
+
+        let cellular = NostrSyncPolicy.default(networkType: .cellular, lowPowerMode: false)
+        #expect(cellular.mode == .ownRelayList)
+        #expect(cellular.tapToLoadMedia)
+        #expect(cellular.disableOGPOnCellular)
+
+        let lowPower = NostrSyncPolicy.default(networkType: .wifi, lowPowerMode: true)
+        #expect(lowPower.mode == .energySaver)
+        #expect(lowPower.tapToLoadMedia)
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,
