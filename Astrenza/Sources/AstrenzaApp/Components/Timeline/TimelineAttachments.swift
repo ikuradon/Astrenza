@@ -708,8 +708,12 @@ private struct BlurHashPlaceholderView: View {
 
 private struct LinkPreviewAttachmentView: View {
     let preview: LinkPreview
+    @State private var availableWidth: CGFloat = 0
 
     var body: some View {
+        let width = measuredWidth
+        let height: CGFloat = preview.imageURL == nil ? 226 : 252
+
         VStack(spacing: 0) {
             LinkPreviewHeroView(preview: preview)
                 .frame(height: preview.imageURL == nil ? 128 : 154)
@@ -742,13 +746,35 @@ private struct LinkPreviewAttachmentView: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(height: preview.imageURL == nil ? 226 : 252)
+        .frame(width: width, height: height)
         .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: LinkPreviewAvailableWidthKey.self, value: proxy.size.width)
+            }
+        )
+        .onPreferenceChange(LinkPreviewAvailableWidthKey.self) { width in
+            guard width > 0, abs(width - availableWidth) > 0.5 else { return }
+            availableWidth = width
+        }
+    }
+
+    private var measuredWidth: CGFloat {
+        availableWidth > 0 ? availableWidth : 320
+    }
+}
+
+private struct LinkPreviewAvailableWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -767,6 +793,8 @@ private struct LinkPreviewHeroView: View {
                 YouTubePlayBadge()
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
     }
 
     private var fallbackHero: some View {
@@ -828,6 +856,8 @@ private struct LinkPreviewRemoteImage: View {
                 endPoint: .bottom
             )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .task(id: url) {
             await loader.load(url: url)
         }
