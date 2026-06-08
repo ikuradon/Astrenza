@@ -2185,6 +2185,144 @@ struct TimelineModelTests {
         #expect(store.hasMoreOlder)
     }
 
+    @Test("Home timeline completed gap backfill uses NIP-77 before resolving")
+    @MainActor
+    func homeTimelineCompletedGapBackfillUsesNIP77BeforeResolving() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "4f", count: 32))
+        let account = NostrAccount(pubkey: signer.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let newer = try await signer.sign(
+            NostrPublishInput.post(content: "negentropy newer side")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 300)
+        )
+        let middle = try await signer.sign(
+            NostrPublishInput.post(content: "negentropy recovered middle")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 200)
+        )
+        let older = try await signer.sign(
+            NostrPublishInput.post(content: "negentropy older side")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 100)
+        )
+        let metadataEvent = timelineEvent(
+            idSeed: "runtime-gap-negentropy-author",
+            kind: 0,
+            pubkey: signer.pubkey,
+            createdAt: 301,
+            content: #"{"name":"Runtime Gap"}"#
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in
+                FakeRelayRuntimeTransport(connection: connection)
+            },
+            autoReceive: false,
+            heartbeatPolicy: .disabled
+        )
+        let relayClient = FakeStoreRelayClient(
+            eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "runtime-gap-negentropy-relays",
+                        kind: 10002,
+                        pubkey: account.pubkey,
+                        createdAt: 90,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "runtime-gap-negentropy-follows",
+                        kind: 3,
+                        pubkey: account.pubkey,
+                        createdAt: 91,
+                        tags: [["p", account.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": [newer, older],
+                "astrenza-gap-events": [middle]
+            ],
+            missingEventIDsBySubscriptionID: [
+                "astrenza-neg-gap": [middle.id]
+            ]
+        )
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: relayClient,
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [account.pubkey],
+                noteEvents: [newer, older],
+                metadataEvents: [metadataEvent],
+                hasMoreOlder: true
+            ),
+            accountID: account.pubkey
+        )
+        try eventStore.saveTimelineEntries([
+            NostrTimelineEntryRecord(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                eventID: newer.id,
+                sortTimestamp: newer.createdAt,
+                insertedAt: 400,
+                gapAfter: true
+            ),
+            NostrTimelineEntryRecord(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                eventID: older.id,
+                sortTimestamp: older.createdAt,
+                insertedAt: 400,
+                gapBefore: true
+            )
+        ])
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        let gap = TimelineGap(
+            id: "gap-\(newer.id)-\(older.id)",
+            newerPostID: newer.id,
+            olderPostID: older.id,
+            missingEstimate: 8,
+            relayCount: 1,
+            state: .needsBackfill,
+            backfilledPosts: []
+        )
+
+        #expect(await store.backfillGap(gap, direction: .older))
+        let gapSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-gap-notes")
+        await connection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: gapSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await waitForRelayProcessing(in: store, isProcessing: false)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(store.entries.map(\.id) == [
+            newer.id,
+            "gap-\(newer.id)-\(middle.id)",
+            middle.id,
+            "gap-\(middle.id)-\(older.id)",
+            older.id
+        ])
+        let fetchSubscriptionIDs = await relayClient.fetchSubscriptionIDs()
+        #expect(fetchSubscriptionIDs.contains("astrenza-gap-events"))
+        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
+        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == true)
+        #expect(timelineEntries.first { $0.eventID == middle.id }?.gapBefore == false)
+        #expect(timelineEntries.first { $0.eventID == middle.id }?.gapAfter == false)
+        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == true)
+    }
+
     @Test("Home timeline gap backfill keeps gap flags after partial runtime success")
     @MainActor
     func homeTimelineGapBackfillKeepsFlagsAfterPartialRuntimeSuccess() async throws {
@@ -5800,16 +5938,25 @@ private func waitForRelaySyncEvent(
 private actor FakeStoreRelayClient: NostrRelayFetching {
     private let eventsBySubscriptionID: [String: [NostrEvent]]
     private let eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]]
+    private let missingEventIDsBySubscriptionID: [String: [String]]
     private var fetchCalls: [String] = []
 
-    init(eventsBySubscriptionID: [String: [NostrEvent]]) {
+    init(
+        eventsBySubscriptionID: [String: [NostrEvent]],
+        missingEventIDsBySubscriptionID: [String: [String]] = [:]
+    ) {
         self.eventsBySubscriptionID = eventsBySubscriptionID
+        self.missingEventIDsBySubscriptionID = missingEventIDsBySubscriptionID
         eventsByRelayAndSubscriptionID = [:]
     }
 
-    init(eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]]) {
+    init(
+        eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]],
+        missingEventIDsBySubscriptionID: [String: [String]] = [:]
+    ) {
         eventsBySubscriptionID = [:]
         self.eventsByRelayAndSubscriptionID = eventsByRelayAndSubscriptionID
+        self.missingEventIDsBySubscriptionID = missingEventIDsBySubscriptionID
     }
 
     func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
@@ -5826,7 +5973,7 @@ private actor FakeStoreRelayClient: NostrRelayFetching {
         localEvents: [NostrEvent],
         subscriptionID: String
     ) async throws -> [String] {
-        []
+        missingEventIDsBySubscriptionID[subscriptionID] ?? []
     }
 
     func fetchSubscriptionIDs() -> [String] {

@@ -82,6 +82,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var materializeTask: Task<Void, Never>?
     private var resolvingLinkPreviewURLs = Set<String>()
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
+    private var pendingGapReconciliationIDs = Set<String>()
     private var runtimeSyncWindows: [RuntimeSubscriptionKey: RuntimeSyncWindow] = [:]
     private var dependencyFetchQueue = NostrDependencyFetchQueue()
     private var backwardFlushTask: Task<Void, Never>?
@@ -178,7 +179,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     var isRelayProcessing: Bool {
         phase.isProcessing ||
             dependencyFetchQueue.hasPendingWork ||
-            !pendingBackwardRequests.isEmpty
+            !pendingBackwardRequests.isEmpty ||
+            !pendingGapReconciliationIDs.isEmpty
     }
 
     init(
@@ -394,6 +396,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         backwardFlushTask = nil
         dependencyFetchQueue.removeAll()
         pendingBackwardRequests.removeAll()
+        pendingGapReconciliationIDs.removeAll()
         unmaterializedNewEventIDs.removeAll()
         unmaterializedNewCount = 0
         runtimeSyncWindows.removeAll()
@@ -1316,11 +1319,12 @@ final class NostrHomeTimelineStore: ObservableObject {
             if let gap = request.gap,
                let account {
                 if completion.status == .completed {
-                    markGapResolved(gap)
+                    reconcileCompletedGap(gap)
+                } else {
+                    reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
+                    materializeEntries()
+                    scheduleLinkPreviewResolution()
                 }
-                reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
-                materializeEntries()
-                scheduleLinkPreviewResolution()
             }
         }
         relayStatusRevision &+= 1
@@ -1379,6 +1383,166 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: "gap resolve failed: \(error.localizedDescription)"
             )
         }
+    }
+
+    private func reconcileCompletedGap(_ gap: PendingGapBackfill) {
+        let reconciliationID = "\(gap.newerPostID)-\(gap.olderPostID)"
+        pendingGapReconciliationIDs.insert(reconciliationID)
+        relayStatusRevision &+= 1
+
+        Task { [weak self] in
+            await self?.runCompletedGapReconciliation(gap, reconciliationID: reconciliationID)
+        }
+    }
+
+    private func runCompletedGapReconciliation(
+        _ gap: PendingGapBackfill,
+        reconciliationID: String
+    ) async {
+        defer {
+            pendingGapReconciliationIDs.remove(reconciliationID)
+            relayStatusRevision &+= 1
+        }
+
+        guard let account,
+              let newerEvent = timelineEvent(id: gap.newerPostID),
+              let olderEvent = timelineEvent(id: gap.olderPostID)
+        else { return }
+
+        let recoveredEvents = await fetchMissingGapEvents(
+            account: account,
+            newerEvent: newerEvent,
+            olderEvent: olderEvent
+        )
+        if recoveredEvents.isEmpty {
+            markGapResolved(gap)
+        } else {
+            do {
+                try eventStore?.save(events: recoveredEvents)
+                saveHomeTimelineIndex(events: recoveredEvents, account: account, source: "gap-negentropy")
+                recoveredEvents.forEach(enqueueBackwardDependencies)
+            } catch {
+                recordRuntimeSyncEvent(
+                    relayURL: resolvedRelays.first ?? "runtime",
+                    kind: .partialFailure,
+                    subscriptionID: "astrenza-gap-events",
+                    message: "gap negentropy save failed: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
+        materializeEntries()
+        scheduleLinkPreviewResolution()
+    }
+
+    private func fetchMissingGapEvents(
+        account: NostrAccount,
+        newerEvent: NostrEvent,
+        olderEvent: NostrEvent
+    ) async -> [NostrEvent] {
+        let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
+        guard !authors.isEmpty, olderEvent.createdAt < newerEvent.createdAt else { return [] }
+
+        let localEvents = localGapWindowEvents(
+            authors: authors,
+            newerEvent: newerEvent,
+            olderEvent: olderEvent
+        )
+        let filter = NostrRelayFilter(
+            kinds: [1, 6],
+            authors: authors,
+            since: olderEvent.createdAt + 1,
+            until: newerEvent.createdAt - 1,
+            limit: max(1, min(newerEvent.createdAt - olderEvent.createdAt, 250))
+        )
+
+        let relayClient = timelineLoader.relayClient
+        let missingIDs = await withTaskGroup(of: [String].self) { group in
+            for relay in resolvedRelays.prefix(4) {
+                group.addTask {
+                    (try? await relayClient.fetchMissingEventIDs(
+                        relayURL: relay,
+                        filter: filter,
+                        localEvents: localEvents,
+                        subscriptionID: "astrenza-neg-gap"
+                    )) ?? []
+                }
+            }
+
+            var ids = Set<String>()
+            for await relayIDs in group {
+                ids.formUnion(relayIDs)
+            }
+            return Array(ids).sorted()
+        }
+        guard !missingIDs.isEmpty else { return [] }
+
+        let request = NostrRelayRequest(
+            subscriptionID: "astrenza-gap-events",
+            filters: [["ids": .strings(Array(missingIDs.prefix(250)))]]
+        )
+        let events = await withTaskGroup(of: [NostrEvent].self) { group in
+            for relay in resolvedRelays.prefix(4) {
+                group.addTask {
+                    (try? await relayClient.fetch(relayURL: relay, request: request)) ?? []
+                }
+            }
+
+            var fetched: [NostrEvent] = []
+            for await relayEvents in group {
+                fetched.append(contentsOf: relayEvents)
+            }
+            return fetched
+        }
+
+        let missingIDSet = Set(missingIDs)
+        return Array(
+            Dictionary(uniqueKeysWithValues: events.compactMap { event -> (String, NostrEvent)? in
+                guard missingIDSet.contains(event.id),
+                      [1, 6].contains(event.kind),
+                      authors.contains(event.pubkey),
+                      event.createdAt > olderEvent.createdAt,
+                      event.createdAt < newerEvent.createdAt
+                else { return nil }
+                return (event.id, event)
+            }).values
+        ).sorted { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id < rhs.id
+            }
+            return lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    private func localGapWindowEvents(
+        authors: [String],
+        newerEvent: NostrEvent,
+        olderEvent: NostrEvent
+    ) -> [NostrEvent] {
+        let inMemoryEvents = noteEvents.filter { event in
+            [1, 6].contains(event.kind) &&
+                authors.contains(event.pubkey) &&
+                event.createdAt > olderEvent.createdAt &&
+                event.createdAt < newerEvent.createdAt
+        }
+        guard let eventStore else { return inMemoryEvents }
+
+        let storedKind1 = ((try? eventStore.events(
+            kind: 1,
+            authors: authors,
+            until: newerEvent.createdAt - 1,
+            limit: 500
+        )) ?? []).filter { $0.createdAt > olderEvent.createdAt }
+        let storedKind6 = ((try? eventStore.events(
+            kind: 6,
+            authors: authors,
+            until: newerEvent.createdAt - 1,
+            limit: 500
+        )) ?? []).filter { $0.createdAt > olderEvent.createdAt }
+        return Array(
+            Dictionary(uniqueKeysWithValues: (inMemoryEvents + storedKind1 + storedKind6).map { ($0.id, $0) }).values
+        )
     }
 
     private func scheduleLinkPreviewResolution() {
