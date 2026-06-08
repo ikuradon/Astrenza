@@ -44,6 +44,20 @@ struct HomeTimelineUnreadStateTests {
         #expect(store.materializedUnreadCount == 0)
     }
 
+    @Test("marking newest materialized window read clears the badge")
+    func markNewestMaterializedWindowReadClearsBadge() {
+        let store = NostrHomeTimelineStore(eventStore: nil)
+
+        store.testingSetMaterializedPostIDs(["new-1", "new-2", "old-1"])
+        store.testingSetReadBoundary(postID: "old-1")
+        #expect(store.visibleUnreadBadgeCount == 2)
+
+        store.markNewestMaterializedWindowRead()
+
+        #expect(store.materializedUnreadCount == 0)
+        #expect(store.visibleUnreadBadgeCount == 0)
+    }
+
     @Test("badge hides when the viewport moves older than the unread range")
     func badgeHidesPastUnreadRange() {
         let store = NostrHomeTimelineStore(eventStore: nil)

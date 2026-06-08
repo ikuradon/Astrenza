@@ -255,6 +255,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         recomputeMaterializedUnreadState()
     }
 
+    func markNewestMaterializedWindowRead() {
+        guard !materializedPostIDs.isEmpty,
+              materializedUnreadCount > 0 || visibleUnreadBadgeCount > 0
+        else { return }
+        readPostIDs.formUnion(materializedPostIDs)
+        recomputeMaterializedUnreadState()
+    }
+
     func applyPendingNewEvents() async {
         guard let account else { return }
         reloadNewestProjectionWindow(account: account)

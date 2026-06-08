@@ -467,6 +467,9 @@ private extension HomeTimelineView {
 
         if sessionStore.account != nil, selectedTimeline == .home {
             let nextIsNewestWindow = offset <= 6
+            if nextIsNewestWindow {
+                liveTimelineStore.markNewestMaterializedWindowRead()
+            }
             if isTimelineAtNewestWindow != nextIsNewestWindow {
                 isTimelineAtNewestWindow = nextIsNewestWindow
                 liveTimelineStore.setTimelineAtNewestWindow(nextIsNewestWindow)
@@ -540,6 +543,7 @@ private extension HomeTimelineView {
             homeReturnAnchor = nil
         } else {
             homeReturnAnchor = homeViewportState
+            liveTimelineStore.markNewestMaterializedWindowRead()
             homeScrollCommand = TimelineScrollCommand(target: .top)
         }
     }
