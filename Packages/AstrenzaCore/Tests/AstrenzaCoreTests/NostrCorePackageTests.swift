@@ -3715,6 +3715,46 @@ struct NostrCorePackageTests {
         #expect(lowPower.tapToLoadMedia)
     }
 
+    @Test("Relay traffic counters accumulate by hour relay network and sync mode")
+    func relayTrafficCountersAccumulate() throws {
+        let store = try NostrEventStore.inMemory()
+        let hour = 1_717_891_200
+        let first = NostrRelayTrafficDelta(
+            accountID: "account",
+            relayURL: "wss://relay.example",
+            occurredAt: hour + 30,
+            networkType: .wifi,
+            syncMode: .ownRelayList,
+            receivedBytes: 120,
+            sentBytes: 40,
+            receivedMessages: 2,
+            sentMessages: 1
+        )
+        let second = NostrRelayTrafficDelta(
+            accountID: "account",
+            relayURL: "wss://relay.example",
+            occurredAt: hour + 600,
+            networkType: .wifi,
+            syncMode: .ownRelayList,
+            receivedBytes: 80,
+            sentBytes: 10,
+            receivedMessages: 1,
+            sentMessages: 1
+        )
+
+        try store.recordRelayTraffic([first, second])
+
+        let totals = try store.relayTrafficTotals(
+            accountID: "account",
+            start: hour,
+            end: hour + 3_600
+        )
+        #expect(totals.receivedBytes == 200)
+        #expect(totals.sentBytes == 50)
+        #expect(totals.receivedMessages == 3)
+        #expect(totals.sentMessages == 2)
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,

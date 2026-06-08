@@ -1762,6 +1762,122 @@ public final class NostrEventStore {
         }
     }
 
+    public func recordRelayTraffic(_ deltas: [NostrRelayTrafficDelta]) throws {
+        guard !deltas.isEmpty else { return }
+
+        try database.write { db in
+            for delta in deltas {
+                let hourStart = Self.hourStart(for: delta.occurredAt)
+                try db.execute(
+                    sql: """
+                    INSERT INTO relay_traffic_hourly_counters (
+                        account_id, relay_url, hour_start, network_type, sync_mode,
+                        received_bytes, sent_bytes, received_messages, sent_messages, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id, relay_url, hour_start, network_type, sync_mode) DO UPDATE SET
+                        received_bytes = received_bytes + excluded.received_bytes,
+                        sent_bytes = sent_bytes + excluded.sent_bytes,
+                        received_messages = received_messages + excluded.received_messages,
+                        sent_messages = sent_messages + excluded.sent_messages,
+                        updated_at = excluded.updated_at
+                    """,
+                    arguments: [
+                        delta.accountID,
+                        delta.relayURL,
+                        hourStart,
+                        delta.networkType.rawValue,
+                        delta.syncMode.rawValue,
+                        delta.receivedBytes,
+                        delta.sentBytes,
+                        delta.receivedMessages,
+                        delta.sentMessages,
+                        delta.occurredAt
+                    ]
+                )
+            }
+        }
+    }
+
+    public func relayTrafficTotals(
+        accountID: String,
+        start: Int,
+        end: Int
+    ) throws -> NostrRelayTrafficTotals {
+        try database.read { db in
+            try relayTrafficTotals(accountID: accountID, relayURL: nil, start: start, end: end, db: db)
+        }
+    }
+
+    public func relayTrafficTotalsByRelay(
+        accountID: String,
+        start: Int,
+        end: Int
+    ) throws -> [String: NostrRelayTrafficTotals] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT relay_url,
+                    COALESCE(SUM(received_bytes), 0) AS received_bytes,
+                    COALESCE(SUM(sent_bytes), 0) AS sent_bytes,
+                    COALESCE(SUM(received_messages), 0) AS received_messages,
+                    COALESCE(SUM(sent_messages), 0) AS sent_messages
+                FROM relay_traffic_hourly_counters
+                WHERE account_id = ? AND hour_start >= ? AND hour_start < ?
+                GROUP BY relay_url
+                ORDER BY relay_url ASC
+                """,
+                arguments: [accountID, start, end]
+            )
+            return Dictionary(uniqueKeysWithValues: rows.map { row in
+                (
+                    row["relay_url"],
+                    NostrRelayTrafficTotals(
+                        receivedBytes: row["received_bytes"],
+                        sentBytes: row["sent_bytes"],
+                        receivedMessages: row["received_messages"],
+                        sentMessages: row["sent_messages"]
+                    )
+                )
+            })
+        }
+    }
+
+    private static func hourStart(for timestamp: Int) -> Int {
+        timestamp - timestamp % 3_600
+    }
+
+    private func relayTrafficTotals(
+        accountID: String,
+        relayURL: String?,
+        start: Int,
+        end: Int,
+        db: Database
+    ) throws -> NostrRelayTrafficTotals {
+        var sql = """
+        SELECT COALESCE(SUM(received_bytes), 0) AS received_bytes,
+            COALESCE(SUM(sent_bytes), 0) AS sent_bytes,
+            COALESCE(SUM(received_messages), 0) AS received_messages,
+            COALESCE(SUM(sent_messages), 0) AS sent_messages
+        FROM relay_traffic_hourly_counters
+        WHERE account_id = ? AND hour_start >= ? AND hour_start < ?
+        """
+        var arguments: StatementArguments = [accountID, start, end]
+        if let relayURL {
+            sql += " AND relay_url = ?"
+            arguments += [relayURL]
+        }
+        guard let row = try Row.fetchOne(db, sql: sql, arguments: arguments) else {
+            return .zero
+        }
+        return NostrRelayTrafficTotals(
+            receivedBytes: row["received_bytes"],
+            sentBytes: row["sent_bytes"],
+            receivedMessages: row["received_messages"],
+            sentMessages: row["sent_messages"]
+        )
+    }
+
     private func migrate() throws {
         var migrator = DatabaseMigrator()
 
@@ -2150,6 +2266,34 @@ public final class NostrEventStore {
                 table.primaryKey(["local_id", "relay_url"])
             }
             try db.create(index: "outbox_relays_status", on: "outbox_relays", columns: ["status"], ifNotExists: true)
+        }
+
+        migrator.registerMigration("addRelayTrafficHourlyCounters") { db in
+            try db.create(table: "relay_traffic_hourly_counters", ifNotExists: true) { table in
+                table.column("account_id", .text).notNull()
+                table.column("relay_url", .text).notNull()
+                table.column("hour_start", .integer).notNull()
+                table.column("network_type", .text).notNull()
+                table.column("sync_mode", .text).notNull()
+                table.column("received_bytes", .integer).notNull().defaults(to: 0)
+                table.column("sent_bytes", .integer).notNull().defaults(to: 0)
+                table.column("received_messages", .integer).notNull().defaults(to: 0)
+                table.column("sent_messages", .integer).notNull().defaults(to: 0)
+                table.column("updated_at", .integer).notNull()
+                table.primaryKey(["account_id", "relay_url", "hour_start", "network_type", "sync_mode"])
+            }
+            try db.create(
+                index: "relay_traffic_hourly_account_hour",
+                on: "relay_traffic_hourly_counters",
+                columns: ["account_id", "hour_start"],
+                ifNotExists: true
+            )
+            try db.create(
+                index: "relay_traffic_hourly_relay",
+                on: "relay_traffic_hourly_counters",
+                columns: ["relay_url", "hour_start"],
+                ifNotExists: true
+            )
         }
 
         try migrator.migrate(database)
