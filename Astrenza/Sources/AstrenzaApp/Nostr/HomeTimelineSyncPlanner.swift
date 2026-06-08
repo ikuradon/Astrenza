@@ -170,13 +170,16 @@ struct HomeTimelineSyncPlanner {
         }
 
         var authorsByRelays: [RelaySelectionKey: [String]] = [:]
+        let connectedHintRelays = Set(contactItems.flatMap(\.relayHints)).intersection(fallbackRelayURLs)
+        let defaultRelayURLs = fallbackRelayURLs.filter { !connectedHintRelays.contains($0) }
+        let fallbackOnlyRelayURLs = defaultRelayURLs.isEmpty ? fallbackRelayURLs : defaultRelayURLs
 
         for author in authors {
             let hints = relayHintsByPubkey[author.lowercased()] ?? []
             let connectedHints = fallbackRelayURLs.filter { relayURL in
                 hints.contains(relayURL)
             }
-            let relayURLs = connectedHints.isEmpty ? fallbackRelayURLs : connectedHints
+            let relayURLs = connectedHints.isEmpty ? fallbackOnlyRelayURLs : connectedHints
             authorsByRelays[RelaySelectionKey(relayURLs: relayURLs), default: []].append(author)
         }
 
