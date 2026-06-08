@@ -23,7 +23,7 @@ struct UserDetailView: View {
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
-    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     @State private var selectedTab: UserProfileTimelineTab = .posts
     @State private var scrollOffset: CGFloat = 0
@@ -119,7 +119,7 @@ struct UserDetailView: View {
     private var profileHero: some View {
         ZStack(alignment: .bottom) {
             Button {
-                onOpenMedia(profile.bannerMedia)
+                onOpenMedia(profile.bannerMedia, 0)
             } label: {
                 ProfileBannerView(style: profile.banner)
                     .frame(height: profileHeroHeight)
@@ -403,7 +403,7 @@ struct UserDetailView: View {
         onOpenPost: { _ in },
         onOpenProfile: { _ in },
         onReplyPost: { _ in },
-        onOpenMedia: { _ in },
+        onOpenMedia: { _, _ in },
         onOpenURL: { _ in }
     )
     .preferredColorScheme(.dark)

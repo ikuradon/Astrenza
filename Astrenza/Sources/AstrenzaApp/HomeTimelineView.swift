@@ -23,7 +23,7 @@ struct HomeTimelineView: View {
     @State private var postNavigationPath: [TimelineNavigationRoute] = []
     @State private var profileNavigationPath: [TimelineNavigationRoute] = []
     @State private var unreadBadgeFrame: CGRect = .zero
-    @State private var fullscreenMedia: TimelineMedia?
+    @State private var fullscreenMedia: TimelineFullscreenMediaRequest?
     @State private var browserDestination: TimelineBrowserDestination?
     @State private var swipeSettings = TimelineSwipeSettings()
     @State private var timelineRestoreStore = TimelineRestoreStore()
@@ -491,9 +491,12 @@ private extension HomeTimelineView {
         profileNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
     }
 
-    func openMedia(_ media: TimelineMedia) {
+    func openMedia(_ media: TimelineMedia, initialTileIndex: Int = 0) {
         dismissFloatingMenus()
-        fullscreenMedia = media
+        fullscreenMedia = TimelineFullscreenMediaRequest(
+            media: media,
+            initialTileIndex: initialTileIndex
+        )
     }
 
     func openURL(_ url: URL) {

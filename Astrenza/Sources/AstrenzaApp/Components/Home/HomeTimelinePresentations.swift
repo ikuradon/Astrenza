@@ -7,7 +7,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var isFiltersSettingsPresented: Bool
     @Binding var isRelayStatusPresented: Bool
     @Binding var composeSheetMode: ComposeSheetMode
-    @Binding var fullscreenMedia: TimelineMedia?
+    @Binding var fullscreenMedia: TimelineFullscreenMediaRequest?
     @Binding var browserDestination: TimelineBrowserDestination?
     @Binding var swipeSettings: TimelineSwipeSettings
     let relayURLs: [String]
@@ -70,8 +70,11 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                     .presentationCornerRadius(26)
             }
             .fullScreenCover(isPresented: isFullscreenMediaPresented) {
-                if let media = fullscreenMedia {
-                    TimelineFullscreenMediaViewer(media: media) {
+                if let request = fullscreenMedia {
+                    TimelineFullscreenMediaViewer(
+                        media: request.media,
+                        initialTileIndex: request.initialTileIndex
+                    ) {
                         fullscreenMedia = nil
                     }
                 }
@@ -101,7 +104,7 @@ extension View {
         isFiltersSettingsPresented: Binding<Bool>,
         isRelayStatusPresented: Binding<Bool>,
         composeSheetMode: Binding<ComposeSheetMode>,
-        fullscreenMedia: Binding<TimelineMedia?>,
+        fullscreenMedia: Binding<TimelineFullscreenMediaRequest?>,
         browserDestination: Binding<TimelineBrowserDestination?>,
         swipeSettings: Binding<TimelineSwipeSettings>,
         relayURLs: [String],

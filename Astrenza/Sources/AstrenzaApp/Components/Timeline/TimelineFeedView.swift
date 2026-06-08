@@ -15,7 +15,7 @@ struct TimelineFeedView: View {
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
-    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
     let onRefresh: (() async -> Void)?
@@ -63,7 +63,7 @@ struct TimelineFeedView: View {
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void,
         onReplyPost: @escaping (TimelinePost) -> Void,
-        onOpenMedia: @escaping (TimelineMedia) -> Void,
+        onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         onOpenURL: @escaping (URL) -> Void,
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
@@ -115,7 +115,7 @@ struct TimelineFeedView: View {
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void,
         onReplyPost: @escaping (TimelinePost) -> Void,
-        onOpenMedia: @escaping (TimelineMedia) -> Void,
+        onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         onOpenURL: @escaping (URL) -> Void,
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
@@ -624,9 +624,9 @@ private extension TimelineFeedView {
         }
     }
 
-    func openMedia(_ media: TimelineMedia) {
+    func openMedia(_ media: TimelineMedia, initialTileIndex: Int) {
         closeFloatingPostMenus()
-        onOpenMedia(media)
+        onOpenMedia(media, initialTileIndex)
     }
 
     func openURL(_ url: URL) {

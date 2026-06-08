@@ -8,7 +8,7 @@ struct TimelinePostRow: View {
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
-    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onDismissActionMenu: () -> Void
     private var needsFloatingActionAnchors: Bool {
@@ -311,12 +311,12 @@ private extension TimelinePostRow {
         onOpenPost(selectedPost)
     }
 
-    func openAttachment(_ media: TimelineMedia) {
+    func openAttachment(_ media: TimelineMedia, initialTileIndex: Int) {
         didHandleActionGesture = true
         onDismissActionMenu()
 
         if media.isFullscreenMedia {
-            onOpenMedia(media)
+            onOpenMedia(media, initialTileIndex)
         } else if let url = media.browserURL {
             onOpenURL(url)
         }

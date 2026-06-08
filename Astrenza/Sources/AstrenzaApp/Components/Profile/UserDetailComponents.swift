@@ -30,14 +30,14 @@ struct ProfileAvatarMediaButton<Overlay: View>: View {
     let profile: UserProfile
     let size: CGFloat
     let label: String
-    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenMedia: (TimelineMedia, Int) -> Void
     @ViewBuilder let overlay: () -> Overlay
 
     init(
         profile: UserProfile,
         size: CGFloat,
         label: String,
-        onOpenMedia: @escaping (TimelineMedia) -> Void,
+        onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         @ViewBuilder overlay: @escaping () -> Overlay
     ) {
         self.profile = profile
@@ -49,7 +49,7 @@ struct ProfileAvatarMediaButton<Overlay: View>: View {
 
     var body: some View {
         Button {
-            onOpenMedia(profile.avatarMedia)
+            onOpenMedia(profile.avatarMedia, 0)
         } label: {
             AvatarView(style: profile.avatar, size: size)
                 .overlay {
@@ -67,7 +67,7 @@ extension ProfileAvatarMediaButton where Overlay == EmptyView {
         profile: UserProfile,
         size: CGFloat,
         label: String,
-        onOpenMedia: @escaping (TimelineMedia) -> Void
+        onOpenMedia: @escaping (TimelineMedia, Int) -> Void
     ) {
         self.init(
             profile: profile,

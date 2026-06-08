@@ -7,7 +7,7 @@ struct PostDetailView: View {
     let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
-    let onOpenMedia: (TimelineMedia) -> Void
+    let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     @State private var isReplyAncestorStackVisible = false
 
@@ -94,9 +94,9 @@ struct PostDetailView: View {
         !replyAncestorPosts.isEmpty && !isReplyAncestorStackVisible
     }
 
-    private func openAttachment(_ media: TimelineMedia) {
+    private func openAttachment(_ media: TimelineMedia, initialTileIndex: Int) {
         if media.isFullscreenMedia {
-            onOpenMedia(media)
+            onOpenMedia(media, initialTileIndex)
         } else if let url = media.browserURL {
             onOpenURL(url)
         }

@@ -50,8 +50,9 @@ struct TimelineAttachmentButton: View {
     let media: TimelineMedia
     let isProtected: Bool
     let accessibilityLabel: String
-    let onOpen: (TimelineMedia) -> Void
+    let onOpen: (TimelineMedia, Int) -> Void
     @State private var isRevealed = false
+    @State private var measuredSize = CGSize.zero
 
     private var isObscured: Bool {
         isProtected && !isRevealed
@@ -60,24 +61,73 @@ struct TimelineAttachmentButton: View {
     var body: some View {
         TimelineMediaView(media: media, isObscured: isObscured)
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .onTapGesture(perform: activate)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: TimelineAttachmentSizePreferenceKey.self, value: proxy.size)
+                }
+            )
+            .onPreferenceChange(TimelineAttachmentSizePreferenceKey.self) { size in
+                guard size.width > 0, size.height > 0 else { return }
+                measuredSize = size
+            }
+            .simultaneousGesture(
+                SpatialTapGesture()
+                    .onEnded { value in
+                        activate(at: value.location)
+                    }
+            )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(isObscured ? "\(accessibilityLabel), protected" : accessibilityLabel)
         .accessibilityIdentifier("timeline.attachment")
         .accessibilityHint(isObscured ? "Reveals the attachment without opening it" : "Opens the attachment")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
-            activate()
+            activate(at: nil)
         }
     }
 
-    private func activate() {
+    private func activate(at location: CGPoint?) {
         if isObscured {
             withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
                 isRevealed = true
             }
         } else {
-            onOpen(media)
+            onOpen(media, selectedTileIndex(at: location))
+        }
+    }
+
+    private func selectedTileIndex(at location: CGPoint?) -> Int {
+        guard case .gallery(let tiles) = media,
+              let location,
+              measuredSize.width > 0,
+              measuredSize.height > 0
+        else {
+            return 0
+        }
+
+        switch tiles.count {
+        case 0, 1:
+            return 0
+        case 2:
+            return location.x < measuredSize.width / 2 ? 0 : 1
+        case 3:
+            if location.y < measuredSize.height / 2 {
+                return location.x < measuredSize.width / 2 ? 0 : 1
+            }
+            return 2
+        default:
+            let isLeft = location.x < measuredSize.width / 2
+            let isTop = location.y < measuredSize.height / 2
+            switch (isTop, isLeft) {
+            case (true, true):
+                return 0
+            case (true, false):
+                return 1
+            case (false, true):
+                return 2
+            case (false, false):
+                return 3
+            }
         }
     }
 }
@@ -85,6 +135,23 @@ struct TimelineAttachmentButton: View {
 struct TimelineBrowserDestination: Identifiable {
     let id = UUID()
     let url: URL
+}
+
+struct TimelineFullscreenMediaRequest: Identifiable {
+    let id = UUID()
+    let media: TimelineMedia
+    let initialTileIndex: Int
+}
+
+private struct TimelineAttachmentSizePreferenceKey: PreferenceKey {
+    static let defaultValue = CGSize.zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let nextValue = nextValue()
+        if nextValue.width > 0, nextValue.height > 0 {
+            value = nextValue
+        }
+    }
 }
 
 struct TimelineFullscreenMediaViewer: View {
@@ -100,6 +167,12 @@ struct TimelineFullscreenMediaViewer: View {
         }
 
         return nil
+    }
+
+    init(media: TimelineMedia, initialTileIndex: Int = 0, onClose: @escaping () -> Void) {
+        self.media = media
+        self.onClose = onClose
+        _selectedTileIndex = State(initialValue: initialTileIndex)
     }
 
     var body: some View {
@@ -141,6 +214,9 @@ struct TimelineFullscreenMediaViewer: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        .onAppear {
+            selectedTileIndex = min(max(selectedTileIndex, 0), max(tiles.count - 1, 0))
+        }
         .offset(y: dismissalDrag.height)
         .scaleEffect(dismissalScale)
         .animation(.spring(duration: 0.22, bounce: 0.08), value: selectedTileIndex)
@@ -244,6 +320,7 @@ private struct TimelineFullscreenMediaChrome: View {
 
 private struct TimelineFullscreenMediaPage: View {
     let tile: MediaTile
+    @StateObject private var loader = RemoteMediaImageLoader()
     @State private var scale: CGFloat = 1
     @State private var offset = CGSize.zero
     @GestureState private var gestureScale: CGFloat = 1
@@ -274,23 +351,52 @@ private struct TimelineFullscreenMediaPage: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Image \(tile.title)")
+            .task(id: tile.url) {
+                await loader.load(url: tile.url)
+            }
     }
 
     private var pageContent: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.white.opacity(0.04))
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                fullscreenPlaceholder
+            }
 
-            LinearGradient(colors: tile.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            if tile.isVideo {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 30, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 76, height: 76)
+                    .background(.black.opacity(0.44), in: Circle())
+                    .shadow(color: .black.opacity(0.32), radius: 18, y: 5)
+            }
+
+            if tile.url != nil, loader.image == nil {
+                ProgressView()
+                    .tint(.white)
+                    .controlSize(.large)
+                    .padding(.top, 112)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .scaleEffect(effectiveScale)
+        .offset(effectiveOffset)
+    }
+
+    private var fullscreenPlaceholder: some View {
+        ZStack {
+            BlurHashPlaceholderView(blurhash: tile.blurhash, colors: tile.colors)
 
             Image(systemName: tile.symbolName)
                 .font(.system(size: 82, weight: .bold))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(.white.opacity(0.86))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .aspectRatio(0.82, contentMode: .fit)
-        .scaleEffect(effectiveScale)
-        .offset(effectiveOffset)
+        .aspectRatio(tile.aspectRatio ?? 0.82, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var doubleTapZoomGesture: some Gesture {
