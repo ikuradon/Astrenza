@@ -1031,8 +1031,14 @@ public final class NostrEventStore {
                         sort_ts = excluded.sort_ts,
                         source = excluded.source,
                         inserted_at = excluded.inserted_at,
-                        gap_before = excluded.gap_before,
-                        gap_after = excluded.gap_after
+                        gap_before = CASE
+                            WHEN timeline_entries.gap_before OR excluded.gap_before THEN 1
+                            ELSE 0
+                        END,
+                        gap_after = CASE
+                            WHEN timeline_entries.gap_after OR excluded.gap_after THEN 1
+                            ELSE 0
+                        END
                     """,
                     arguments: [
                         entry.accountID,
@@ -1193,6 +1199,32 @@ public final class NostrEventStore {
             )
 
             return newerRows.reversed().map(decodeTimelineEntry) + [anchor] + olderRows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func markTimelineGap(
+        accountID: String,
+        timelineKey: String,
+        newerEventID: String,
+        olderEventID: String
+    ) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                UPDATE timeline_entries
+                SET gap_after = 1
+                WHERE account_id = ? AND timeline_key = ? AND event_id = ?
+                """,
+                arguments: [accountID, timelineKey, newerEventID]
+            )
+            try db.execute(
+                sql: """
+                UPDATE timeline_entries
+                SET gap_before = 1
+                WHERE account_id = ? AND timeline_key = ? AND event_id = ?
+                """,
+                arguments: [accountID, timelineKey, olderEventID]
+            )
         }
     }
 

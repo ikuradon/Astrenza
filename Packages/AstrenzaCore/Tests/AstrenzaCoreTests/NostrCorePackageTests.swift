@@ -1233,6 +1233,88 @@ struct NostrCorePackageTests {
         #expect(entries.first { $0.eventID == older.id }?.gapBefore == false)
     }
 
+    @Test("Nostr event store preserves existing gap flags when timeline entries are re-saved")
+    func eventStorePreservesGapFlagsOnTimelineEntryUpsert() throws {
+        let store = try NostrEventStore.inMemory()
+        let older = nostrEvent(kind: 1, createdAt: 100, content: "older")
+        let newer = nostrEvent(kind: 1, createdAt: 200, content: "newer")
+        try store.save(events: [older, newer])
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: newer.id,
+                sortTimestamp: newer.createdAt,
+                insertedAt: 300,
+                gapAfter: true
+            ),
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: older.id,
+                sortTimestamp: older.createdAt,
+                insertedAt: 300,
+                gapBefore: true
+            )
+        ])
+
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: newer.id,
+                sortTimestamp: newer.createdAt,
+                insertedAt: 400
+            ),
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: older.id,
+                sortTimestamp: older.createdAt,
+                insertedAt: 400
+            )
+        ])
+
+        let entries = try store.timelineEntries(accountID: "account", timelineKey: "home", limit: 10)
+        #expect(entries.first { $0.eventID == newer.id }?.gapAfter == true)
+        #expect(entries.first { $0.eventID == older.id }?.gapBefore == true)
+    }
+
+    @Test("Nostr event store can mark a gap between timeline entries")
+    func eventStoreMarksGapBetweenTimelineEntries() throws {
+        let store = try NostrEventStore.inMemory()
+        let older = nostrEvent(kind: 1, createdAt: 100, content: "older")
+        let newer = nostrEvent(kind: 1, createdAt: 200, content: "newer")
+        try store.save(events: [older, newer])
+        try store.saveTimelineEntries([
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: newer.id,
+                sortTimestamp: newer.createdAt,
+                insertedAt: 300
+            ),
+            NostrTimelineEntryRecord(
+                accountID: "account",
+                timelineKey: "home",
+                eventID: older.id,
+                sortTimestamp: older.createdAt,
+                insertedAt: 300
+            )
+        ])
+
+        try store.markTimelineGap(
+            accountID: "account",
+            timelineKey: "home",
+            newerEventID: newer.id,
+            olderEventID: older.id
+        )
+
+        let entries = try store.timelineEntries(accountID: "account", timelineKey: "home", limit: 10)
+        #expect(entries.first { $0.eventID == newer.id }?.gapAfter == true)
+        #expect(entries.first { $0.eventID == older.id }?.gapBefore == true)
+    }
+
     @Test("Nostr event store applies same-author deletion requests")
     func eventStoreAppliesSameAuthorDeletionRequests() throws {
         let store = try NostrEventStore.inMemory()
@@ -2440,17 +2522,28 @@ struct NostrCorePackageTests {
         #expect(relayURLs.contains("wss://read.example"))
     }
 
-    @Test("Home timeline loader returns after the first NIP-65 relay responds")
-    func homeTimelineLoaderReturnsAfterFirstNIP65RelayResponds() async throws {
+    @Test("Home timeline loader chooses the newest NIP-65 relay list")
+    func homeTimelineLoaderChoosesNewestNIP65RelayList() async throws {
         let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
-        let relayEvent = nostrEvent(kind: 10002, pubkey: account.pubkey, tags: [["r", "wss://read.example", "read"]])
+        let oldRelayEvent = nostrEvent(
+            kind: 10002,
+            pubkey: account.pubkey,
+            createdAt: 100,
+            tags: [["r", "wss://old-read.example", "read"]]
+        )
+        let newRelayEvent = nostrEvent(
+            kind: 10002,
+            pubkey: account.pubkey,
+            createdAt: 200,
+            tags: [["r", "wss://new-read.example", "read"]]
+        )
         let fake = FakeRelayClient(
             eventsByRelayAndSubscriptionID: [
-                "wss://fast.example": ["astrenza-nip65": [relayEvent]],
-                "wss://slow.example": ["astrenza-nip65": [relayEvent]]
+                "wss://fast.example": ["astrenza-nip65": [oldRelayEvent]],
+                "wss://slow.example": ["astrenza-nip65": [newRelayEvent]]
             ],
             delayNanosecondsByRelayAndSubscriptionID: [
-                "wss://slow.example": ["astrenza-nip65": 2_000_000_000]
+                "wss://slow.example": ["astrenza-nip65": 100_000_000]
             ]
         )
         let loader = NostrHomeTimelineLoader(
@@ -2458,12 +2551,11 @@ struct NostrCorePackageTests {
             bootstrapRelays: ["wss://fast.example", "wss://slow.example"],
             pageLimit: 10
         )
-        let started = Date()
 
         let state = try await loader.initialState(account: account)
 
-        #expect(state.relays == ["wss://read.example"])
-        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(state.relays == ["wss://new-read.example"])
+        #expect(state.relayListEvent?.id == newRelayEvent.id)
     }
 
     @Test("Home timeline bootstrap returns after the first kind 3 relay responds")
