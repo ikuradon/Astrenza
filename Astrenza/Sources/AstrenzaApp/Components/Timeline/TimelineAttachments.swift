@@ -471,45 +471,65 @@ struct TimelineInAppBrowserView: UIViewControllerRepresentable {
 
 private struct GalleryAttachmentView: View {
     let tiles: [MediaTile]
+    @State private var availableWidth: CGFloat = 0
 
     var body: some View {
-        Group {
-            switch tiles.count {
-            case 0:
-                EmptyView()
-            case 1:
-                SingleMediaAttachmentView(tile: tiles[0])
-            case 2:
+        if tiles.count == 1 {
+            SingleMediaAttachmentView(tile: tiles[0])
+        } else {
+            let width = max(availableWidth, 1)
+            let height = width / resolvedAspectRatio
+
+            galleryGrid
+                .frame(width: width, height: height)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: height, alignment: .topLeading)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: GalleryAvailableWidthKey.self, value: proxy.size.width)
+                    }
+                )
+                .onPreferenceChange(GalleryAvailableWidthKey.self) { width in
+                    guard width > 0, abs(width - availableWidth) > 0.5 else { return }
+                    availableWidth = width
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var galleryGrid: some View {
+        switch tiles.count {
+        case 0:
+            EmptyView()
+        case 2:
+            HStack(spacing: 2) {
+                TimelineMediaTileView(tile: tiles[0])
+                TimelineMediaTileView(tile: tiles[1])
+            }
+        case 3:
+            VStack(spacing: 2) {
                 HStack(spacing: 2) {
                     TimelineMediaTileView(tile: tiles[0])
                     TimelineMediaTileView(tile: tiles[1])
                 }
-            case 3:
-                VStack(spacing: 2) {
-                    HStack(spacing: 2) {
-                        TimelineMediaTileView(tile: tiles[0])
-                        TimelineMediaTileView(tile: tiles[1])
-                    }
-                    TimelineMediaTileView(tile: tiles[2])
+                TimelineMediaTileView(tile: tiles[2])
+            }
+        default:
+            VStack(spacing: 2) {
+                HStack(spacing: 2) {
+                    TimelineMediaTileView(tile: tiles[0])
+                    TimelineMediaTileView(tile: tiles[1])
                 }
-            default:
-                VStack(spacing: 2) {
-                    HStack(spacing: 2) {
-                        TimelineMediaTileView(tile: tiles[0])
-                        TimelineMediaTileView(tile: tiles[1])
-                    }
-                    HStack(spacing: 2) {
-                        TimelineMediaTileView(tile: tiles[2])
-                        TimelineMediaTileView(
-                            tile: tiles[3],
-                            overlayCount: tiles.count > 4 ? tiles.count - 4 : nil
-                        )
-                    }
+                HStack(spacing: 2) {
+                    TimelineMediaTileView(tile: tiles[2])
+                    TimelineMediaTileView(
+                        tile: tiles[3],
+                        overlayCount: tiles.count > 4 ? tiles.count - 4 : nil
+                    )
                 }
             }
         }
-        .modifier(GalleryAspectRatioModifier(aspectRatio: resolvedAspectRatio, isSingleMedia: tiles.count == 1))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var resolvedAspectRatio: CGFloat {
@@ -517,16 +537,11 @@ private struct GalleryAttachmentView: View {
     }
 }
 
-private struct GalleryAspectRatioModifier: ViewModifier {
-    let aspectRatio: CGFloat
-    let isSingleMedia: Bool
+private struct GalleryAvailableWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
 
-    func body(content: Content) -> some View {
-        if isSingleMedia {
-            content
-        } else {
-            content.aspectRatio(aspectRatio, contentMode: .fit)
-        }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -617,6 +632,8 @@ private struct TimelineMediaTileView: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
         } else {
             BlurHashPlaceholderView(blurhash: tile.blurhash, colors: tile.colors)
 

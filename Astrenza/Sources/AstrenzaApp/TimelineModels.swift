@@ -811,7 +811,6 @@ enum TimelineMedia {
 
 enum TimelineMediaLayoutMetrics {
     static let galleryAspectRatio: CGFloat = 1.9
-    static let portraitGalleryAspectRatio: CGFloat = 1 / 1.9
     static let singleFallbackAspectRatio: CGFloat = 1.35
     static let singleMinimumAspectRatio: CGFloat = 0.62
     static let singleMaximumAspectRatio: CGFloat = 2.2
@@ -839,8 +838,6 @@ enum TimelineMediaLayoutMetrics {
         switch tiles.count {
         case 1:
             return min(max(tiles.first?.aspectRatio ?? singleFallbackAspectRatio, singleMinimumAspectRatio), singleMaximumAspectRatio)
-        case 2, 3:
-            return tiles.contains(where: \.isPortrait) ? portraitGalleryAspectRatio : galleryAspectRatio
         default:
             return galleryAspectRatio
         }
