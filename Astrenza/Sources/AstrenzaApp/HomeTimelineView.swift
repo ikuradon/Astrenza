@@ -4,6 +4,7 @@ import SwiftUI
 struct HomeTimelineView: View {
     @ObservedObject var sessionStore: NostrSessionStore
     @ObservedObject var liveTimelineStore: NostrHomeTimelineStore
+    let onInitialPresentationReady: () -> Void
     @State private var selectedTab: TimelineTab = .home
     @State private var previousTab: TimelineTab = .home
     @State private var selectedTimeline: TimelineKind = .home
@@ -42,10 +43,12 @@ struct HomeTimelineView: View {
 
     init(
         sessionStore: NostrSessionStore = NostrSessionStore(restoreAccount: false),
-        liveTimelineStore: NostrHomeTimelineStore = NostrHomeTimelineStore()
+        liveTimelineStore: NostrHomeTimelineStore = NostrHomeTimelineStore(),
+        onInitialPresentationReady: @escaping () -> Void = {}
     ) {
         self.sessionStore = sessionStore
         self.liveTimelineStore = liveTimelineStore
+        self.onInitialPresentationReady = onInitialPresentationReady
     }
 
     private var actionMenuTopClearance: CGFloat {
@@ -445,6 +448,7 @@ private extension HomeTimelineView {
         }
         DispatchQueue.main.async {
             didCompleteInitialAppearance = true
+            onInitialPresentationReady()
         }
     }
 

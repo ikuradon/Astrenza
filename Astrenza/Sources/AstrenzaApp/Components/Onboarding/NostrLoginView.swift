@@ -8,11 +8,11 @@ struct NostrLoginView: View {
             Spacer(minLength: 40)
 
             VStack(spacing: 14) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 54, weight: .bold))
-                    .foregroundStyle(Color.astrenzaAccent)
-                    .frame(width: 96, height: 96)
-                    .background(Color.astrenzaAccent.opacity(0.16), in: Circle())
+                AstrenzaLogoMark(
+                    size: 96,
+                    strokeColor: Color.astrenzaAccent.opacity(0.28),
+                    shadowColor: Color.astrenzaAccent.opacity(0.16)
+                )
 
                 Text("Astrenza")
                     .font(.system(size: 42, weight: .black, design: .rounded))

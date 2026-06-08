@@ -563,17 +563,12 @@ private struct OnboardingHeroMark: View {
             Circle()
                 .stroke(.white.opacity(0.18), lineWidth: 22)
                 .frame(width: 196, height: 196)
-            Image(systemName: "sparkles")
-                .font(.system(size: 82, weight: .black))
-                .foregroundStyle(.white)
-            Image(systemName: "key.radiowaves.forward.fill")
-                .font(.system(size: 42, weight: .black))
-                .foregroundStyle(OnboardingPalette.accent)
-                .offset(x: 72, y: -70)
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 42, weight: .black))
-                .foregroundStyle(.cyan)
-                .offset(x: -76, y: 74)
+            AstrenzaLogoMark(
+                size: 150,
+                backgroundColor: Color(red: 0.96, green: 0.91, blue: 1.0),
+                strokeColor: .white.opacity(0.35),
+                shadowColor: .black.opacity(0.2)
+            )
         }
         .shadow(color: .black.opacity(0.24), radius: 22, y: 18)
     }
