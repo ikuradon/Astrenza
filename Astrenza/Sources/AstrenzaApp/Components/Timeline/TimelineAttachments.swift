@@ -557,6 +557,7 @@ private struct SingleMediaAttachmentView: View {
 
         TimelineMediaTileView(tile: tile)
             .frame(width: size.width, height: size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 GeometryReader { proxy in
