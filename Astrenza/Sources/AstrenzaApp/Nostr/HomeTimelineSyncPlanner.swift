@@ -104,6 +104,6 @@ struct HomeTimelineSyncPlanner {
     }
 
     private func timelineAuthors(account: NostrAccount, followedPubkeys: [String]) -> [String] {
-        followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
+        followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
     }
 }

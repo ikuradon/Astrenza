@@ -65,6 +65,20 @@ struct NostrTimelineSyncTests {
         #expect(older["limit"] == .int(50))
     }
 
+    @Test("Home timeline sync planner keeps all followed authors before runtime chunking")
+    func homeTimelinePlannerKeepsAllFollowedAuthors() throws {
+        let account = NostrAccount(pubkey: String(repeating: "f", count: 64), displayIdentifier: "account", readOnly: true)
+        let authors = (0..<753).map { String(format: "%064x", $0) }
+        let packet = HomeTimelineSyncPlanner().forwardPacket(
+            account: account,
+            followedPubkeys: authors,
+            newestCreatedAt: nil,
+            relayURLs: ["wss://relay.example"]
+        )
+
+        #expect(authorCount(in: packet) == 753)
+    }
+
     @Test("NIP-77 client messages encode relay frames")
     func nip77ClientFrames() throws {
         let filter = NostrRelayFilter(kinds: [1], authors: [String(repeating: "a", count: 64)], since: 100, limit: 20)
@@ -186,6 +200,16 @@ struct NostrTimelineSyncTests {
         )
     }
 
+}
+
+private func authorCount(in packet: NostrREQPacket) -> Int {
+    guard let value = packet.filters.first?["authors"] else { return 0 }
+    switch value {
+    case .strings(let authors):
+        return authors.count
+    default:
+        return 0
+    }
 }
 
 private func liveMergedEvents(

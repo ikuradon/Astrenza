@@ -93,7 +93,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         )
         relaySyncEvents.append(contentsOf: contactResult.syncEvents)
         let contactEvent = contactResult.event
-        let contacts = Array(NostrContactList.pubkeys(from: contactEvent).prefix(256))
+        let contacts = NostrContactList.pubkeys(from: contactEvent)
 
         return NostrHomeTimelineState(
             relays: readRelays,
@@ -144,7 +144,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         )
         relaySyncEvents.append(contentsOf: contactResult.syncEvents)
         let contactEvent = contactResult.event
-        let contacts = Array(NostrContactList.pubkeys(from: contactEvent).prefix(256))
+        let contacts = NostrContactList.pubkeys(from: contactEvent)
 
         guard !contacts.isEmpty else {
             return NostrHomeTimelineState(
@@ -160,7 +160,7 @@ public struct NostrHomeTimelineLoader: Sendable {
             )
         }
 
-        let planner = NostrHomeFetchPlanner(authors: Array(contacts.prefix(128)), pageLimit: pageLimit)
+        let planner = NostrHomeFetchPlanner(authors: contacts, pageLimit: pageLimit)
         let homeResult = try await mergedEvents(
             relays: readRelays,
             request: planner.initialRequest(subscriptionID: "astrenza-home"),
@@ -199,7 +199,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         }
 
         let relays = current.relays.isEmpty ? bootstrapRelays : current.relays
-        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : Array(current.followedPubkeys.prefix(128))
+        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : current.followedPubkeys
         let newestCreatedAt = current.noteEvents.map(\.createdAt).max() ?? 0
         let planner = NostrHomeFetchPlanner(authors: authors, pageLimit: pageLimit)
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
@@ -243,7 +243,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         localBackfillEvents: [NostrEvent]? = nil
     ) async throws -> NostrHomeTimelineState {
         let relays = current.relays.isEmpty ? bootstrapRelays : current.relays
-        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : Array(current.followedPubkeys.prefix(128))
+        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : current.followedPubkeys
         guard let oldestCreatedAt = current.noteEvents.map(\.createdAt).min() else {
             return current
         }

@@ -2609,6 +2609,22 @@ struct NostrCorePackageTests {
         #expect(!calls.contains("astrenza-kind0"))
     }
 
+    @Test("Home timeline loader keeps all followed pubkeys")
+    func homeTimelineLoaderKeepsAllFollowedPubkeys() async throws {
+        let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
+        let followed = (0..<300).map { String(format: "%064x", $0 + 2) }
+        let tags = followed.map { ["p", $0] }
+        let contacts = nostrEvent(kind: 3, pubkey: account.pubkey, tags: tags)
+        let fake = FakeRelayClient(eventsBySubscriptionID: [
+            "astrenza-kind3": [contacts]
+        ])
+        let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+
+        let state = try await loader.bootstrapState(account: account)
+
+        #expect(state.followedPubkeys == followed)
+    }
+
     @Test("Home timeline loader uses NIP-05 discovery relays for NIP-65")
     func homeTimelineLoaderUsesNIP05DiscoveryRelays() async throws {
         let account = NostrAccount(

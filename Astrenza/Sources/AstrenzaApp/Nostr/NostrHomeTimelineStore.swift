@@ -1481,7 +1481,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         newerEvent: NostrEvent,
         olderEvent: NostrEvent
     ) async -> [NostrEvent] {
-        let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
+        let authors = followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
         guard !authors.isEmpty, olderEvent.createdAt < newerEvent.createdAt else { return [] }
 
         let localEvents = localGapWindowEvents(
@@ -1680,7 +1680,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             return nil
         }
 
-        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : Array(current.followedPubkeys.prefix(128))
+        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : current.followedPubkeys
         guard let events = try? eventStore.events(kind: 1, authors: authors, until: until, limit: 1_000),
               !events.isEmpty
         else {
