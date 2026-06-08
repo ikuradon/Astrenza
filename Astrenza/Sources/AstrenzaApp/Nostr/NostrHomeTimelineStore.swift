@@ -75,6 +75,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let eventIngestor: HomeTimelineEventIngestor
     private let syncPlanner: HomeTimelineSyncPlanner
+    private let timelineRepository: HomeTimelineRepository
     private let relayRuntime: NostrRelayRuntime?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
     private var loadTask: Task<Void, Never>?
@@ -196,6 +197,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.eventStore = eventStore
         self.eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
         self.syncPlanner = HomeTimelineSyncPlanner()
+        self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.relayRuntime = relayRuntime
         self.linkPreviewResolver = linkPreviewResolver
     }
@@ -1678,36 +1680,25 @@ final class NostrHomeTimelineStore: ObservableObject {
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
         let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
         let contextEvents = contextEventsForCurrentProjection()
-        let materialReferenceEvents = noteEvents + contextEvents
-        let deletedEntries = account.flatMap { account in
-            try? eventStore?.deletedTimelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 250)
-        } ?? []
-        let timelineEntries = account.flatMap { account in
-            try? eventStore?.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 500)
-        } ?? []
-        let nextEntries = NostrTimelineMaterializer.entries(
+        let snapshot = timelineRepository.materialize(
+            account: account,
             noteEvents: noteEvents,
             contextEvents: contextEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
-            followedPubkeys: Set(followedPubkeys),
-            mediaAssetsByEventID: mediaAssetsByEventID(for: materialReferenceEvents),
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: materialReferenceEvents),
+            followedPubkeys: followedPubkeys,
+            resolvedRelays: resolvedRelays,
             filterRules: materializerFilterRuleSet,
-            deletedEntries: deletedEntries,
-            timelineEntries: timelineEntries,
-            relayCount: max(1, resolvedRelays.count)
+            filterStatus: timelineFilterStatus(ruleSet: activeFilterRuleSet)
         )
-        let nextFingerprint = entriesRenderFingerprint(for: nextEntries)
-        if nextFingerprint != lastEntriesRenderFingerprint {
-            entries = nextEntries
-            lastEntriesRenderFingerprint = nextFingerprint
+        if snapshot.renderFingerprint != lastEntriesRenderFingerprint {
+            entries = snapshot.entries
+            lastEntriesRenderFingerprint = snapshot.renderFingerprint
         }
         recomputeMaterializedUnreadState()
 
-        let nextFilterStatus = timelineFilterStatus(ruleSet: activeFilterRuleSet)
-        if nextFilterStatus != filterStatus {
-            filterStatus = nextFilterStatus
+        if snapshot.filterStatus != filterStatus {
+            filterStatus = snapshot.filterStatus
         }
         resolvedContentRevision &+= 1
     }
@@ -1784,82 +1775,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self.materializeTask = nil
                 self.materializeEntries()
             }
-        }
-    }
-
-    private func entriesRenderFingerprint(for entries: [TimelineFeedEntry]) -> [String] {
-        entries.map(entryRenderFingerprint)
-    }
-
-    private func entryRenderFingerprint(_ entry: TimelineFeedEntry) -> String {
-        switch entry {
-        case .post(let post):
-            return [
-                "post",
-                post.id,
-                post.author.primaryText,
-                post.author.secondaryText,
-                "\(post.author.nip05Status)",
-                "\(post.author.isMetadataResolved)",
-                "\(post.author.isFollowed)",
-                post.avatar.imageURL?.absoluteString ?? "",
-                "\(post.avatar.pictureState)",
-                post.body,
-                post.timestamp,
-                post.repostedBy?.author.primaryText ?? "",
-                post.repostedBy?.timestamp ?? "",
-                post.replyContext?.author.primaryText ?? "",
-                post.replyContext?.bodyPreview ?? "",
-                post.quotedPost?.body ?? "",
-                post.contentWarning?.displayReason ?? "",
-                mediaRenderFingerprint(post.media),
-                post.linkSummary?.compactText ?? "",
-                "\(post.actionState.didReply)",
-                "\(post.actionState.didRepost)",
-                "\(post.actionState.didFavorite)",
-                "\(post.actionState.didZap)"
-            ].joined(separator: "\u{1f}")
-        case .gap(let gap):
-            return [
-                "gap",
-                gap.id,
-                gap.newerPostID,
-                gap.olderPostID,
-                "\(gap.missingEstimate)",
-                "\(gap.relayCount)",
-                "\(gap.state)",
-                gap.backfilledPosts.map(\.id).joined(separator: ",")
-            ].joined(separator: "\u{1f}")
-        case .deleted(let entry):
-            return "deleted\u{1f}\(entry.id)"
-        }
-    }
-
-    private func mediaRenderFingerprint(_ media: TimelineMedia?) -> String {
-        guard let media else { return "" }
-        switch media {
-        case .gallery(let tiles):
-            return tiles.map { tile in
-                [
-                    tile.id,
-                    tile.title,
-                    tile.symbolName,
-                    tile.url?.absoluteString ?? "",
-                    tile.altText ?? ""
-                ].joined(separator: "\u{1e}")
-            }.joined(separator: "\u{1d}")
-        case .linkPreview(let preview):
-            return [
-                "link",
-                preview.title,
-                preview.subtitle,
-                preview.host,
-                preview.url,
-                preview.imageURL?.absoluteString ?? "",
-                String(describing: preview.style)
-            ].joined(separator: "\u{1e}")
-        case .unresolvedLink(let preview):
-            return ["unresolved", preview.host, preview.url].joined(separator: "\u{1e}")
         }
     }
 

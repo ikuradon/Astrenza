@@ -1184,6 +1184,40 @@ struct TimelineModelTests {
         ]])
     }
 
+    @Test("Home timeline repository materializes entries from projection")
+    func homeTimelineRepositoryMaterializesEntriesFromProjection() throws {
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let eventStore = try NostrEventStore.inMemory()
+        let note = timelineEvent(
+            idSeed: "repository-note",
+            pubkey: account.pubkey,
+            createdAt: 100,
+            content: "repository body"
+        )
+        try eventStore.save(events: [note])
+        let repository = HomeTimelineRepository(eventStore: eventStore)
+
+        let snapshot = repository.materialize(
+            account: account,
+            noteEvents: [note],
+            contextEvents: [],
+            metadataEvents: [],
+            nip05Resolutions: [:],
+            followedPubkeys: [account.pubkey],
+            resolvedRelays: ["wss://relay.example"],
+            filterRules: nil,
+            filterStatus: TimelineFilterStatus()
+        )
+
+        #expect(snapshot.entries.compactMap(\.post).map(\.id) == [note.id])
+        #expect(snapshot.filterStatus == TimelineFilterStatus())
+        #expect(snapshot.renderFingerprint.count == snapshot.entries.count)
+    }
+
     @Test("Home timeline store restores live gap rows from database timeline entries")
     @MainActor
     func homeTimelineStoreRestoresLiveGapRowsFromDatabaseEntries() throws {
