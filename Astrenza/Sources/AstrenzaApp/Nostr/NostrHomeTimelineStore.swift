@@ -92,7 +92,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var lastRelayTrafficFlushAt = 0
     private var dependencyFetchQueue = NostrDependencyFetchQueue()
     private var backwardFlushTask: Task<Void, Never>?
-    private var installedHomeForwardPacket: NostrREQPacket?
+    private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
     private var relayListEvent: NostrEvent?
@@ -886,15 +886,21 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
             try await relayRuntime.setDefaultRelays(resolvedRelays)
             let newestCreatedAt = noteEvents.map(\.createdAt).max()
-            let packet = syncPlanner.forwardPacket(
+            let policy = NostrSyncPolicy.default(networkType: .unknown, lowPowerMode: false)
+            let plan = syncPlanner.forwardPlan(
                 account: account,
                 followedPubkeys: followedPubkeys,
+                contactItems: NostrContactList.items(from: contactListEvent),
                 newestCreatedAt: newestCreatedAt,
-                relayURLs: resolvedRelays
+                relayURLs: resolvedRelays,
+                policy: policy
             )
-            guard forceInstall || installedHomeForwardPacket != packet else { return }
-            try await relayRuntime.installForward(packet)
-            installedHomeForwardPacket = packet
+            guard forceInstall || installedHomeForwardPackets != plan.packets else { return }
+            try await relayRuntime.installForward(
+                plan.packets,
+                replacingGroupIDsWithPrefix: HomeTimelineSyncPlanner.homeForwardGroupPrefix
+            )
+            installedHomeForwardPackets = plan.packets
         } catch {
             recordRuntimeSyncEvent(
                 relayURL: resolvedRelays.first ?? "runtime",
@@ -1026,8 +1032,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private static func isHomeForwardSubscription(_ subscriptionID: String) -> Bool {
-        subscriptionID == NostrHomeForwardREQBuilder.subscriptionID ||
-            subscriptionID.hasPrefix(NostrHomeForwardREQBuilder.subscriptionID + "-chunk")
+        HomeTimelineSyncPlanner.isHomeForwardSubscription(subscriptionID)
     }
 
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) {

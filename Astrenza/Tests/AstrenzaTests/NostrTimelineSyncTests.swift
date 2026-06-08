@@ -96,6 +96,43 @@ struct NostrTimelineSyncTests {
         #expect(plan.mode == .ownRelayList)
     }
 
+    @Test("Full outbox mode groups authors by contact relay hints")
+    func fullOutboxPlannerGroupsAuthorsByRelayHints() throws {
+        let account = NostrAccount(pubkey: String(repeating: "a", count: 64), displayIdentifier: "account", readOnly: true)
+        let hinted = String(repeating: "b", count: 64)
+        let fallback = String(repeating: "c", count: 64)
+        let missingHint = String(repeating: "d", count: 64)
+        let plan = HomeTimelineSyncPlanner().forwardPlan(
+            account: account,
+            followedPubkeys: [hinted, fallback, missingHint],
+            contactItems: [
+                NostrContactListItem(pubkey: hinted, relayHints: ["wss://hint.example"]),
+                NostrContactListItem(pubkey: fallback, relayHints: []),
+                NostrContactListItem(pubkey: missingHint, relayHints: ["wss://offline.example"])
+            ],
+            newestCreatedAt: nil,
+            relayURLs: ["wss://own.example", "wss://hint.example"],
+            policy: NostrSyncPolicy(
+                mode: .fullOutbox,
+                networkType: .wifi,
+                lowPowerMode: false,
+                tapToLoadMedia: false,
+                queueOGPPreviews: true,
+                disableOGPOnCellular: false,
+                reduceFullOutboxOnCellular: true
+            )
+        )
+
+        #expect(plan.mode == .fullOutbox)
+        #expect(plan.totalAuthorCount == 3)
+        #expect(plan.packets.map(\.subscriptionID) == [
+            "astrenza-home-forward-outbox-1",
+            "astrenza-home-forward-outbox-2"
+        ])
+        #expect(authorsByRelay(in: plan)["wss://hint.example"] == [hinted])
+        #expect(authorsByRelay(in: plan)["wss://own.example"] == [fallback, missingHint])
+    }
+
     @Test("NIP-77 client messages encode relay frames")
     func nip77ClientFrames() throws {
         let filter = NostrRelayFilter(kinds: [1], authors: [String(repeating: "a", count: 64)], since: 100, limit: 20)
@@ -227,6 +264,19 @@ private func authorCount(in packet: NostrREQPacket) -> Int {
     default:
         return 0
     }
+}
+
+private func authorsByRelay(in plan: HomeTimelineForwardPlan) -> [String: [String]] {
+    var result: [String: [String]] = [:]
+    for packet in plan.packets {
+        guard case .strings(let authors)? = packet.filters.first?["authors"] else {
+            continue
+        }
+        for relayURL in packet.relayURLs {
+            result[relayURL, default: []].append(contentsOf: authors)
+        }
+    }
+    return result.mapValues { Array(Set($0)).sorted() }
 }
 
 private func liveMergedEvents(

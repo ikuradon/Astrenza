@@ -23,14 +23,33 @@ struct HomeTimelineForwardPlan {
 }
 
 struct HomeTimelineSyncPlanner {
+    static let homeForwardGroupPrefix = NostrHomeForwardREQBuilder.subscriptionID
+    private static let fullOutboxSubscriptionPrefix = NostrHomeForwardREQBuilder.subscriptionID + "-outbox"
+
     func forwardPlan(
         account: NostrAccount,
         followedPubkeys: [String],
+        contactItems: [NostrContactListItem] = [],
         newestCreatedAt: Int?,
         relayURLs: [String],
         policy: NostrSyncPolicy
     ) -> HomeTimelineForwardPlan {
         let authors = timelineAuthors(account: account, followedPubkeys: followedPubkeys)
+        if policy.mode == .fullOutbox,
+           !(policy.reduceFullOutboxOnCellular && policy.networkType == .cellular) {
+            let packets = fullOutboxForwardPackets(
+                authors: authors,
+                contactItems: contactItems,
+                newestCreatedAt: newestCreatedAt,
+                fallbackRelayURLs: relayURLs
+            )
+            return HomeTimelineForwardPlan(
+                packets: packets,
+                totalAuthorCount: authors.count,
+                mode: policy.mode
+            )
+        }
+
         let packet = NostrHomeForwardREQBuilder.reconnectPacket(
             authors: authors,
             newestCreatedAt: newestCreatedAt,
@@ -133,5 +152,66 @@ struct HomeTimelineSyncPlanner {
 
     private func timelineAuthors(account: NostrAccount, followedPubkeys: [String]) -> [String] {
         followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
+    }
+
+    private func fullOutboxForwardPackets(
+        authors: [String],
+        contactItems: [NostrContactListItem],
+        newestCreatedAt: Int?,
+        fallbackRelayURLs: [String]
+    ) -> [NostrREQPacket] {
+        var relayHintsByPubkey: [String: [String]] = [:]
+        for item in contactItems {
+            var hints = relayHintsByPubkey[item.pubkey.lowercased(), default: []]
+            for relayHint in item.relayHints where !hints.contains(relayHint) {
+                hints.append(relayHint)
+            }
+            relayHintsByPubkey[item.pubkey.lowercased()] = hints
+        }
+
+        var authorsByRelays: [RelaySelectionKey: [String]] = [:]
+
+        for author in authors {
+            let hints = relayHintsByPubkey[author.lowercased()] ?? []
+            let connectedHints = fallbackRelayURLs.filter { relayURL in
+                hints.contains(relayURL)
+            }
+            let relayURLs = connectedHints.isEmpty ? fallbackRelayURLs : connectedHints
+            authorsByRelays[RelaySelectionKey(relayURLs: relayURLs), default: []].append(author)
+        }
+
+        let groups = authorsByRelays
+            .map { key, authors in (relayURLs: key.relayURLs, authors: authors) }
+            .sorted { lhs, rhs in
+                lhs.relayURLs.lexicographicallyPrecedes(rhs.relayURLs)
+            }
+
+        return groups.enumerated().map { index, group in
+            let basePacket = NostrHomeForwardREQBuilder.reconnectPacket(
+                authors: group.authors,
+                newestCreatedAt: newestCreatedAt,
+                relayURLs: group.relayURLs
+            )
+            let subscriptionID = "\(Self.fullOutboxSubscriptionPrefix)-\(index + 1)"
+            return NostrREQPacket(
+                strategy: .forward,
+                subscriptionID: subscriptionID,
+                groupID: subscriptionID,
+                filters: basePacket.filters,
+                relayURLs: basePacket.relayURLs
+            )
+        }
+    }
+
+    static func isHomeForwardSubscription(_ subscriptionID: String) -> Bool {
+        subscriptionID.hasPrefix(homeForwardGroupPrefix)
+    }
+}
+
+private struct RelaySelectionKey: Hashable {
+    let relayURLs: [String]
+
+    init(relayURLs: [String]) {
+        self.relayURLs = relayURLs
     }
 }

@@ -92,6 +92,28 @@ struct NostrCorePackageTests {
         #expect(NostrContactList.pubkeys(from: event) == [first, second])
     }
 
+    @Test("kind:3 contact list exposes pubkeys with relay hints")
+    func contactListPubkeysWithRelayHints() {
+        let first = String(repeating: "a", count: 64)
+        let second = String(repeating: "b", count: 64)
+        let event = nostrEvent(
+            kind: 3,
+            tags: [
+                ["p", first, "wss://one.example"],
+                ["p", second],
+                ["p", first, "wss://two.example"],
+                ["p", first, "not-a-relay"],
+                ["e", String(repeating: "c", count: 64)]
+            ]
+        )
+
+        let items = NostrContactList.items(from: event)
+
+        #expect(items.map(\.pubkey) == [first, second])
+        #expect(items.first { $0.pubkey == first }?.relayHints == ["wss://one.example", "wss://two.example"])
+        #expect(items.first { $0.pubkey == second }?.relayHints == [])
+    }
+
     @Test("NIP-65 relay list keeps read and write markers")
     func nip65RelayList() {
         let event = nostrEvent(
@@ -3627,6 +3649,41 @@ struct NostrCorePackageTests {
         #expect(await firstConnection.sentFrames().count == 1)
         #expect(await secondConnection.sentFrames().count == 1)
         #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://two.example") == ["astrenza-home-forward"])
+    }
+
+    @Test("Relay runtime replaces a forward packet set by group prefix")
+    func relayRuntimeReplacesForwardPacketSetByGroupPrefix() async throws {
+        let oneConnection = FakeRelayRuntimeConnection()
+        let twoConnection = FakeRelayRuntimeConnection()
+        let transports = [
+            "wss://one.example": FakeRelayRuntimeTransport(connection: oneConnection),
+            "wss://two.example": FakeRelayRuntimeTransport(connection: twoConnection)
+        ]
+        let runtime = NostrRelayRuntime(transportFactory: { relayURL in
+            transports[relayURL] ?? FakeRelayRuntimeTransport(connection: FakeRelayRuntimeConnection())
+        }, autoReceive: false)
+        let onePacket = NostrREQPacket.forward(
+            subscriptionID: "astrenza-home-forward-outbox-1",
+            filters: [["kinds": .ints([1]), "authors": .strings([String(repeating: "a", count: 64)])]],
+            relayURLs: ["wss://one.example"]
+        )
+        let twoPacket = NostrREQPacket.forward(
+            subscriptionID: "astrenza-home-forward-outbox-2",
+            filters: [["kinds": .ints([1]), "authors": .strings([String(repeating: "b", count: 64)])]],
+            relayURLs: ["wss://two.example"]
+        )
+
+        try await runtime.setDefaultRelays(["wss://one.example", "wss://two.example"])
+        try await runtime.installForward([onePacket, twoPacket], replacingGroupIDsWithPrefix: "astrenza-home-forward-outbox")
+        #expect(await runtime.activeForwardSubscriptionIDs() == [
+            "astrenza-home-forward-outbox-1",
+            "astrenza-home-forward-outbox-2"
+        ])
+
+        try await runtime.installForward([onePacket], replacingGroupIDsWithPrefix: "astrenza-home-forward-outbox")
+
+        #expect(await runtime.activeForwardSubscriptionIDs() == ["astrenza-home-forward-outbox-1"])
+        #expect(await twoConnection.sentFrames().contains(#"["CLOSE","astrenza-home-forward-outbox-2"]"#))
     }
 
     @Test("Relay runtime terminates sessions removed from default relays")

@@ -519,22 +519,64 @@ public struct NostrRelayList: Equatable {
     }
 }
 
+public struct NostrContactListItem: Codable, Equatable, Sendable {
+    public let pubkey: String
+    public let relayHints: [String]
+
+    public init(pubkey: String, relayHints: [String]) {
+        self.pubkey = pubkey
+        self.relayHints = relayHints
+    }
+}
+
 public enum NostrContactList {
     public static func pubkeys(from event: NostrEvent?) -> [String] {
+        items(from: event).map(\.pubkey)
+    }
+
+    public static func items(from event: NostrEvent?) -> [NostrContactListItem] {
         guard let event, event.kind == 3 else {
             return []
         }
 
         var seen = Set<String>()
-        var result: [String] = []
+        var result: [NostrContactListItem] = []
+        var indexByPubkey: [String: Int] = [:]
         for tag in event.tags where tag.count >= 2 && tag[0] == "p" {
             let pubkey = tag[1].lowercased()
-            guard NostrHex.isLowercaseHex(pubkey, byteCount: 32), seen.insert(pubkey).inserted else {
+            guard NostrHex.isLowercaseHex(pubkey, byteCount: 32) else {
                 continue
             }
-            result.append(pubkey)
+            if seen.insert(pubkey).inserted {
+                indexByPubkey[pubkey] = result.count
+                result.append(NostrContactListItem(pubkey: pubkey, relayHints: []))
+            }
+            guard tag.count >= 3,
+                  let relayHint = normalizeRelayHint(tag[2]),
+                  let index = indexByPubkey[pubkey],
+                  !result[index].relayHints.contains(relayHint)
+            else { continue }
+
+            var hints = result[index].relayHints
+            hints.append(relayHint)
+            result[index] = NostrContactListItem(pubkey: pubkey, relayHints: hints)
         }
         return result
+    }
+
+    private static func normalizeRelayHint(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "ws" || scheme == "wss",
+              components.host?.isEmpty == false
+        else { return nil }
+
+        components.scheme = scheme
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+        return components.string
     }
 }
 

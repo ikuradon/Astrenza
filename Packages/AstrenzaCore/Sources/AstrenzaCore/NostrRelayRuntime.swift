@@ -112,15 +112,36 @@ public actor NostrRelayRuntime {
     }
 
     public func installForward(_ packet: NostrREQPacket) async throws {
-        let forwardPacket = packet.strategy == .forward ? packet : NostrREQPacket.forward(
+        let forwardPacket = normalizedForwardPacket(packet)
+        let installPackets = NostrREQScheduler.forwardChunks(forwardPacket)
+        try await replaceForwardPackets(installPackets) { $0.groupID == forwardPacket.groupID }
+    }
+
+    public func installForward(
+        _ packets: [NostrREQPacket],
+        replacingGroupIDsWithPrefix groupIDPrefix: String
+    ) async throws {
+        let installPackets = packets
+            .map(normalizedForwardPacket)
+            .flatMap { NostrREQScheduler.forwardChunks($0) }
+        try await replaceForwardPackets(installPackets) { $0.groupID.hasPrefix(groupIDPrefix) }
+    }
+
+    private func normalizedForwardPacket(_ packet: NostrREQPacket) -> NostrREQPacket {
+        packet.strategy == .forward ? packet : NostrREQPacket.forward(
             subscriptionID: packet.subscriptionID,
             filters: packet.filters,
             relayURLs: packet.relayURLs
         )
-        let installPackets = NostrREQScheduler.forwardChunks(forwardPacket)
-        let previousPackets = activeForwardPackets.values.filter { $0.groupID == forwardPacket.groupID }
+    }
+
+    private func replaceForwardPackets(
+        _ installPackets: [NostrREQPacket],
+        replacing shouldReplace: (NostrREQPacket) -> Bool
+    ) async throws {
+        let previousPackets = activeForwardPackets.values.filter(shouldReplace)
         let installSubscriptionIDs = Set(installPackets.map(\.subscriptionID))
-        activeForwardPackets = activeForwardPackets.filter { $0.value.groupID != forwardPacket.groupID }
+        activeForwardPackets = activeForwardPackets.filter { !shouldReplace($0.value) }
         for packet in installPackets {
             activeForwardPackets[packet.subscriptionID] = packet
         }
