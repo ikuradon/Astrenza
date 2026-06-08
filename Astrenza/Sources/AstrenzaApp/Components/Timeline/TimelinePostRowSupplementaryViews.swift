@@ -169,7 +169,12 @@ struct QuotedPostCard: View {
                 }
 
                 if quotedPost.isAvailable {
-                    TimelinePostBodyText(text: quotedPost.body, mention: nil, lineLimit: 3)
+                    TimelinePostBodyText(
+                        text: quotedPost.body,
+                        richContent: quotedPost.richBody,
+                        mention: nil,
+                        lineLimit: 3
+                    )
                 } else {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle")

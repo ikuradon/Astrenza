@@ -532,6 +532,45 @@ struct TimelineModelTests {
         #expect(quotedPost.timestamp.isEmpty)
     }
 
+    @Test("Timeline quote projection preserves rich custom emoji")
+    func timelineQuoteProjectionPreservesRichCustomEmoji() throws {
+        let author = String(repeating: "a", count: 64)
+        let quotedAuthor = String(repeating: "b", count: 64)
+        let quoted = timelineEvent(
+            idSeed: "quote-projection-custom-emoji-source",
+            pubkey: quotedAuthor,
+            createdAt: 110,
+            tags: [["emoji", "astrenza", "https://emoji.example.test/astrenza.png"]],
+            content: "hello :astrenza:"
+        )
+        let event = timelineEvent(
+            idSeed: "quote-projection-custom-emoji",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["q", quoted.id]],
+            content: "quoted"
+        )
+
+        let quotedPost = try #require(NostrTimelineQuoteProjection.quotedPost(
+            from: event,
+            eventsByID: [quoted.id: quoted],
+            metadataEvents: [],
+            nip05Resolutions: [:],
+            followedPubkeys: [],
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
+            relativeTimestamp: { "\($0)s" }
+        ))
+
+        #expect(quotedPost.body == "hello :astrenza:")
+        #expect(quotedPost.richBody?.tokens.contains { token in
+            if case .customEmoji(let shortcode, let url) = token {
+                return shortcode == "astrenza" &&
+                    url.absoluteString == "https://emoji.example.test/astrenza.png"
+            }
+            return false
+        } == true)
+    }
+
     @Test("Timeline media projection prefers persisted assets over content attachments")
     func timelineMediaProjectionPrefersPersistedAssets() throws {
         let author = String(repeating: "a", count: 64)

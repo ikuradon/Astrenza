@@ -23,11 +23,17 @@ struct NostrTimelineQuoteProjection {
             followedPubkeys: followedPubkeys,
             nip05Resolutions: nip05Resolutions
         ).first ?? fallbackItem(for: quoted, followedPubkeys: followedPubkeys)
+        let richBody = NostrRichContentParser.parse(
+            event: quoted,
+            attachments: [],
+            promotedLinkURLs: []
+        )
 
         return QuotedTimelinePost(
             author: NostrTimelineAuthorProjection.author(for: item),
             avatar: avatarForItem(item),
-            body: quoted.content,
+            body: richBody.displayText,
+            richBody: richBody,
             timestamp: relativeTimestamp(quoted.createdAt),
             isAvailable: true
         )
@@ -62,6 +68,7 @@ struct NostrTimelineQuoteProjection {
                 placeholderSeed: quotedID
             ),
             body: "Quoted note is not cached yet.",
+            richBody: nil,
             timestamp: "",
             isAvailable: false
         )

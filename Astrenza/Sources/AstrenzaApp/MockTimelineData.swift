@@ -428,6 +428,7 @@ extension MockTimelineData {
                     pictureState: .missing
                 ),
                 body: "引用参照は返信扱いにしないための手がかりになる。表示上もcount上も別物として扱いたい。",
+                richBody: nil,
                 timestamp: "31m",
                 isAvailable: true
             ),

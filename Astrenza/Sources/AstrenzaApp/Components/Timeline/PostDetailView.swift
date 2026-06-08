@@ -34,7 +34,12 @@ struct PostDetailView: View {
                             SensitiveDetailBanner(contentWarning: contentWarning)
                         }
 
-                        TimelinePostBodyText(text: post.body, mention: post.replyMention)
+                        TimelinePostBodyText(
+                            text: post.body,
+                            richContent: post.richBody,
+                            mention: post.replyMention
+                        )
+                        .environment(\.openURL, OpenURLAction(handler: handleRichTextURL))
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         if let linkSummary = post.linkSummary {
@@ -100,6 +105,51 @@ struct PostDetailView: View {
         } else if let url = media.browserURL {
             onOpenURL(url)
         }
+    }
+
+    private func handleRichTextURL(_ url: URL) -> OpenURLAction.Result {
+        guard url.scheme == "astrenza" else {
+            onOpenURL(url)
+            return .handled
+        }
+
+        if url.host == "profile", let pubkey = url.pathComponents.dropFirst().first {
+            onOpenPost(profilePost(pubkey: pubkey))
+            return .handled
+        }
+
+        if url.host == "event" {
+            onOpenPost(post)
+            return .handled
+        }
+
+        if url.host == "hashtag" {
+            return .handled
+        }
+
+        return .discarded
+    }
+
+    private func profilePost(pubkey: String) -> TimelinePost {
+        TimelinePost(
+            id: "profile-\(pubkey)",
+            author: .unresolved(pubkey: pubkey),
+            avatar: AvatarStyle(
+                primary: .purple,
+                secondary: .blue,
+                symbolName: "person.crop.circle.fill",
+                pictureState: .metadataPending,
+                placeholderSeed: pubkey
+            ),
+            body: "",
+            timestamp: "",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
     }
 
     private var postHeader: some View {

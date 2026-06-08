@@ -474,6 +474,7 @@ struct QuotedTimelinePost {
     let author: TimelineAuthor
     let avatar: AvatarStyle
     let body: String
+    let richBody: NostrRichContent?
     let timestamp: String
     let isAvailable: Bool
 
@@ -483,6 +484,7 @@ struct QuotedTimelinePost {
             author: author,
             avatar: avatar,
             body: body,
+            richBody: richBody,
             timestamp: timestamp,
             replyCount: nil,
             boostCount: nil,
