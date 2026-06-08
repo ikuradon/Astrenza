@@ -226,9 +226,9 @@ enum TimelineGapFillDirection: Equatable {
     var systemName: String {
         switch self {
         case .newer:
-            "arrow.up"
+            "chevron.up"
         case .older:
-            "arrow.down"
+            "chevron.down"
         }
     }
 

@@ -163,6 +163,62 @@ struct TimelineModelTests {
         #expect(gap.backfilledPosts.isEmpty)
     }
 
+    @Test("Timeline gap fill directions expose distinct labels and icons")
+    func timelineGapFillDirectionsExposeDistinctPresentation() {
+        #expect(TimelineGapFillDirection.newer.label == "Backfill newer notes")
+        #expect(TimelineGapFillDirection.newer.systemName == "chevron.up")
+        #expect(TimelineGapFillDirection.older.label == "Backfill older notes")
+        #expect(TimelineGapFillDirection.older.systemName == "chevron.down")
+    }
+
+    @Test("Nostr materializer splits unresolved gap around inserted events")
+    func nostrMaterializerSplitsUnresolvedGapAroundInsertedEvents() throws {
+        let author = String(repeating: "a", count: 64)
+        let newer = timelineEvent(idSeed: "live-gap-split-newer", pubkey: author, createdAt: 300, content: "newer")
+        let middle = timelineEvent(idSeed: "live-gap-split-middle", pubkey: author, createdAt: 200, content: "middle")
+        let older = timelineEvent(idSeed: "live-gap-split-older", pubkey: author, createdAt: 100, content: "older")
+
+        let entries = NostrTimelineMaterializer.entries(
+            noteEvents: [newer, middle, older],
+            metadataEvents: [],
+            followedPubkeys: [author],
+            timelineEntries: [
+                NostrTimelineEntryRecord(
+                    accountID: "account",
+                    timelineKey: "home",
+                    eventID: newer.id,
+                    sortTimestamp: newer.createdAt,
+                    insertedAt: 400,
+                    gapAfter: true
+                ),
+                NostrTimelineEntryRecord(
+                    accountID: "account",
+                    timelineKey: "home",
+                    eventID: middle.id,
+                    sortTimestamp: middle.createdAt,
+                    insertedAt: 410
+                ),
+                NostrTimelineEntryRecord(
+                    accountID: "account",
+                    timelineKey: "home",
+                    eventID: older.id,
+                    sortTimestamp: older.createdAt,
+                    insertedAt: 400,
+                    gapBefore: true
+                )
+            ],
+            relayCount: 2
+        )
+
+        #expect(entries.map(\.id) == [
+            newer.id,
+            "gap-\(newer.id)-\(middle.id)",
+            middle.id,
+            "gap-\(middle.id)-\(older.id)",
+            older.id
+        ])
+    }
+
     @Test("Implicit mock post IDs are stable across construction")
     func implicitMockPostIDsAreStable() {
         let author = TimelineAuthor.resolved(
