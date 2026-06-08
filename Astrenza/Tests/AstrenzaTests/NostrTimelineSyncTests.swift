@@ -79,6 +79,23 @@ struct NostrTimelineSyncTests {
         #expect(authorCount(in: packet) == 753)
     }
 
+    @Test("Own relay list mode sends all authors only to account read relays")
+    func ownRelayListPlannerUsesAccountReadRelays() throws {
+        let authors = (0..<300).map { String(format: "%064x", $0) }
+        let relays = ["wss://read1.example", "wss://read2.example"]
+        let plan = HomeTimelineSyncPlanner().forwardPlan(
+            account: NostrAccount(pubkey: String(repeating: "a", count: 64), displayIdentifier: "account", readOnly: true),
+            followedPubkeys: authors,
+            newestCreatedAt: nil,
+            relayURLs: relays,
+            policy: .default(networkType: .wifi)
+        )
+
+        #expect(plan.packets.allSatisfy { $0.relayURLs == relays })
+        #expect(plan.totalAuthorCount == 300)
+        #expect(plan.mode == .ownRelayList)
+    }
+
     @Test("NIP-77 client messages encode relay frames")
     func nip77ClientFrames() throws {
         let filter = NostrRelayFilter(kinds: [1], authors: [String(repeating: "a", count: 64)], since: 100, limit: 20)

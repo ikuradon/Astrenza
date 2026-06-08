@@ -16,18 +16,46 @@ struct HomeTimelineDependencyPacketPlan {
     }
 }
 
+struct HomeTimelineForwardPlan {
+    let packets: [NostrREQPacket]
+    let totalAuthorCount: Int
+    let mode: NostrSyncMode
+}
+
 struct HomeTimelineSyncPlanner {
+    func forwardPlan(
+        account: NostrAccount,
+        followedPubkeys: [String],
+        newestCreatedAt: Int?,
+        relayURLs: [String],
+        policy: NostrSyncPolicy
+    ) -> HomeTimelineForwardPlan {
+        let authors = timelineAuthors(account: account, followedPubkeys: followedPubkeys)
+        let packet = NostrHomeForwardREQBuilder.reconnectPacket(
+            authors: authors,
+            newestCreatedAt: newestCreatedAt,
+            relayURLs: relayURLs
+        )
+        return HomeTimelineForwardPlan(
+            packets: [packet],
+            totalAuthorCount: authors.count,
+            mode: policy.mode
+        )
+    }
+
     func forwardPacket(
         account: NostrAccount,
         followedPubkeys: [String],
         newestCreatedAt: Int?,
         relayURLs: [String]
     ) -> NostrREQPacket {
-        NostrHomeForwardREQBuilder.reconnectPacket(
-            authors: followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys,
+        forwardPlan(
+            account: account,
+            followedPubkeys: followedPubkeys,
             newestCreatedAt: newestCreatedAt,
-            relayURLs: relayURLs
-        )
+            relayURLs: relayURLs,
+            policy: .default()
+        ).packets[0]
     }
 
     func olderNotesPacket(
