@@ -3774,6 +3774,29 @@ struct NostrCorePackageTests {
         #expect(deltas[0].receivedMessages == 1)
     }
 
+    @Test("Forward REQ scheduler chunks large author filters")
+    func forwardREQSchedulerChunksAuthors() {
+        let authors = (0..<251).map { String(format: "%064x", $0) }
+        let packet = NostrHomeForwardREQBuilder.packet(
+            authors: authors,
+            since: 100,
+            relayURLs: ["wss://relay.example"]
+        )
+
+        let chunks = NostrREQScheduler.forwardChunks(
+            packet,
+            policy: NostrREQChunkPolicy(maxIDsPerFilter: 250, maxAuthorsPerFilter: 100)
+        )
+
+        #expect(chunks.count == 3)
+        #expect(authorCount(in: chunks[0]) == 100)
+        #expect(authorCount(in: chunks[1]) == 100)
+        #expect(authorCount(in: chunks[2]) == 51)
+        #expect(Set(chunks.map(\.subscriptionID)).count == 3)
+        #expect(chunks.allSatisfy { $0.strategy == .forward })
+        #expect(chunks.allSatisfy { $0.relayURLs == ["wss://relay.example"] })
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,
@@ -3844,6 +3867,16 @@ struct NostrCorePackageTests {
             content: content,
             sig: NostrHex.hexString(Array(signature.rawRepresentation))
         )
+    }
+
+    private func authorCount(in packet: NostrREQPacket) -> Int {
+        guard let value = packet.filters.first?["authors"] else { return 0 }
+        switch value {
+        case .strings(let authors):
+            return authors.count
+        default:
+            return 0
+        }
     }
 }
 

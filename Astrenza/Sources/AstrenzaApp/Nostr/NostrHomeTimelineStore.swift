@@ -1025,8 +1025,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         return .closed
     }
 
+    private static func isHomeForwardSubscription(_ subscriptionID: String) -> Bool {
+        subscriptionID == NostrHomeForwardREQBuilder.subscriptionID ||
+            subscriptionID.hasPrefix(NostrHomeForwardREQBuilder.subscriptionID + "-chunk")
+    }
+
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) {
-        if subscriptionID == NostrHomeForwardREQBuilder.subscriptionID {
+        if Self.isHomeForwardSubscription(subscriptionID) {
             handleHomeForwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
             return
         }

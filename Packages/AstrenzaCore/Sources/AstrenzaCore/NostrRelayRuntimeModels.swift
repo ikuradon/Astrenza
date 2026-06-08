@@ -280,6 +280,38 @@ public enum NostrREQScheduler {
                 return packet.replacing(filters: filters, subscriptionID: suffix.map { packet.subscriptionID + $0 })
             }
     }
+
+    public static func forwardChunks(_ packet: NostrREQPacket, policy: NostrREQChunkPolicy = NostrREQChunkPolicy()) -> [NostrREQPacket] {
+        let forwardPacket = packet.strategy == .forward ? packet : NostrREQPacket.forward(
+            subscriptionID: packet.subscriptionID,
+            filters: packet.filters,
+            relayURLs: packet.relayURLs
+        )
+        var filters: [[String: AnySendableJSON]] = []
+
+        for filter in forwardPacket.filters {
+            let authors = filter.strings(for: NostrREQMergeField.authors.rawValue).dedupedSorted()
+            guard authors.count > policy.maxAuthorsPerFilter else {
+                filters.append(filter)
+                continue
+            }
+
+            for slice in authors.chunked(size: policy.maxAuthorsPerFilter) {
+                filters.append(filter.settingStrings(slice, for: NostrREQMergeField.authors.rawValue))
+            }
+        }
+
+        guard filters.count > 1 else {
+            return [forwardPacket.replacing(filters: filters)]
+        }
+
+        return filters.enumerated().map { index, filter in
+            forwardPacket.replacing(
+                filters: [filter],
+                subscriptionID: index == 0 ? forwardPacket.subscriptionID : "\(forwardPacket.subscriptionID)-chunk\(index + 1)"
+            )
+        }
+    }
 }
 
 public enum NostrHomeForwardREQBuilder {

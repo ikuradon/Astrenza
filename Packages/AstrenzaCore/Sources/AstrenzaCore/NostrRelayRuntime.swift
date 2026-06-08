@@ -117,12 +117,28 @@ public actor NostrRelayRuntime {
             filters: packet.filters,
             relayURLs: packet.relayURLs
         )
-        activeForwardPackets[forwardPacket.subscriptionID] = forwardPacket
+        let installPackets = NostrREQScheduler.forwardChunks(forwardPacket)
+        let previousPackets = activeForwardPackets.values.filter { $0.groupID == forwardPacket.groupID }
+        let installSubscriptionIDs = Set(installPackets.map(\.subscriptionID))
+        activeForwardPackets = activeForwardPackets.filter { $0.value.groupID != forwardPacket.groupID }
+        for packet in installPackets {
+            activeForwardPackets[packet.subscriptionID] = packet
+        }
 
-        let targetRelays = forwardPacket.relayURLs.isEmpty ? relayURLs : relayURLs.filter { forwardPacket.relayURLs.contains($0) }
-        for relayURL in targetRelays {
-            guard let session = sessions[relayURL] else { continue }
-            try await session.install(forwardPacket)
+        for packet in previousPackets where !installSubscriptionIDs.contains(packet.subscriptionID) {
+            let targetRelays = packet.relayURLs.isEmpty ? relayURLs : relayURLs.filter { packet.relayURLs.contains($0) }
+            for relayURL in targetRelays {
+                guard let session = sessions[relayURL] else { continue }
+                try? await session.close(subscriptionID: packet.subscriptionID)
+            }
+        }
+
+        for packet in installPackets {
+            let targetRelays = packet.relayURLs.isEmpty ? relayURLs : relayURLs.filter { packet.relayURLs.contains($0) }
+            for relayURL in targetRelays {
+                guard let session = sessions[relayURL] else { continue }
+                try await session.install(packet)
+            }
         }
     }
 
