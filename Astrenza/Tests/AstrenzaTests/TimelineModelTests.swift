@@ -836,6 +836,55 @@ struct TimelineModelTests {
         #expect(gap.relayCount == 2)
     }
 
+    @Test("Home timeline store projects saved restore anchor from database window")
+    @MainActor
+    func homeTimelineStoreProjectsSavedRestoreAnchorFromDatabaseWindow() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "b", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let events = (0..<300).map { index in
+            timelineEvent(
+                idSeed: "restore-window-\(index)",
+                pubkey: account.pubkey,
+                createdAt: 10_000 - index,
+                content: "restore window \(index)"
+            )
+        }
+        let anchor = events[270]
+
+        try eventStore.save(events: events)
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [account.pubkey],
+                noteEvents: Array(events.prefix(10)),
+                metadataEvents: [],
+                hasMoreOlder: true
+            ),
+            accountID: account.pubkey
+        )
+        try eventStore.saveTimelineEntries(events.map { event in
+            NostrTimelineEntryRecord(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                eventID: event.id,
+                sortTimestamp: event.createdAt,
+                insertedAt: 10_001
+            )
+        })
+
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.setRestoreProjectionAnchor(anchor.id)
+        store.start(account: account)
+
+        let postIDs = store.entries.compactMap(\.post).map(\.id)
+        #expect(postIDs.contains(anchor.id))
+        #expect(postIDs.contains(events[0].id) == false)
+    }
+
     @Test("Home timeline store can temporarily suspend and resume filters")
     @MainActor
     func homeTimelineStoreSuspendsAndResumesFilters() throws {
@@ -5507,11 +5556,17 @@ struct TimelineModelTests {
         #expect(afterOffset == beforeOffset)
     }
 
-    @Test("Timeline viewport resolver restores exact content offset when available")
-    func timelineViewportResolverPrefersExactContentOffset() throws {
+    @Test("Timeline viewport resolver prefers anchor over stale content offset")
+    func timelineViewportResolverPrefersAnchorOverStaleContentOffset() throws {
         let posts = Array(MockTimelineData.posts.prefix(3))
         let anchorPost = try #require(posts.last)
-        let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: TimelineLayoutCache(), topContentPadding: 72)
+        var cache = TimelineLayoutCache()
+        cache.merge(measuredFrames: [
+            posts[0].id: CGRect(x: 0, y: 0, width: 390, height: 120),
+            posts[1].id: CGRect(x: 0, y: 120, width: 390, height: 180),
+            anchorPost.id: CGRect(x: 0, y: 300, width: 390, height: 220)
+        ])
+        let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: cache, topContentPadding: 72)
         let state = TimelineViewportState(
             accountID: "account-a",
             timelineKey: "home",
@@ -5527,7 +5582,7 @@ struct TimelineModelTests {
             anchorLineY: 72
         )
 
-        #expect(restoredOffset == 512)
+        #expect(restoredOffset == 324)
     }
 
     @Test("Timeline viewport resolver handles persisted large timelines by snapshot offset")

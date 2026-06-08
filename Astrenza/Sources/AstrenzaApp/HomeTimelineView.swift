@@ -691,6 +691,9 @@ private extension HomeTimelineView {
     func loadTimelineRestoreState() {
         homeViewportState = timelineRestoreStore.viewportState(accountID: accountID, timelineKey: selectedTimeline.id)
         homeLayoutCache = timelineRestoreStore.layoutCache(accountID: accountID, timelineKey: selectedTimeline.id)
+        if sessionStore.account != nil, selectedTimeline == .home {
+            liveTimelineStore.setRestoreProjectionAnchor(homeViewportState?.anchorPostID)
+        }
     }
 
     func saveTimelineViewportState(_ state: TimelineViewportState) {

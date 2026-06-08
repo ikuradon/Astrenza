@@ -144,13 +144,12 @@ enum TimelineViewportResolver {
         state: TimelineViewportState,
         anchorLineY: CGFloat
     ) -> CGFloat? {
-        if state.contentOffset > 0 {
-            return state.contentOffset
+        if let anchorTopY = snapshot.offset(for: state.anchorPostID) {
+            let restoredOffset = anchorTopY - anchorLineY + state.anchorOffset
+            return max(restoredOffset, 0)
         }
 
-        guard let anchorTopY = snapshot.offset(for: state.anchorPostID) else { return nil }
-        let restoredOffset = anchorTopY - anchorLineY + state.anchorOffset
-        return max(restoredOffset, 0)
+        return state.contentOffset > 0 ? state.contentOffset : nil
     }
 
     static func contentOffsetPreservingAnchor(

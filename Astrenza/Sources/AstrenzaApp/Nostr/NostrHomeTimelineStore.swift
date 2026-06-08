@@ -100,6 +100,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var unreadBadgeDismissedGeneration: String?
     private var unreadBadgeViewportHiddenGeneration: String?
     private var isTimelineAtNewestWindow = true
+    private var restoreProjectionAnchorEventID: String?
     private var lastEntriesRenderFingerprint: [String] = []
     private let materializeCoalescingDelayNanoseconds: UInt64 = 250_000_000
     private let projectionWindowLimit = 240
@@ -199,6 +200,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.account = account
         startRuntimeEventPump()
         restoreCachedSnapshot(account: account)
+        applyRestoreProjectionAnchorIfPossible(account: account)
         installProvisionalRuntimeBootstrapIfNeeded(account: account)
         if relayRuntime != nil, !resolvedRelays.isEmpty {
             phase = .loaded
@@ -209,6 +211,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         loadTask = Task {
             await load(account: account)
         }
+    }
+
+    func setRestoreProjectionAnchor(_ anchorEventID: String?) {
+        restoreProjectionAnchorEventID = anchorEventID
+        guard let account else { return }
+        applyRestoreProjectionAnchorIfPossible(account: account)
     }
 
     func refresh() {
@@ -770,8 +778,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         noteEvents = projectedTimelineEvents(entries: timelineEntries)
     }
 
-    private func reloadProjectionWindow(account: NostrAccount, around anchorEventID: String?) {
-        guard let eventStore else { return }
+    @discardableResult
+    private func reloadProjectionWindow(account: NostrAccount, around anchorEventID: String?) -> Bool {
+        guard let eventStore else { return false }
         let timelineEntries: [NostrTimelineEntryRecord]
         if let anchorEventID,
            let anchoredEntries = try? eventStore.timelineEntries(
@@ -781,6 +790,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             leadingLimit: projectionAnchorLeadingLimit,
             trailingLimit: projectionAnchorTrailingLimit
            ) {
+            guard anchoredEntries.contains(where: { $0.eventID == anchorEventID }) else { return false }
             timelineEntries = anchoredEntries
         } else {
             timelineEntries = (try? eventStore.timelineEntries(
@@ -790,6 +800,17 @@ final class NostrHomeTimelineStore: ObservableObject {
             )) ?? []
         }
         noteEvents = projectedTimelineEvents(entries: timelineEntries)
+        return true
+    }
+
+    private func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
+        guard let restoreProjectionAnchorEventID else { return }
+        guard reloadProjectionWindow(account: account, around: restoreProjectionAnchorEventID) else { return }
+        materializeEntries()
+        scheduleLinkPreviewResolution()
+        if !entries.isEmpty {
+            phase = .loaded
+        }
     }
 
     private func projectedTimelineEvents(entries timelineEntries: [NostrTimelineEntryRecord]) -> [NostrEvent] {
