@@ -1157,6 +1157,33 @@ struct TimelineModelTests {
         #expect(try eventStore.eventSources(eventID: target.id).map(\.relayURL) == ["wss://relay.example"])
     }
 
+    @Test("Home timeline sync planner builds forward reconnect packet")
+    func homeTimelineSyncPlannerBuildsForwardReconnectPacket() {
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "b", count: 64)
+        let planner = HomeTimelineSyncPlanner()
+
+        let packet = planner.forwardPacket(
+            account: account,
+            followedPubkeys: [followed],
+            newestCreatedAt: 1_800_000_100,
+            relayURLs: ["wss://relay.example"]
+        )
+
+        #expect(packet.strategy == .forward)
+        #expect(packet.subscriptionID == NostrHomeForwardREQBuilder.subscriptionID)
+        #expect(packet.relayURLs == ["wss://relay.example"])
+        #expect(packet.filters == [[
+            "kinds": .ints([1, 5, 6]),
+            "authors": .strings([followed]),
+            "since": .int(1_800_000_090)
+        ]])
+    }
+
     @Test("Home timeline store restores live gap rows from database timeline entries")
     @MainActor
     func homeTimelineStoreRestoresLiveGapRowsFromDatabaseEntries() throws {

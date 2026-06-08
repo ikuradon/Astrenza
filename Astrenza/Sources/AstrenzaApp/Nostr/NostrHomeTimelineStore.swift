@@ -74,6 +74,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
     private let eventIngestor: HomeTimelineEventIngestor
+    private let syncPlanner: HomeTimelineSyncPlanner
     private let relayRuntime: NostrRelayRuntime?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
     private var loadTask: Task<Void, Never>?
@@ -194,6 +195,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
         self.eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
+        self.syncPlanner = HomeTimelineSyncPlanner()
         self.relayRuntime = relayRuntime
         self.linkPreviewResolver = linkPreviewResolver
     }
@@ -888,10 +890,10 @@ final class NostrHomeTimelineStore: ObservableObject {
 
         do {
             try await relayRuntime.setDefaultRelays(resolvedRelays)
-            let authors = followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
             let newestCreatedAt = noteEvents.map(\.createdAt).max()
-            let packet = NostrHomeForwardREQBuilder.reconnectPacket(
-                authors: authors,
+            let packet = syncPlanner.forwardPacket(
+                account: account,
+                followedPubkeys: followedPubkeys,
                 newestCreatedAt: newestCreatedAt,
                 relayURLs: resolvedRelays
             )
