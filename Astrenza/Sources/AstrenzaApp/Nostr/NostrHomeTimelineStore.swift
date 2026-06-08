@@ -644,11 +644,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         else { return }
         let olderAnchorPostID = noteEvents.last?.id
 
-        let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
-        guard let packet = NostrBackwardREQBuilder.olderNotes(
-            authors: authors,
-            until: oldestCreatedAt - 1,
-            limit: 100,
+        guard let packet = syncPlanner.olderNotesPacket(
+            account: account,
+            followedPubkeys: followedPubkeys,
+            oldestCreatedAt: oldestCreatedAt,
             relayURLs: resolvedRelays
         ) else { return }
 
@@ -682,12 +681,12 @@ final class NostrHomeTimelineStore: ObservableObject {
               let olderEvent = timelineEvent(id: gap.olderPostID)
         else { return false }
 
-        let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
-        guard let packet = NostrBackwardREQBuilder.notesWindow(
-            authors: authors,
-            since: olderEvent.createdAt + 1,
-            until: newerEvent.createdAt - 1,
-            limit: max(1, min(gap.missingEstimate, 250)),
+        guard let packet = syncPlanner.gapNotesPacket(
+            account: account,
+            followedPubkeys: followedPubkeys,
+            newerEvent: newerEvent,
+            olderEvent: olderEvent,
+            missingEstimate: gap.missingEstimate,
             relayURLs: resolvedRelays
         ) else { return false }
 
@@ -1273,47 +1272,30 @@ final class NostrHomeTimelineStore: ObservableObject {
 
         let batch = dependencyFetchQueue.drain()
 
-        var profilePackets: [NostrREQPacket] = []
-        var sourcePackets: [NostrREQPacket] = []
-        var registeredGroupIDs: [String] = []
-        var registeredProfilePubkeys: [String] = []
-        var registeredSourceEventIDs: [String] = []
-
-        for group in batch.profileGroups {
-            guard let packet = NostrBackwardREQBuilder.profiles(authors: group.values, relayURLs: group.relayURLs) else {
-                continue
-            }
+        let plan = syncPlanner.dependencyPackets(batch: batch)
+        for (packet, group) in zip(plan.profilePackets, batch.profileGroups) {
             pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: group.values, sourceEventIDs: [])
-            registeredGroupIDs.append(packet.groupID)
-            registeredProfilePubkeys.append(contentsOf: group.values)
-            profilePackets.append(packet)
         }
-        for group in batch.sourceGroups {
-            guard let packet = NostrBackwardREQBuilder.sourceEvents(ids: group.values, relayURLs: group.relayURLs) else {
-                continue
-            }
+        for (packet, group) in zip(plan.sourcePackets, batch.sourceGroups) {
             pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(profilePubkeys: [], sourceEventIDs: group.values)
-            registeredGroupIDs.append(packet.groupID)
-            registeredSourceEventIDs.append(contentsOf: group.values)
-            sourcePackets.append(packet)
         }
 
-        guard !profilePackets.isEmpty || !sourcePackets.isEmpty else { return }
+        guard !plan.isEmpty else { return }
 
         Task {
             do {
-                if !profilePackets.isEmpty {
-                    try await relayRuntime.installBackward(profilePackets, mergeField: .authors)
+                if !plan.profilePackets.isEmpty {
+                    try await relayRuntime.installBackward(plan.profilePackets, mergeField: .authors)
                 }
-                if !sourcePackets.isEmpty {
-                    try await relayRuntime.installBackward(sourcePackets, mergeField: .ids)
+                if !plan.sourcePackets.isEmpty {
+                    try await relayRuntime.installBackward(plan.sourcePackets, mergeField: .ids)
                 }
             } catch {
                 await MainActor.run {
-                    registeredGroupIDs.forEach { pendingBackwardRequests.removeValue(forKey: $0) }
+                    plan.registeredGroupIDs.forEach { pendingBackwardRequests.removeValue(forKey: $0) }
                     dependencyFetchQueue.finish(
-                        profilePubkeys: registeredProfilePubkeys,
-                        sourceEventIDs: registeredSourceEventIDs,
+                        profilePubkeys: plan.registeredProfilePubkeys,
+                        sourceEventIDs: plan.registeredSourceEventIDs,
                         succeeded: false
                     )
                     recordRuntimeSyncEvent(

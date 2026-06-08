@@ -1,6 +1,21 @@
 import Foundation
 import AstrenzaCore
 
+struct HomeTimelineDependencyPacketPlan {
+    let profilePackets: [NostrREQPacket]
+    let sourcePackets: [NostrREQPacket]
+    let registeredProfilePubkeys: [String]
+    let registeredSourceEventIDs: [String]
+
+    var isEmpty: Bool {
+        profilePackets.isEmpty && sourcePackets.isEmpty
+    }
+
+    var registeredGroupIDs: [String] {
+        (profilePackets + sourcePackets).map(\.groupID)
+    }
+}
+
 struct HomeTimelineSyncPlanner {
     func forwardPacket(
         account: NostrAccount,
@@ -13,5 +28,82 @@ struct HomeTimelineSyncPlanner {
             newestCreatedAt: newestCreatedAt,
             relayURLs: relayURLs
         )
+    }
+
+    func olderNotesPacket(
+        account: NostrAccount,
+        followedPubkeys: [String],
+        oldestCreatedAt: Int,
+        relayURLs: [String],
+        limit: Int = 100,
+        requestID: String = UUID().uuidString
+    ) -> NostrREQPacket? {
+        NostrBackwardREQBuilder.olderNotes(
+            authors: timelineAuthors(account: account, followedPubkeys: followedPubkeys),
+            until: oldestCreatedAt - 1,
+            limit: limit,
+            relayURLs: relayURLs,
+            requestID: requestID
+        )
+    }
+
+    func gapNotesPacket(
+        account: NostrAccount,
+        followedPubkeys: [String],
+        newerEvent: NostrEvent,
+        olderEvent: NostrEvent,
+        missingEstimate: Int,
+        relayURLs: [String],
+        requestID: String = UUID().uuidString
+    ) -> NostrREQPacket? {
+        NostrBackwardREQBuilder.notesWindow(
+            authors: timelineAuthors(account: account, followedPubkeys: followedPubkeys),
+            since: olderEvent.createdAt + 1,
+            until: newerEvent.createdAt - 1,
+            limit: max(1, min(missingEstimate, 250)),
+            relayURLs: relayURLs,
+            requestID: requestID
+        )
+    }
+
+    func dependencyPackets(
+        batch: NostrDependencyFetchBatch,
+        requestID: String = UUID().uuidString
+    ) -> HomeTimelineDependencyPacketPlan {
+        var profilePackets: [NostrREQPacket] = []
+        var sourcePackets: [NostrREQPacket] = []
+        var registeredProfilePubkeys: [String] = []
+        var registeredSourceEventIDs: [String] = []
+
+        for (index, group) in batch.profileGroups.enumerated() {
+            guard let packet = NostrBackwardREQBuilder.profiles(
+                authors: group.values,
+                relayURLs: group.relayURLs,
+                requestID: "\(requestID)-profile-\(index)"
+            ) else { continue }
+            registeredProfilePubkeys.append(contentsOf: group.values)
+            profilePackets.append(packet)
+        }
+
+        for (index, group) in batch.sourceGroups.enumerated() {
+            guard let packet = NostrBackwardREQBuilder.sourceEvents(
+                ids: group.values,
+                relayURLs: group.relayURLs,
+                requestID: "\(requestID)-source-\(index)"
+            ) else { continue }
+            registeredSourceEventIDs.append(contentsOf: group.values)
+            sourcePackets.append(packet)
+        }
+
+        return HomeTimelineDependencyPacketPlan(
+            profilePackets: profilePackets,
+            sourcePackets: sourcePackets,
+            registeredProfilePubkeys: registeredProfilePubkeys,
+            registeredSourceEventIDs: registeredSourceEventIDs
+        )
+    }
+
+    private func timelineAuthors(account: NostrAccount, followedPubkeys: [String]) -> [String] {
+        followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
     }
 }

@@ -1184,6 +1184,100 @@ struct TimelineModelTests {
         ]])
     }
 
+    @Test("Home timeline sync planner builds older notes packet")
+    func homeTimelineSyncPlannerBuildsOlderNotesPacket() {
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "b", count: 64)
+        let planner = HomeTimelineSyncPlanner()
+
+        let packet = planner.olderNotesPacket(
+            account: account,
+            followedPubkeys: [followed],
+            oldestCreatedAt: 200,
+            relayURLs: ["wss://relay.example"],
+            requestID: "older-test"
+        )
+
+        #expect(packet?.strategy == .backward)
+        #expect(packet?.groupID == "astrenza-older-notes-older-test")
+        #expect(packet?.relayURLs == ["wss://relay.example"])
+        #expect(packet?.filters == [[
+            "kinds": .ints([1, 5, 6]),
+            "authors": .strings([followed]),
+            "until": .int(199),
+            "limit": .int(100)
+        ]])
+    }
+
+    @Test("Home timeline sync planner builds gap notes packet")
+    func homeTimelineSyncPlannerBuildsGapNotesPacket() {
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let newer = timelineEvent(idSeed: "planner-gap-newer", pubkey: account.pubkey, createdAt: 500, content: "newer")
+        let older = timelineEvent(idSeed: "planner-gap-older", pubkey: account.pubkey, createdAt: 100, content: "older")
+        let planner = HomeTimelineSyncPlanner()
+
+        let packet = planner.gapNotesPacket(
+            account: account,
+            followedPubkeys: [],
+            newerEvent: newer,
+            olderEvent: older,
+            missingEstimate: 500,
+            relayURLs: ["wss://relay.example"],
+            requestID: "gap-test"
+        )
+
+        #expect(packet?.strategy == .backward)
+        #expect(packet?.groupID == "astrenza-gap-notes-gap-test")
+        #expect(packet?.filters == [[
+            "kinds": .ints([1, 5, 6]),
+            "authors": .strings([account.pubkey]),
+            "since": .int(101),
+            "until": .int(499),
+            "limit": .int(250)
+        ]])
+    }
+
+    @Test("Home timeline sync planner builds dependency packets")
+    func homeTimelineSyncPlannerBuildsDependencyPackets() {
+        let planner = HomeTimelineSyncPlanner()
+        let profilePubkeys = [String(repeating: "b", count: 64), String(repeating: "c", count: 64)]
+        let sourceIDs = [String(repeating: "d", count: 64), String(repeating: "e", count: 64)]
+        let batch = NostrDependencyFetchBatch(
+            profileGroups: [
+                NostrDependencyFetchGroup(relayURLs: ["wss://profiles.example"], values: profilePubkeys)
+            ],
+            sourceGroups: [
+                NostrDependencyFetchGroup(relayURLs: ["wss://source.example"], values: sourceIDs)
+            ]
+        )
+
+        let plan = planner.dependencyPackets(batch: batch, requestID: "deps-test")
+
+        #expect(plan.profilePackets.count == 1)
+        #expect(plan.sourcePackets.count == 1)
+        #expect(plan.registeredProfilePubkeys == profilePubkeys)
+        #expect(plan.registeredSourceEventIDs == sourceIDs)
+        #expect(plan.registeredGroupIDs == [
+            "astrenza-kind0-deps-test-profile-0",
+            "astrenza-source-events-deps-test-source-0"
+        ])
+        #expect(plan.profilePackets.first?.filters == [[
+            "kinds": .ints([0]),
+            "authors": .strings(profilePubkeys)
+        ]])
+        #expect(plan.sourcePackets.first?.filters == [[
+            "ids": .strings(sourceIDs)
+        ]])
+    }
+
     @Test("Home timeline repository materializes entries from projection")
     func homeTimelineRepositoryMaterializesEntriesFromProjection() throws {
         let account = NostrAccount(
