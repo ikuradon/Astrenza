@@ -4,15 +4,60 @@ public struct NostrRichContent: Equatable, Sendable {
     public let displayText: String
     public let tokens: [NostrRichContentToken]
     public let references: [NostrRichContentReference]
+    public let profileDisplayNamesByPubkey: [String: String]
+    public let eventDisplayTextByID: [String: String]
 
     public init(
         displayText: String,
         tokens: [NostrRichContentToken],
-        references: [NostrRichContentReference]
+        references: [NostrRichContentReference],
+        profileDisplayNamesByPubkey: [String: String] = [:],
+        eventDisplayTextByID: [String: String] = [:]
     ) {
         self.displayText = displayText
         self.tokens = tokens
         self.references = references
+        self.profileDisplayNamesByPubkey = profileDisplayNamesByPubkey
+        self.eventDisplayTextByID = eventDisplayTextByID
+    }
+
+    public func displayText(for token: NostrRichContentToken) -> String {
+        token.displayText(
+            profileDisplayNamesByPubkey: profileDisplayNamesByPubkey,
+            eventDisplayTextByID: eventDisplayTextByID
+        )
+    }
+
+    public func resolving(
+        profileDisplayNamesByPubkey newProfileDisplayNames: [String: String] = [:],
+        eventDisplayTextByID newEventDisplayTextByID: [String: String] = [:]
+    ) -> NostrRichContent {
+        let profileDisplayNames = profileDisplayNamesByPubkey.merging(newProfileDisplayNames) { _, new in new }
+        let eventDisplayText = eventDisplayTextByID.merging(newEventDisplayTextByID) { _, new in new }
+        return NostrRichContent(
+            displayText: Self.displayText(
+                from: tokens,
+                profileDisplayNamesByPubkey: profileDisplayNames,
+                eventDisplayTextByID: eventDisplayText
+            ),
+            tokens: tokens,
+            references: references,
+            profileDisplayNamesByPubkey: profileDisplayNames,
+            eventDisplayTextByID: eventDisplayText
+        )
+    }
+
+    private static func displayText(
+        from tokens: [NostrRichContentToken],
+        profileDisplayNamesByPubkey: [String: String],
+        eventDisplayTextByID: [String: String]
+    ) -> String {
+        tokens.map {
+            $0.displayText(
+                profileDisplayNamesByPubkey: profileDisplayNamesByPubkey,
+                eventDisplayTextByID: eventDisplayTextByID
+            )
+        }.joined()
     }
 }
 
@@ -47,6 +92,23 @@ public enum NostrRichContentToken: Equatable, Sendable {
 
     private func eventDisplay(eventID: String) -> String {
         "note:\(eventID.prefix(8))"
+    }
+
+    fileprivate func displayText(
+        profileDisplayNamesByPubkey: [String: String],
+        eventDisplayTextByID: [String: String]
+    ) -> String {
+        switch self {
+        case .profile(let pubkey, _):
+            if let displayName = profileDisplayNamesByPubkey[pubkey], !displayName.isEmpty {
+                return "@\(displayName)"
+            }
+            return displayText
+        case .event(let eventID, _, _, _):
+            return eventDisplayTextByID[eventID] ?? displayText
+        case .text, .url, .hashtag, .customEmoji:
+            return displayText
+        }
     }
 }
 
@@ -91,10 +153,12 @@ public enum NostrRichContentParser {
             {
                 let normalizedURL = NostrLinkParser.normalizedURLString(url)
                 guard !hiddenURLs.contains(normalizedURL) else {
+                    appendTrailing(token.trailing, to: &tokens)
                     skipWhitespaceAfterHiddenToken = true
                     continue
                 }
                 tokens.append(.url(url: url))
+                appendTrailing(token.trailing, to: &tokens)
                 continue
             }
 
@@ -119,6 +183,7 @@ public enum NostrRichContentParser {
 
             if let eventReference = eventReference(from: token.value) {
                 guard !hiddenEventIDs.contains(eventReference.eventID) else {
+                    appendTrailing(token.trailing, to: &tokens)
                     skipWhitespaceAfterHiddenToken = true
                     continue
                 }
@@ -134,6 +199,15 @@ public enum NostrRichContentParser {
                     author: eventReference.author,
                     kind: eventReference.kind
                 ))
+                appendTrailing(token.trailing, to: &tokens)
+                continue
+            }
+
+            if let indexedReference = indexedReference(from: token.value, event: event) {
+                tokens.append(indexedReference.token)
+                if let reference = indexedReference.reference {
+                    references.append(reference)
+                }
                 appendTrailing(token.trailing, to: &tokens)
                 continue
             }
@@ -223,6 +297,37 @@ public enum NostrRichContentParser {
         return try? NostrNIP19.eventReference(from: token)
     }
 
+    private static func indexedReference(
+        from token: String,
+        event: NostrEvent
+    ) -> (token: NostrRichContentToken, reference: NostrRichContentReference?)? {
+        guard isCompleteIndexedReference(token) else { return nil }
+        let indexText = token.dropFirst(2).dropLast()
+        guard let index = Int(indexText),
+              event.tags.indices.contains(index)
+        else { return nil }
+
+        let tag = event.tags[index]
+        guard tag.count >= 2 else { return nil }
+        let relays = relayHint(from: tag, at: 2).map { [$0] } ?? []
+        switch tag[0] {
+        case "p":
+            let pubkey = tag[1]
+            return (
+                .profile(pubkey: pubkey, relays: relays),
+                .profile(pubkey: pubkey, relays: relays)
+            )
+        case "e", "q":
+            let eventID = tag[1]
+            return (
+                .event(eventID: eventID, relays: relays, author: nil, kind: nil),
+                .event(eventID: eventID, relays: relays, author: nil, kind: nil)
+            )
+        default:
+            return nil
+        }
+    }
+
     private static func isNIP19Token(_ token: String, prefixes: [String]) -> Bool {
         let lowered = token.lowercased()
         let value = lowered.hasPrefix("nostr:") ? String(lowered.dropFirst("nostr:".count)) : lowered
@@ -235,10 +340,38 @@ public enum NostrRichContentParser {
         while let last = value.unicodeScalars.last,
               trailingPunctuation.contains(last)
         {
+            if last == "]", isCompleteIndexedReference(value) {
+                break
+            }
             trailing = String(last) + trailing
             value.removeLast()
         }
         return (value, trailing)
+    }
+
+    private static func isCompleteIndexedReference(_ value: String) -> Bool {
+        guard value.hasPrefix("#["),
+              value.hasSuffix("]"),
+              value.count > 3
+        else { return false }
+        let digits = value.dropFirst(2).dropLast()
+        return digits.allSatisfy(\.isNumber)
+    }
+
+    private static func relayHint(from tag: [String], at index: Int) -> String? {
+        guard tag.count > index else { return nil }
+        let trimmed = tag[index].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "ws" || scheme == "wss",
+              components.host?.isEmpty == false
+        else { return nil }
+
+        var normalized = components
+        normalized.scheme = scheme
+        normalized.host = components.host?.lowercased()
+        return normalized.string
     }
 
     private static func appendTrailing(_ trailing: String, to tokens: inout [NostrRichContentToken]) {

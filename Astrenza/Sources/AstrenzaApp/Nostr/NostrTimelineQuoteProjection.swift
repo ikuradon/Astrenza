@@ -23,10 +23,13 @@ struct NostrTimelineQuoteProjection {
             followedPubkeys: followedPubkeys,
             nip05Resolutions: nip05Resolutions
         ).first ?? fallbackItem(for: quoted, followedPubkeys: followedPubkeys)
-        let richBody = NostrRichContentParser.parse(
-            event: quoted,
-            attachments: [],
-            promotedLinkURLs: []
+        let contentProjection = NostrTimelineContentProjection(event: quoted)
+        let richBody = NostrTimelineRichContentResolver.resolve(
+            contentProjection.richBody,
+            eventsByID: eventsByID,
+            metadataEvents: metadataEvents,
+            nip05Resolutions: nip05Resolutions,
+            followedPubkeys: followedPubkeys
         )
 
         return QuotedTimelinePost(

@@ -235,26 +235,21 @@ private extension TimelinePostRow {
     func handleRichTextURL(_ url: URL) -> OpenURLAction.Result {
         didHandleActionGesture = true
 
-        guard url.scheme == "astrenza" else {
+        switch TimelineRichContentRoute(url: url) {
+        case .external(let url):
             onOpenURL(url)
             return .handled
-        }
-
-        if url.host == "profile", let pubkey = url.pathComponents.dropFirst().first {
+        case .profile(let pubkey, _):
             onOpenProfile(profilePost(pubkey: pubkey))
             return .handled
-        }
-
-        if url.host == "event" {
-            onOpenPost(post)
+        case .event(let eventID, _, _, _):
+            onOpenPost(referencedEventPost(eventID: eventID))
             return .handled
-        }
-
-        if url.host == "hashtag" {
+        case .hashtag:
             return .handled
+        case .unsupported:
+            return .discarded
         }
-
-        return .discarded
     }
 
     func profilePost(pubkey: String) -> TimelinePost {
@@ -266,6 +261,28 @@ private extension TimelinePostRow {
                 symbolName: "person.fill",
                 pictureState: .metadataPending,
                 placeholderSeed: pubkey
+            ),
+            body: "",
+            timestamp: "",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
+    }
+
+    func referencedEventPost(eventID: String) -> TimelinePost {
+        TimelinePost(
+            id: eventID,
+            author: .unresolved(pubkey: eventID),
+            avatar: AvatarStyle(
+                primary: .astrenzaAccent,
+                secondary: .astrenzaAttachmentBackground,
+                symbolName: "doc.text",
+                pictureState: .metadataPending,
+                placeholderSeed: eventID
             ),
             body: "",
             timestamp: "",

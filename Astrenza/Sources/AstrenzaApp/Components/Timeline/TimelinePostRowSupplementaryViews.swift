@@ -139,6 +139,15 @@ struct TimelineAuthorHeader: View {
 
 struct QuotedPostCard: View {
     let quotedPost: QuotedTimelinePost
+    let onOpenRichURL: (URL) -> OpenURLAction.Result
+
+    init(
+        quotedPost: QuotedTimelinePost,
+        onOpenRichURL: @escaping (URL) -> OpenURLAction.Result = { _ in .systemAction }
+    ) {
+        self.quotedPost = quotedPost
+        self.onOpenRichURL = onOpenRichURL
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -175,6 +184,7 @@ struct QuotedPostCard: View {
                         mention: nil,
                         lineLimit: 3
                     )
+                    .environment(\.openURL, OpenURLAction(handler: onOpenRichURL))
                 } else {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle")

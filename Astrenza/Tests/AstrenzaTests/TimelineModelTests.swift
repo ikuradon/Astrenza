@@ -504,6 +504,52 @@ struct TimelineModelTests {
         } == false)
     }
 
+    @Test("Nostr materializer resolves inline profile rich content display names")
+    func nostrMaterializerResolvesInlineProfileRichContentDisplayNames() throws {
+        let author = String(repeating: "a", count: 64)
+        let mentioned = String(repeating: "b", count: 64)
+        let npub = try NostrNIP19.publicKey(mentioned)
+        let note = timelineEvent(
+            idSeed: "inline-profile-rich-content",
+            pubkey: author,
+            createdAt: 120,
+            content: "hello nostr:\(npub)"
+        )
+        let metadata = timelineEvent(
+            idSeed: "inline-profile-rich-content-metadata",
+            kind: 0,
+            pubkey: mentioned,
+            createdAt: 130,
+            content: #"{"display_name":"User Beta"}"#
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [note],
+            metadataEvents: [metadata],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first)
+
+        #expect(post.body == "hello @User Beta")
+        #expect(post.richBody?.displayText == "hello @User Beta")
+        #expect(post.richBody?.tokens.map { post.richBody?.displayText(for: $0) ?? "" }.joined() == "hello @User Beta")
+    }
+
+    @Test("Timeline rich content route keeps relay hints for internal references")
+    func timelineRichContentRouteKeepsRelayHintsForInternalReferences() throws {
+        let eventID = String(repeating: "c", count: 64)
+        let author = String(repeating: "d", count: 64)
+        let eventURL = try #require(URL(string: "astrenza://event/\(eventID)?relay=wss%3A%2F%2Frelay.example&author=\(author)&kind=1"))
+        let eventRoute = TimelineRichContentRoute(url: eventURL)
+
+        #expect(eventRoute == .event(eventID: eventID, relays: ["wss://relay.example"], author: author, kind: 1))
+
+        let profileURL = try #require(URL(string: "astrenza://profile/\(author)?relay=wss%3A%2F%2Fprofile.example"))
+        let profileRoute = TimelineRichContentRoute(url: profileURL)
+
+        #expect(profileRoute == .profile(pubkey: author, relays: ["wss://profile.example"]))
+    }
+
     @Test("Timeline quote projection returns placeholder for uncached quote")
     func timelineQuoteProjectionReturnsPlaceholderForUncachedQuote() throws {
         let author = String(repeating: "a", count: 64)
@@ -569,6 +615,44 @@ struct TimelineModelTests {
             }
             return false
         } == true)
+    }
+
+    @Test("Timeline quote projection removes promoted media and OGP URLs")
+    func timelineQuoteProjectionRemovesPromotedMediaAndOGPURLs() throws {
+        let author = String(repeating: "a", count: 64)
+        let quotedAuthor = String(repeating: "b", count: 64)
+        let quoted = timelineEvent(
+            idSeed: "quote-projection-promoted-links-source",
+            pubkey: quotedAuthor,
+            createdAt: 110,
+            tags: [["imeta", "url https://cdn.example.test/pic.png", "m image/png"]],
+            content: "photo https://cdn.example.test/pic.png read https://example.test/page"
+        )
+        let event = timelineEvent(
+            idSeed: "quote-projection-promoted-links",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["q", quoted.id]],
+            content: "quoted"
+        )
+
+        let quotedPost = try #require(NostrTimelineQuoteProjection.quotedPost(
+            from: event,
+            eventsByID: [quoted.id: quoted],
+            metadataEvents: [],
+            nip05Resolutions: [:],
+            followedPubkeys: [],
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
+            relativeTimestamp: { "\($0)s" }
+        ))
+
+        #expect(quotedPost.body == "photo read")
+        #expect(quotedPost.richBody?.tokens.contains { token in
+            if case .url = token {
+                return true
+            }
+            return false
+        } == false)
     }
 
     @Test("Timeline media projection prefers persisted assets over content attachments")
@@ -784,8 +868,10 @@ struct TimelineModelTests {
             event: reply,
             eventsByID: [parent.id: parent, reply.id: reply],
             author: .resolved(displayName: "Author", nip05: nil, nip05Status: .absent, pubkey: author, isFollowed: true),
+            authorForParent: { _ in TimelineAuthor.unresolved(pubkey: parentAuthor) },
             avatarForParent: { _ in AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person") },
-            relativeTimestamp: { "\($0)s" }
+            relativeTimestamp: { "\($0)s" },
+            mentionDisplayForPubkey: { _ in nil }
         )
 
         #expect(projection.replyContext?.bodyPreview == "parent preview")
@@ -793,6 +879,124 @@ struct TimelineModelTests {
         #expect(projection.replyContext?.isSelfReply == false)
         #expect(projection.replyMention?.text == "@\(parentAuthor.prefix(10))")
         #expect(projection.replyMention?.isExternal == true)
+    }
+
+    @Test("Timeline reply projection carries rich parent preview content")
+    func timelineReplyProjectionCarriesRichParentPreviewContent() throws {
+        let author = String(repeating: "a", count: 64)
+        let parentAuthor = String(repeating: "b", count: 64)
+        let parent = timelineEvent(
+            idSeed: "reply-rich-parent",
+            pubkey: parentAuthor,
+            createdAt: 90,
+            tags: [["emoji", "spark", "https://emoji.example.test/spark.png"]],
+            content: "parent :spark:"
+        )
+        let reply = timelineEvent(
+            idSeed: "reply-rich-child",
+            pubkey: author,
+            createdAt: 120,
+            tags: [
+                ["e", parent.id, "", "reply"],
+                ["p", parentAuthor]
+            ],
+            content: "reply body"
+        )
+
+        let projection = NostrTimelineReplyProjection(
+            event: reply,
+            eventsByID: [parent.id: parent, reply.id: reply],
+            author: .resolved(displayName: "Author", nip05: nil, nip05Status: .absent, pubkey: author, isFollowed: true),
+            authorForParent: { _ in TimelineAuthor.unresolved(pubkey: parentAuthor) },
+            avatarForParent: { _ in AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person") },
+            relativeTimestamp: { "\($0)s" },
+            mentionDisplayForPubkey: { _ in nil }
+        )
+
+        #expect(projection.replyContext?.richContent?.displayText == "parent :spark:")
+        #expect(projection.replyContext?.richContent?.tokens.contains { token in
+            if case .customEmoji(let shortcode, _) = token {
+                return shortcode == "spark"
+            }
+            return false
+        } == true)
+    }
+
+    @Test("Nostr materializer resolves reply target author and mention from kind 0")
+    func nostrMaterializerResolvesReplyTargetAuthorAndMention() throws {
+        let author = String(repeating: "a", count: 64)
+        let parentAuthor = String(repeating: "b", count: 64)
+        let parent = timelineEvent(
+            idSeed: "resolved-reply-parent",
+            pubkey: parentAuthor,
+            createdAt: 90,
+            content: "parent preview"
+        )
+        let reply = timelineEvent(
+            idSeed: "resolved-reply",
+            pubkey: author,
+            createdAt: 120,
+            tags: [
+                ["e", parent.id, "", "reply"],
+                ["p", parentAuthor]
+            ],
+            content: "reply body"
+        )
+        let parentMetadata = timelineEvent(
+            idSeed: "resolved-reply-parent-metadata",
+            kind: 0,
+            pubkey: parentAuthor,
+            createdAt: 130,
+            content: #"{"name":"Parent Display","nip05":"parent.example","picture":"https://example.test/avatar.png"}"#
+        )
+
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [reply, parent],
+            metadataEvents: [parentMetadata],
+            followedPubkeys: [author]
+        )
+        let post = try #require(posts.first { $0.id == reply.id })
+
+        #expect(post.replyContext?.author.primaryText == "Parent Display")
+        #expect(post.replyContext?.author.secondaryText == "parent.example")
+        #expect(post.replyMention?.text == "@Parent Display")
+        #expect(post.replyMention?.isExternal == true)
+    }
+
+    @Test("Home timeline store single post projection resolves reply mention from cached kind 0")
+    @MainActor
+    func homeTimelineStoreSinglePostProjectionResolvesReplyMentionFromCachedKind0() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let parentAuthor = String(repeating: "b", count: 64)
+        let parentID = timelineEventID("single-post-reply-parent")
+        let reply = timelineEvent(
+            idSeed: "single-post-reply",
+            pubkey: author,
+            createdAt: 120,
+            tags: [
+                ["e", parentID, "", "reply"],
+                ["p", parentAuthor]
+            ],
+            content: "reply body"
+        )
+        let parentMetadata = timelineEvent(
+            idSeed: "single-post-reply-parent-metadata",
+            kind: 0,
+            pubkey: parentAuthor,
+            createdAt: 130,
+            content: #"{"name":"Parent Display"}"#
+        )
+        try eventStore.save(events: [reply, parentMetadata])
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:])),
+            eventStore: eventStore,
+            relayRuntime: nil
+        )
+
+        let post = try #require(store.post(eventID: reply.id))
+
+        #expect(post.replyMention?.text == "@Parent Display")
     }
 
     @Test("Timeline author projection resolves author avatar timestamp and warning")

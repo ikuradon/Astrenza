@@ -1705,8 +1705,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializedPosts(from events: [NostrEvent]) -> [TimelinePost] {
-        let pubkeys = Set(events.map(\.pubkey))
-        let metadata = (try? eventStore?.latestReplaceableEvents(pubkeys: pubkeys, kind: 0)) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
+        let profilePubkeys = Set(events.flatMap { event in
+            NostrEventDependencies.extract(from: event).profilePubkeys
+        })
+        let storedMetadata = (try? eventStore?.latestReplaceableEvents(pubkeys: profilePubkeys, kind: 0)) ?? []
+        let liveMetadata = metadataEvents.filter { profilePubkeys.contains($0.pubkey) }
+        let metadata = storedMetadata + liveMetadata
 
         return NostrTimelineMaterializer.posts(
             noteEvents: events,

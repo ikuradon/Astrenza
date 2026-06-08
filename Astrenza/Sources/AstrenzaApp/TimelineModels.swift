@@ -342,7 +342,24 @@ struct TimelineReplyContext {
     let avatar: AvatarStyle
     let timestamp: String
     let bodyPreview: String
+    let richContent: NostrRichContent?
     let isSelfReply: Bool
+
+    init(
+        author: TimelineAuthor,
+        avatar: AvatarStyle,
+        timestamp: String,
+        bodyPreview: String,
+        richContent: NostrRichContent? = nil,
+        isSelfReply: Bool
+    ) {
+        self.author = author
+        self.avatar = avatar
+        self.timestamp = timestamp
+        self.bodyPreview = bodyPreview
+        self.richContent = richContent
+        self.isSelfReply = isSelfReply
+    }
 }
 
 struct TimelineReplyMention {

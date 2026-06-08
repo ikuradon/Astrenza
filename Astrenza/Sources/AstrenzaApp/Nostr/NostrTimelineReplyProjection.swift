@@ -9,17 +9,24 @@ struct NostrTimelineReplyProjection {
         event: NostrEvent,
         eventsByID: [String: NostrEvent],
         author: TimelineAuthor,
+        authorForParent: (NostrEvent) -> TimelineAuthor,
         avatarForParent: (NostrEvent) -> AvatarStyle,
-        relativeTimestamp: (Int) -> String
+        relativeTimestamp: (Int) -> String,
+        mentionDisplayForPubkey: (String) -> String?
     ) {
         self.replyContext = Self.replyContext(
             from: event,
             eventsByID: eventsByID,
             fallbackAuthor: author,
+            authorForParent: authorForParent,
             avatarForParent: avatarForParent,
             relativeTimestamp: relativeTimestamp
         )
-        self.replyMention = Self.replyMention(from: event, author: author)
+        self.replyMention = Self.replyMention(
+            from: event,
+            author: author,
+            mentionDisplayForPubkey: mentionDisplayForPubkey
+        )
     }
 
     static func replyParentID(from tags: [[String]]) -> String? {
@@ -54,6 +61,7 @@ struct NostrTimelineReplyProjection {
         from event: NostrEvent,
         eventsByID: [String: NostrEvent],
         fallbackAuthor: TimelineAuthor,
+        authorForParent: (NostrEvent) -> TimelineAuthor,
         avatarForParent: (NostrEvent) -> AvatarStyle,
         relativeTimestamp: (Int) -> String
     ) -> TimelineReplyContext? {
@@ -61,23 +69,30 @@ struct NostrTimelineReplyProjection {
               let parent = eventsByID[parentID]
         else { return nil }
 
-        let parentAuthor = parent.pubkey == event.pubkey ? fallbackAuthor : TimelineAuthor.unresolved(pubkey: parent.pubkey)
+        let parentAuthor = parent.pubkey == event.pubkey ? fallbackAuthor : authorForParent(parent)
+        let parentRichContent = NostrRichContentParser.parse(event: parent)
         return TimelineReplyContext(
             author: parentAuthor,
             avatar: avatarForParent(parent),
             timestamp: relativeTimestamp(parent.createdAt),
-            bodyPreview: parent.content,
+            bodyPreview: parentRichContent.displayText,
+            richContent: parentRichContent,
             isSelfReply: parent.pubkey == event.pubkey
         )
     }
 
-    private static func replyMention(from event: NostrEvent, author: TimelineAuthor) -> TimelineReplyMention? {
+    private static func replyMention(
+        from event: NostrEvent,
+        author: TimelineAuthor,
+        mentionDisplayForPubkey: (String) -> String?
+    ) -> TimelineReplyMention? {
         guard replyParentID(from: event.tags) != nil,
               let pubkey = event.tags.first(where: { $0.first == "p" && $0.count >= 2 })?[1],
               pubkey != event.pubkey
         else { return nil }
 
-        let display = "@\(pubkey.prefix(10))"
+        let displayName = mentionDisplayForPubkey(pubkey) ?? String(pubkey.prefix(10))
+        let display = "@\(displayName)"
         return TimelineReplyMention(text: String(display), isExternal: pubkey != author.pubkey)
     }
 }

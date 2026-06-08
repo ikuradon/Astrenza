@@ -371,6 +371,21 @@ public struct NostrEventDependencies: Equatable, Sendable {
             }
         }
 
+        let richContent = NostrRichContentParser.parse(event: event)
+        for reference in richContent.references {
+            switch reference {
+            case .profile(let pubkey, let relays):
+                profilePubkeys.append(pubkey)
+                profileRelayURLsByPubkey[pubkey, default: []].append(contentsOf: relays)
+            case .event(let eventID, let relays, let author, _):
+                sourceEventIDs.append(eventID)
+                sourceRelayURLsByEventID[eventID, default: []].append(contentsOf: relays)
+                if let author {
+                    profilePubkeys.append(author)
+                }
+            }
+        }
+
         return NostrEventDependencies(
             profilePubkeys: profilePubkeys,
             sourceEventIDs: sourceEventIDs,

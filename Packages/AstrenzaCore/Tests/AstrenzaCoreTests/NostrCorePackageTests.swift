@@ -818,6 +818,60 @@ struct NostrCorePackageTests {
         )))
     }
 
+    @Test("Rich content can render profile references with resolved display names")
+    func richContentRendersResolvedProfileDisplayNames() throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let npub = try NostrNIP19.publicKey(pubkey)
+        let event = nostrEvent(
+            kind: 1,
+            content: "hello nostr:\(npub)"
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+            .resolving(profileDisplayNamesByPubkey: [pubkey: "User Gamma"])
+
+        #expect(rich.displayText == "hello @User Gamma")
+        #expect(rich.tokens.map { rich.displayText(for: $0) }.joined() == "hello @User Gamma")
+    }
+
+    @Test("Rich content keeps URL trailing punctuation visible")
+    func richContentKeepsURLTrailingPunctuationVisible() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "read https://example.test/page."
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+
+        #expect(rich.displayText == "read https://example.test/page.")
+        #expect(rich.tokens.contains(.url(url: try #require(URL(string: "https://example.test/page")))))
+        #expect(rich.tokens.last == .text("."))
+    }
+
+    @Test("Rich content parses indexed profile and event references")
+    func richContentParsesIndexedProfileAndEventReferences() throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let eventID = String(repeating: "d", count: 64)
+        let event = nostrEvent(
+            kind: 1,
+            content: "hi #[0] see #[1]",
+            tags: [
+                ["p", pubkey],
+                ["e", eventID, "wss://Relay.Example", "mention"]
+            ]
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+
+        #expect(rich.references.contains(.profile(pubkey: pubkey, relays: [])))
+        #expect(rich.references.contains(.event(
+            eventID: eventID,
+            relays: ["wss://relay.example"],
+            author: nil,
+            kind: nil
+        )))
+    }
+
     @Test("Rich content hides promoted event references")
     func richContentHidesPromotedEventReferences() throws {
         let pubkey = String(repeating: "c", count: 64)
@@ -2902,6 +2956,32 @@ struct NostrCorePackageTests {
         #expect(dependencies.profileRelayURLsByPubkey[mentioned] == ["wss://profile.example"])
         #expect(dependencies.sourceRelayURLsByEventID[replyID] == ["wss://reply.example"])
         #expect(dependencies.sourceRelayURLsByEventID[quoteID] == ["wss://quote.example"])
+    }
+
+    @Test("Relay runtime extracts dependencies from rich content references")
+    func relayRuntimeExtractsRichContentDependencies() throws {
+        let author = String(repeating: "a", count: 64)
+        let mentioned = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+        let sourceID = String(repeating: "c", count: 64)
+        let nprofile = "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8gpp4mhxue69uhhytnc9e3k7mgpz4mhxue69uhkg6nzv9ejuumpv34kytnrdaksjlyr9p"
+        let nevent = try NostrNIP19.encodeEventReference(
+            eventID: sourceID,
+            relays: ["wss://Source.Example"],
+            author: mentioned,
+            kind: 1
+        )
+        let event = nostrEvent(
+            kind: 1,
+            pubkey: author,
+            content: "hello nostr:\(nprofile) see nostr:\(nevent)"
+        )
+
+        let dependencies = NostrEventDependencies.extract(from: event)
+
+        #expect(dependencies.profilePubkeys == [mentioned, author])
+        #expect(dependencies.profileRelayURLsByPubkey[mentioned] == ["wss://djbas.sadkb.com", "wss://r.x.com"])
+        #expect(dependencies.sourceEventIDs == [sourceID])
+        #expect(dependencies.sourceRelayURLsByEventID[sourceID] == ["wss://source.example"])
     }
 
     @Test("Relay filter matcher applies standard NIP-01 fields")

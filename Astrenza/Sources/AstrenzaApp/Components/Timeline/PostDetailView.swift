@@ -50,7 +50,7 @@ struct PostDetailView: View {
                             Button {
                                 onOpenPost(quotedPost.timelinePost())
                             } label: {
-                                QuotedPostCard(quotedPost: quotedPost)
+                                QuotedPostCard(quotedPost: quotedPost, onOpenRichURL: handleRichTextURL)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
@@ -108,26 +108,21 @@ struct PostDetailView: View {
     }
 
     private func handleRichTextURL(_ url: URL) -> OpenURLAction.Result {
-        guard url.scheme == "astrenza" else {
+        switch TimelineRichContentRoute(url: url) {
+        case .external(let url):
             onOpenURL(url)
             return .handled
-        }
-
-        if url.host == "profile", let pubkey = url.pathComponents.dropFirst().first {
+        case .profile(let pubkey, _):
             onOpenPost(profilePost(pubkey: pubkey))
             return .handled
-        }
-
-        if url.host == "event" {
-            onOpenPost(post)
+        case .event(let eventID, _, _, _):
+            onOpenPost(referencedEventPost(eventID: eventID))
             return .handled
-        }
-
-        if url.host == "hashtag" {
+        case .hashtag:
             return .handled
+        case .unsupported:
+            return .discarded
         }
-
-        return .discarded
     }
 
     private func profilePost(pubkey: String) -> TimelinePost {
@@ -140,6 +135,28 @@ struct PostDetailView: View {
                 symbolName: "person.crop.circle.fill",
                 pictureState: .metadataPending,
                 placeholderSeed: pubkey
+            ),
+            body: "",
+            timestamp: "",
+            replyCount: nil,
+            boostCount: nil,
+            favoriteCount: nil,
+            isLocked: false,
+            media: nil,
+            context: nil
+        )
+    }
+
+    private func referencedEventPost(eventID: String) -> TimelinePost {
+        TimelinePost(
+            id: eventID,
+            author: .unresolved(pubkey: eventID),
+            avatar: AvatarStyle(
+                primary: .astrenzaAccent,
+                secondary: .astrenzaAttachmentBackground,
+                symbolName: "doc.text",
+                pictureState: .metadataPending,
+                placeholderSeed: eventID
             ),
             body: "",
             timestamp: "",

@@ -81,7 +81,7 @@ struct TimelinePostContentView: View {
                 Button {
                     onOpenQuotedPost(quotedPost.timelinePost())
                 } label: {
-                    QuotedPostCard(quotedPost: quotedPost)
+                    QuotedPostCard(quotedPost: quotedPost, onOpenRichURL: onOpenRichURL)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")

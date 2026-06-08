@@ -172,7 +172,7 @@ struct TimelinePostBodyText: View {
 
         if let richContent {
             for token in richContent.tokens {
-                result += attributedToken(token)
+                result += attributedToken(token, in: richContent)
             }
         } else {
             var bodyPart = AttributedString(text)
@@ -183,23 +183,14 @@ struct TimelinePostBodyText: View {
         return result
     }
 
-    private func attributedToken(_ token: NostrRichContentToken) -> AttributedString {
-        var part = AttributedString(token.displayText)
+    private func attributedToken(_ token: NostrRichContentToken, in richContent: NostrRichContent) -> AttributedString {
+        var part = AttributedString(richContent.displayText(for: token))
         switch token {
         case .text:
             part.foregroundColor = Color.astrenzaText
-        case .url(let url):
+        case .url, .hashtag, .profile, .event:
             part.foregroundColor = Color.astrenzaAccent
-            part.link = url
-        case .hashtag(let hashtag):
-            part.foregroundColor = Color.astrenzaAccent
-            part.link = URL(string: "astrenza://hashtag/\(hashtag)")
-        case .profile(let pubkey, _):
-            part.foregroundColor = Color.astrenzaAccent
-            part.link = URL(string: "astrenza://profile/\(pubkey)")
-        case .event(let eventID, _, _, _):
-            part.foregroundColor = Color.astrenzaAccent
-            part.link = URL(string: "astrenza://event/\(eventID)")
+            part.link = TimelineRichContentRoute.url(for: token)
         case .customEmoji:
             part.foregroundColor = Color.astrenzaAccent
         }
@@ -317,22 +308,12 @@ private struct TimelineRichPostBodyTextRepresentable: UIViewRepresentable {
             switch token {
             case .text(let text):
                 result.append(NSAttributedString(string: text, attributes: baseAttributes))
-            case .url(let url):
+            case .url, .hashtag, .profile, .event:
                 var attributes = accentAttributes
-                attributes[.link] = url
-                result.append(NSAttributedString(string: url.absoluteString, attributes: attributes))
-            case .hashtag(let hashtag):
-                var attributes = accentAttributes
-                attributes[.link] = URL(string: "astrenza://hashtag/\(hashtag)")
-                result.append(NSAttributedString(string: "#\(hashtag)", attributes: attributes))
-            case .profile(let pubkey, _):
-                var attributes = accentAttributes
-                attributes[.link] = URL(string: "astrenza://profile/\(pubkey)")
-                result.append(NSAttributedString(string: token.displayText, attributes: attributes))
-            case .event(let eventID, _, _, _):
-                var attributes = accentAttributes
-                attributes[.link] = URL(string: "astrenza://event/\(eventID)")
-                result.append(NSAttributedString(string: token.displayText, attributes: attributes))
+                if let url = TimelineRichContentRoute.url(for: token) {
+                    attributes[.link] = url
+                }
+                result.append(NSAttributedString(string: richContent.displayText(for: token), attributes: attributes))
             case .customEmoji(let shortcode, let url):
                 result.append(customEmojiAttachment(shortcode: shortcode, url: url))
             }
