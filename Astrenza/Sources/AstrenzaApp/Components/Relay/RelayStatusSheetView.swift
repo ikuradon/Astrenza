@@ -12,13 +12,15 @@ struct RelayStatusSheetView: View {
         relayURLs: [String] = [],
         relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
         accountID: String? = nil,
-        eventStore: NostrEventStore? = nil
+        eventStore: NostrEventStore? = nil,
+        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) {
         _store = StateObject(wrappedValue: RelayStatusSheetStore(
             relayURLs: relayURLs,
             relayRuntimeStates: relayRuntimeStates,
             accountID: accountID,
-            eventStore: eventStore
+            eventStore: eventStore,
+            syncPolicy: syncPolicy
         ))
         self.relayURLs = relayURLs
         self.relayRuntimeStates = relayRuntimeStates
@@ -40,6 +42,11 @@ struct RelayStatusSheetView: View {
                     )
 
                     OutboxStatusCard(summary: store.outboxSummary)
+
+                    SyncDiagnosticsCard(
+                        policy: store.syncPolicy,
+                        traffic: store.trafficSummary
+                    )
 
                     RelayConnectionLogCard(
                         activities: store.recentActivity,
@@ -102,35 +109,48 @@ struct RelayStatusSheetView: View {
 final class RelayStatusSheetStore: ObservableObject {
     @Published private(set) var relays: [RelayDescriptor]
     @Published fileprivate var outboxSummary: OutboxStatusSummary
+    @Published private(set) var trafficSummary: RelayTrafficSummary
     @Published fileprivate var recentActivity: [RelayActivityItem]
 
     let isLive: Bool
+    let syncPolicy: NostrSyncPolicy
     private let client: any NostrRelayInformationFetching
     private let accountID: String?
     private let eventStore: NostrEventStore?
     private var relayRuntimeStates: [String: NostrRelayConnectionState]
+    private let sessionStartedAt: Int
+    private let now: () -> Int
 
     init(
         relayURLs: [String],
         relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
         accountID: String?,
         eventStore: NostrEventStore?,
+        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
+        sessionStartedAt: Int = Int(Date().timeIntervalSince1970),
+        now: @escaping () -> Int = { Int(Date().timeIntervalSince1970) },
         client: any NostrRelayInformationFetching = NostrRelayInformationClient()
     ) {
         isLive = accountID != nil || !relayURLs.isEmpty
+        self.syncPolicy = syncPolicy
         self.client = client
         self.accountID = accountID
         self.eventStore = eventStore
         self.relayRuntimeStates = relayRuntimeStates
+        self.sessionStartedAt = sessionStartedAt
+        self.now = now
         let initialRelays = Self.initialRelays(
             relayURLs: relayURLs,
             isLive: isLive,
             relayRuntimeStates: relayRuntimeStates,
             accountID: accountID,
-            eventStore: eventStore
+            eventStore: eventStore,
+            sessionStartedAt: sessionStartedAt,
+            now: now()
         )
         relays = initialRelays
         outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
+        trafficSummary = Self.loadTrafficSummary(accountID: accountID, eventStore: eventStore, sessionStartedAt: sessionStartedAt, now: now())
         recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: initialRelays)
     }
 
@@ -141,8 +161,11 @@ final class RelayStatusSheetStore: ObservableObject {
             isLive: isLive,
             relayRuntimeStates: relayRuntimeStates,
             accountID: accountID,
-            eventStore: eventStore
+            eventStore: eventStore,
+            sessionStartedAt: sessionStartedAt,
+            now: now()
         )
+        trafficSummary = Self.loadTrafficSummary(accountID: accountID, eventStore: eventStore, sessionStartedAt: sessionStartedAt, now: now())
         recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: relays)
     }
 
@@ -164,7 +187,9 @@ final class RelayStatusSheetStore: ObservableObject {
     func refresh() async {
         guard isLive else { return }
         outboxSummary = Self.loadOutboxSummary(accountID: accountID, eventStore: eventStore)
+        trafficSummary = Self.loadTrafficSummary(accountID: accountID, eventStore: eventStore, sessionStartedAt: sessionStartedAt, now: now())
         recentActivity = Self.loadRecentActivity(accountID: accountID, eventStore: eventStore, relays: relays)
+        let trafficByRelay = Self.loadTrafficSummariesByRelay(accountID: accountID, eventStore: eventStore, sessionStartedAt: sessionStartedAt, now: now())
         for relay in relays {
             let startedAt = Int(Date().timeIntervalSince1970)
             let descriptor: RelayDescriptor
@@ -187,7 +212,9 @@ final class RelayStatusSheetStore: ObservableObject {
             guard let index = relays.firstIndex(where: { $0.url == relay.url }) else { continue }
             let summary = Self.loadSummaries(accountID: accountID, eventStore: eventStore)[relay.url]
             let cursor = Self.loadCursor(accountID: accountID, eventStore: eventStore, relayURL: relay.url)
-            let appliedDescriptor = descriptor.applying(summary: summary, cursor: cursor)
+            let appliedDescriptor = descriptor
+                .applying(summary: summary, cursor: cursor)
+                .applying(traffic: trafficByRelay[relay.url])
             relays[index] = summary == nil
                 ? appliedDescriptor.preservingConnectionState(from: relay).withRuntimeState(relayRuntimeStates[relay.url])
                 : appliedDescriptor.withRuntimeState(relayRuntimeStates[relay.url])
@@ -200,16 +227,25 @@ final class RelayStatusSheetStore: ObservableObject {
         isLive: Bool,
         relayRuntimeStates: [String: NostrRelayConnectionState],
         accountID: String?,
-        eventStore: NostrEventStore?
+        eventStore: NostrEventStore?,
+        sessionStartedAt: Int,
+        now: Int
     ) -> [RelayDescriptor] {
         guard !relayURLs.isEmpty else {
             return isLive ? [] : RelayMockStore.relays
         }
         let summaries = loadSummaries(accountID: accountID, eventStore: eventStore)
         let cursors = loadCursors(accountID: accountID, eventStore: eventStore, relayURLs: relayURLs)
+        let traffic = loadTrafficSummariesByRelay(
+            accountID: accountID,
+            eventStore: eventStore,
+            sessionStartedAt: sessionStartedAt,
+            now: now
+        )
         return relayURLs.map { relayURL in
             RelayDescriptor.livePlaceholder(url: relayURL)
                 .applying(summary: summaries[relayURL], cursor: cursors[relayURL])
+                .applying(traffic: traffic[relayURL])
                 .withRuntimeState(relayRuntimeStates[relayURL])
         }
     }
@@ -273,6 +309,69 @@ final class RelayStatusSheetStore: ObservableObject {
             return .empty
         }
         return OutboxStatusSummary(records: records)
+    }
+
+    private static func loadTrafficSummary(
+        accountID: String?,
+        eventStore: NostrEventStore?,
+        sessionStartedAt: Int,
+        now: Int
+    ) -> RelayTrafficSummary {
+        guard let accountID, let eventStore else { return .empty }
+        let windows = trafficWindows(sessionStartedAt: sessionStartedAt, now: now)
+        return RelayTrafficSummary(
+            session: (try? eventStore.relayTrafficTotals(accountID: accountID, start: windows.session.start, end: windows.session.end)) ?? .zero,
+            today: (try? eventStore.relayTrafficTotals(accountID: accountID, start: windows.today.start, end: windows.today.end)) ?? .zero,
+            billingCycle: (try? eventStore.relayTrafficTotals(accountID: accountID, start: windows.billingCycle.start, end: windows.billingCycle.end)) ?? .zero
+        )
+    }
+
+    private static func loadTrafficSummariesByRelay(
+        accountID: String?,
+        eventStore: NostrEventStore?,
+        sessionStartedAt: Int,
+        now: Int
+    ) -> [String: RelayTrafficSummary] {
+        guard let accountID, let eventStore else { return [:] }
+        let windows = trafficWindows(sessionStartedAt: sessionStartedAt, now: now)
+        let session = (try? eventStore.relayTrafficTotalsByRelay(accountID: accountID, start: windows.session.start, end: windows.session.end)) ?? [:]
+        let today = (try? eventStore.relayTrafficTotalsByRelay(accountID: accountID, start: windows.today.start, end: windows.today.end)) ?? [:]
+        let billingCycle = (try? eventStore.relayTrafficTotalsByRelay(accountID: accountID, start: windows.billingCycle.start, end: windows.billingCycle.end)) ?? [:]
+        let relayURLs = Set(session.keys).union(today.keys).union(billingCycle.keys)
+        return Dictionary(uniqueKeysWithValues: relayURLs.map { relayURL in
+            (
+                relayURL,
+                RelayTrafficSummary(
+                    session: session[relayURL] ?? .zero,
+                    today: today[relayURL] ?? .zero,
+                    billingCycle: billingCycle[relayURL] ?? .zero
+                )
+            )
+        })
+    }
+
+    private static func trafficWindows(
+        sessionStartedAt: Int,
+        now: Int
+    ) -> (
+        session: (start: Int, end: Int),
+        today: (start: Int, end: Int),
+        billingCycle: (start: Int, end: Int)
+    ) {
+        let end = hourStart(now) + 3_600
+        let date = Date(timeIntervalSince1970: TimeInterval(now))
+        let calendar = Calendar.current
+        let dayStart = Int(calendar.startOfDay(for: date).timeIntervalSince1970)
+        let monthStart = calendar.dateInterval(of: .month, for: date)?.start ?? calendar.startOfDay(for: date)
+        return (
+            session: (start: hourStart(sessionStartedAt), end: end),
+            today: (start: hourStart(dayStart), end: end),
+            billingCycle: (start: hourStart(Int(monthStart.timeIntervalSince1970)), end: end)
+        )
+    }
+
+    private static func hourStart(_ timestamp: Int) -> Int {
+        timestamp - timestamp % 3_600
     }
 }
 
@@ -574,6 +673,71 @@ private struct OutboxStatusCard: View {
     }
 }
 
+private struct SyncDiagnosticsCard: View {
+    let policy: NostrSyncPolicy
+    let traffic: RelayTrafficSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                    .font(.system(size: 20, weight: .black))
+                    .foregroundStyle(Color.astrenzaAccent)
+                    .frame(width: 42, height: 42)
+                    .background(Color.astrenzaAccent.opacity(0.14), in: Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Sync Diagnostics")
+                        .font(.system(size: 16, weight: .black, design: .rounded))
+                    Text(policy.diagnosticsDetail)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(policy.mode.displayTitle)
+                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.astrenzaAccent)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(Color.astrenzaAccent.opacity(0.16), in: Capsule())
+            }
+
+            HStack(spacing: 10) {
+                TrafficWindowTile(title: "Session", totals: traffic.session)
+                TrafficWindowTile(title: "Today", totals: traffic.today)
+                TrafficWindowTile(title: "Billing", totals: traffic.billingCycle)
+            }
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+private struct TrafficWindowTile: View {
+    let title: String
+    let totals: NostrRelayTrafficTotals
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(totals.totalBytes.formattedByteCount)
+                .font(.system(size: 14, weight: .black, design: .rounded))
+                .lineLimit(1)
+            Text(title)
+                .font(.system(size: 10, weight: .black, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text("\(totals.receivedMessages + totals.sentMessages) msg")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
 private struct RelayStatusRow: View {
     let relay: RelayDescriptor
     let isSelected: Bool
@@ -789,6 +953,7 @@ private extension RelayDescriptor {
                 oldestCreatedAt: cursor?.oldestCreatedAt ?? oldestCreatedAt,
                 lastEOSEAt: cursor?.lastEOSEAt ?? lastEOSEAt,
                 runtimeState: runtimeState,
+                traffic: traffic,
                 lifecycle: lifecycle
             )
         }
@@ -841,12 +1006,42 @@ private extension RelayDescriptor {
             oldestCreatedAt: cursor?.oldestCreatedAt ?? oldestCreatedAt,
             lastEOSEAt: cursor?.lastEOSEAt ?? summary.lastEOSEAt ?? lastEOSEAt,
             runtimeState: runtimeState,
+            traffic: traffic,
             lifecycle: RelayLifecycleCounts(summary: summary)
         )
     }
 
     var runtimeStateDescription: String {
         runtimeState?.displayText ?? "No live session"
+    }
+
+    func applying(traffic: RelayTrafficSummary?) -> RelayDescriptor {
+        let traffic = traffic ?? .empty
+        return RelayDescriptor(
+            url: url,
+            displayName: displayName,
+            status: status,
+            usage: usage,
+            source: source,
+            pingMilliseconds: pingMilliseconds,
+            receivedBytes: traffic.today.receivedBytes > 0 ? traffic.today.receivedBytes.formattedByteCount : receivedBytes,
+            sentBytes: traffic.today.sentBytes > 0 ? traffic.today.sentBytes.formattedByteCount : sentBytes,
+            eventCount: eventCount,
+            errorCount: errorCount,
+            supportedNIPs: supportedNIPs,
+            software: software,
+            version: version,
+            description: description,
+            limitation: limitation,
+            contact: contact,
+            lastMessage: lastMessage,
+            newestCreatedAt: newestCreatedAt,
+            oldestCreatedAt: oldestCreatedAt,
+            lastEOSEAt: lastEOSEAt,
+            runtimeState: runtimeState,
+            traffic: traffic,
+            lifecycle: lifecycle
+        )
     }
 
     func withRuntimeState(_ runtimeState: NostrRelayConnectionState?) -> RelayDescriptor {
@@ -872,6 +1067,7 @@ private extension RelayDescriptor {
             oldestCreatedAt: oldestCreatedAt,
             lastEOSEAt: lastEOSEAt,
             runtimeState: runtimeState,
+            traffic: traffic,
             lifecycle: lifecycle
         )
     }
@@ -899,6 +1095,7 @@ private extension RelayDescriptor {
             oldestCreatedAt: relay.oldestCreatedAt,
             lastEOSEAt: relay.lastEOSEAt,
             runtimeState: runtimeState ?? relay.runtimeState,
+            traffic: traffic == .empty ? relay.traffic : traffic,
             lifecycle: lifecycle
         )
     }
@@ -1037,6 +1234,82 @@ private extension NostrRelayConnectionState {
         case .error, .rejected, .suspended, .terminated:
             .red
         }
+    }
+}
+
+private extension NostrSyncPolicy {
+    var diagnosticsDetail: String {
+        [
+            "Network \(networkType.displayTitle)",
+            lowPowerMode ? "Low Power" : nil,
+            tapToLoadMedia ? "Media tap-to-load" : "Media automatic",
+            NostrContentAttachmentClassifier.linkPreviewFetchMode(for: self).displayTitle
+        ]
+        .compactMap { $0 }
+        .joined(separator: " / ")
+    }
+}
+
+private extension NostrSyncMode {
+    var displayTitle: String {
+        switch self {
+        case .energySaver:
+            "Energy Saver"
+        case .ownRelayList:
+            "Own Relays"
+        case .fullOutbox:
+            "Full Outbox"
+        }
+    }
+}
+
+private extension NostrNetworkType {
+    var displayTitle: String {
+        switch self {
+        case .wifi:
+            "Wi-Fi"
+        case .cellular:
+            "Cellular"
+        case .other:
+            "Other"
+        case .unknown:
+            "Unknown"
+        }
+    }
+}
+
+private extension NostrRemotePreviewFetchMode {
+    var displayTitle: String {
+        switch self {
+        case .automatic:
+            "OGP automatic"
+        case .queued:
+            "OGP queued"
+        case .tapRequired:
+            "OGP tap-to-load"
+        }
+    }
+}
+
+private extension NostrRelayTrafficTotals {
+    var totalBytes: Int {
+        receivedBytes + sentBytes
+    }
+}
+
+private extension Int {
+    var formattedByteCount: String {
+        let units = ["B", "KB", "MB", "GB"]
+        var value = Double(self)
+        var unitIndex = 0
+        while value >= 1_024, unitIndex < units.count - 1 {
+            value /= 1_024
+            unitIndex += 1
+        }
+        if unitIndex == 0 {
+            return "\(self) \(units[unitIndex])"
+        }
+        return String(format: "%.1f %@", value, units[unitIndex])
     }
 }
 

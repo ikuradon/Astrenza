@@ -115,6 +115,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventStore
     }
 
+    var currentSyncPolicy: NostrSyncPolicy {
+        syncPolicy
+    }
+
     private static func isRuntimeReachable(_ state: NostrRelayConnectionState) -> Bool {
         state == .connected
     }

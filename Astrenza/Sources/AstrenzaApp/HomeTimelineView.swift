@@ -230,6 +230,7 @@ struct HomeTimelineView: View {
             swipeSettings: $swipeSettings,
             relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays,
             relayRuntimeStates: sessionStore.account == nil ? [:] : liveTimelineStore.relayRuntimeStates,
+            syncPolicy: liveTimelineStore.currentSyncPolicy,
             accountID: sessionStore.account?.pubkey,
             eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore,
             accountSummaries: accountSummaries,

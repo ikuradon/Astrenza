@@ -2411,6 +2411,59 @@ struct TimelineModelTests {
         #expect(lifecycle.summary.contains("partial 1"))
     }
 
+    @Test("Relay status sheet projects DB traffic counters into diagnostics")
+    @MainActor
+    func relayStatusSheetProjectsTrafficCounters() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "b2", count: 32)
+        let relayURL = "wss://relay.example"
+        let now = 1_717_891_200
+        try eventStore.recordRelayTraffic([
+            NostrRelayTrafficDelta(
+                accountID: accountID,
+                relayURL: relayURL,
+                occurredAt: now - 10,
+                networkType: .wifi,
+                syncMode: .ownRelayList,
+                receivedBytes: 120,
+                sentBytes: 40,
+                receivedMessages: 2,
+                sentMessages: 1
+            ),
+            NostrRelayTrafficDelta(
+                accountID: accountID,
+                relayURL: relayURL,
+                occurredAt: now - 7_200,
+                networkType: .wifi,
+                syncMode: .ownRelayList,
+                receivedBytes: 80,
+                sentBytes: 10,
+                receivedMessages: 1,
+                sentMessages: 1
+            )
+        ])
+
+        let store = RelayStatusSheetStore(
+            relayURLs: [relayURL],
+            accountID: accountID,
+            eventStore: eventStore,
+            syncPolicy: NostrSyncPolicy.default(networkType: .wifi),
+            sessionStartedAt: now - 60,
+            now: { now }
+        )
+
+        #expect(store.trafficSummary.session.receivedBytes == 120)
+        #expect(store.trafficSummary.session.sentBytes == 40)
+        #expect(store.trafficSummary.today.receivedBytes == 200)
+        #expect(store.trafficSummary.billingCycle.sentBytes == 50)
+
+        let relay = try #require(store.relays.first)
+        #expect(relay.traffic.session.receivedBytes == 120)
+        #expect(relay.traffic.today.receivedMessages == 3)
+        #expect(relay.receivedBytes == "200 B")
+        #expect(relay.sentBytes == "50 B")
+    }
+
     @Test("Home timeline store does not reinstall an unchanged forward subscription")
     @MainActor
     func homeTimelineStoreSkipsUnchangedForwardSubscriptionInstall() async throws {

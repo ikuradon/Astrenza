@@ -150,6 +150,18 @@ struct RelayMockStore {
     }
 }
 
+struct RelayTrafficSummary: Equatable {
+    var session: NostrRelayTrafficTotals
+    var today: NostrRelayTrafficTotals
+    var billingCycle: NostrRelayTrafficTotals
+
+    static let empty = RelayTrafficSummary(
+        session: .zero,
+        today: .zero,
+        billingCycle: .zero
+    )
+}
+
 struct RelayDescriptor: Identifiable, Equatable {
     let id = UUID()
     let url: String
@@ -173,6 +185,7 @@ struct RelayDescriptor: Identifiable, Equatable {
     let oldestCreatedAt: Int?
     let lastEOSEAt: Int?
     let runtimeState: NostrRelayConnectionState?
+    let traffic: RelayTrafficSummary
     let lifecycle: RelayLifecycleCounts
 
     init(
@@ -197,6 +210,7 @@ struct RelayDescriptor: Identifiable, Equatable {
         oldestCreatedAt: Int? = nil,
         lastEOSEAt: Int? = nil,
         runtimeState: NostrRelayConnectionState? = nil,
+        traffic: RelayTrafficSummary = .empty,
         lifecycle: RelayLifecycleCounts = RelayLifecycleCounts()
     ) {
         self.url = url
@@ -220,6 +234,7 @@ struct RelayDescriptor: Identifiable, Equatable {
         self.oldestCreatedAt = oldestCreatedAt
         self.lastEOSEAt = lastEOSEAt
         self.runtimeState = runtimeState
+        self.traffic = traffic
         self.lifecycle = lifecycle
     }
 

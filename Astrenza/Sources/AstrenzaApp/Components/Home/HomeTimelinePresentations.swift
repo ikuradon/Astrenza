@@ -12,6 +12,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     @Binding var swipeSettings: TimelineSwipeSettings
     let relayURLs: [String]
     let relayRuntimeStates: [String: NostrRelayConnectionState]
+    let syncPolicy: NostrSyncPolicy
     let accountID: String?
     let eventStore: NostrEventStore?
     let accountSummaries: [NostrAccountSummary]
@@ -63,7 +64,8 @@ struct HomeTimelinePresentationModifier: ViewModifier {
                     relayURLs: relayURLs,
                     relayRuntimeStates: relayRuntimeStates,
                     accountID: accountID,
-                    eventStore: eventStore
+                    eventStore: eventStore,
+                    syncPolicy: syncPolicy
                 )
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
@@ -109,6 +111,7 @@ extension View {
         swipeSettings: Binding<TimelineSwipeSettings>,
         relayURLs: [String],
         relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
+        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
         accountID: String?,
         eventStore: NostrEventStore?,
         accountSummaries: [NostrAccountSummary] = [],
@@ -130,6 +133,7 @@ extension View {
                 swipeSettings: swipeSettings,
                 relayURLs: relayURLs,
                 relayRuntimeStates: relayRuntimeStates,
+                syncPolicy: syncPolicy,
                 accountID: accountID,
                 eventStore: eventStore,
                 accountSummaries: accountSummaries,
