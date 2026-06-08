@@ -4,6 +4,22 @@ import Testing
 @MainActor
 @Suite("Home timeline unread state")
 struct HomeTimelineUnreadStateTests {
+    @Test("unread state scopes dismissed badge to the current generation")
+    func unreadStateDismissesOnlyCurrentGeneration() {
+        var state = HomeTimelineUnreadState()
+
+        state.replaceMaterializedPostIDs(["new-1", "old-1"], marksInitialWindowRead: false)
+        state.setReadBoundary(postID: "old-1")
+        state.dismissBadge()
+
+        #expect(state.visibleUnreadBadgeCount == 0)
+
+        state.replaceMaterializedPostIDs(["new-2", "new-1", "old-1"], marksInitialWindowRead: false)
+
+        #expect(state.materializedUnreadCount == 2)
+        #expect(state.visibleUnreadBadgeCount == 2)
+    }
+
     @Test("materialized unread count ignores unmaterialized new events")
     func materializedUnreadCountIsSeparateFromUnmaterializedEvents() {
         let store = NostrHomeTimelineStore(eventStore: nil)
