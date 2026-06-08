@@ -18,3 +18,7 @@ xcuserdata/
 # Reference screenshots and captures
 Documents/Screenshot*/
 Documents/Screenshots*/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
