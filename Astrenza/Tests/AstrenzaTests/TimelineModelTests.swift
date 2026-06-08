@@ -468,6 +468,152 @@ struct TimelineModelTests {
         }
     }
 
+    @Test("Timeline content projection hides promoted OGP and quote references")
+    func timelineContentProjectionHidesPromotedReferences() throws {
+        let author = String(repeating: "a", count: 64)
+        let quotedEventID = String(repeating: "b", count: 64)
+        let nevent = try NostrNIP19.encodeEventReference(
+            eventID: quotedEventID,
+            relays: ["wss://relay.example"],
+            author: author,
+            kind: 1
+        )
+        let event = timelineEvent(
+            idSeed: "projected-content",
+            pubkey: author,
+            createdAt: 120,
+            content: "read https://example.test/article nostr:\(nevent)"
+        )
+
+        let projection = NostrTimelineContentProjection(event: event)
+
+        #expect(projection.linkURLs.map(\.absoluteString) == ["https://example.test/article"])
+        #expect(projection.quotedEventID == quotedEventID)
+        #expect(projection.richBody.displayText == "read")
+        #expect(projection.richBody.tokens.contains { token in
+            if case .url = token {
+                return true
+            }
+            return false
+        } == false)
+        #expect(projection.richBody.tokens.contains { token in
+            if case .event = token {
+                return true
+            }
+            return false
+        } == false)
+    }
+
+    @Test("Timeline quote projection returns placeholder for uncached quote")
+    func timelineQuoteProjectionReturnsPlaceholderForUncachedQuote() throws {
+        let author = String(repeating: "a", count: 64)
+        let quotedEventID = String(repeating: "b", count: 64)
+        let event = timelineEvent(
+            idSeed: "quote-projection-placeholder",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["q", quotedEventID]],
+            content: "quoted"
+        )
+
+        let quotedPost = try #require(NostrTimelineQuoteProjection.quotedPost(
+            from: event,
+            eventsByID: [:],
+            metadataEvents: [],
+            nip05Resolutions: [:],
+            followedPubkeys: [],
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
+            relativeTimestamp: { "\($0)s" }
+        ))
+
+        #expect(quotedPost.isAvailable == false)
+        #expect(quotedPost.author.pubkey == quotedEventID)
+        #expect(quotedPost.body == "Quoted note is not cached yet.")
+        #expect(quotedPost.timestamp.isEmpty)
+    }
+
+    @Test("Timeline media projection prefers persisted assets over content attachments")
+    func timelineMediaProjectionPrefersPersistedAssets() throws {
+        let author = String(repeating: "a", count: 64)
+        let note = timelineEvent(
+            idSeed: "media-projection",
+            pubkey: author,
+            createdAt: 120,
+            content: "look https://cdn.example.test/fallback.jpg"
+        )
+        let content = NostrTimelineContentProjection(event: note)
+        let persisted = NostrMediaAssetRecord(
+            assetID: "asset-1",
+            eventID: note.id,
+            url: "https://cdn.example.test/persisted.mp4",
+            mimeType: "video/mp4",
+            blurhash: "LKO2?U%2Tw=w]~RBVZRi};RPxuwH",
+            width: 1920,
+            height: 1080,
+            alt: "Persisted media",
+            sha256: nil,
+            status: "resolved",
+            localPath: nil,
+            createdAt: 120
+        )
+
+        let media = NostrTimelineMediaProjection.media(
+            assets: [persisted],
+            mediaAttachments: content.mediaAttachments,
+            linkURLs: content.linkURLs,
+            linkPreviewsByNormalizedURL: [:],
+            palette: NostrTimelineAuthorProjection.avatarPalette(for: author)
+        )
+
+        if case .gallery(let tiles) = media {
+            #expect(tiles.count == 1)
+            #expect(tiles[0].url?.absoluteString == "https://cdn.example.test/persisted.mp4")
+            #expect(tiles[0].symbolName == "play.rectangle")
+            #expect(tiles[0].altText == "Persisted media")
+            #expect(tiles[0].width == 1920)
+            #expect(tiles[0].height == 1080)
+            #expect(tiles[0].blurhash == "LKO2?U%2Tw=w]~RBVZRi};RPxuwH")
+        } else {
+            Issue.record("Expected persisted media gallery")
+        }
+    }
+
+    @Test("Timeline presentation projection collapses low trust and link heavy bodies")
+    func timelinePresentationProjectionCollapsesRiskyBodies() throws {
+        let links = try [
+            #require(URL(string: "https://b.example.test/one")),
+            #require(URL(string: "https://a.example.test/two")),
+            #require(URL(string: "https://b.example.test/three")),
+            #require(URL(string: "https://c.example.test/four")),
+            #require(URL(string: "https://d.example.test/five"))
+        ]
+
+        #expect(
+            NostrTimelinePresentationProjection.bodyPresentation(
+                body: "external link",
+                linkURLs: [links[0]],
+                isFollowed: false
+            ).collapseReason == .lowTrustLinks
+        )
+        #expect(
+            NostrTimelinePresentationProjection.bodyPresentation(
+                body: "many links",
+                linkURLs: links,
+                isFollowed: true
+            ).collapseReason == .linkHeavy
+        )
+
+        let summary = try #require(NostrTimelinePresentationProjection.linkSummary(from: links))
+        #expect(summary.totalCount == 5)
+        #expect(summary.visibleHosts == [
+            "a.example.test",
+            "b.example.test",
+            "c.example.test",
+            "d.example.test"
+        ])
+        #expect(summary.unresolvedCount == 5)
+    }
+
     @Test("Nostr materializer gives YouTube previews a video card style")
     func nostrMaterializerUsesYouTubeLinkPreviewStyle() throws {
         let author = String(repeating: "a", count: 64)
@@ -555,6 +701,166 @@ struct TimelineModelTests {
 
         #expect(post.replyContext == nil)
         #expect(post.replyMention == nil)
+    }
+
+    @Test("Timeline reply projection separates root markers from reply markers")
+    func timelineReplyProjectionSeparatesRootAndReplyMarkers() throws {
+        let author = String(repeating: "a", count: 64)
+        let root = timelineEvent(idSeed: "projection-root", pubkey: author, createdAt: 100, content: "root")
+        let rootMarkerOnly = timelineEvent(
+            idSeed: "projection-root-marker",
+            pubkey: author,
+            createdAt: 120,
+            tags: [["e", root.id, "", "root"]],
+            content: "root marker only"
+        )
+        let legacyReply = timelineEvent(
+            idSeed: "projection-legacy-reply",
+            pubkey: author,
+            createdAt: 130,
+            tags: [["e", root.id]],
+            content: "legacy reply"
+        )
+
+        #expect(NostrTimelineReplyProjection.replyParentID(from: rootMarkerOnly.tags) == nil)
+        #expect(NostrTimelineReplyProjection.replyParentID(from: legacyReply.tags) == root.id)
+    }
+
+    @Test("Timeline reply projection builds reply context and external mention")
+    func timelineReplyProjectionBuildsContextAndMention() throws {
+        let author = String(repeating: "a", count: 64)
+        let parentAuthor = String(repeating: "b", count: 64)
+        let parent = timelineEvent(idSeed: "projection-parent", pubkey: parentAuthor, createdAt: 90, content: "parent preview")
+        let reply = timelineEvent(
+            idSeed: "projection-reply",
+            pubkey: author,
+            createdAt: 120,
+            tags: [
+                ["e", parent.id, "", "reply"],
+                ["p", parentAuthor]
+            ],
+            content: "reply body"
+        )
+        let projection = NostrTimelineReplyProjection(
+            event: reply,
+            eventsByID: [parent.id: parent, reply.id: reply],
+            author: .resolved(displayName: "Author", nip05: nil, nip05Status: .absent, pubkey: author, isFollowed: true),
+            avatarForParent: { _ in AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person") },
+            relativeTimestamp: { "\($0)s" }
+        )
+
+        #expect(projection.replyContext?.bodyPreview == "parent preview")
+        #expect(projection.replyContext?.timestamp == "90s")
+        #expect(projection.replyContext?.isSelfReply == false)
+        #expect(projection.replyMention?.text == "@\(parentAuthor.prefix(10))")
+        #expect(projection.replyMention?.isExternal == true)
+    }
+
+    @Test("Timeline author projection resolves author avatar timestamp and warning")
+    func timelineAuthorProjectionBuildsDisplayBits() throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let item = NostrHomeTimelineItem(
+            id: "author-projection-item",
+            pubkey: pubkey,
+            displayName: "Projection Author",
+            nip05: "author.example",
+            nip05Status: NostrNIP05Status.verified,
+            isFollowed: true,
+            body: "body",
+            createdAt: 120,
+            avatarPictureState: .resolved,
+            avatarImageURL: URL(string: "https://example.test/avatar.png")
+        )
+        let event = timelineEvent(
+            idSeed: "author-projection-warning",
+            pubkey: pubkey,
+            createdAt: 120,
+            tags: [["content-warning", "spoiler"]],
+            content: "warning body"
+        )
+
+        let author = NostrTimelineAuthorProjection.author(for: item)
+        let avatar = NostrTimelineAuthorProjection.avatar(for: item)
+
+        #expect(author.primaryText == "Projection Author")
+        #expect(author.secondaryText == "author.example")
+        #expect(author.nip05Status == NIP05Status.valid)
+        #expect(avatar.pictureState == AvatarPictureState.resolved)
+        #expect(avatar.imageURL?.absoluteString == "https://example.test/avatar.png")
+        #expect(NostrTimelineAuthorProjection.relativeTimestamp(from: 90, now: 120) == "30s")
+        #expect(NostrTimelineAuthorProjection.relativeTimestamp(from: 0, now: 3_600) == "1h")
+        #expect(NostrTimelineAuthorProjection.contentWarning(from: event)?.displayReason == "spoiler")
+    }
+
+    @Test("Timeline post projection composes quote media reply and presentation")
+    func timelinePostProjectionComposesDisplayDependencies() throws {
+        let author = String(repeating: "a", count: 64)
+        let parentAuthor = String(repeating: "b", count: 64)
+        let quotedAuthor = String(repeating: "c", count: 64)
+        let parent = timelineEvent(idSeed: "post-projection-parent", pubkey: parentAuthor, createdAt: 90, content: "parent body")
+        let quoted = timelineEvent(idSeed: "post-projection-quoted", pubkey: quotedAuthor, createdAt: 95, content: "quoted body")
+        let note = timelineEvent(
+            idSeed: "post-projection-note",
+            pubkey: author,
+            createdAt: 120,
+            tags: [
+                ["e", parent.id, "", "reply"],
+                ["p", parentAuthor],
+                ["q", quoted.id],
+                ["content-warning", "sensitive"]
+            ],
+            content: "hello https://example.test/card"
+        )
+        let item = NostrHomeTimelineItem(
+            id: note.id,
+            pubkey: author,
+            displayName: "Projection Poster",
+            nip05: nil,
+            nip05Status: .absent,
+            isFollowed: false,
+            body: note.content,
+            createdAt: note.createdAt,
+            avatarPictureState: .metadataPending,
+            avatarImageURL: nil
+        )
+        let previewURL = try #require(URL(string: "https://example.test/card"))
+        let preview = NostrLinkPreviewRecord(
+            url: previewURL.absoluteString,
+            normalizedURL: NostrLinkParser.normalizedURLString(previewURL),
+            status: "resolved",
+            title: "Example Card",
+            summary: "Card summary",
+            siteName: "Example",
+            imageURL: "https://example.test/card.png",
+            fetchedAt: 100,
+            expiresAt: 200,
+            error: nil
+        )
+
+        let post = NostrTimelinePostProjection.post(
+            for: item,
+            event: note,
+            eventsByID: [
+                note.id: note,
+                parent.id: parent,
+                quoted.id: quoted
+            ],
+            linkPreviewsByNormalizedURL: [preview.normalizedURL: preview]
+        )
+
+        #expect(post.author.primaryText == "Projection Poster")
+        #expect(post.replyContext?.bodyPreview == "parent body")
+        #expect(post.replyMention?.isExternal == true)
+        #expect(post.quotedPost?.body == "quoted body")
+        #expect(post.contentWarning?.displayReason == "sensitive")
+        #expect(post.bodyPresentation.collapseReason == .lowTrustLinks)
+        #expect(post.linkSummary?.totalCount == 1)
+        if case .linkPreview(let card) = post.media {
+            #expect(card.title == "Example Card")
+            #expect(card.host == "Example")
+        } else {
+            Issue.record("Expected link preview media")
+        }
     }
 
     @Test("Nostr materializer falls back to unmarked e tags for legacy replies")
@@ -2135,7 +2441,15 @@ struct TimelineModelTests {
         ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitForTimelinePostIDs(in: store, ids: [newer.id, middle.id, older.id])
+        try await waitForTimelineGapFlags(
+            in: eventStore,
+            accountID: account.pubkey,
+            newerEventID: newer.id,
+            olderEventID: older.id,
+            gapAfter: false,
+            gapBefore: false
+        )
 
         #expect(store.entries.compactMap(\.post).map(\.id) == [newer.id, middle.id, older.id])
         let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
@@ -2240,7 +2554,15 @@ struct TimelineModelTests {
         let gapSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-gap-notes")
         await connection.appendInboundFrames([try relayEOSEFrame(subscriptionID: gapSubscriptionID)])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitForTimelinePostIDs(in: store, ids: [newer.id, older.id])
+        try await waitForTimelineGapFlags(
+            in: eventStore,
+            accountID: account.pubkey,
+            newerEventID: newer.id,
+            olderEventID: older.id,
+            gapAfter: false,
+            gapBefore: false
+        )
 
         #expect(store.entries.map(\.id) == [newer.id, older.id])
         let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
@@ -2510,6 +2832,7 @@ struct TimelineModelTests {
             subscriptionID: gapSubscriptionID
         )
         try await waitForRelayProcessing(in: store, isProcessing: false)
+        try await waitForTimelinePostIDs(in: store, ids: [newer.id, middle.id, older.id])
 
         #expect(store.entries.map(\.id) == [
             newer.id,
@@ -5227,6 +5550,69 @@ struct TimelineModelTests {
         #expect(repostedPost.repostedBy?.author.pubkey == reposter)
     }
 
+    @Test("Timeline repost projection uses the last event tag as target")
+    func timelineRepostProjectionUsesLastEventTagAsTarget() throws {
+        let reposter = String(repeating: "b", count: 64)
+        let firstTargetID = timelineEventID("first-repost-target")
+        let secondTargetID = timelineEventID("second-repost-target")
+        let repost = timelineEvent(
+            idSeed: "projection-repost-target",
+            kind: 6,
+            pubkey: reposter,
+            createdAt: 300,
+            tags: [
+                ["e", firstTargetID],
+                ["e", secondTargetID]
+            ],
+            content: ""
+        )
+
+        #expect(NostrTimelineRepostProjection.targetID(from: repost) == secondTargetID)
+    }
+
+    @Test("Timeline repost projection builds attribution from metadata")
+    func timelineRepostProjectionBuildsAttributionFromMetadata() throws {
+        let reposter = String(repeating: "b", count: 64)
+        let repost = timelineEvent(
+            idSeed: "projection-repost-attribution",
+            kind: 6,
+            pubkey: reposter,
+            createdAt: 300,
+            tags: [["e", timelineEventID("projection-target")]],
+            content: ""
+        )
+        let metadata = timelineEvent(
+            idSeed: "projection-reposter-metadata",
+            kind: 0,
+            pubkey: reposter,
+            createdAt: 250,
+            content: #"{"display_name":"Projection Reposter","nip05":"reposter@example.test","picture":"https://example.test/reposter.png"}"#
+        )
+
+        let attribution = NostrTimelineRepostProjection.attribution(
+            for: repost,
+            metadataEvents: [metadata],
+            nip05Resolutions: [
+                reposter: NostrNIP05Resolution(
+                    identifier: "reposter@example.test",
+                    pubkey: reposter,
+                    relays: [],
+                    status: .verified
+                )
+            ],
+            followedPubkeys: [reposter],
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
+            relativeTimestamp: { "\($0)s" }
+        )
+
+        #expect(attribution.author.primaryText == "Projection Reposter")
+        #expect(attribution.author.nip05 == "reposter@example.test")
+        #expect(attribution.author.nip05Status == .valid)
+        #expect(attribution.author.isFollowed == true)
+        #expect(attribution.avatar.imageURL?.absoluteString == "https://example.test/reposter.png")
+        #expect(attribution.timestamp == "300s")
+    }
+
     @Test("Nostr materializer keeps kind 6 reposts visible when the target event is missing")
     func nostrMaterializerUsesKind6MissingTargetPlaceholder() throws {
         let author = String(repeating: "a", count: 64)
@@ -5784,6 +6170,30 @@ private func waitForTimelinePostIDs(
     }
 
     #expect(store.entries.compactMap(\.post).map(\.id) == ids)
+}
+
+@MainActor
+private func waitForTimelineGapFlags(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    newerEventID: String,
+    olderEventID: String,
+    gapAfter: Bool,
+    gapBefore: Bool,
+    attempts: Int = 100
+) async throws {
+    for _ in 0..<attempts {
+        let timelineEntries = try eventStore.timelineEntries(accountID: accountID, timelineKey: "home", limit: 100)
+        if timelineEntries.first(where: { $0.eventID == newerEventID })?.gapAfter == gapAfter,
+           timelineEntries.first(where: { $0.eventID == olderEventID })?.gapBefore == gapBefore {
+            return
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    let timelineEntries = try eventStore.timelineEntries(accountID: accountID, timelineKey: "home", limit: 100)
+    #expect(timelineEntries.first { $0.eventID == newerEventID }?.gapAfter == gapAfter)
+    #expect(timelineEntries.first { $0.eventID == olderEventID }?.gapBefore == gapBefore)
 }
 
 private func waitForSentFrameCount(

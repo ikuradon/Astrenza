@@ -56,7 +56,13 @@ struct TimelinePostRow: View {
                         .contentShape(Rectangle())
                         .onTapGesture(perform: handleRowTap)
 
-                    sensitiveAwareContent
+                    TimelinePostContentView(
+                        post: post,
+                        onTap: handleRowTap,
+                        onOpenQuotedPost: openEmbeddedPost,
+                        onOpenAttachment: openAttachment,
+                        onOpenRichURL: handleRichTextURL
+                    )
 
                     actionRow
                 }
@@ -90,102 +96,6 @@ struct TimelinePostRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .fixedSize()
-        }
-    }
-
-    @ViewBuilder
-    private var sensitiveAwareContent: some View {
-        if let contentWarning = post.contentWarning {
-            SensitiveTimelineContent(contentWarning: contentWarning) {
-                postContent
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: handleRowTap)
-        } else {
-            postContent
-        }
-    }
-
-    private var postContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            textContent
-
-            bodySummaryContent
-
-            attachmentContent
-        }
-    }
-
-    @ViewBuilder
-    private var textContent: some View {
-        let bodyText = TimelinePostBodyText(
-            text: post.body,
-            richContent: post.richBody,
-            mention: post.replyMention,
-            lineLimit: post.bodyPresentation.timelineLineLimit
-        )
-            .contentShape(Rectangle())
-            .accessibilityIdentifier("timeline.body.\(post.id)")
-
-        if post.richBody != nil {
-            bodyText
-                .environment(\.openURL, OpenURLAction(handler: handleRichTextURL))
-                .onTapGesture(perform: handleRowTap)
-        } else {
-            bodyText
-                .onTapGesture(perform: handleRowTap)
-        }
-    }
-
-    @ViewBuilder
-    private var bodySummaryContent: some View {
-        if post.bodyPresentation.collapseReason != nil || post.linkSummary != nil {
-            HStack(spacing: 7) {
-                if let collapseReason = post.bodyPresentation.collapseReason {
-                    TimelineBodySummaryPill(
-                        systemName: collapseReason.systemName,
-                        text: collapseReason.label,
-                        prominence: collapseReason == .lowTrustLinks || collapseReason == .filtered ? .warning : .normal
-                    )
-                }
-
-                if let linkSummary = post.linkSummary {
-                    TimelineBodySummaryPill(
-                        systemName: "link",
-                        text: linkSummary.compactText,
-                        prominence: linkSummary.unresolvedCount > 0 ? .muted : .normal
-                    )
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: handleRowTap)
-        }
-    }
-
-    private var attachmentContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let quotedPost = post.quotedPost {
-                Button {
-                    openEmbeddedPost(quotedPost.timelinePost())
-                } label: {
-                    QuotedPostCard(quotedPost: quotedPost)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open quoted post by \(quotedPost.author.primaryText)")
-                .accessibilityAction {
-                    openEmbeddedPost(quotedPost.timelinePost())
-                }
-            }
-
-            if let media = post.media {
-                TimelineAttachmentButton(
-                    media: media,
-                    isProtected: post.shouldObscureExternalAttachments,
-                    accessibilityLabel: "Open attachment for post by \(post.author.primaryText)",
-                    onOpen: openAttachment
-                )
-                .padding(.top, 2)
-            }
         }
     }
 
