@@ -3755,6 +3755,25 @@ struct NostrCorePackageTests {
         #expect(totals.sentMessages == 2)
     }
 
+    @Test("Relay traffic meter counts UTF8 payload bytes")
+    func relayTrafficMeterCountsPayloadBytes() {
+        var meter = NostrRelayTrafficMeter(
+            accountID: "account",
+            relayURL: "wss://relay.example",
+            policy: .default(networkType: .wifi)
+        )
+        meter.recordSent(#"["REQ","sub",{}]"#)
+        meter.recordReceived(#"["EOSE","sub"]"#)
+
+        let deltas = meter.flush(occurredAt: 1_717_891_234)
+
+        #expect(deltas.count == 1)
+        #expect(deltas[0].sentBytes == #"["REQ","sub",{}]"#.utf8.count)
+        #expect(deltas[0].receivedBytes == #"["EOSE","sub"]"#.utf8.count)
+        #expect(deltas[0].sentMessages == 1)
+        #expect(deltas[0].receivedMessages == 1)
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,

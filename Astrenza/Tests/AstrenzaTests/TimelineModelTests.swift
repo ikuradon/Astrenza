@@ -1577,6 +1577,7 @@ struct TimelineModelTests {
             closed: { _, _, _ in },
             timeout: { _, _, _ in },
             backwardCompleted: { _ in },
+            traffic: { _ in },
             notice: { _, _ in },
             auth: { _, _ in }
         )

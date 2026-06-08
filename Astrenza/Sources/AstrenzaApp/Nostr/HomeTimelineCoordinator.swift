@@ -18,6 +18,7 @@ struct HomeTimelineRuntimePacketHandlers {
     let closed: (_ relayURL: String, _ subscriptionID: String, _ message: String) -> Void
     let timeout: (_ relayURL: String, _ subscriptionID: String, _ message: String) -> Void
     let backwardCompleted: (_ completion: NostrBackwardREQCompletion) -> Void
+    let traffic: (_ delta: NostrRelayTrafficDelta) -> Void
     let notice: (_ relayURL: String, _ message: String) -> Void
     let auth: (_ relayURL: String, _ challenge: String) -> Void
 }
@@ -33,6 +34,8 @@ struct HomeTimelineCoordinator: HomeTimelineCoordinating {
         switch packet {
         case .stateChanged(let relayURL, let state):
             handlers.stateChanged(relayURL, state)
+        case .traffic(let delta):
+            handlers.traffic(delta)
         case .event(let relayURL, let subscriptionID, let event):
             handlers.event(relayURL, subscriptionID, event)
         case .eose(let relayURL, let subscriptionID):

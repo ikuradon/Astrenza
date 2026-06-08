@@ -19,6 +19,8 @@ public actor NostrRelayRuntime {
     private var backwardTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var backwardProgressBySubscriptionKey: [String: BackwardSubscriptionProgress] = [:]
     private var backwardSubscriptionKeysByGroupID: [String: Set<String>] = [:]
+    private var trafficAccountID: String?
+    private var trafficPolicy = NostrSyncPolicy.default()
     private var continuation: AsyncStream<NostrRelayRuntimePacket>.Continuation?
 
     public init(
@@ -59,6 +61,14 @@ public actor NostrRelayRuntime {
         await sessions[relayURL]?.state() ?? .initialized
     }
 
+    public func setTrafficContext(accountID: String?, policy: NostrSyncPolicy) async {
+        trafficAccountID = accountID
+        trafficPolicy = policy
+        for session in sessions.values {
+            await session.configureTraffic(accountID: accountID, policy: policy)
+        }
+    }
+
     public func setDefaultRelays(_ newRelayURLs: [String]) async throws {
         let normalizedRelays = newRelayURLs.dedupedPreservingOrder()
         let removedRelays = Set(relayURLs).subtracting(normalizedRelays)
@@ -87,6 +97,7 @@ public actor NostrRelayRuntime {
                 transport: transportFactory(relayURL),
                 eventValidator: eventValidator
             )
+            await session.configureTraffic(accountID: trafficAccountID, policy: trafficPolicy)
             sessions[relayURL] = session
             await startPump(for: session, relayURL: relayURL)
             try await session.connect()
@@ -208,7 +219,7 @@ public actor NostrRelayRuntime {
         case .timeout(let relayURL, let subscriptionID, _):
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             await completeBackwardSubscription(relayURL: relayURL, subscriptionID: subscriptionID, terminal: .timeout)
-        case .stateChanged, .notice, .auth, .backwardCompleted:
+        case .stateChanged, .traffic, .notice, .auth, .backwardCompleted:
             break
         }
 

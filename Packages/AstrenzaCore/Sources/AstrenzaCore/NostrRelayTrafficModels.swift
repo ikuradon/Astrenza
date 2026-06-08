@@ -59,3 +59,51 @@ public struct NostrRelayTrafficTotals: Equatable, Sendable {
         sentMessages: 0
     )
 }
+
+public struct NostrRelayTrafficMeter: Equatable, Sendable {
+    public var accountID: String
+    public var relayURL: String
+    public var policy: NostrSyncPolicy
+    private var receivedBytes: Int = 0
+    private var sentBytes: Int = 0
+    private var receivedMessages: Int = 0
+    private var sentMessages: Int = 0
+
+    public init(accountID: String, relayURL: String, policy: NostrSyncPolicy) {
+        self.accountID = accountID
+        self.relayURL = relayURL
+        self.policy = policy
+    }
+
+    public mutating func recordReceived(_ textFrame: String) {
+        receivedBytes += textFrame.utf8.count
+        receivedMessages += 1
+    }
+
+    public mutating func recordSent(_ textFrame: String) {
+        sentBytes += textFrame.utf8.count
+        sentMessages += 1
+    }
+
+    public mutating func flush(occurredAt: Int) -> [NostrRelayTrafficDelta] {
+        guard receivedBytes > 0 || sentBytes > 0 || receivedMessages > 0 || sentMessages > 0 else {
+            return []
+        }
+        let delta = NostrRelayTrafficDelta(
+            accountID: accountID,
+            relayURL: relayURL,
+            occurredAt: occurredAt,
+            networkType: policy.networkType,
+            syncMode: policy.mode,
+            receivedBytes: receivedBytes,
+            sentBytes: sentBytes,
+            receivedMessages: receivedMessages,
+            sentMessages: sentMessages
+        )
+        receivedBytes = 0
+        sentBytes = 0
+        receivedMessages = 0
+        sentMessages = 0
+        return [delta]
+    }
+}

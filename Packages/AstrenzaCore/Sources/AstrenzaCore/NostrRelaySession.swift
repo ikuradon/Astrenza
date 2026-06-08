@@ -2,6 +2,7 @@ import Foundation
 
 public enum NostrRelayRuntimePacket: Equatable, Sendable {
     case stateChanged(relayURL: String, state: NostrRelayConnectionState)
+    case traffic(NostrRelayTrafficDelta)
     case event(relayURL: String, subscriptionID: String, event: NostrEvent)
     case eose(relayURL: String, subscriptionID: String)
     case closed(relayURL: String, subscriptionID: String, message: String)
@@ -30,6 +31,7 @@ public actor NostrRelaySession {
     private var connectionState: NostrRelayConnectionState = .initialized
     private var activeSubscriptions: [String: NostrREQPacket] = [:]
     private var continuation: AsyncStream<NostrRelayRuntimePacket>.Continuation?
+    private var trafficMeter: NostrRelayTrafficMeter?
 
     public init(
         relayURL: String,
@@ -55,6 +57,18 @@ public actor NostrRelaySession {
         activeSubscriptions.keys.sorted()
     }
 
+    public func configureTraffic(accountID: String?, policy: NostrSyncPolicy) {
+        guard let accountID else {
+            trafficMeter = nil
+            return
+        }
+        trafficMeter = NostrRelayTrafficMeter(
+            accountID: accountID,
+            relayURL: relayURL,
+            policy: policy
+        )
+    }
+
     public func connect() async throws {
         guard connection == nil else { return }
         setState(.connecting)
@@ -76,7 +90,7 @@ public actor NostrRelaySession {
             connection = try await transport.connect(relayURL: relayURL)
             setState(.connected)
             for packet in packets {
-                try await connection?.send(packet.relayRequest.textFrame())
+                try await send(packet.relayRequest.textFrame())
             }
         } catch {
             connection = nil
@@ -90,7 +104,7 @@ public actor NostrRelaySession {
             try await connect()
         }
         guard let connection else { return }
-        try await connection.send(packet.relayRequest.textFrame())
+        try await send(packet.relayRequest.textFrame(), connection: connection)
         activeSubscriptions[packet.subscriptionID] = packet
     }
 
@@ -99,13 +113,14 @@ public actor NostrRelaySession {
             activeSubscriptions.removeValue(forKey: subscriptionID)
             return
         }
-        try await connection.send(Self.closeFrame(subscriptionID: subscriptionID))
+        try await send(Self.closeFrame(subscriptionID: subscriptionID), connection: connection)
         activeSubscriptions.removeValue(forKey: subscriptionID)
     }
 
     public func receiveNext() async throws {
         guard let connection else { return }
         let raw = try await connection.receive()
+        recordReceived(raw)
         guard let message = NostrRelayMessage.parse(raw) else { return }
 
         switch message {
@@ -119,7 +134,7 @@ public actor NostrRelaySession {
             guard let packet = activeSubscriptions[subscriptionID] else { return }
             emit(.eose(relayURL: relayURL, subscriptionID: subscriptionID))
             if packet.strategy == .backward {
-                try await connection.send(Self.closeFrame(subscriptionID: subscriptionID))
+                try await send(Self.closeFrame(subscriptionID: subscriptionID), connection: connection)
                 activeSubscriptions.removeValue(forKey: subscriptionID)
             }
         case .closed(let subscriptionID, let message):
@@ -166,6 +181,33 @@ public actor NostrRelaySession {
 
     private func emit(_ packet: NostrRelayRuntimePacket) {
         continuation?.yield(packet)
+    }
+
+    private func send(_ textFrame: String) async throws {
+        guard let connection else { return }
+        try await send(textFrame, connection: connection)
+    }
+
+    private func send(_ textFrame: String, connection: any NostrRelayTransportConnection) async throws {
+        try await connection.send(textFrame)
+        recordSent(textFrame)
+    }
+
+    private func recordReceived(_ textFrame: String) {
+        trafficMeter?.recordReceived(textFrame)
+        flushTraffic()
+    }
+
+    private func recordSent(_ textFrame: String) {
+        trafficMeter?.recordSent(textFrame)
+        flushTraffic()
+    }
+
+    private func flushTraffic() {
+        let occurredAt = Int(Date().timeIntervalSince1970)
+        for delta in trafficMeter?.flush(occurredAt: occurredAt) ?? [] {
+            emit(.traffic(delta))
+        }
     }
 
     private static func closeFrame(subscriptionID: String) throws -> String {
