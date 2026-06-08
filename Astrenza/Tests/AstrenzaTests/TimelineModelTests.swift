@@ -1218,6 +1218,42 @@ struct TimelineModelTests {
         #expect(snapshot.renderFingerprint.count == snapshot.entries.count)
     }
 
+    @Test("Home timeline coordinator classifies runtime packets")
+    @MainActor
+    func homeTimelineCoordinatorClassifiesRuntimePackets() {
+        let coordinator = HomeTimelineCoordinator()
+        let event = timelineEvent(
+            idSeed: "coordinator-event",
+            pubkey: String(repeating: "a", count: 64),
+            createdAt: 100,
+            content: "coordinator body"
+        )
+        var receivedState: (String, NostrRelayConnectionState)?
+        var receivedEventID: String?
+        var receivedEOSE: String?
+
+        let handlers = HomeTimelineRuntimePacketHandlers(
+            shouldHandle: { true },
+            stateChanged: { relayURL, state in receivedState = (relayURL, state) },
+            event: { _, _, event in receivedEventID = event.id },
+            eose: { _, subscriptionID in receivedEOSE = subscriptionID },
+            closed: { _, _, _ in },
+            timeout: { _, _, _ in },
+            backwardCompleted: { _ in },
+            notice: { _, _ in },
+            auth: { _, _ in }
+        )
+
+        coordinator.handleRuntimePacket(.stateChanged(relayURL: "wss://relay.example", state: .connected), handlers: handlers)
+        coordinator.handleRuntimePacket(.event(relayURL: "wss://relay.example", subscriptionID: "home", event: event), handlers: handlers)
+        coordinator.handleRuntimePacket(.eose(relayURL: "wss://relay.example", subscriptionID: "home"), handlers: handlers)
+
+        #expect(receivedState?.0 == "wss://relay.example")
+        #expect(receivedState?.1 == .connected)
+        #expect(receivedEventID == event.id)
+        #expect(receivedEOSE == "home")
+    }
+
     @Test("Home timeline store restores live gap rows from database timeline entries")
     @MainActor
     func homeTimelineStoreRestoresLiveGapRowsFromDatabaseEntries() throws {

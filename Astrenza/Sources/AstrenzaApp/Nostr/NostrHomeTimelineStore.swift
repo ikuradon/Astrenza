@@ -76,6 +76,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventIngestor: HomeTimelineEventIngestor
     private let syncPlanner: HomeTimelineSyncPlanner
     private let timelineRepository: HomeTimelineRepository
+    private let timelineCoordinator: HomeTimelineCoordinator
     private let relayRuntime: NostrRelayRuntime?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
     private var loadTask: Task<Void, Never>?
@@ -198,6 +199,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
         self.syncPlanner = HomeTimelineSyncPlanner()
         self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
+        self.timelineCoordinator = HomeTimelineCoordinator()
         self.relayRuntime = relayRuntime
         self.linkPreviewResolver = linkPreviewResolver
     }
@@ -913,58 +915,69 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleRuntimePacket(_ packet: NostrRelayRuntimePacket) {
-        guard phase != .idle else { return }
-        switch packet {
-        case .stateChanged(let relayURL, let state):
-            handleRuntimeStateChange(relayURL: relayURL, state: state)
-        case .event(let relayURL, let subscriptionID, let event):
-            handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
-        case .eose(let relayURL, let subscriptionID):
-            let window = finishRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID)
-            recordRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: .eose,
-                subscriptionID: subscriptionID,
-                newestCreatedAt: window.newestCreatedAt,
-                oldestCreatedAt: window.oldestCreatedAt,
-                message: "EOSE received"
+        timelineCoordinator.handleRuntimePacket(
+            packet,
+            handlers: HomeTimelineRuntimePacketHandlers(
+                shouldHandle: { self.phase != .idle },
+                stateChanged: { relayURL, state in
+                    self.handleRuntimeStateChange(relayURL: relayURL, state: state)
+                },
+                event: { relayURL, subscriptionID, event in
+                    self.handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+                },
+                eose: { relayURL, subscriptionID in
+                    let window = self.finishRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID)
+                    self.recordRuntimeSyncEvent(
+                        relayURL: relayURL,
+                        kind: .eose,
+                        subscriptionID: subscriptionID,
+                        newestCreatedAt: window.newestCreatedAt,
+                        oldestCreatedAt: window.oldestCreatedAt,
+                        message: "EOSE received"
+                    )
+                },
+                closed: { relayURL, subscriptionID, message in
+                    self.recordRuntimeSyncEvent(
+                        relayURL: relayURL,
+                        kind: Self.syncEventKind(forClosedMessage: message),
+                        subscriptionID: subscriptionID,
+                        message: message
+                    )
+                },
+                timeout: { relayURL, subscriptionID, message in
+                    self.recordRuntimeSyncEvent(
+                        relayURL: relayURL,
+                        kind: .timeout,
+                        subscriptionID: subscriptionID,
+                        message: message
+                    )
+                },
+                backwardCompleted: { completion in
+                    self.handleBackwardCompletion(completion)
+                },
+                notice: { relayURL, message in
+                    self.recordRuntimeSyncEvent(
+                        relayURL: relayURL,
+                        kind: message.lowercased().contains("timeout") ? .timeout : .partialFailure,
+                        subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
+                        message: message
+                    )
+                },
+                auth: { relayURL, challenge in
+                    guard !self.hasRecentRuntimeSyncEvent(
+                        relayURL: relayURL,
+                        kind: .authRequired,
+                        message: challenge
+                    ) else { return }
+                    self.recordRuntimeSyncEvent(
+                        relayURL: relayURL,
+                        kind: .authRequired,
+                        subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
+                        message: challenge
+                    )
+                }
             )
-        case .closed(let relayURL, let subscriptionID, let message):
-            recordRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: Self.syncEventKind(forClosedMessage: message),
-                subscriptionID: subscriptionID,
-                message: message
-            )
-        case .timeout(let relayURL, let subscriptionID, let message):
-            recordRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: .timeout,
-                subscriptionID: subscriptionID,
-                message: message
-            )
-        case .backwardCompleted(let completion):
-            handleBackwardCompletion(completion)
-        case .notice(let relayURL, let message):
-            recordRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: message.lowercased().contains("timeout") ? .timeout : .partialFailure,
-                subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
-                message: message
-            )
-        case .auth(let relayURL, let challenge):
-            guard !hasRecentRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: .authRequired,
-                message: challenge
-            ) else { return }
-            recordRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: .authRequired,
-                subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
-                message: challenge
-            )
-        }
+        )
     }
 
     private func handleRuntimeStateChange(relayURL: String, state: NostrRelayConnectionState) {
