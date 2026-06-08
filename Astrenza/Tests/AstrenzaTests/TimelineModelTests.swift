@@ -2464,6 +2464,67 @@ struct TimelineModelTests {
         #expect(relay.sentBytes == "50 B")
     }
 
+    @Test("Sync policy settings persist per account")
+    @MainActor
+    func syncPolicySettingsPersistPerAccount() throws {
+        let suiteName = "AstrenzaTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = NostrSyncPolicySettingsStore(defaults: defaults)
+        let accountA = String(repeating: "c2", count: 32)
+        let accountB = String(repeating: "d2", count: 32)
+        let policy = NostrSyncPolicy(
+            mode: .fullOutbox,
+            networkType: .cellular,
+            lowPowerMode: false,
+            tapToLoadMedia: true,
+            queueOGPPreviews: true,
+            disableOGPOnCellular: true,
+            reduceFullOutboxOnCellular: true
+        )
+
+        store.save(policy, accountID: accountA)
+
+        #expect(store.policy(accountID: accountA).mode == .fullOutbox)
+        #expect(store.policy(accountID: accountA).networkType == .cellular)
+        #expect(store.policy(accountID: accountB).mode == .ownRelayList)
+    }
+
+    @Test("Home timeline store loads saved sync policy when account starts")
+    @MainActor
+    func homeTimelineStoreLoadsSavedSyncPolicyOnStart() throws {
+        let suiteName = "AstrenzaTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = NostrSyncPolicySettingsStore(defaults: defaults)
+        let account = NostrAccount(
+            pubkey: String(repeating: "e2", count: 32),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        policyStore.save(NostrSyncPolicy(
+            mode: .energySaver,
+            networkType: .cellular,
+            lowPowerMode: true,
+            tapToLoadMedia: true,
+            queueOGPPreviews: true,
+            disableOGPOnCellular: true,
+            reduceFullOutboxOnCellular: true
+        ), accountID: account.pubkey)
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:])),
+            eventStore: nil,
+            syncPolicySettingsStore: policyStore
+        )
+
+        store.start(account: account)
+        defer { store.cancel() }
+
+        #expect(store.currentSyncPolicy.mode == .energySaver)
+        #expect(store.currentSyncPolicy.networkType == .cellular)
+        #expect(store.currentSyncPolicy.lowPowerMode)
+    }
+
     @Test("Home timeline store does not reinstall an unchanged forward subscription")
     @MainActor
     func homeTimelineStoreSkipsUnchangedForwardSubscriptionInstall() async throws {

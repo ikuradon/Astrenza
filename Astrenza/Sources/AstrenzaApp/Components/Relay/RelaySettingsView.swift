@@ -7,16 +7,26 @@ struct RelaySettingsView: View {
     @State private var selectedSection: RelaySettingsSection = .nip65
     @State private var draftRelayURL = "wss://"
     @State private var isPublishingNIP65 = true
+    @State private var syncPolicy: NostrSyncPolicy
+    private let syncPolicyStore: NostrSyncPolicySettingsStore
 
-    init(accountID: String? = nil, eventStore: NostrEventStore? = nil) {
+    init(
+        accountID: String? = nil,
+        eventStore: NostrEventStore? = nil,
+        syncPolicyStore: NostrSyncPolicySettingsStore = .shared
+    ) {
         self.accountID = accountID
         self.eventStore = eventStore
+        self.syncPolicyStore = syncPolicyStore
+        _syncPolicy = State(initialValue: syncPolicyStore.policy(accountID: accountID))
     }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
                 RelaySettingsHeader(isPublishingNIP65: $isPublishingNIP65)
+
+                RelaySyncPolicyCard(policy: $syncPolicy)
 
                 Picker("Relay Section", selection: $selectedSection) {
                     ForEach(RelaySettingsSection.allCases) { section in
@@ -35,6 +45,9 @@ struct RelaySettingsView: View {
         .background(Color.astrenzaBackground.ignoresSafeArea())
         .navigationTitle("Relays")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: syncPolicy) { _, policy in
+            syncPolicyStore.save(policy, accountID: accountID)
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Publish") {}
@@ -139,6 +152,105 @@ private struct RelaySettingsHeader: View {
         }
         .padding(18)
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+private struct RelaySyncPolicyCard: View {
+    @Binding var policy: NostrSyncPolicy
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "bolt.horizontal.circle.fill")
+                    .font(.system(size: 23, weight: .black))
+                    .foregroundStyle(Color.astrenzaAccent)
+                    .frame(width: 48, height: 48)
+                    .background(Color.astrenzaAccent.opacity(0.16), in: Circle())
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Sync & Traffic")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                    Text("Choose how aggressively Home TL asks relays for followed authors, media, and OGP.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Sync Mode")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Picker("Sync Mode", selection: $policy.mode) {
+                    ForEach(NostrSyncMode.allCases, id: \.rawValue) { mode in
+                        Text(mode.settingsTitle).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Network Assumption")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Picker("Network", selection: $policy.networkType) {
+                    ForEach(NostrNetworkType.allCases, id: \.rawValue) { networkType in
+                        Text(networkType.settingsTitle).tag(networkType)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            VStack(spacing: 0) {
+                RelayPolicyToggle(
+                    title: "Tap to Load Media",
+                    subtitle: "Do not fetch remote images and videos until the row is tapped.",
+                    isOn: $policy.tapToLoadMedia
+                )
+                Divider().overlay(Color.white.opacity(0.08))
+                RelayPolicyToggle(
+                    title: "Queue OGP Previews",
+                    subtitle: "Resolve link cards in the background instead of blocking timeline rendering.",
+                    isOn: $policy.queueOGPPreviews
+                )
+                Divider().overlay(Color.white.opacity(0.08))
+                RelayPolicyToggle(
+                    title: "Disable OGP on Cellular",
+                    subtitle: "Keep links clickable but skip preview fetching while on cellular.",
+                    isOn: $policy.disableOGPOnCellular
+                )
+                Divider().overlay(Color.white.opacity(0.08))
+                RelayPolicyToggle(
+                    title: "Reduce Full Outbox on Cellular",
+                    subtitle: "Fall back to your own NIP-65 relays when Full Outbox would be too chatty.",
+                    isOn: $policy.reduceFullOutboxOnCellular
+                )
+            }
+            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18))
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+private struct RelayPolicyToggle: View {
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .tint(Color.astrenzaAccent)
+        .padding(14)
     }
 }
 
@@ -320,6 +432,34 @@ private struct RelayAddCard: View {
         }
         .padding(16)
         .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+private extension NostrSyncMode {
+    var settingsTitle: String {
+        switch self {
+        case .energySaver:
+            "Saver"
+        case .ownRelayList:
+            "Own"
+        case .fullOutbox:
+            "Full"
+        }
+    }
+}
+
+private extension NostrNetworkType {
+    var settingsTitle: String {
+        switch self {
+        case .wifi:
+            "Wi-Fi"
+        case .cellular:
+            "Cellular"
+        case .other:
+            "Other"
+        case .unknown:
+            "Auto"
+        }
     }
 }
 

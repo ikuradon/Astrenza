@@ -79,6 +79,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineCoordinator: HomeTimelineCoordinator
     private let relayRuntime: NostrRelayRuntime?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
+    private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
@@ -197,7 +198,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza"),
         relayRuntime: NostrRelayRuntime? = nil,
         linkPreviewResolver: NostrLinkPreviewResolver? = nil,
-        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
+        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
+        syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
     ) {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
@@ -207,11 +209,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.timelineCoordinator = HomeTimelineCoordinator()
         self.relayRuntime = relayRuntime
         self.linkPreviewResolver = linkPreviewResolver
+        self.syncPolicySettingsStore = syncPolicySettingsStore
         self.syncPolicy = syncPolicy
     }
 
     func start(account: NostrAccount) {
         self.account = account
+        syncPolicy = syncPolicySettingsStore.policy(accountID: account.pubkey, fallback: syncPolicy)
         startRuntimeEventPump()
         restoreCachedSnapshot(account: account)
         applyRestoreProjectionAnchorIfPossible(account: account)
