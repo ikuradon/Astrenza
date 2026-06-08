@@ -185,7 +185,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
 
         func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
             if timelineTab(for: tab) == .compose {
-                parent.onComposeTap()
+                scheduleComposeTap()
                 return false
             }
 
@@ -194,7 +194,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
 
         func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
             if let tab = viewController.tab, timelineTab(for: tab) == .compose {
-                parent.onComposeTap()
+                scheduleComposeTap()
                 return false
             }
 
@@ -203,21 +203,31 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
 
         func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
             guard let tab = timelineTab(for: selectedTab), tab != .compose else { return }
-            if tab == .home, parent.selectedTab == .home {
-                notifyHomeRetapIfNeeded()
-            }
-            parent.previousTab = tab
-            parent.selectedTab = tab
+            scheduleTimelineTabSelection(tab)
         }
 
         func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
             guard let selectedTab = viewController.tab else { return }
             guard let tab = timelineTab(for: selectedTab), tab != .compose else { return }
-            if tab == .home, parent.selectedTab == .home {
-                notifyHomeRetapIfNeeded()
+            scheduleTimelineTabSelection(tab)
+        }
+
+        private func scheduleTimelineTabSelection(_ tab: TimelineTab) {
+            let shouldNotifyHomeRetap = tab == .home && parent.selectedTab == .home
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if shouldNotifyHomeRetap {
+                    notifyHomeRetapIfNeeded()
+                }
+                parent.previousTab = tab
+                parent.selectedTab = tab
             }
-            parent.previousTab = tab
-            parent.selectedTab = tab
+        }
+
+        private func scheduleComposeTap() {
+            Task { @MainActor [weak self] in
+                self?.parent.onComposeTap()
+            }
         }
 
         private func notifyHomeRetapIfNeeded() {
@@ -240,7 +250,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
             )
             guard composeFrame.contains(location) else { return }
 
-            parent.onComposeTap()
+            scheduleComposeTap()
         }
 
         func gestureRecognizer(
