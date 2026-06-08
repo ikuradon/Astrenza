@@ -873,6 +873,7 @@ struct MediaTile: Identifiable {
     let width: Int?
     let height: Int?
     let blurhash: String?
+    let remoteLoadMode: NostrRemotePreviewFetchMode
 
     init(
         title: String,
@@ -882,7 +883,8 @@ struct MediaTile: Identifiable {
         altText: String? = nil,
         width: Int? = nil,
         height: Int? = nil,
-        blurhash: String? = nil
+        blurhash: String? = nil,
+        remoteLoadMode: NostrRemotePreviewFetchMode = .automatic
     ) {
         self.id = url?.absoluteString ?? "\(title)|\(symbolName)|\(altText ?? "")"
         self.title = title
@@ -893,6 +895,7 @@ struct MediaTile: Identifiable {
         self.width = width
         self.height = height
         self.blurhash = blurhash
+        self.remoteLoadMode = remoteLoadMode
     }
 
     var aspectRatio: CGFloat? {
@@ -917,6 +920,7 @@ struct LinkPreview {
     let url: String
     let imageURL: URL?
     let style: LinkPreviewStyle
+    let remoteImageLoadMode: NostrRemotePreviewFetchMode
 
     init(
         title: String,
@@ -924,7 +928,8 @@ struct LinkPreview {
         host: String,
         url: String,
         imageURL: URL? = nil,
-        style: LinkPreviewStyle = .standard
+        style: LinkPreviewStyle = .standard,
+        remoteImageLoadMode: NostrRemotePreviewFetchMode = .automatic
     ) {
         self.title = title
         self.subtitle = subtitle
@@ -932,6 +937,7 @@ struct LinkPreview {
         self.url = url
         self.imageURL = imageURL
         self.style = style
+        self.remoteImageLoadMode = remoteImageLoadMode
     }
 }
 
@@ -946,6 +952,52 @@ struct UnresolvedLinkPreview {
 }
 
 extension TimelineMedia {
+    var allowsAutomaticRemoteMediaLoading: Bool {
+        switch self {
+        case .gallery(let tiles):
+            tiles.allSatisfy { $0.remoteLoadMode == .automatic }
+        case .linkPreview(let preview):
+            preview.imageURL == nil || preview.remoteImageLoadMode == .automatic
+        case .unresolvedLink:
+            true
+        }
+    }
+
+    var requiresTapToLoadRemoteMedia: Bool {
+        !allowsAutomaticRemoteMediaLoading
+    }
+
+    func allowingRemoteMediaLoading() -> TimelineMedia {
+        switch self {
+        case .gallery(let tiles):
+            return .gallery(tiles.map { tile in
+                MediaTile(
+                    title: tile.title,
+                    colors: tile.colors,
+                    symbolName: tile.symbolName,
+                    url: tile.url,
+                    altText: tile.altText,
+                    width: tile.width,
+                    height: tile.height,
+                    blurhash: tile.blurhash,
+                    remoteLoadMode: .automatic
+                )
+            })
+        case .linkPreview(let preview):
+            return .linkPreview(LinkPreview(
+                title: preview.title,
+                subtitle: preview.subtitle,
+                host: preview.host,
+                url: preview.url,
+                imageURL: preview.imageURL,
+                style: preview.style,
+                remoteImageLoadMode: .automatic
+            ))
+        case .unresolvedLink:
+            return self
+        }
+    }
+
     var browserURL: URL? {
         switch self {
         case .linkPreview(let preview):

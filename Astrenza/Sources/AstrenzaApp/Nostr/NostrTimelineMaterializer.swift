@@ -20,7 +20,8 @@ enum NostrTimelineMaterializer {
         deletedEntries: [NostrDeletedTimelineEntryRecord] = [],
         timelineEntries: [NostrTimelineEntryRecord] = [],
         relayCount: Int = 1,
-        timeline: NostrFilterTimelineScope = .home
+        timeline: NostrFilterTimelineScope = .home,
+        policy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
         let timelineEntryByEventID = Dictionary(uniqueKeysWithValues: timelineEntries.map { ($0.eventID, $0) })
@@ -33,7 +34,8 @@ enum NostrTimelineMaterializer {
             mediaAssetsByEventID: mediaAssetsByEventID,
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
             filterRules: filterRules,
-            timeline: timeline
+            timeline: timeline,
+            policy: policy
         )
         .filter { !deletedTargetIDs.contains($0.id) }
         .map { ($0.id, $0) })
@@ -84,7 +86,8 @@ enum NostrTimelineMaterializer {
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         filterRules: NostrFilterRuleSet? = nil,
         timeline: NostrFilterTimelineScope = .home,
-        now: Int = Int(Date().timeIntervalSince1970)
+        now: Int = Int(Date().timeIntervalSince1970),
+        policy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) -> [TimelinePost] {
         var eventsByID: [String: NostrEvent] = [:]
         for event in contextEvents + noteEvents {
@@ -112,7 +115,8 @@ enum NostrTimelineMaterializer {
                     nip05Resolutions: nip05Resolutions,
                     followedPubkeys: followedPubkeys,
                     mediaAssets: mediaAssetsByEventID[event.id] ?? [],
-                    linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
+                    linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
+                    policy: policy
                 )
             )
         }
@@ -123,7 +127,8 @@ enum NostrTimelineMaterializer {
             followedPubkeys: followedPubkeys,
             eventsByID: eventsByID,
             mediaAssetsByEventID: mediaAssetsByEventID,
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
+            policy: policy
         )
 
         return (directPosts + reposts)
@@ -243,7 +248,8 @@ enum NostrTimelineMaterializer {
         followedPubkeys: Set<String>,
         eventsByID: [String: NostrEvent],
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]],
-        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord]
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord],
+        policy: NostrSyncPolicy
     ) -> [SortableTimelinePost] {
         events
             .filter { $0.kind == 6 }
@@ -294,7 +300,8 @@ enum NostrTimelineMaterializer {
                         mediaAssets: mediaAssetsByEventID[targetEvent.id] ?? [],
                         linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
                         idOverride: repostEvent.id,
-                        repostedBy: attribution
+                        repostedBy: attribution,
+                        policy: policy
                     )
                 )
             }

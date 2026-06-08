@@ -48,6 +48,49 @@ public struct NostrClassifiedAttachment: Equatable, Sendable {
     }
 }
 
+public enum NostrRemotePreviewRequestKind: String, Codable, Sendable {
+    case media
+    case linkPreview
+}
+
+public enum NostrRemotePreviewFetchMode: String, Codable, Sendable {
+    case automatic
+    case queued
+    case tapRequired
+}
+
+public struct NostrRemotePreviewRequest: Codable, Equatable, Sendable {
+    public var url: URL
+    public var kind: NostrRemotePreviewRequestKind
+    public var eventID: String
+    public var requestedAt: Int
+
+    public init(
+        url: URL,
+        kind: NostrRemotePreviewRequestKind,
+        eventID: String,
+        requestedAt: Int
+    ) {
+        self.url = url
+        self.kind = kind
+        self.eventID = eventID
+        self.requestedAt = requestedAt
+    }
+}
+
+public struct NostrRemotePreviewDecision: Equatable, Sendable {
+    public var request: NostrRemotePreviewRequest
+    public var fetchMode: NostrRemotePreviewFetchMode
+
+    public init(
+        request: NostrRemotePreviewRequest,
+        fetchMode: NostrRemotePreviewFetchMode
+    ) {
+        self.request = request
+        self.fetchMode = fetchMode
+    }
+}
+
 public struct NostrURLMetadata: Equatable, Sendable {
     public let url: URL
     public let normalizedURL: String
@@ -135,6 +178,46 @@ public enum NostrContentAttachmentClassifier {
         attachments(from: event)
             .filter { $0.kind == .linkPreview }
             .map(\.url)
+    }
+
+    public static func remotePreviewDecisions(
+        from event: NostrEvent,
+        policy: NostrSyncPolicy,
+        requestedAt: Int
+    ) -> [NostrRemotePreviewDecision] {
+        attachments(from: event).compactMap { attachment in
+            switch attachment.kind {
+            case .media:
+                return NostrRemotePreviewDecision(
+                    request: NostrRemotePreviewRequest(
+                        url: attachment.url,
+                        kind: .media,
+                        eventID: event.id,
+                        requestedAt: requestedAt
+                    ),
+                    fetchMode: policy.tapToLoadMedia ? .tapRequired : .automatic
+                )
+            case .linkPreview:
+                return NostrRemotePreviewDecision(
+                    request: NostrRemotePreviewRequest(
+                        url: attachment.url,
+                        kind: .linkPreview,
+                        eventID: event.id,
+                        requestedAt: requestedAt
+                    ),
+                    fetchMode: linkPreviewFetchMode(for: policy)
+                )
+            case .unsupported:
+                return nil
+            }
+        }
+    }
+
+    public static func linkPreviewFetchMode(for policy: NostrSyncPolicy) -> NostrRemotePreviewFetchMode {
+        if policy.disableOGPOnCellular && policy.networkType == .cellular {
+            return .tapRequired
+        }
+        return policy.queueOGPPreviews ? .queued : .automatic
     }
 
     public static func webURLs(in content: String) -> [URL] {

@@ -21,7 +21,8 @@ struct HomeTimelineRepository {
         filterRules: NostrFilterRuleSet?,
         filterStatus: TimelineFilterStatus,
         timelineKey: String = "home",
-        timeline: NostrFilterTimelineScope = .home
+        timeline: NostrFilterTimelineScope = .home,
+        policy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) -> HomeTimelineMaterializedSnapshot {
         let materialReferenceEvents = noteEvents + contextEvents
         let deletedEntries = account.flatMap { account in
@@ -50,7 +51,8 @@ struct HomeTimelineRepository {
             deletedEntries: deletedEntries,
             timelineEntries: timelineEntries,
             relayCount: max(1, resolvedRelays.count),
-            timeline: timeline
+            timeline: timeline,
+            policy: policy
         )
 
         return HomeTimelineMaterializedSnapshot(

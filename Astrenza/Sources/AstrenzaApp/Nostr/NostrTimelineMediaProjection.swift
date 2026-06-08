@@ -8,17 +8,19 @@ struct NostrTimelineMediaProjection {
         mediaAttachments: [NostrClassifiedAttachment],
         linkURLs: [URL],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord],
-        palette: (primary: Color, secondary: Color)
+        palette: (primary: Color, secondary: Color),
+        policy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) -> TimelineMedia? {
-        if let media = persistedMedia(assets: assets, palette: palette) {
+        if let media = persistedMedia(assets: assets, palette: palette, policy: policy) {
             return media
         }
-        if let media = fallbackMedia(attachments: mediaAttachments, palette: palette) {
+        if let media = fallbackMedia(attachments: mediaAttachments, palette: palette, policy: policy) {
             return media
         }
         return linkPreview(
             linkURLs: linkURLs,
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
+            policy: policy
         )
     }
 
@@ -36,7 +38,8 @@ struct NostrTimelineMediaProjection {
 
     private static func persistedMedia(
         assets: [NostrMediaAssetRecord],
-        palette: (primary: Color, secondary: Color)
+        palette: (primary: Color, secondary: Color),
+        policy: NostrSyncPolicy
     ) -> TimelineMedia? {
         let tiles = assets.prefix(5).compactMap { asset -> MediaTile? in
             guard let url = URL(string: asset.url) else { return nil }
@@ -47,7 +50,8 @@ struct NostrTimelineMediaProjection {
                 width: asset.width,
                 height: asset.height,
                 blurhash: asset.blurhash,
-                palette: palette
+                palette: palette,
+                policy: policy
             )
         }
         guard !tiles.isEmpty else { return nil }
@@ -56,7 +60,8 @@ struct NostrTimelineMediaProjection {
 
     private static func fallbackMedia(
         attachments: [NostrClassifiedAttachment],
-        palette: (primary: Color, secondary: Color)
+        palette: (primary: Color, secondary: Color),
+        policy: NostrSyncPolicy
     ) -> TimelineMedia? {
         guard !attachments.isEmpty else { return nil }
         let tiles = attachments.prefix(5).map { attachment in
@@ -67,7 +72,8 @@ struct NostrTimelineMediaProjection {
                 width: attachment.width,
                 height: attachment.height,
                 blurhash: attachment.blurhash,
-                palette: palette
+                palette: palette,
+                policy: policy
             )
         }
         return .gallery(Array(tiles))
@@ -75,7 +81,8 @@ struct NostrTimelineMediaProjection {
 
     private static func linkPreview(
         linkURLs: [URL],
-        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord]
+        linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord],
+        policy: NostrSyncPolicy
     ) -> TimelineMedia? {
         guard let link = linkURLs.first else { return nil }
         let normalizedURL = NostrLinkParser.normalizedURLString(link)
@@ -88,7 +95,8 @@ struct NostrTimelineMediaProjection {
                 host: preview.siteName ?? link.host ?? link.absoluteString,
                 url: preview.url,
                 imageURL: preview.imageURL.flatMap(URL.init(string:)),
-                style: linkPreviewStyle(for: link)
+                style: linkPreviewStyle(for: link),
+                remoteImageLoadMode: policy.tapToLoadMedia ? .tapRequired : .automatic
             ))
         }
         return .unresolvedLink(UnresolvedLinkPreview(host: link.host ?? link.absoluteString, url: link.absoluteString))
@@ -101,7 +109,8 @@ struct NostrTimelineMediaProjection {
         width: Int?,
         height: Int?,
         blurhash: String?,
-        palette: (primary: Color, secondary: Color)
+        palette: (primary: Color, secondary: Color),
+        policy: NostrSyncPolicy
     ) -> MediaTile {
         MediaTile(
             title: alt ?? (url.lastPathComponent.isEmpty ? (url.host ?? "media") : url.lastPathComponent),
@@ -111,7 +120,8 @@ struct NostrTimelineMediaProjection {
             altText: alt,
             width: width,
             height: height,
-            blurhash: blurhash
+            blurhash: blurhash,
+            remoteLoadMode: policy.tapToLoadMedia ? .tapRequired : .automatic
         )
     }
 }

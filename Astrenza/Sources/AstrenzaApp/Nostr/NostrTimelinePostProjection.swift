@@ -12,7 +12,8 @@ struct NostrTimelinePostProjection {
         mediaAssets: [NostrMediaAssetRecord] = [],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         idOverride: String? = nil,
-        repostedBy: TimelineRepostAttribution? = nil
+        repostedBy: TimelineRepostAttribution? = nil,
+        policy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) -> TimelinePost {
         let author = NostrTimelineAuthorProjection.author(for: item)
         let contentProjection = event.map(NostrTimelineContentProjection.init(event:))
@@ -76,7 +77,8 @@ struct NostrTimelinePostProjection {
                 mediaAttachments: mediaAttachments,
                 linkURLs: linkURLs,
                 linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
-                palette: NostrTimelineAuthorProjection.avatarPalette(for: item.pubkey)
+                palette: NostrTimelineAuthorProjection.avatarPalette(for: item.pubkey),
+                policy: policy
             ),
             context: nil,
             repostedBy: repostedBy,

@@ -79,6 +79,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineCoordinator: HomeTimelineCoordinator
     private let relayRuntime: NostrRelayRuntime?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
+    private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
@@ -191,7 +192,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
         eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza"),
         relayRuntime: NostrRelayRuntime? = nil,
-        linkPreviewResolver: NostrLinkPreviewResolver? = nil
+        linkPreviewResolver: NostrLinkPreviewResolver? = nil,
+        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
@@ -201,6 +203,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.timelineCoordinator = HomeTimelineCoordinator()
         self.relayRuntime = relayRuntime
         self.linkPreviewResolver = linkPreviewResolver
+        self.syncPolicy = syncPolicy
     }
 
     func start(account: NostrAccount) {
@@ -882,18 +885,17 @@ final class NostrHomeTimelineStore: ObservableObject {
         do {
             await relayRuntime.setTrafficContext(
                 accountID: account.pubkey,
-                policy: .default(networkType: .unknown, lowPowerMode: false)
+                policy: syncPolicy
             )
             try await relayRuntime.setDefaultRelays(resolvedRelays)
             let newestCreatedAt = noteEvents.map(\.createdAt).max()
-            let policy = NostrSyncPolicy.default(networkType: .unknown, lowPowerMode: false)
             let plan = syncPlanner.forwardPlan(
                 account: account,
                 followedPubkeys: followedPubkeys,
                 contactItems: NostrContactList.items(from: contactListEvent),
                 newestCreatedAt: newestCreatedAt,
                 relayURLs: resolvedRelays,
-                policy: policy
+                policy: syncPolicy
             )
             guard forceInstall || installedHomeForwardPackets != plan.packets else { return }
             try await relayRuntime.installForward(
@@ -1592,6 +1594,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func scheduleLinkPreviewResolution() {
         guard let eventStore, let linkPreviewResolver, linkPreviewTask == nil else { return }
+        guard NostrContentAttachmentClassifier.linkPreviewFetchMode(for: syncPolicy) != .tapRequired else { return }
         let previews = ((try? eventStore.unresolvedLinkPreviews(limit: 6)) ?? [])
             .filter { resolvingLinkPreviewURLs.insert($0.normalizedURL).inserted }
         guard !previews.isEmpty else { return }
@@ -1710,7 +1713,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: followedPubkeys,
             resolvedRelays: resolvedRelays,
             filterRules: materializerFilterRuleSet,
-            filterStatus: timelineFilterStatus(ruleSet: activeFilterRuleSet)
+            filterStatus: timelineFilterStatus(ruleSet: activeFilterRuleSet),
+            policy: syncPolicy
         )
         if snapshot.renderFingerprint != lastEntriesRenderFingerprint {
             entries = snapshot.entries
@@ -1759,7 +1763,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: events),
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events),
-            filterRules: homeFilterRuleSet()
+            filterRules: homeFilterRuleSet(),
+            policy: syncPolicy
         )
     }
 

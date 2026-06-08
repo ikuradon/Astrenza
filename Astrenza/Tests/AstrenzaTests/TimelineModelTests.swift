@@ -701,6 +701,77 @@ struct TimelineModelTests {
         }
     }
 
+    @Test("Timeline media projection defers remote media loading when policy requires tap")
+    func timelineMediaProjectionDefersRemoteMediaLoading() throws {
+        let author = String(repeating: "b", count: 64)
+        let note = timelineEvent(
+            idSeed: "media-deferred",
+            pubkey: author,
+            createdAt: 121,
+            content: "look https://cdn.example.test/deferred.jpg"
+        )
+        let content = NostrTimelineContentProjection(event: note)
+
+        let media = NostrTimelineMediaProjection.media(
+            assets: [],
+            mediaAttachments: content.mediaAttachments,
+            linkURLs: content.linkURLs,
+            linkPreviewsByNormalizedURL: [:],
+            palette: NostrTimelineAuthorProjection.avatarPalette(for: author),
+            policy: .default(networkType: .cellular)
+        )
+
+        guard case .gallery(let tiles) = media else {
+            Issue.record("Expected deferred media gallery")
+            return
+        }
+
+        #expect(tiles[0].remoteLoadMode == .tapRequired)
+        #expect(media?.allowsAutomaticRemoteMediaLoading == false)
+        #expect(media?.allowingRemoteMediaLoading().allowsAutomaticRemoteMediaLoading == true)
+    }
+
+    @Test("Timeline media projection keeps OGP card but defers remote preview image loading")
+    func timelineMediaProjectionDefersOGPImageLoading() throws {
+        let author = String(repeating: "c", count: 64)
+        let note = timelineEvent(
+            idSeed: "ogp-deferred-image",
+            pubkey: author,
+            createdAt: 122,
+            content: "read https://example.test/page"
+        )
+        let content = NostrTimelineContentProjection(event: note)
+        let preview = NostrLinkPreviewRecord(
+            url: "https://example.test/page",
+            normalizedURL: "https://example.test/page",
+            status: "resolved",
+            title: "Example",
+            summary: "Summary",
+            siteName: "Example",
+            imageURL: "https://example.test/card.jpg",
+            fetchedAt: 122,
+            expiresAt: 222,
+            error: nil
+        )
+
+        let media = NostrTimelineMediaProjection.media(
+            assets: [],
+            mediaAttachments: content.mediaAttachments,
+            linkURLs: content.linkURLs,
+            linkPreviewsByNormalizedURL: [preview.normalizedURL: preview],
+            palette: NostrTimelineAuthorProjection.avatarPalette(for: author),
+            policy: .default(networkType: .cellular)
+        )
+
+        guard case .linkPreview(let linkPreview) = media else {
+            Issue.record("Expected link preview card")
+            return
+        }
+
+        #expect(linkPreview.imageURL?.absoluteString == "https://example.test/card.jpg")
+        #expect(linkPreview.remoteImageLoadMode == .tapRequired)
+    }
+
     @Test("Timeline presentation projection collapses low trust and link heavy bodies")
     func timelinePresentationProjectionCollapsesRiskyBodies() throws {
         let links = try [

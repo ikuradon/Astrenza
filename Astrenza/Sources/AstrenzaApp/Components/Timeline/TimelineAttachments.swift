@@ -29,6 +29,20 @@ struct TimelineMediaView: View {
                 }
                 .foregroundStyle(.primary)
             }
+
+            if media.requiresTapToLoadRemoteMedia && !isObscured {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.72)
+
+                VStack(spacing: 7) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 22, weight: .bold))
+                    Text("Tap to load")
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                }
+                .foregroundStyle(.primary)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
@@ -52,14 +66,23 @@ struct TimelineAttachmentButton: View {
     let accessibilityLabel: String
     let onOpen: (TimelineMedia, Int) -> Void
     @State private var isRevealed = false
+    @State private var isRemoteLoadAllowed = false
     @State private var measuredSize = CGSize.zero
 
     private var isObscured: Bool {
         isProtected && !isRevealed
     }
 
+    private var isDeferredRemoteLoad: Bool {
+        media.requiresTapToLoadRemoteMedia && !isRemoteLoadAllowed
+    }
+
+    private var visibleMedia: TimelineMedia {
+        isRemoteLoadAllowed ? media.allowingRemoteMediaLoading() : media
+    }
+
     var body: some View {
-        TimelineMediaView(media: media, isObscured: isObscured)
+        TimelineMediaView(media: visibleMedia, isObscured: isObscured)
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .background(
                 GeometryReader { proxy in
@@ -77,9 +100,9 @@ struct TimelineAttachmentButton: View {
                     }
             )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isObscured ? "\(accessibilityLabel), protected" : accessibilityLabel)
+        .accessibilityLabel(accessibilityLabelText)
         .accessibilityIdentifier("timeline.attachment")
-        .accessibilityHint(isObscured ? "Reveals the attachment without opening it" : "Opens the attachment")
+        .accessibilityHint(accessibilityHintText)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             activate(at: nil)
@@ -91,9 +114,33 @@ struct TimelineAttachmentButton: View {
             withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
                 isRevealed = true
             }
+        } else if isDeferredRemoteLoad {
+            withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
+                isRemoteLoadAllowed = true
+            }
         } else {
-            onOpen(media, selectedTileIndex(at: location))
+            onOpen(visibleMedia, selectedTileIndex(at: location))
         }
+    }
+
+    private var accessibilityLabelText: String {
+        if isObscured {
+            return "\(accessibilityLabel), protected"
+        }
+        if isDeferredRemoteLoad {
+            return "\(accessibilityLabel), not loaded"
+        }
+        return accessibilityLabel
+    }
+
+    private var accessibilityHintText: String {
+        if isObscured {
+            return "Reveals the attachment without opening it"
+        }
+        if isDeferredRemoteLoad {
+            return "Loads the attachment without opening it"
+        }
+        return "Opens the attachment"
     }
 
     private func selectedTileIndex(at location: CGPoint?) -> Int {
@@ -622,8 +669,12 @@ private struct TimelineMediaTileView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .compositingGroup()
         .clipped()
-        .task(id: tile.url) {
-            await loader.load(url: tile.url)
+        .task(id: "\(tile.id)|\(tile.remoteLoadMode.rawValue)") {
+            if tile.remoteLoadMode == .automatic {
+                await loader.load(url: tile.url)
+            } else {
+                await loader.load(url: nil)
+            }
         }
     }
 
@@ -712,11 +763,12 @@ private struct LinkPreviewAttachmentView: View {
 
     var body: some View {
         let width = measuredWidth
-        let height: CGFloat = preview.imageURL == nil ? 226 : 252
+        let showsRemoteImage = preview.imageURL != nil && preview.remoteImageLoadMode == .automatic
+        let height: CGFloat = showsRemoteImage ? 252 : 226
 
         VStack(spacing: 0) {
             LinkPreviewHeroView(preview: preview)
-                .frame(height: preview.imageURL == nil ? 128 : 154)
+                .frame(height: showsRemoteImage ? 154 : 128)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
@@ -783,7 +835,8 @@ private struct LinkPreviewHeroView: View {
 
     var body: some View {
         ZStack {
-            if let imageURL = preview.imageURL {
+            if let imageURL = preview.imageURL,
+               preview.remoteImageLoadMode == .automatic {
                 LinkPreviewRemoteImage(url: imageURL, style: preview.style)
             } else {
                 fallbackHero

@@ -55,6 +55,26 @@ public struct NostrLinkPreviewResolver: Sendable {
         }
     }
 
+    public func remotePreviewDecision(
+        for preview: NostrLinkPreviewRecord,
+        eventID: String,
+        policy: NostrSyncPolicy,
+        requestedAt: Int
+    ) -> NostrRemotePreviewDecision? {
+        guard let url = URL(string: preview.url) ?? URL(string: preview.normalizedURL) else {
+            return nil
+        }
+        return NostrRemotePreviewDecision(
+            request: NostrRemotePreviewRequest(
+                url: url,
+                kind: .linkPreview,
+                eventID: eventID,
+                requestedAt: requestedAt
+            ),
+            fetchMode: NostrContentAttachmentClassifier.linkPreviewFetchMode(for: policy)
+        )
+    }
+
     private func metadataWithOEmbedFallback(
         _ metadata: NostrOpenGraphMetadata,
         html: String,

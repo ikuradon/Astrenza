@@ -3788,6 +3788,80 @@ struct NostrCorePackageTests {
         #expect(lowPower.tapToLoadMedia)
     }
 
+    @Test("Remote preview decisions keep media classification separate from automatic fetching")
+    func remotePreviewDecisionsGateMediaFetching() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: "photo https://cdn.example.test/pic.png read https://example.test/page"
+        )
+        let policy = NostrSyncPolicy(
+            mode: .energySaver,
+            networkType: .cellular,
+            lowPowerMode: true,
+            tapToLoadMedia: true,
+            queueOGPPreviews: true,
+            disableOGPOnCellular: true,
+            reduceFullOutboxOnCellular: true
+        )
+
+        let decisions = NostrContentAttachmentClassifier.remotePreviewDecisions(
+            from: event,
+            policy: policy,
+            requestedAt: 1_717_891_234
+        )
+
+        let media = try #require(decisions.first { $0.request.kind == .media })
+        #expect(media.request.eventID == event.id)
+        #expect(media.request.url.absoluteString == "https://cdn.example.test/pic.png")
+        #expect(media.fetchMode == .tapRequired)
+
+        let linkPreview = try #require(decisions.first { $0.request.kind == .linkPreview })
+        #expect(linkPreview.request.url.absoluteString == "https://example.test/page")
+        #expect(linkPreview.fetchMode == .tapRequired)
+    }
+
+    @Test("Link preview resolver can produce queued requests without loading data")
+    func linkPreviewResolverBuildsQueuedRequestWithoutNetworkFetch() async throws {
+        let probe = LinkPreviewLoaderProbe()
+        let resolver = NostrLinkPreviewResolver(dataLoader: { _ in
+            await probe.markLoaded()
+            return (Data(), URLResponse())
+        })
+        let preview = NostrLinkPreviewRecord(
+            url: "https://example.test/page",
+            normalizedURL: "https://example.test/page",
+            status: "unresolved",
+            title: nil,
+            summary: nil,
+            siteName: nil,
+            imageURL: nil,
+            fetchedAt: nil,
+            expiresAt: nil,
+            error: nil
+        )
+        let policy = NostrSyncPolicy(
+            mode: .ownRelayList,
+            networkType: .wifi,
+            lowPowerMode: false,
+            tapToLoadMedia: false,
+            queueOGPPreviews: true,
+            disableOGPOnCellular: false,
+            reduceFullOutboxOnCellular: true
+        )
+
+        let decision = try #require(resolver.remotePreviewDecision(
+            for: preview,
+            eventID: "event",
+            policy: policy,
+            requestedAt: 1_717_891_235
+        ))
+
+        #expect(decision.request.kind == .linkPreview)
+        #expect(decision.request.eventID == "event")
+        #expect(decision.fetchMode == .queued)
+        #expect(await probe.didLoad == false)
+    }
+
     @Test("Relay traffic counters accumulate by hour relay network and sync mode")
     func relayTrafficCountersAccumulate() throws {
         let store = try NostrEventStore.inMemory()
@@ -3888,6 +3962,18 @@ struct NostrCorePackageTests {
             content: content,
             sig: String(repeating: "1", count: 128)
         )
+    }
+
+    private actor LinkPreviewLoaderProbe {
+        private var loaded = false
+
+        var didLoad: Bool {
+            loaded
+        }
+
+        func markLoaded() {
+            loaded = true
+        }
     }
 
     private func nostrEvent(
