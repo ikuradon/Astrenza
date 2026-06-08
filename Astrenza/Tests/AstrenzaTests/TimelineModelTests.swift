@@ -1106,6 +1106,57 @@ struct TimelineModelTests {
         #expect(store.entries.compactMap(\.post).map(\.id) == [matching.id, other.id])
     }
 
+    @Test("Home timeline event ingestor stores event and relay source")
+    func homeTimelineEventIngestorStoresEventAndRelaySource() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let event = timelineEvent(
+            idSeed: "ingest-note",
+            pubkey: String(repeating: "a", count: 64),
+            createdAt: 100,
+            content: "ingested note"
+        )
+        let ingestor = HomeTimelineEventIngestor(eventStore: eventStore)
+
+        let result = try ingestor.ingest(event: event, relayURL: "wss://relay.example")
+
+        #expect(result.primaryEventID == event.id)
+        #expect(result.embeddedEvent == nil)
+        #expect(result.savedEventIDs == [event.id])
+        #expect(try eventStore.events(ids: [event.id]).map(\.id) == [event.id])
+        #expect(try eventStore.eventSources(eventID: event.id).map(\.relayURL) == ["wss://relay.example"])
+    }
+
+    @Test("Home timeline event ingestor stores embedded repost target")
+    func homeTimelineEventIngestorStoresEmbeddedRepostTarget() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let reposterSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "44", count: 32))
+        let targetSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "45", count: 32))
+        let target = try await targetSigner.sign(
+            NostrPublishInput.post(content: "original body")
+                .unsignedEvent(pubkey: targetSigner.pubkey, createdAt: 90)
+        )
+        let targetData = try JSONEncoder().encode(target)
+        let targetJSON = try #require(String(data: targetData, encoding: .utf8))
+        let repost = try await reposterSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: reposterSigner.pubkey,
+                createdAt: 100,
+                kind: 6,
+                tags: [["e", target.id], ["p", target.pubkey]],
+                content: targetJSON
+            )
+        )
+        let ingestor = HomeTimelineEventIngestor(eventStore: eventStore)
+
+        let result = try ingestor.ingest(event: repost, relayURL: "wss://relay.example")
+
+        #expect(result.primaryEventID == repost.id)
+        #expect(result.embeddedEvent?.id == target.id)
+        #expect(result.savedEventIDs == [repost.id, target.id])
+        #expect(Set(try eventStore.events(ids: [repost.id, target.id]).map(\.id)) == [repost.id, target.id])
+        #expect(try eventStore.eventSources(eventID: target.id).map(\.relayURL) == ["wss://relay.example"])
+    }
+
     @Test("Home timeline store restores live gap rows from database timeline entries")
     @MainActor
     func homeTimelineStoreRestoresLiveGapRowsFromDatabaseEntries() throws {

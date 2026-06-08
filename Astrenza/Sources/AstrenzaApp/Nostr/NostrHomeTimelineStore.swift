@@ -73,6 +73,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
+    private let eventIngestor: HomeTimelineEventIngestor
     private let relayRuntime: NostrRelayRuntime?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
     private var loadTask: Task<Void, Never>?
@@ -192,6 +193,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
+        self.eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
         self.relayRuntime = relayRuntime
         self.linkPreviewResolver = linkPreviewResolver
     }
@@ -1031,11 +1033,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         else { return }
         guard followedPubkeys.isEmpty || followedPubkeys.contains(event.pubkey) else { return }
 
-        let embeddedTarget = embeddedRepostTarget(from: event)
-        let eventsToSave = [event] + (embeddedTarget.map { [$0] } ?? [])
+        let ingestResult: HomeTimelineEventIngestResult
         do {
-            try eventStore?.save(events: eventsToSave)
-            try eventStore?.recordEventSources(eventIDs: eventsToSave.map(\.id), relayURL: relayURL)
+            ingestResult = try eventIngestor.ingest(event: event, relayURL: relayURL)
         } catch {
             recordRuntimeSyncEvent(
                 relayURL: relayURL,
@@ -1045,6 +1045,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
             return
         }
+        let embeddedTarget = ingestResult.embeddedEvent
 
         if event.kind == 5 {
             let deletedIDs = event.tags.compactMap { tag in
@@ -1082,11 +1083,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         let requestKey = pendingBackwardRequestKey(for: subscriptionID)
         let request = requestKey.flatMap { pendingBackwardRequests[$0] }
 
-        let embeddedTarget = embeddedRepostTarget(from: event)
-        let eventsToSave = [event] + (embeddedTarget.map { [$0] } ?? [])
+        let ingestResult: HomeTimelineEventIngestResult
         do {
-            try eventStore?.save(events: eventsToSave)
-            try eventStore?.recordEventSources(eventIDs: eventsToSave.map(\.id), relayURL: relayURL)
+            ingestResult = try eventIngestor.ingest(event: event, relayURL: relayURL)
         } catch {
             recordRuntimeSyncEvent(
                 relayURL: relayURL,
@@ -1096,6 +1095,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
             return
         }
+        let embeddedTarget = ingestResult.embeddedEvent
 
         switch event.kind {
         case 0:
@@ -1165,18 +1165,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             return
         }
         scheduleBackwardDependencyFlush()
-    }
-
-    private func embeddedRepostTarget(from event: NostrEvent) -> NostrEvent? {
-        guard event.kind == 6,
-              let data = event.content.data(using: .utf8),
-              let embedded = try? JSONDecoder().decode(NostrEvent.self, from: data),
-              embedded.kind == 1,
-              embedded.hasValidShape
-        else {
-            return nil
-        }
-        return embedded
     }
 
     private func ingestCachedDependencies(_ dependencies: NostrEventDependencies) -> NostrDependencyFetchCacheSnapshot {
