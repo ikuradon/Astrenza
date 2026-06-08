@@ -60,7 +60,7 @@ public struct NostrHomeTimelineLoader: Sendable {
     public func bootstrapState(account: NostrAccount) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
         let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
-        let relayListResult = try await firstAvailableEvent(
+        let relayListResult = try await latestEvent(
             relays: discoveryRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-nip65",
@@ -111,7 +111,7 @@ public struct NostrHomeTimelineLoader: Sendable {
     public func initialState(account: NostrAccount) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
         let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
-        let relayListResult = try await firstAvailableEvent(
+        let relayListResult = try await latestEvent(
             relays: discoveryRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-nip65",

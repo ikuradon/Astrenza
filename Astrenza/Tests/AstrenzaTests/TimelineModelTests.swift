@@ -1046,6 +1046,7 @@ struct TimelineModelTests {
         ])
         #expect(store.followedPubkeys == [account.pubkey])
         #expect(store.relayStatusCounts.planned == 3)
+        #expect(store.phase == .loaded)
     }
 
     @Test("Home relay pill keeps newer cached NIP-65 over stale bootstrap result")
@@ -1109,6 +1110,82 @@ struct TimelineModelTests {
             "wss://relay-c.example"
         ])
         #expect(store.relayStatusCounts.planned == 3)
+    }
+
+    @Test("Home timeline loader chooses newest NIP-65 across bootstrap relays")
+    func homeTimelineLoaderChoosesNewestNIP65AcrossBootstrapRelays() async throws {
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let staleRelayList = timelineEvent(
+            idSeed: "stale-fast-nip65",
+            kind: 10002,
+            pubkey: account.pubkey,
+            createdAt: 100,
+            tags: [["r", "wss://stale.example", "read"]],
+            content: ""
+        )
+        let freshRelayList = timelineEvent(
+            idSeed: "fresh-slower-nip65",
+            kind: 10002,
+            pubkey: account.pubkey,
+            createdAt: 300,
+            tags: [
+                ["r", "wss://relay-a.example", "read"],
+                ["r", "wss://relay-b.example", "read"],
+                ["r", "wss://relay-c.example", "read"]
+            ],
+            content: ""
+        )
+        let contactList = timelineEvent(
+            idSeed: "bootstrap-kind3",
+            kind: 3,
+            pubkey: account.pubkey,
+            createdAt: 301,
+            tags: [["p", account.pubkey]],
+            content: ""
+        )
+        let loader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(
+                eventsByRelayAndSubscriptionID: [
+                    "wss://fast.example": [
+                        "astrenza-nip65": [staleRelayList],
+                        "astrenza-kind3": [contactList],
+                        "astrenza-home": []
+                    ],
+                    "wss://slow.example": [
+                        "astrenza-nip65": [freshRelayList],
+                        "astrenza-kind3": [contactList],
+                        "astrenza-home": []
+                    ],
+                    "wss://relay-a.example": [
+                        "astrenza-kind3": [contactList],
+                        "astrenza-home": []
+                    ],
+                    "wss://relay-b.example": [
+                        "astrenza-kind3": [contactList],
+                        "astrenza-home": []
+                    ],
+                    "wss://relay-c.example": [
+                        "astrenza-kind3": [contactList],
+                        "astrenza-home": []
+                    ]
+                ]
+            ),
+            bootstrapRelays: ["wss://fast.example", "wss://slow.example"],
+            pageLimit: 20
+        )
+
+        let state = try await loader.initialState(account: account)
+
+        #expect(state.relayListEvent?.id == freshRelayList.id)
+        #expect(state.relays == [
+            "wss://relay-a.example",
+            "wss://relay-b.example",
+            "wss://relay-c.example"
+        ])
     }
 
     @Test("Home timeline keeps newer cached kind 3 over stale bootstrap result")
@@ -5225,14 +5302,24 @@ private func waitForRelaySyncEvent(
 
 private actor FakeStoreRelayClient: NostrRelayFetching {
     private let eventsBySubscriptionID: [String: [NostrEvent]]
+    private let eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]]
     private var fetchCalls: [String] = []
 
     init(eventsBySubscriptionID: [String: [NostrEvent]]) {
         self.eventsBySubscriptionID = eventsBySubscriptionID
+        eventsByRelayAndSubscriptionID = [:]
+    }
+
+    init(eventsByRelayAndSubscriptionID: [String: [String: [NostrEvent]]]) {
+        eventsBySubscriptionID = [:]
+        self.eventsByRelayAndSubscriptionID = eventsByRelayAndSubscriptionID
     }
 
     func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
         fetchCalls.append(request.subscriptionID)
+        if let relayEvents = eventsByRelayAndSubscriptionID[relayURL]?[request.subscriptionID] {
+            return relayEvents
+        }
         return eventsBySubscriptionID[request.subscriptionID] ?? []
     }
 

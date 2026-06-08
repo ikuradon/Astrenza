@@ -198,12 +198,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         startRuntimeEventPump()
         restoreCachedSnapshot(account: account)
         installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        if !resolvedRelays.isEmpty {
-            Task {
-                await configureRelayRuntime(account: account)
-            }
-        }
-        if entries.isEmpty {
+        if relayRuntime != nil, !resolvedRelays.isEmpty {
+            phase = .loaded
+        } else if entries.isEmpty {
             phase = .resolvingRelays
         }
         loadTask?.cancel()
@@ -488,14 +485,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func load(account: NostrAccount) async {
+        if relayRuntime != nil {
+            await loadRuntimeBootstrap(account: account)
+            return
+        }
+
         do {
-            let state = if relayRuntime != nil {
-                runtimeBootstrapState(
-                    from: try await timelineLoader.bootstrapState(account: account)
-                )
-            } else {
-                try await timelineLoader.initialState(account: account)
-            }
+            let state = try await timelineLoader.initialState(account: account)
             guard Task.isCancelled == false else { return }
             apply(state)
             materializeEntries()
@@ -505,6 +501,33 @@ final class NostrHomeTimelineStore: ObservableObject {
         } catch {
             guard Task.isCancelled == false else { return }
             phase = .failed("Home timeline failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadRuntimeBootstrap(account: NostrAccount) async {
+        installProvisionalRuntimeBootstrapIfNeeded(account: account)
+        if !resolvedRelays.isEmpty {
+            phase = .loaded
+            await configureRelayRuntime(account: account)
+        }
+
+        do {
+            let bootstrapState = try await timelineLoader.bootstrapState(account: account)
+            guard Task.isCancelled == false else { return }
+            apply(runtimeBootstrapState(from: bootstrapState))
+            materializeEntries()
+            persistDatabase(account: account)
+            await configureRelayRuntime(account: account)
+            phase = .loaded
+        } catch {
+            guard Task.isCancelled == false else { return }
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: "astrenza-bootstrap",
+                message: "bootstrap refresh failed: \(error.localizedDescription)"
+            )
+            phase = resolvedRelays.isEmpty ? .failed("Home timeline failed: \(error.localizedDescription)") : .loaded
         }
     }
 
@@ -1848,14 +1871,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             state.contactListEvent,
             storedContactListEvent
         ])
-        let effectiveRelays: [String]
-        if effectiveRelayListEvent?.id != nil,
-           effectiveRelayListEvent?.id != state.relayListEvent?.id {
-            let currentReadRelays = NostrRelayList.parse(from: effectiveRelayListEvent).readRelays
-            effectiveRelays = currentReadRelays.isEmpty ? resolvedRelays : currentReadRelays
-        } else {
-            effectiveRelays = state.relays
-        }
+        let effectiveRelays = effectiveReadRelays(
+            from: effectiveRelayListEvent,
+            stateRelays: state.relays
+        )
         let effectiveFollowedPubkeys: [String]
         if effectiveContactListEvent?.id != nil,
            effectiveContactListEvent?.id != state.contactListEvent?.id {
@@ -1875,6 +1894,20 @@ final class NostrHomeTimelineStore: ObservableObject {
         relaySyncEvents = state.relaySyncEvents
         hasMoreOlder = state.hasMoreOlder
         updateRelayStatusCounts()
+    }
+
+    private func effectiveReadRelays(
+        from relayListEvent: NostrEvent?,
+        stateRelays: [String]
+    ) -> [String] {
+        let readRelays = NostrRelayList.parse(from: relayListEvent).readRelays
+        if !readRelays.isEmpty {
+            return readRelays
+        }
+        if !stateRelays.isEmpty {
+            return stateRelays
+        }
+        return resolvedRelays
     }
 
     @discardableResult
