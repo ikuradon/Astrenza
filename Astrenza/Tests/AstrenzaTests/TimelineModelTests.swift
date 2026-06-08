@@ -456,6 +456,13 @@ struct TimelineModelTests {
             #expect(card.host == "Example")
             #expect(card.imageURL?.absoluteString == "https://example.test/card.png")
             #expect(card.style == .standard)
+            #expect(post.body == "read")
+            #expect(post.richBody?.tokens.contains { token in
+                if case .url = token {
+                    return true
+                }
+                return false
+            } == false)
         } else {
             Issue.record("Expected resolved link preview media")
         }
@@ -598,6 +605,14 @@ struct TimelineModelTests {
         let post = try #require(posts.first { $0.id == note.id })
 
         #expect(post.quotedPost?.body == "quoted from note1")
+        #expect(post.body.isEmpty)
+        #expect(post.richBody?.references.isEmpty == true)
+        #expect(post.richBody?.tokens.contains { token in
+            if case .event = token {
+                return true
+            }
+            return false
+        } == false)
     }
 
     @Test("Nostr materializer treats NIP-10 mention markers as quote-like event references")

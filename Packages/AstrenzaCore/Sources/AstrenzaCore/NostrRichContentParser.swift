@@ -59,7 +59,8 @@ public enum NostrRichContentParser {
     public static func parse(
         event: NostrEvent,
         attachments: [NostrClassifiedAttachment] = [],
-        promotedLinkURLs: [URL] = []
+        promotedLinkURLs: [URL] = [],
+        hiddenEventIDs: Set<String> = []
     ) -> NostrRichContent {
         let customEmojis = customEmojiMap(from: event.tags)
         let hiddenURLs = Set(
@@ -69,12 +70,18 @@ public enum NostrRichContentParser {
 
         var tokens: [NostrRichContentToken] = []
         var references: [NostrRichContentReference] = []
+        var skipWhitespaceAfterHiddenToken = false
 
         for rawToken in lexicalTokens(from: event.content) {
             if rawToken.allSatisfy(\.isWhitespace) {
+                if skipWhitespaceAfterHiddenToken {
+                    skipWhitespaceAfterHiddenToken = false
+                    continue
+                }
                 appendText(rawToken, to: &tokens)
                 continue
             }
+            skipWhitespaceAfterHiddenToken = false
 
             let token = trimmedToken(rawToken)
             guard !token.value.isEmpty else { continue }
@@ -83,7 +90,10 @@ public enum NostrRichContentParser {
                url.scheme == "http" || url.scheme == "https"
             {
                 let normalizedURL = NostrLinkParser.normalizedURLString(url)
-                guard !hiddenURLs.contains(normalizedURL) else { continue }
+                guard !hiddenURLs.contains(normalizedURL) else {
+                    skipWhitespaceAfterHiddenToken = true
+                    continue
+                }
                 tokens.append(.url(url: url))
                 continue
             }
@@ -108,6 +118,10 @@ public enum NostrRichContentParser {
             }
 
             if let eventReference = eventReference(from: token.value) {
+                guard !hiddenEventIDs.contains(eventReference.eventID) else {
+                    skipWhitespaceAfterHiddenToken = true
+                    continue
+                }
                 tokens.append(.event(
                     eventID: eventReference.eventID,
                     relays: eventReference.relays,
@@ -126,6 +140,8 @@ public enum NostrRichContentParser {
 
             appendText(rawToken, to: &tokens)
         }
+
+        removeTrailingWhitespaceText(from: &tokens)
 
         return NostrRichContent(
             displayText: displayText(from: tokens),
@@ -240,6 +256,14 @@ public enum NostrRichContentParser {
             return
         }
         tokens.append(.text(text))
+    }
+
+    private static func removeTrailingWhitespaceText(from tokens: inout [NostrRichContentToken]) {
+        guard let last = tokens.last,
+              case .text(let text) = last,
+              text.allSatisfy(\.isWhitespace)
+        else { return }
+        tokens.removeLast()
     }
 
     private static var trailingPunctuation: CharacterSet {

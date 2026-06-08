@@ -2423,8 +2423,14 @@ enum NostrTimelineMaterializer {
         let attachments = event.map(NostrContentAttachmentClassifier.attachments(from:)) ?? []
         let mediaAttachments = attachments.filter { $0.kind == .media }
         let linkURLs = attachments.filter { $0.kind == .linkPreview }.map(\.url)
+        let quotedEventID = event.flatMap(quotedPostID(from:))
         let richBody = event.map {
-            NostrRichContentParser.parse(event: $0, attachments: attachments, promotedLinkURLs: [])
+            NostrRichContentParser.parse(
+                event: $0,
+                attachments: attachments,
+                promotedLinkURLs: linkURLs,
+                hiddenEventIDs: Set([quotedEventID].compactMap { $0 })
+            )
         }
         let bodyText = richBody?.displayText ?? item.body
         let contentWarning = event.flatMap(contentWarning(from:))
@@ -2846,8 +2852,7 @@ enum NostrTimelineMaterializer {
             .lazy
             .compactMap { token -> String? in
                 let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}>\n"))
-                guard trimmed.hasPrefix("note1") || trimmed.hasPrefix("nostr:note1") else { return nil }
-                return try? NostrNIP19.eventIDHex(from: trimmed)
+                return try? NostrNIP19.eventReference(from: trimmed).eventID
             }
             .first
     }

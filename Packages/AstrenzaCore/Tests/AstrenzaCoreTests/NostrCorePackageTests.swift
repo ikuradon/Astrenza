@@ -738,6 +738,29 @@ struct NostrCorePackageTests {
         } == false)
     }
 
+    @Test("Rich content removes promoted link preview URLs")
+    func richContentRemovesPromotedLinkPreviewURLs() throws {
+        let previewURL = try #require(URL(string: "https://example.test/page"))
+        let event = nostrEvent(
+            kind: 1,
+            content: "read https://example.test/page"
+        )
+
+        let rich = NostrRichContentParser.parse(
+            event: event,
+            attachments: [],
+            promotedLinkURLs: [previewURL]
+        )
+
+        #expect(rich.displayText == "read")
+        #expect(rich.tokens.contains { token in
+            if case .url = token {
+                return true
+            }
+            return false
+        } == false)
+    }
+
     @Test("Rich content turns tagged custom emoji shortcode into token")
     func richContentParsesCustomEmoji() throws {
         let event = nostrEvent(
@@ -793,6 +816,38 @@ struct NostrCorePackageTests {
             author: pubkey,
             kind: 1
         )))
+    }
+
+    @Test("Rich content hides promoted event references")
+    func richContentHidesPromotedEventReferences() throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let eventID = String(repeating: "d", count: 64)
+        let nevent = try NostrNIP19.encodeEventReference(
+            eventID: eventID,
+            relays: ["wss://relay.example"],
+            author: pubkey,
+            kind: 1
+        )
+        let event = nostrEvent(
+            kind: 1,
+            content: "see nostr:\(nevent)"
+        )
+
+        let rich = NostrRichContentParser.parse(
+            event: event,
+            attachments: [],
+            promotedLinkURLs: [],
+            hiddenEventIDs: [eventID]
+        )
+
+        #expect(rich.displayText == "see")
+        #expect(rich.references.isEmpty)
+        #expect(rich.tokens.contains { token in
+            if case .event = token {
+                return true
+            }
+            return false
+        } == false)
     }
 
     @Test("Nostr event store records unresolved link preview requests")
