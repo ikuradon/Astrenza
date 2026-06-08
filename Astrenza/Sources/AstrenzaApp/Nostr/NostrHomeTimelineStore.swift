@@ -613,6 +613,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let relayRuntime,
               let oldestCreatedAt = noteEvents.map(\.createdAt).min()
         else { return }
+        let olderAnchorPostID = noteEvents.last?.id
 
         let authors = followedPubkeys.isEmpty ? [account.pubkey] : Array(followedPubkeys.prefix(128))
         guard let packet = NostrBackwardREQBuilder.olderNotes(
@@ -625,7 +626,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
             profilePubkeys: [],
             sourceEventIDs: [],
-            isOlderPage: true
+            isOlderPage: true,
+            olderAnchorPostID: olderAnchorPostID
         )
 
         do {
@@ -1075,6 +1077,9 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
                 if let requestKey {
                     pendingBackwardRequests[requestKey]?.receivedTimelineEventCount += 1
+                    if pendingBackwardRequests[requestKey]?.receivedTimelineEventIDs.contains(event.id) != true {
+                        pendingBackwardRequests[requestKey]?.receivedTimelineEventIDs.append(event.id)
+                    }
                 }
             }
             dependencyFetchQueue.finish(sourceEventIDs: [event.id], succeeded: true)
@@ -1284,7 +1289,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
         guard let request = pendingBackwardRequests.removeValue(forKey: completion.groupID) else { return }
-        let priorBottomPostID = noteEvents.last?.id
+        let priorBottomPostID = request.olderAnchorPostID ?? noteEvents.last?.id
         dependencyFetchQueue.finish(
             profilePubkeys: request.profilePubkeys,
             sourceEventIDs: request.sourceEventIDs,
@@ -1293,11 +1298,16 @@ final class NostrHomeTimelineStore: ObservableObject {
         if request.isOlderPage && completion.status == .completed && completion.eventCount == 0 {
             hasMoreOlder = false
         }
-        let didReceiveTimelineEvents = completion.eventCount > 0 || request.receivedTimelineEventCount > 0
+        let didReceiveTimelineEvents = completion.eventCount > 0 ||
+            request.receivedTimelineEventCount > 0 ||
+            !request.receivedTimelineEventIDs.isEmpty
         if completion.status == .completed || completion.status == .partial || didReceiveTimelineEvents {
             if request.isOlderPage,
                didReceiveTimelineEvents,
                let account {
+                if completion.status != .completed {
+                    markOlderPageBoundaryGap(request)
+                }
                 reloadProjectionWindow(account: account, around: priorBottomPostID)
                 materializeEntries()
                 scheduleLinkPreviewResolution()
@@ -1305,13 +1315,51 @@ final class NostrHomeTimelineStore: ObservableObject {
 
             if let gap = request.gap,
                let account {
-                markGapResolved(gap)
+                if completion.status == .completed {
+                    markGapResolved(gap)
+                }
                 reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
                 materializeEntries()
                 scheduleLinkPreviewResolution()
             }
         }
         relayStatusRevision &+= 1
+    }
+
+    private func markOlderPageBoundaryGap(_ request: PendingBackwardRequest) {
+        guard let account,
+              let anchorPostID = request.olderAnchorPostID,
+              let newestReceivedEventID = newestReceivedTimelineEventID(in: request)
+        else { return }
+        do {
+            try eventStore?.markTimelineGap(
+                accountID: account.pubkey,
+                timelineKey: "home",
+                newerEventID: anchorPostID,
+                olderEventID: newestReceivedEventID
+            )
+        } catch {
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: nil,
+                message: "older gap mark failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func newestReceivedTimelineEventID(in request: PendingBackwardRequest) -> String? {
+        guard let eventStore else { return nil }
+        let uniqueEventIDs = Array(Set(request.receivedTimelineEventIDs))
+        guard !uniqueEventIDs.isEmpty,
+              let events = try? eventStore.events(ids: uniqueEventIDs)
+        else { return nil }
+        return events.max { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id > rhs.id
+            }
+            return lhs.createdAt < rhs.createdAt
+        }?.id
     }
 
     private func markGapResolved(_ gap: PendingGapBackfill) {
@@ -2744,8 +2792,10 @@ private struct PendingBackwardRequest {
     let profilePubkeys: [String]
     let sourceEventIDs: [String]
     var isOlderPage = false
+    var olderAnchorPostID: String?
     var gap: PendingGapBackfill?
     var receivedTimelineEventCount = 0
+    var receivedTimelineEventIDs: [String] = []
 }
 
 private struct PendingGapBackfill {
