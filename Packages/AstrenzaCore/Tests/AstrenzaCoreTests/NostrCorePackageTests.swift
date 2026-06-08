@@ -3572,6 +3572,52 @@ struct NostrCorePackageTests {
         #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .suspended)
     }
 
+    @Test("Relay runtime resumes forward receive after retry exhaustion")
+    func relayRuntimeResumesForwardReceiveAfterRetryExhaustion() async throws {
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "43", count: 32))
+        let event = try await signer.sign(
+            NostrPublishInput.post(content: "recovered")
+                .unsignedEvent(pubkey: signer.pubkey, createdAt: 100)
+        )
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: true,
+            retryPolicy: NostrRelayRuntimeRetryPolicy(maxAttempts: 0, initialDelayMilliseconds: 0, delayStepMilliseconds: 0),
+            heartbeatPolicy: .disabled
+        )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1]), "authors": .strings([signer.pubkey])]]
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installForward(packet)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .suspended)
+
+        await connection.appendInboundFrames([try relayRuntimeEventFrame(subscriptionID: "home-forward", event: event)])
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        let packets = await collector.packets()
+        #expect(packets.contains { packet in
+            if case .event("wss://relay.example", "home-forward", event) = packet {
+                return true
+            }
+            return false
+        })
+    }
+
     private func signedShapeOnlyEvent(kind: Int, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
         let canonical = NostrCanonicalJSON.serialize(
             pubkey: pubkey,
@@ -3812,6 +3858,10 @@ private actor FakeRelayRuntimeConnection: NostrRelayTransportConnection {
             throw NostrRelayClientError.timeout
         }
         return inboundFrames.removeFirst()
+    }
+
+    func appendInboundFrames(_ frames: [String]) {
+        inboundFrames.append(contentsOf: frames)
     }
 
     func close() async {

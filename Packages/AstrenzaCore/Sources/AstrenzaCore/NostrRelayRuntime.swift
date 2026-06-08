@@ -227,9 +227,11 @@ public actor NostrRelayRuntime {
                 } catch {
                     await session.markWaitingForRetry(message: String(describing: error))
                     retryAttempt += 1
-                    guard retryAttempt <= retryPolicy.maxAttempts else {
+                    if retryAttempt > retryPolicy.maxAttempts {
                         await session.markSuspended(message: "retry attempts exhausted")
-                        break
+                        try? await Task.sleep(nanoseconds: retryPolicy.recoveryDelayNanoseconds(forAttempt: retryAttempt))
+                        guard !Task.isCancelled else { break }
+                        retryAttempt = 0
                     }
 
                     let delay = retryPolicy.delayNanoseconds(forAttempt: retryAttempt)

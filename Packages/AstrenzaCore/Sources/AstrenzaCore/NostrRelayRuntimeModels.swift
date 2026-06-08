@@ -60,6 +60,10 @@ public struct NostrRelayRuntimeRetryPolicy: Equatable, Sendable {
         let delayMilliseconds = initialDelayMilliseconds + ((safeAttempt - 1) * delayStepMilliseconds)
         return UInt64(max(0, delayMilliseconds)) * 1_000_000
     }
+
+    public func recoveryDelayNanoseconds(forAttempt attempt: Int) -> UInt64 {
+        max(delayNanoseconds(forAttempt: attempt), 10_000_000)
+    }
 }
 
 public struct NostrRelayRuntimeHeartbeatPolicy: Equatable, Sendable {

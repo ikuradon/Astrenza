@@ -2210,9 +2210,11 @@ struct TimelineModelTests {
 
         store.start(account: account)
         try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 1)
-        try await Task.sleep(nanoseconds: 100_000_000)
 
-        let fetchSubscriptionIDs = await relayClient.fetchSubscriptionIDs()
+        let fetchSubscriptionIDs = try await waitForFetchSubscriptionIDs(
+            in: relayClient,
+            containing: ["astrenza-nip65", "astrenza-kind3"]
+        )
         #expect(fetchSubscriptionIDs.contains("astrenza-nip65"))
         #expect(fetchSubscriptionIDs.contains("astrenza-kind3"))
         #expect(!fetchSubscriptionIDs.contains("astrenza-home"))
@@ -6396,6 +6398,22 @@ private func assertNoREQSubscriptionID(
         reqSubscriptionID(from: frame, containing: needle)
     }.last
     #expect(subscriptionID == nil)
+}
+
+private func waitForFetchSubscriptionIDs(
+    in relayClient: FakeStoreRelayClient,
+    containing expectedSubscriptionIDs: Set<String>,
+    attempts: Int = 100
+) async throws -> [String] {
+    for _ in 0..<attempts {
+        let subscriptionIDs = await relayClient.fetchSubscriptionIDs()
+        if expectedSubscriptionIDs.isSubset(of: Set(subscriptionIDs)) {
+            return subscriptionIDs
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    return await relayClient.fetchSubscriptionIDs()
 }
 
 @MainActor
