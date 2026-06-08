@@ -28,14 +28,8 @@ struct HomeTimelineView: View {
     @State private var browserDestination: TimelineBrowserDestination?
     @State private var swipeSettings = TimelineSwipeSettings()
     @State private var timelineRestoreStore = TimelineRestoreStore()
-    @State private var homeViewportState = TimelineRestoreStore().viewportState(
-        accountID: "mock-account",
-        timelineKey: "home"
-    )
-    @State private var homeLayoutCache = TimelineRestoreStore().layoutCache(
-        accountID: "mock-account",
-        timelineKey: "home"
-    )
+    @State private var homeViewportState: TimelineViewportState?
+    @State private var homeLayoutCache: TimelineLayoutCache
 
     private var accountID: String {
         sessionStore.account?.pubkey ?? "mock-account"
@@ -49,6 +43,12 @@ struct HomeTimelineView: View {
         self.sessionStore = sessionStore
         self.liveTimelineStore = liveTimelineStore
         self.onInitialPresentationReady = onInitialPresentationReady
+
+        let restoreStore = TimelineRestoreStore()
+        let initialAccountID = sessionStore.account?.pubkey ?? "mock-account"
+        _timelineRestoreStore = State(initialValue: restoreStore)
+        _homeViewportState = State(initialValue: restoreStore.viewportState(accountID: initialAccountID, timelineKey: TimelineKind.home.id))
+        _homeLayoutCache = State(initialValue: restoreStore.layoutCache(accountID: initialAccountID, timelineKey: TimelineKind.home.id))
     }
 
     private var actionMenuTopClearance: CGFloat {

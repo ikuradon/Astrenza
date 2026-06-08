@@ -241,6 +241,9 @@ struct TimelineFeedView: View {
         .onChange(of: entries.map(\.id)) { _, _ in
             syncDisplayedEntriesFromSource()
         }
+        .onChange(of: viewportState) { _, _ in
+            restoreViewportIfNeeded()
+        }
         .onChange(of: scrollCommand?.id) { _, _ in
             handleScrollCommand()
         }
