@@ -2389,6 +2389,7 @@ public final class NostrEventStore {
                 rawData
             ]
         )
+        try applyPendingDeletionIfNeeded(for: event, db: db)
     }
 
     private func replaceTags(for event: NostrEvent, db: Database) throws {
@@ -2646,37 +2647,62 @@ public final class NostrEventStore {
         guard !targetIDs.isEmpty else { return }
 
         for targetID in Set(targetIDs) {
-            guard let target = try fetchEvent(id: targetID, db: db), target.pubkey == deletionEvent.pubkey else {
+            let target = try fetchEvent(id: targetID, db: db)
+            if let target, target.pubkey != deletionEvent.pubkey {
                 continue
             }
 
-            try db.execute(
-                sql: """
-                INSERT INTO deletion_tombstones (
-                    target_event_id, deletion_event_id, deleted_at, author_pubkey
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(target_event_id) DO UPDATE SET
-                    deletion_event_id = excluded.deletion_event_id,
-                    deleted_at = excluded.deleted_at,
-                    author_pubkey = excluded.author_pubkey
-                """,
-                arguments: [
-                    targetID,
-                    deletionEvent.id,
-                    deletionEvent.createdAt,
-                    deletionEvent.pubkey
-                ]
-            )
-
-            try db.execute(
-                sql: """
-                UPDATE events
-                SET deleted_at = ?
-                WHERE event_id = ?
-                """,
-                arguments: [deletionEvent.createdAt, targetID]
-            )
+            try upsertDeletionTombstone(targetID: targetID, deletionEvent: deletionEvent, db: db)
+            if target != nil {
+                try markEventDeleted(eventID: targetID, deletedAt: deletionEvent.createdAt, db: db)
+            }
         }
+    }
+
+    private func applyPendingDeletionIfNeeded(for event: NostrEvent, db: Database) throws {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT deleted_at
+            FROM deletion_tombstones
+            WHERE target_event_id = ? AND author_pubkey = ?
+            """,
+            arguments: [event.id, event.pubkey]
+        ) else { return }
+
+        let deletedAt: Int = row["deleted_at"]
+        try markEventDeleted(eventID: event.id, deletedAt: deletedAt, db: db)
+    }
+
+    private func upsertDeletionTombstone(targetID: String, deletionEvent: NostrEvent, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO deletion_tombstones (
+                target_event_id, deletion_event_id, deleted_at, author_pubkey
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(target_event_id) DO UPDATE SET
+                deletion_event_id = excluded.deletion_event_id,
+                deleted_at = excluded.deleted_at,
+                author_pubkey = excluded.author_pubkey
+            """,
+            arguments: [
+                targetID,
+                deletionEvent.id,
+                deletionEvent.createdAt,
+                deletionEvent.pubkey
+            ]
+        )
+    }
+
+    private func markEventDeleted(eventID: String, deletedAt: Int, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE events
+            SET deleted_at = ?
+            WHERE event_id = ?
+            """,
+            arguments: [deletedAt, eventID]
+        )
     }
 
     private func saveTimelineStateMetadata(
