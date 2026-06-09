@@ -1,0 +1,22 @@
+{
+  "name": "astrenza-media-resolver",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "SERVICE_VERSION": "1",
+    "DEFAULT_CACHE_TTL_SECONDS": "86400",
+    "MAX_HTML_BYTES": "1048576",
+    "MAX_IMAGE_PROBE_BYTES": "131072"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  }
+}

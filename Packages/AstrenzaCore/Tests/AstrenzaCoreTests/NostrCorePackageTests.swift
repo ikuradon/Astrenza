@@ -1121,6 +1121,244 @@ struct NostrCorePackageTests {
         #expect(failed.expiresAt == 3_800)
     }
 
+    @Test("Media resolver service config requires enabled HTTPS or localhost URL and token")
+    func mediaResolverServiceConfigValidation() {
+        let valid = NostrMediaResolverServiceConfiguration(
+            serviceURLString: " https://media.example.test/base/ ",
+            bearerToken: " secret-token ",
+            isEnabled: true
+        )
+        #expect(valid.isUsable)
+        #expect(valid.serviceURL?.absoluteString == "https://media.example.test/base/")
+        #expect(valid.bearerToken == "secret-token")
+        #expect(String(describing: valid).contains("secret-token") == false)
+        #expect(String(reflecting: valid).contains("secret-token") == false)
+
+        let redactedURL = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "https://user:password@media.example.test/base?token=url-secret#fragment",
+            bearerToken: "secret-token",
+            isEnabled: true
+        )
+        #expect(redactedURL.isUsable)
+        #expect(String(describing: redactedURL).contains("user") == false)
+        #expect(String(describing: redactedURL).contains("password") == false)
+        #expect(String(describing: redactedURL).contains("url-secret") == false)
+
+        let localHTTP = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "http://127.0.0.1:8787",
+            bearerToken: "secret-token",
+            isEnabled: true
+        )
+        #expect(localHTTP.isUsable)
+
+        let remoteHTTP = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "http://media.example.test",
+            bearerToken: "secret-token",
+            isEnabled: true
+        )
+        #expect(!remoteHTTP.isUsable)
+
+        let missingToken = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "https://media.example.test",
+            bearerToken: " ",
+            isEnabled: true
+        )
+        #expect(!missingToken.isUsable)
+
+        let invalidScheme = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "ftp://media.example.test",
+            bearerToken: "secret-token",
+            isEnabled: true
+        )
+        #expect(!invalidScheme.isUsable)
+
+        let disabled = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "https://media.example.test",
+            bearerToken: "secret-token",
+            isEnabled: false
+        )
+        #expect(!disabled.isUsable)
+    }
+
+    @Test("Media resolver service client posts batched items with bearer auth")
+    func mediaResolverServiceClientRequestShape() async throws {
+        let captured = MediaResolverRequestProbe()
+        let configuration = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "https://user:password@media.example.test/base?ignored=true#fragment",
+            bearerToken: "private-token",
+            isEnabled: true
+        )
+        let client = NostrMediaResolverServiceClient(
+            configuration: configuration,
+            dataLoader: { request in
+                await captured.store(request)
+                let body = """
+                {"results":[]}
+                """
+                let data = try #require(body.data(using: .utf8))
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            }
+        )
+        #expect(String(describing: client).contains("private-token") == false)
+        #expect(String(reflecting: client).contains("private-token") == false)
+
+        _ = try await client.resolve(items: [
+            NostrMediaResolverResolveItem(
+                id: "preview",
+                url: "https://example.test/article",
+                kind: .html
+            )
+        ])
+
+        let request = try await #require(captured.request)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.absoluteString == "https://media.example.test/base/v1/resolve")
+        #expect(request.url?.absoluteString.contains("user") == false)
+        #expect(request.url?.absoluteString.contains("password") == false)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer private-token")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
+        #expect(request.url?.absoluteString.contains("private-token") == false)
+
+        let body = try #require(request.httpBody)
+        let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let items = try #require(object["items"] as? [[String: Any]])
+        let firstItem = try #require(items.first)
+        #expect(firstItem["id"] as? String == "preview")
+        #expect(firstItem["url"] as? String == "https://example.test/article")
+        #expect(firstItem["kind"] as? String == "html")
+    }
+
+    @Test("Link preview resolver maps service results before local HTML fetch")
+    func linkPreviewResolverUsesServiceResult() async throws {
+        let localProbe = LinkPreviewLoaderProbe()
+        let configuration = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "https://media.example.test",
+            bearerToken: "private-token",
+            isEnabled: true
+        )
+        let client = NostrMediaResolverServiceClient(
+            configuration: configuration,
+            dataLoader: { request in
+                let body = """
+                {
+                  "results": [
+                    {
+                      "id": "link-preview",
+                      "status": "resolved",
+                      "kind": "html",
+                      "url": "https://example.test/article",
+                      "finalUrl": "https://example.test/article",
+                      "title": "Service Title",
+                      "description": "Service summary",
+                      "siteName": "Service Site",
+                      "thumbnailStyle": "summary_large_image",
+                      "image": {
+                        "url": "https://cdn.example.test/original.png",
+                        "optimizedUrl": "https://media.example.test/v1/image/thumb?url=encoded",
+                        "mimeType": "image/png",
+                        "width": 100,
+                        "height": 80,
+                        "blurhash": null
+                      },
+                      "cacheTtlSeconds": 86400,
+                      "warnings": [],
+                      "error": null
+                    }
+                  ]
+                }
+                """
+                let data = try #require(body.data(using: .utf8))
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            }
+        )
+        let resolver = NostrLinkPreviewResolver(
+            dataLoader: { _ in
+                await localProbe.markLoaded()
+                return (Data(), URLResponse())
+            },
+            serviceClient: client,
+            now: { Date(timeIntervalSince1970: 4_000) },
+            cacheTTLSeconds: 600
+        )
+        let preview = NostrLinkPreviewRecord(
+            url: "https://example.test/article",
+            normalizedURL: "https://example.test/article",
+            status: "unresolved",
+            title: nil,
+            summary: nil,
+            siteName: nil,
+            imageURL: nil,
+            fetchedAt: nil,
+            expiresAt: nil,
+            error: nil
+        )
+
+        let resolved = await resolver.resolve(preview)
+
+        #expect(resolved.status == "resolved")
+        #expect(resolved.title == "Service Title")
+        #expect(resolved.summary == "Service summary")
+        #expect(resolved.siteName == "Service Site")
+        #expect(resolved.imageURL == "https://media.example.test/v1/image/thumb?url=encoded")
+        #expect(resolved.fetchedAt == 4_000)
+        #expect(resolved.expiresAt == 4_600)
+        #expect(await localProbe.didLoad == false)
+    }
+
+    @Test("Link preview resolver falls back to local HTML when service fails")
+    func linkPreviewResolverFallsBackToLocalWhenServiceFails() async throws {
+        struct ServiceFailure: Error {}
+
+        let configuration = NostrMediaResolverServiceConfiguration(
+            serviceURLString: "https://media.example.test",
+            bearerToken: "private-token",
+            isEnabled: true
+        )
+        let client = NostrMediaResolverServiceClient(
+            configuration: configuration,
+            dataLoader: { _ in throw ServiceFailure() }
+        )
+        let html = """
+        <html>
+          <head>
+            <meta property="og:title" content="Local Title">
+            <meta property="og:description" content="Local summary">
+          </head>
+        </html>
+        """
+        let resolver = NostrLinkPreviewResolver(
+            dataLoader: { request in
+                #expect(request.url?.absoluteString == "https://example.test/article")
+                let data = try #require(html.data(using: .utf8))
+                return (data, httpResponse(url: request.url, statusCode: 200))
+            },
+            serviceClient: client,
+            now: { Date(timeIntervalSince1970: 5_000) },
+            cacheTTLSeconds: 300
+        )
+        let preview = NostrLinkPreviewRecord(
+            url: "https://example.test/article",
+            normalizedURL: "https://example.test/article",
+            status: "unresolved",
+            title: nil,
+            summary: nil,
+            siteName: nil,
+            imageURL: nil,
+            fetchedAt: nil,
+            expiresAt: nil,
+            error: nil
+        )
+
+        let resolved = await resolver.resolve(preview)
+
+        #expect(resolved.status == "resolved")
+        #expect(resolved.title == "Local Title")
+        #expect(resolved.summary == "Local summary")
+        #expect(resolved.fetchedAt == 5_000)
+        #expect(resolved.expiresAt == 5_300)
+    }
+
     @Test("Nostr outbox persists events and relay destinations")
     func eventStoreOutboxPersistence() throws {
         let store = try NostrEventStore.inMemory()
@@ -3973,6 +4211,18 @@ struct NostrCorePackageTests {
 
         func markLoaded() {
             loaded = true
+        }
+    }
+
+    private actor MediaResolverRequestProbe {
+        private var capturedRequest: URLRequest?
+
+        var request: URLRequest? {
+            capturedRequest
+        }
+
+        func store(_ request: URLRequest) {
+            capturedRequest = request
         }
     }
 

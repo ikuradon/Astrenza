@@ -17,7 +17,13 @@ struct AstrenzaRootView: View {
             relayRuntime: NostrRelayRuntime { _ in
                 NostrURLSessionRelayTransport()
             },
-            linkPreviewResolver: NostrLinkPreviewResolver()
+            linkPreviewResolver: NostrLinkPreviewResolver(
+                serviceClientProvider: {
+                    let serviceConfiguration = NostrMediaResolverSettingsStore.shared.configuration()
+                    guard serviceConfiguration.isUsable else { return nil }
+                    return NostrMediaResolverServiceClient(configuration: serviceConfiguration)
+                }
+            )
         ))
     }
 
