@@ -381,7 +381,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard !listEvents.isEmpty else { return [] }
         let pubkeys = Set(listEvents.map(\.pubkey))
         let metadata = (try? eventStore.latestReplaceableEvents(pubkeys: pubkeys, kind: 0)) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
-        return NostrTimelineMaterializer.entries(
+        return NostrTimelineProjection.entries(
             noteEvents: listEvents,
             metadataEvents: metadata,
             nip05Resolutions: nip05Resolutions,
@@ -1764,7 +1764,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let liveMetadata = metadataEvents.filter { profilePubkeys.contains($0.pubkey) }
         let metadata = storedMetadata + liveMetadata
 
-        return NostrTimelineMaterializer.posts(
+        return NostrTimelineProjection.posts(
             noteEvents: events,
             metadataEvents: metadata,
             nip05Resolutions: nip05Resolutions,
