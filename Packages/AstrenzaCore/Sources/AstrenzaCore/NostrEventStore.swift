@@ -1202,6 +1202,61 @@ public final class NostrEventStore {
         }
     }
 
+    public func pruneTimelineEntries(
+        accountID: String,
+        timelineKey: String,
+        policy: NostrTimelineIndexPolicy,
+        anchorEventID: String?,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> Int {
+        try database.write { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ?
+                ORDER BY sort_ts DESC, event_id ASC
+                """,
+                arguments: [accountID, timelineKey]
+            )
+            let entries = rows.map(decodeTimelineEntry)
+            guard !entries.isEmpty else { return 0 }
+
+            let candidates = entries.map { entry in
+                NostrTimelineIndexCandidate(
+                    eventID: entry.eventID,
+                    sortTimestamp: entry.sortTimestamp,
+                    insertedAt: entry.insertedAt,
+                    gapBefore: entry.gapBefore,
+                    gapAfter: entry.gapAfter
+                )
+            }
+            let retainedIDs = policy.retainedEventIDs(
+                from: candidates,
+                anchorEventID: anchorEventID,
+                now: now
+            )
+            let deletingIDs = entries.map(\.eventID).filter { !retainedIDs.contains($0) }
+            guard !deletingIDs.isEmpty else { return 0 }
+
+            let placeholders = deletingIDs.map { _ in "?" }.joined(separator: ", ")
+            var arguments: StatementArguments = [accountID, timelineKey]
+            for eventID in deletingIDs {
+                arguments += [eventID]
+            }
+            try db.execute(
+                sql: """
+                DELETE FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ? AND event_id IN (\(placeholders))
+                """,
+                arguments: arguments
+            )
+
+            return deletingIDs.count
+        }
+    }
+
     public func markTimelineGap(
         accountID: String,
         timelineKey: String,
