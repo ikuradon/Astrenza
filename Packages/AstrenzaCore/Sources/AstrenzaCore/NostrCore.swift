@@ -77,6 +77,20 @@ public struct NostrEvent: Codable, Equatable, Identifiable, Sendable {
             && NostrHex.isLowercaseHex(sig, byteCount: 64)
             && computedID == id
     }
+
+    public var embeddedRepostTarget: NostrEvent? {
+        guard kind == 6,
+              let targetID = tags.last(where: { $0.count >= 2 && $0[0] == "e" })?[1],
+              let data = content.data(using: .utf8),
+              let embedded = try? JSONDecoder().decode(NostrEvent.self, from: data),
+              embedded.kind == 1,
+              embedded.id == targetID,
+              embedded.hasValidShape
+        else {
+            return nil
+        }
+        return embedded
+    }
 }
 
 public enum NostrCanonicalJSON {

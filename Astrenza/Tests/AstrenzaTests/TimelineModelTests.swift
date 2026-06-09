@@ -6367,6 +6367,51 @@ struct TimelineModelTests {
         #expect(repostedPost.bodyPresentation.timelineLineLimit == 1)
     }
 
+    @Test("Home timeline persistence saves embedded repost targets")
+    func homeTimelinePersistenceSavesEmbeddedRepostTargets() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let reposterSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "4a", count: 32))
+        let targetSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "4b", count: 32))
+        let target = try await targetSigner.sign(
+            NostrPublishInput.post(content: "persisted embedded repost body")
+                .unsignedEvent(pubkey: targetSigner.pubkey, createdAt: 100)
+        )
+        let targetJSON = try #require(String(data: JSONEncoder().encode(target), encoding: .utf8))
+        let repost = try await reposterSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: reposterSigner.pubkey,
+                createdAt: 300,
+                kind: 6,
+                tags: [
+                    ["e", target.id],
+                    ["p", targetSigner.pubkey]
+                ],
+                content: targetJSON
+            )
+        )
+
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [reposterSigner.pubkey],
+                noteEvents: [repost],
+                metadataEvents: [],
+                hasMoreOlder: false
+            ),
+            accountID: reposterSigner.pubkey
+        )
+
+        let storedTarget = try #require(try eventStore.event(id: target.id))
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [repost],
+            contextEvents: [storedTarget],
+            metadataEvents: [],
+            followedPubkeys: [reposterSigner.pubkey]
+        )
+
+        #expect(posts.first?.body == "persisted embedded repost body")
+    }
+
     @Test("_@domain NIP-05 is displayed as domain only")
     func rootNIP05Display() {
         let author = TimelineAuthor.resolved(

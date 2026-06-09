@@ -376,9 +376,10 @@ public final class NostrEventStore {
 
     public func save(events: [NostrEvent], receivedAt: Int = Int(Date().timeIntervalSince1970)) throws {
         guard !events.isEmpty else { return }
+        let eventsToSave = Self.eventsIncludingEmbeddedRepostTargets(events)
 
         try database.write { db in
-            for event in events {
+            for event in eventsToSave {
                 try upsert(event: event, receivedAt: receivedAt, db: db)
                 try replaceTags(for: event, db: db)
                 try replaceMediaAssets(for: event, receivedAt: receivedAt, db: db)
@@ -387,10 +388,29 @@ public final class NostrEventStore {
                 try upsertAddressableHeadIfNeeded(for: event, db: db)
                 try upsertListIfNeeded(for: event, accountID: event.pubkey, db: db)
             }
-            for event in events where event.kind == 5 {
+            for event in eventsToSave where event.kind == 5 {
                 try applyDeletionRequest(event, db: db)
             }
         }
+    }
+
+    private static func eventsIncludingEmbeddedRepostTargets(_ events: [NostrEvent]) -> [NostrEvent] {
+        var output: [NostrEvent] = []
+        var seenEventIDs = Set<String>()
+
+        func append(_ event: NostrEvent) {
+            guard seenEventIDs.insert(event.id).inserted else { return }
+            output.append(event)
+        }
+
+        for event in events {
+            append(event)
+            if let embeddedTarget = event.embeddedRepostTarget {
+                append(embeddedTarget)
+            }
+        }
+
+        return output
     }
 
     public func saveHomeTimelineState(
