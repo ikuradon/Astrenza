@@ -23,6 +23,73 @@ struct NostrTimelineProjectionTests {
 
         #expect(projected.map(\.id) == materialized.map(\.id))
     }
+
+    @Test("Projection refresh coordinator runs a scheduled refresh once")
+    @MainActor
+    func projectionRefreshCoordinatorRunsScheduledRefresh() async throws {
+        let coordinator = NostrProjectionRefreshCoordinator(delayNanoseconds: 50_000_000)
+        var refreshCount = 0
+
+        coordinator.schedule {
+            refreshCount += 1
+        }
+
+        await Task.yield()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        await Task.yield()
+        #expect(refreshCount == 1)
+    }
+
+    @Test("Projection refresh coordinator coalesces multiple pending refreshes")
+    @MainActor
+    func projectionRefreshCoordinatorCoalescesPendingRefreshes() async throws {
+        let coordinator = NostrProjectionRefreshCoordinator(delayNanoseconds: 50_000_000)
+        var refreshCount = 0
+
+        coordinator.schedule {
+            refreshCount += 1
+        }
+        await Task.yield()
+        coordinator.schedule {
+            refreshCount += 10
+        }
+
+        try await Task.sleep(nanoseconds: 150_000_000)
+        await Task.yield()
+        #expect(refreshCount == 1)
+    }
+
+    @Test("Projection refresh coordinator flushes immediately")
+    @MainActor
+    func projectionRefreshCoordinatorFlushesImmediately() async throws {
+        let coordinator = NostrProjectionRefreshCoordinator(delayNanoseconds: 100_000_000)
+        var refreshCount = 0
+
+        coordinator.schedule {
+            refreshCount += 100
+        }
+        coordinator.flush {
+            refreshCount += 1
+        }
+
+        try await Task.sleep(nanoseconds: 120_000_000)
+        #expect(refreshCount == 1)
+    }
+
+    @Test("Projection refresh coordinator cancels pending refreshes")
+    @MainActor
+    func projectionRefreshCoordinatorCancelsPendingRefresh() async throws {
+        let coordinator = NostrProjectionRefreshCoordinator(delayNanoseconds: 20_000_000)
+        var refreshCount = 0
+
+        coordinator.schedule {
+            refreshCount += 1
+        }
+        coordinator.cancel()
+
+        try await Task.sleep(nanoseconds: 60_000_000)
+        #expect(refreshCount == 0)
+    }
 }
 
 private func projectionEvent(idSeed: Character, pubkey: String, createdAt: Int, content: String) -> NostrEvent {
