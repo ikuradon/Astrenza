@@ -85,7 +85,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
     private var linkPreviewTask: Task<Void, Never>?
-    private var materializeTask: Task<Void, Never>?
     private var resolvingLinkPreviewURLs = Set<String>()
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
@@ -108,6 +107,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var restoreProjectionAnchorEventID: String?
     private var lastEntriesRenderFingerprint: [String] = []
     private let materializeCoalescingDelayNanoseconds: UInt64 = 250_000_000
+    private lazy var projectionRefreshCoordinator = NostrProjectionRefreshCoordinator(
+        delayNanoseconds: materializeCoalescingDelayNanoseconds
+    )
     private let projectionWindowLimit = 240
     private let projectionAnchorLeadingLimit = 80
     private let projectionAnchorTrailingLimit = 160
@@ -410,13 +412,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         paginationTask?.cancel()
         runtimeTask?.cancel()
         linkPreviewTask?.cancel()
-        materializeTask?.cancel()
+        projectionRefreshCoordinator.cancel()
         backwardFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
         linkPreviewTask = nil
-        materializeTask = nil
         backwardFlushTask = nil
         dependencyFetchQueue.removeAll()
         pendingBackwardRequests.removeAll()
@@ -1706,8 +1707,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries() {
-        materializeTask?.cancel()
-        materializeTask = nil
+        projectionRefreshCoordinator.cancel()
         let filterRules = homeFilterRules()
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
         let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
@@ -1743,16 +1743,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleMaterializeEntries(delayNanoseconds: UInt64? = nil) {
-        guard materializeTask == nil else { return }
         let delay = delayNanoseconds ?? materializeCoalescingDelayNanoseconds
-        materializeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: delay)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self, !Task.isCancelled else { return }
-                self.materializeTask = nil
-                self.materializeEntries()
-            }
+        projectionRefreshCoordinator.schedule(delayNanoseconds: delay) { [weak self] in
+            self?.materializeEntries()
         }
     }
 

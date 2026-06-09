@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class NostrProjectionRefreshCoordinator {
     private let delayNanoseconds: UInt64
-    private var pendingTask: Task<Void, Never>?
+    private var pendingWorkItem: DispatchWorkItem?
     private var pendingGeneration = 0
 
     init(delayNanoseconds: UInt64) {
@@ -11,19 +11,21 @@ final class NostrProjectionRefreshCoordinator {
     }
 
     func schedule(_ operation: @escaping @MainActor () -> Void) {
-        guard pendingTask == nil else { return }
-        let delayNanoseconds = delayNanoseconds
+        schedule(delayNanoseconds: delayNanoseconds, operation)
+    }
+
+    func schedule(delayNanoseconds: UInt64, _ operation: @escaping @MainActor () -> Void) {
+        guard pendingWorkItem == nil else { return }
         pendingGeneration += 1
         let generation = pendingGeneration
-        pendingTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: delayNanoseconds)
-            } catch {
-                return
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.complete(generation: generation, operation)
             }
-            guard !Task.isCancelled else { return }
-            self?.complete(generation: generation, operation)
         }
+        pendingWorkItem = workItem
+        let delay = DispatchTimeInterval.nanoseconds(Int(delayNanoseconds))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     func flush(_ operation: @escaping @MainActor () -> Void) {
@@ -32,14 +34,14 @@ final class NostrProjectionRefreshCoordinator {
     }
 
     func cancel() {
-        pendingTask?.cancel()
-        pendingTask = nil
+        pendingWorkItem?.cancel()
+        pendingWorkItem = nil
         pendingGeneration += 1
     }
 
     private func complete(generation: Int, _ operation: @escaping @MainActor () -> Void) {
-        guard pendingGeneration == generation, pendingTask != nil else { return }
-        pendingTask = nil
+        guard pendingGeneration == generation, pendingWorkItem != nil else { return }
+        pendingWorkItem = nil
         operation()
     }
 }

@@ -34,9 +34,10 @@ struct NostrTimelineProjectionTests {
             refreshCount += 1
         }
 
-        await Task.yield()
-        try await Task.sleep(nanoseconds: 150_000_000)
-        await Task.yield()
+        for _ in 0..<25 where refreshCount == 0 {
+            try await Task.sleep(nanoseconds: 40_000_000)
+            await Task.yield()
+        }
         #expect(refreshCount == 1)
     }
 
@@ -54,8 +55,27 @@ struct NostrTimelineProjectionTests {
             refreshCount += 10
         }
 
-        try await Task.sleep(nanoseconds: 150_000_000)
-        await Task.yield()
+        for _ in 0..<25 where refreshCount == 0 {
+            try await Task.sleep(nanoseconds: 40_000_000)
+            await Task.yield()
+        }
+        #expect(refreshCount == 1)
+    }
+
+    @Test("Projection refresh coordinator supports per-schedule delay")
+    @MainActor
+    func projectionRefreshCoordinatorSupportsPerScheduleDelay() async throws {
+        let coordinator = NostrProjectionRefreshCoordinator(delayNanoseconds: 200_000_000)
+        var refreshCount = 0
+
+        coordinator.schedule(delayNanoseconds: 20_000_000) {
+            refreshCount += 1
+        }
+
+        for _ in 0..<25 where refreshCount == 0 {
+            try await Task.sleep(nanoseconds: 40_000_000)
+            await Task.yield()
+        }
         #expect(refreshCount == 1)
     }
 
