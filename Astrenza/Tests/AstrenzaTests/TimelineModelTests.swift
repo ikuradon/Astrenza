@@ -4261,12 +4261,13 @@ struct TimelineModelTests {
         #expect(store.unmaterializedNewCount == 1)
         #expect(store.entries.compactMap(\.post).map(\.id) == [initialEvent.id])
         #expect(try eventStore.event(id: liveEvent.id)?.content == "buffered live")
-        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [liveEvent.id, initialEvent.id])
+        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [initialEvent.id])
 
         await store.applyPendingNewEvents()
 
         #expect(store.unmaterializedNewCount == 0)
         #expect(store.entries.compactMap(\.post).map(\.id) == [liveEvent.id, initialEvent.id])
+        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [liveEvent.id, initialEvent.id])
     }
 
     @Test("Home timeline store applies runtime forward events immediately at newest window")

@@ -273,6 +273,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func applyPendingNewEvents() async {
         guard let account else { return }
+        promotePendingNewEventsToTimelineIndex(account: account)
         reloadNewestProjectionWindow(account: account)
         unmaterializedNewEventIDs.removeAll()
         unmaterializedNewCount = 0
@@ -784,6 +785,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
+    private func promotePendingNewEventsToTimelineIndex(account: NostrAccount) {
+        guard let eventStore, !unmaterializedNewEventIDs.isEmpty else { return }
+        let events = (try? eventStore.events(ids: Array(unmaterializedNewEventIDs))) ?? []
+        saveHomeTimelineIndex(events: events, account: account, source: "forward")
+    }
+
     private func reloadNewestProjectionWindow(account: NostrAccount) {
         guard let eventStore,
               let timelineEntries = try? eventStore.timelineEntries(
@@ -1107,10 +1114,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             noteEvents.removeAll { deletedIDs.contains($0.id) }
             materializeEntries()
         } else {
-            saveHomeTimelineIndex(events: [event], account: account, source: "forward")
             enqueueBackwardDependencies(for: event)
             embeddedTarget.map(enqueueBackwardDependencies)
             if isTimelineAtNewestWindow && unmaterializedNewEventIDs.isEmpty {
+                saveHomeTimelineIndex(events: [event], account: account, source: "forward")
                 reloadNewestProjectionWindow(account: account)
                 materializeEntries()
             } else if unmaterializedNewEventIDs.insert(event.id).inserted {
