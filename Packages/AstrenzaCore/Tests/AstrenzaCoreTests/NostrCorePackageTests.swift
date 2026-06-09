@@ -799,6 +799,38 @@ struct NostrCorePackageTests {
         )))
     }
 
+    @Test("Rich content parses adjacent custom emoji shortcodes")
+    func richContentParsesAdjacentCustomEmoji() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: ":tiger_lower_right::tiger_upper_left:\n:tiger_middle_right::tiger_middle_left:\n:tiger_lower_left::tiger_upper_right:",
+            tags: [
+                ["emoji", "tiger_upper_left", "https://emoji.example.test/tiger_upper_left.webp"],
+                ["emoji", "tiger_upper_right", "https://emoji.example.test/tiger_upper_right.webp"],
+                ["emoji", "tiger_middle_left", "https://emoji.example.test/tiger_middle_left.webp"],
+                ["emoji", "tiger_middle_right", "https://emoji.example.test/tiger_middle_right.webp"],
+                ["emoji", "tiger_lower_left", "https://emoji.example.test/tiger_lower_left.webp"],
+                ["emoji", "tiger_lower_right", "https://emoji.example.test/tiger_lower_right.webp"]
+            ]
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+        let emojiShortcodes = rich.tokens.compactMap { token -> String? in
+            guard case .customEmoji(let shortcode, _) = token else { return nil }
+            return shortcode
+        }
+
+        #expect(emojiShortcodes == [
+            "tiger_lower_right",
+            "tiger_upper_left",
+            "tiger_middle_right",
+            "tiger_middle_left",
+            "tiger_lower_left",
+            "tiger_upper_right"
+        ])
+        #expect(rich.displayText == event.content)
+    }
+
     @Test("Rich content preserves line breaks and parses hashtags")
     func richContentPreservesLineBreaksAndParsesHashtags() throws {
         let event = nostrEvent(
