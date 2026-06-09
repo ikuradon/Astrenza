@@ -1,7 +1,14 @@
+export type ResolveImagePreset = "timeline" | "thumb" | "blurhash-source";
+
 export type ResolveItem = {
   id: string;
   url: string;
   kind: "auto" | "html" | "image";
+};
+
+export type ResolveBatchRequest = {
+  items: ResolveItem[];
+  imagePreset?: ResolveImagePreset;
 };
 
 export type ResolvedImage = {
