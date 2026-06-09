@@ -6029,6 +6029,11 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         let url = try #require(URL(string: "https://example.test/story"))
+        let entriesBeforePreviewResolution = try await waitForTimelineEntryIDs(
+            in: eventStore,
+            accountID: account.pubkey,
+            containing: linkEvent.id
+        )
         let preview = try await waitForLinkPreview(
             in: eventStore,
             url: url,
@@ -6053,6 +6058,7 @@ struct TimelineModelTests {
             Issue.record("Expected resolved OGP card")
         }
         #expect(preview.status == "resolved")
+        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == entriesBeforePreviewResolution)
     }
 
     @Test("Home timeline store materializes runtime deletion events")
@@ -6905,6 +6911,35 @@ private func waitForTimelinePostIDs(
     }
 
     #expect(store.entries.compactMap(\.post).map(\.id) == ids)
+}
+
+@MainActor
+private func waitForTimelineEntryIDs(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    timelineKey: String = "home",
+    containing eventID: String,
+    attempts: Int = 100
+) async throws -> [String] {
+    for _ in 0..<attempts {
+        let ids = try eventStore.timelineEntries(
+            accountID: accountID,
+            timelineKey: timelineKey,
+            limit: 100
+        ).map(\.eventID)
+        if ids.contains(eventID) {
+            return ids
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    let ids = try eventStore.timelineEntries(
+        accountID: accountID,
+        timelineKey: timelineKey,
+        limit: 100
+    ).map(\.eventID)
+    #expect(ids.contains(eventID))
+    return ids
 }
 
 @MainActor

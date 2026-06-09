@@ -752,10 +752,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         publishUnreadState()
     }
 
-    private func persistDatabase(account: NostrAccount) {
+    private func persistDatabase(account: NostrAccount, updatesTimelineIndex: Bool = true) {
         guard let eventStore else { return }
         do {
-            try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
+            if updatesTimelineIndex {
+                try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
+            } else {
+                try eventStore.saveHomeTimelineFacts(loaderState(), accountID: account.pubkey)
+            }
         } catch {
             // Live networking can still populate the timeline if the database write fails.
         }
@@ -1270,13 +1274,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard !identifier.isEmpty else {
             nip05Resolutions.removeValue(forKey: metadataEvent.pubkey)
             if let account {
-                persistDatabase(account: account)
+                persistDatabase(account: account, updatesTimelineIndex: false)
             }
             return
         }
         guard nip05Resolutions[metadataEvent.pubkey]?.identifier != identifier else {
             if let account {
-                persistDatabase(account: account)
+                persistDatabase(account: account, updatesTimelineIndex: false)
             }
             return
         }
@@ -1294,7 +1298,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self.nip05Resolutions[metadataEvent.pubkey] = resolution
                 self.scheduleMaterializeEntries()
                 if let account = self.account {
-                    self.persistDatabase(account: account)
+                    self.persistDatabase(account: account, updatesTimelineIndex: false)
                 }
             }
         }
@@ -1638,7 +1642,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self.linkPreviewTask = nil
                 self.scheduleMaterializeEntries()
                 if let account = self.account {
-                    self.persistDatabase(account: account)
+                    self.persistDatabase(account: account, updatesTimelineIndex: false)
                 }
                 self.scheduleLinkPreviewResolution()
             }

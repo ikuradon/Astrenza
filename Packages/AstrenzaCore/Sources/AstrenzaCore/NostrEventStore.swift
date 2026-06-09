@@ -417,6 +417,18 @@ public final class NostrEventStore {
         try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
     }
 
+    public func saveHomeTimelineFacts(
+        _ state: NostrHomeTimelineState,
+        accountID: String,
+        timelineKey: String = "home",
+        savedAt: Int = Int(Date().timeIntervalSince1970)
+    ) throws {
+        let events = state.noteEvents + state.metadataEvents + [state.relayListEvent, state.contactListEvent].compactMap { $0 }
+        try save(events: events, receivedAt: savedAt)
+        try saveRelaySyncEvents(state.relaySyncEvents)
+        try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
+    }
+
     public func homeTimelineState(
         accountID: String,
         timelineKey: String = "home",

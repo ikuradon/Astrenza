@@ -105,6 +105,7 @@ Projection currently lives in app-layer files under `Astrenza/Sources/AstrenzaAp
 - Projection refresh scheduling is currently embedded in `NostrHomeTimelineStore`; future work should use a focused coordinator.
 - `timeline_entries` can grow forever unless retention and pruning are implemented.
 - kind:5 handling currently applies deletion only when the target event is already known; pending deletion and `a` tag deletion are future work.
+- `media_assets` are currently extracted during event fact save, while `link_previews` can be resolved asynchronously later. The async path must only update projection input facts and must not insert, remove, or reorder `timeline_entries`.
 
 ## Safe Existing Behavior
 
