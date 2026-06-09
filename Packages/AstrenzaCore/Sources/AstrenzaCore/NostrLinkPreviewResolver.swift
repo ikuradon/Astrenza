@@ -2,6 +2,7 @@ import Foundation
 
 public struct NostrLinkPreviewResolver: Sendable {
     public let dataLoader: NostrHTTPDataLoader
+    private let serviceClientProvider: @Sendable () -> NostrMediaResolverServiceClient?
     public let now: @Sendable () -> Date
     public let cacheTTLSeconds: Int
 
@@ -9,15 +10,66 @@ public struct NostrLinkPreviewResolver: Sendable {
         dataLoader: @escaping NostrHTTPDataLoader = { request in
             try await URLSession.shared.data(for: request)
         },
+        serviceClient: NostrMediaResolverServiceClient? = nil,
         now: @escaping @Sendable () -> Date = Date.init,
         cacheTTLSeconds: Int = 60 * 60 * 24
     ) {
         self.dataLoader = dataLoader
+        self.serviceClientProvider = { serviceClient }
+        self.now = now
+        self.cacheTTLSeconds = cacheTTLSeconds
+    }
+
+    public init(
+        dataLoader: @escaping NostrHTTPDataLoader = { request in
+            try await URLSession.shared.data(for: request)
+        },
+        serviceClientProvider: @escaping @Sendable () -> NostrMediaResolverServiceClient?,
+        now: @escaping @Sendable () -> Date = Date.init,
+        cacheTTLSeconds: Int = 60 * 60 * 24
+    ) {
+        self.dataLoader = dataLoader
+        self.serviceClientProvider = serviceClientProvider
         self.now = now
         self.cacheTTLSeconds = cacheTTLSeconds
     }
 
     public func resolve(_ preview: NostrLinkPreviewRecord) async -> NostrLinkPreviewRecord {
+        if let serviceResult = await resolveWithService(preview) {
+            return serviceResult
+        }
+        return await resolveLocally(preview)
+    }
+
+    private func resolveWithService(_ preview: NostrLinkPreviewRecord) async -> NostrLinkPreviewRecord? {
+        guard let serviceClient = serviceClientProvider(), serviceClient.configuration.isUsable else {
+            return nil
+        }
+
+        let item = NostrMediaResolverResolveItem(
+            id: "link-preview",
+            url: preview.url,
+            kind: .html
+        )
+
+        do {
+            let results = try await serviceClient.resolve(items: [item])
+            guard let result = results.first(where: { result in
+                result.id == item.id ||
+                    result.url == preview.url ||
+                    result.url == preview.normalizedURL ||
+                    result.finalURL == preview.url ||
+                    result.finalURL == preview.normalizedURL
+            }) else {
+                return nil
+            }
+            return linkPreviewRecord(from: result, fallback: preview)
+        } catch {
+            return nil
+        }
+    }
+
+    private func resolveLocally(_ preview: NostrLinkPreviewRecord) async -> NostrLinkPreviewRecord {
         guard let url = URL(string: preview.url) ?? URL(string: preview.normalizedURL) else {
             return failedPreview(from: preview, message: "invalid URL")
         }
@@ -53,6 +105,28 @@ public struct NostrLinkPreviewResolver: Sendable {
         } catch {
             return failedPreview(from: preview, message: error.localizedDescription)
         }
+    }
+
+    private func linkPreviewRecord(
+        from result: NostrMediaResolverResolveResult,
+        fallback preview: NostrLinkPreviewRecord
+    ) -> NostrLinkPreviewRecord {
+        let fetchedAt = Int(now().timeIntervalSince1970)
+        let imageURL = result.image?.optimizedURL ?? result.image?.url
+        let isResolved = result.status == "resolved"
+
+        return NostrLinkPreviewRecord(
+            url: preview.url,
+            normalizedURL: preview.normalizedURL,
+            status: isResolved ? "resolved" : "failed",
+            title: isResolved ? result.title : nil,
+            summary: isResolved ? result.description : nil,
+            siteName: isResolved ? result.siteName : nil,
+            imageURL: isResolved ? imageURL : nil,
+            fetchedAt: fetchedAt,
+            expiresAt: fetchedAt + (isResolved ? cacheTTLSeconds : min(cacheTTLSeconds, 60 * 30)),
+            error: isResolved ? nil : result.error
+        )
     }
 
     public func remotePreviewDecision(

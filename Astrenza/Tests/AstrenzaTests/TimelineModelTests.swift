@@ -2490,6 +2490,47 @@ struct TimelineModelTests {
         #expect(store.policy(accountID: accountB).mode == .ownRelayList)
     }
 
+    @Test("Media resolver service settings persist URL token and enabled state")
+    func mediaResolverServiceSettingsPersist() throws {
+        let suiteName = "AstrenzaTests.media-resolver.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let tokenStore = MediaResolverBearerTokenProbe()
+        let store = NostrMediaResolverSettingsStore(defaults: defaults, bearerTokenStore: tokenStore.store)
+        let settings = NostrMediaResolverServiceSettings(
+            serviceURLString: "https://media.example.test/base",
+            bearerToken: "private-token",
+            isEnabled: true
+        )
+
+        store.save(settings)
+
+        let restored = store.settings()
+        #expect(restored == settings)
+        #expect(store.configuration().isUsable)
+        #expect(store.configuration().bearerToken == "private-token")
+        #expect(tokenStore.token == "private-token")
+        #expect(defaults.string(forKey: NostrMediaResolverSettingsStore.legacyBearerTokenDefaultsKey) == nil)
+        #expect(String(describing: restored).contains("private-token") == false)
+        #expect(String(reflecting: restored).contains("private-token") == false)
+    }
+
+    @Test("Media resolver service settings migrate legacy UserDefaults token into token store")
+    func mediaResolverServiceSettingsMigrateLegacyToken() throws {
+        let suiteName = "AstrenzaTests.media-resolver.legacy.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("legacy-token", forKey: NostrMediaResolverSettingsStore.legacyBearerTokenDefaultsKey)
+        let tokenStore = MediaResolverBearerTokenProbe()
+        let store = NostrMediaResolverSettingsStore(defaults: defaults, bearerTokenStore: tokenStore.store)
+
+        let settings = store.settings()
+
+        #expect(settings.bearerToken == "legacy-token")
+        #expect(tokenStore.token == "legacy-token")
+        #expect(defaults.string(forKey: NostrMediaResolverSettingsStore.legacyBearerTokenDefaultsKey) == nil)
+    }
+
     @Test("Home timeline store loads saved sync policy when account starts")
     @MainActor
     func homeTimelineStoreLoadsSavedSyncPolicyOnStart() throws {
@@ -7147,6 +7188,34 @@ private actor FakeStoreRelayClient: NostrRelayFetching {
 
     func fetchSubscriptionIDs() -> [String] {
         fetchCalls
+    }
+}
+
+private final class MediaResolverBearerTokenProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = ""
+
+    var store: NostrMediaResolverBearerTokenStore {
+        NostrMediaResolverBearerTokenStore(
+            token: { [weak self] in
+                self?.token ?? ""
+            },
+            save: { [weak self] token in
+                self?.save(token)
+            }
+        )
+    }
+
+    var token: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    private func save(_ token: String) {
+        lock.lock()
+        value = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.unlock()
     }
 }
 

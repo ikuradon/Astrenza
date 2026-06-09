@@ -8,17 +8,22 @@ struct RelaySettingsView: View {
     @State private var draftRelayURL = "wss://"
     @State private var isPublishingNIP65 = true
     @State private var syncPolicy: NostrSyncPolicy
+    @State private var mediaResolverSettings: NostrMediaResolverServiceSettings
     private let syncPolicyStore: NostrSyncPolicySettingsStore
+    private let mediaResolverSettingsStore: NostrMediaResolverSettingsStore
 
     init(
         accountID: String? = nil,
         eventStore: NostrEventStore? = nil,
-        syncPolicyStore: NostrSyncPolicySettingsStore = .shared
+        syncPolicyStore: NostrSyncPolicySettingsStore = .shared,
+        mediaResolverSettingsStore: NostrMediaResolverSettingsStore = .shared
     ) {
         self.accountID = accountID
         self.eventStore = eventStore
         self.syncPolicyStore = syncPolicyStore
+        self.mediaResolverSettingsStore = mediaResolverSettingsStore
         _syncPolicy = State(initialValue: syncPolicyStore.policy(accountID: accountID))
+        _mediaResolverSettings = State(initialValue: mediaResolverSettingsStore.settings())
     }
 
     var body: some View {
@@ -27,6 +32,8 @@ struct RelaySettingsView: View {
                 RelaySettingsHeader(isPublishingNIP65: $isPublishingNIP65)
 
                 RelaySyncPolicyCard(policy: $syncPolicy)
+
+                RelayMediaResolverServiceCard(settings: $mediaResolverSettings)
 
                 Picker("Relay Section", selection: $selectedSection) {
                     ForEach(RelaySettingsSection.allCases) { section in
@@ -47,6 +54,9 @@ struct RelaySettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: syncPolicy) { _, policy in
             syncPolicyStore.save(policy, accountID: accountID)
+        }
+        .onChange(of: mediaResolverSettings) { _, settings in
+            mediaResolverSettingsStore.save(settings)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -227,6 +237,63 @@ private struct RelaySyncPolicyCard: View {
                 )
             }
             .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18))
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+private struct RelayMediaResolverServiceCard: View {
+    @Binding var settings: NostrMediaResolverServiceSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "link.badge.plus")
+                    .font(.system(size: 23, weight: .black))
+                    .foregroundStyle(Color.astrenzaAccent)
+                    .frame(width: 48, height: 48)
+                    .background(Color.astrenzaAccent.opacity(0.16), in: Circle())
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Media Resolver Service")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                    Text(settings.configuration.isUsable ? "Ready" : "Disabled or incomplete")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Toggle(isOn: $settings.isEnabled) {
+                Text("Use service for OGP")
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+            }
+            .tint(Color.astrenzaAccent)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Service URL")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+                TextField("https://media.example.com", text: $settings.serviceURLString)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.URL)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .padding(12)
+                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Bearer Token")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+                SecureField("Token", text: $settings.bearerToken)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .padding(12)
+                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+            }
         }
         .padding(16)
         .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
