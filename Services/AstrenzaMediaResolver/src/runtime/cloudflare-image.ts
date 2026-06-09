@@ -1,5 +1,6 @@
 import type { ResolveImagePreset } from "../core/schema";
 import { validateFetchUrl, validateRedirectLocation } from "../core/url-guard";
+import type { ImageTransformer } from "./adapter";
 
 type CloudflareImageFit = "scale-down";
 type CloudflareImageFormat = "avif" | "webp" | "jpeg";
@@ -69,7 +70,13 @@ export type FetchCloudflareImageOptions = {
   fetch?: typeof fetch;
   serviceOrigin: string;
   maxRedirects?: number;
+  imageRequestInit?: ImageRequestInitFactory;
 };
+
+type ImageRequestInitFactory = (
+  request: Request,
+  preset: ImagePresetName,
+) => RequestInit;
 
 export function isImagePresetName(value: string): value is ImagePresetName {
   return Object.hasOwn(imagePresets, value);
@@ -100,6 +107,7 @@ export async function fetchCloudflareImage(
 
   const fetchImpl = options.fetch ?? fetch;
   const maxRedirects = options.maxRedirects ?? MAX_IMAGE_REDIRECTS;
+  const requestInit = options.imageRequestInit ?? cloudflareImageRequestInit;
   let currentUrl = guard.url;
 
   for (
@@ -109,7 +117,7 @@ export async function fetchCloudflareImage(
   ) {
     let response: Response;
     try {
-      response = await fetchImpl(currentUrl, imageRequestInit(request, preset));
+      response = await fetchImpl(currentUrl, requestInit(request, preset));
     } catch {
       return { ok: false, error: "upstream_fetch_failed", status: 502 };
     }
@@ -153,7 +161,18 @@ export async function fetchCloudflareImage(
   return { ok: false, error: "too_many_redirects", status: 400 };
 }
 
-function imageRequestInit(
+export function createPassThroughImageTransformer(
+  fetchImpl?: typeof fetch,
+): ImageTransformer {
+  return (request, targetUrl, preset, options) =>
+    fetchCloudflareImage(request, targetUrl, preset, {
+      fetch: fetchImpl ?? options.fetch,
+      serviceOrigin: options.serviceOrigin,
+      imageRequestInit: passThroughImageRequestInit,
+    });
+}
+
+function cloudflareImageRequestInit(
   request: Request,
   preset: ImagePresetName,
 ): CloudflareImageRequestInit {
@@ -167,6 +186,14 @@ function imageRequestInit(
         format: negotiatedFormat(request, preset),
       },
     },
+  };
+}
+
+function passThroughImageRequestInit(request: Request): RequestInit {
+  return {
+    headers: safeUpstreamHeaders(request),
+    redirect: "manual",
+    signal: request.signal,
   };
 }
 
@@ -251,6 +278,6 @@ function isUnexpectedSuccessContentType(response: Response): boolean {
   if (!isSuccessStatus(response.status)) return false;
 
   const contentType = response.headers.get("Content-Type");
-  if (!contentType) return false;
+  if (!contentType) return true;
   return !contentType.toLowerCase().startsWith("image/");
 }

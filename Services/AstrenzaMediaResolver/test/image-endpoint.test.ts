@@ -291,6 +291,24 @@ describe("image endpoint", () => {
       error: "upstream_non_image",
     });
   });
+
+  it("rejects successful upstream responses without Content-Type", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      return new Response("<html></html>", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await worker.fetch(
+      imageRequest("timeline", "https://cdn.example.com/unknown"),
+      resolverEnv(),
+      executionContext(),
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: "upstream_non_image",
+    });
+  });
 });
 
 function cloudflareImageOptions(

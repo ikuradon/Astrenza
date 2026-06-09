@@ -97,6 +97,7 @@ export async function probeImageHeader(
 
   const headIsUnavailable =
     head.response.status === 405 || head.response.status === 501;
+  const headContentType = head.response.headers.get("Content-Type");
 
   if (isSuccessStatus(head.response.status)) {
     await cancelResponseBody(head.response);
@@ -106,6 +107,13 @@ export async function probeImageHeader(
 
   if (!headIsUnavailable && !isSuccessStatus(head.response.status)) {
     probeUrl = initialGuard.url;
+  }
+
+  if (isSuccessStatus(head.response.status) && isClearlyNotImage(headContentType)) {
+    return {
+      ...emptyHeader(),
+      warnings: [],
+    };
   }
 
   const get = await fetchImageProbeRequest(fetchImpl, probeUrl, {
@@ -311,6 +319,18 @@ function imageProbeHeaders(rangeEnd: number | undefined): Record<string, string>
   }
 
   return headers;
+}
+
+function isClearlyNotImage(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
+  if (!mediaType || mediaType.startsWith("image/")) return false;
+  return (
+    mediaType.startsWith("text/") ||
+    mediaType === "application/json" ||
+    mediaType === "application/xml" ||
+    mediaType === "application/xhtml+xml"
+  );
 }
 
 async function readLimitedBytes(

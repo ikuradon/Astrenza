@@ -158,6 +158,31 @@ describe("probeImageHeader", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("skips ranged GET when HEAD is clearly not an image", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      if (init?.method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      return new Response("unexpected", { status: 200 });
+    });
+
+    const result = await probeImageHeader("https://example.com/article", {
+      fetch: fetchMock,
+    });
+
+    expect(result).toEqual({
+      width: null,
+      height: null,
+      mimeType: null,
+      warnings: [],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels ignored Range responses that exceed the probe limit", async () => {
     const png = fixtureBytes(tinyPngBase64);
     let cancelled = false;

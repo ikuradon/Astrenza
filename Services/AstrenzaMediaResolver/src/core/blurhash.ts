@@ -17,6 +17,10 @@ export type GenerateBlurHashResult = {
 
 export type GenerateBlurHashOptions = {
   fetch?: typeof fetch;
+  fetchBlurHashSource?: (
+    url: string,
+    signal: AbortSignal,
+  ) => Promise<Response>;
   maxBytes?: number;
   maxRedirects?: number;
   timeoutMs?: number;
@@ -61,11 +65,13 @@ export async function generateBlurHash(
 
   let response: Response;
   try {
-    response = await fetchBlurHashImage(fetchImpl, guard.url, {
-      maxRedirects: options.maxRedirects ?? DEFAULT_BLURHASH_MAX_REDIRECTS,
-      serviceOrigin: options.serviceOrigin,
-      signal,
-    });
+    response = options.fetchBlurHashSource
+      ? await options.fetchBlurHashSource(guard.url, signal)
+      : await fetchBlurHashImage(fetchImpl, guard.url, {
+          maxRedirects: options.maxRedirects ?? DEFAULT_BLURHASH_MAX_REDIRECTS,
+          serviceOrigin: options.serviceOrigin,
+          signal,
+        });
   } catch {
     return failedResult("blurhash_failed");
   }

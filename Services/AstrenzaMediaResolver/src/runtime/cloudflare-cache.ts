@@ -1,7 +1,20 @@
 import type { ResolveResult } from "../core/schema";
 import type { ImagePresetName } from "./cloudflare-image";
 
-export type MetaCacheBinding = Pick<KVNamespace, "get" | "put">;
+export type MetaCachePutOptions = {
+  expirationTtl?: number;
+};
+
+export type MetaCacheBinding = {
+  get(key: string): Promise<string | null>;
+  put(
+    key: string,
+    value: string,
+    options?: MetaCachePutOptions,
+  ): Promise<void>;
+};
+
+export type BackgroundScheduler = (task: Promise<unknown>) => void;
 
 export const FALLBACK_CACHE_TTL_SECONDS = 86400;
 export const FAILED_CACHE_TTL_SECONDS = 1800;
@@ -53,7 +66,7 @@ export async function readResolveCache(
 }
 
 export function writeResolveCache(
-  ctx: ExecutionContext,
+  schedule: BackgroundScheduler,
   cache: MetaCacheBinding | undefined,
   normalizedUrl: string,
   imagePreset: ImagePresetName,
@@ -64,9 +77,7 @@ export function writeResolveCache(
 
   const ttl =
     result.status === "resolved" ? resolvedTtlSeconds : FAILED_CACHE_TTL_SECONDS;
-  ctx.waitUntil(
-    writeResolveCacheNow(cache, normalizedUrl, imagePreset, result, ttl),
-  );
+  schedule(writeResolveCacheNow(cache, normalizedUrl, imagePreset, result, ttl));
 }
 
 async function writeResolveCacheNow(

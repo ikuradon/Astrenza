@@ -1,14 +1,12 @@
 import { bearerToken, verifyBearerToken } from "./core/auth";
-import { generateBlurHash } from "./core/blurhash";
+import { generateBlurHash, type GenerateBlurHashOptions } from "./core/blurhash";
 import {
   DEFAULT_IMAGE_PROBE_TIMEOUT_MS,
   ImageProbeError,
-  MAX_IMAGE_PROBE_BYTES,
   probeImageHeader,
 } from "./core/image-header";
 import {
   FetchHtmlError,
-  MAX_HTML_BYTES,
   fetchHtmlDocument,
   parseHtmlMetadata,
 } from "./core/html-metadata";
@@ -21,11 +19,15 @@ import type {
 import { validateFetchUrl } from "./core/url-guard";
 import {
   FAILED_CACHE_TTL_SECONDS,
-  defaultCacheTtlSeconds,
   readResolveCache,
   writeResolveCache,
   type MetaCacheBinding,
 } from "./runtime/cloudflare-cache";
+import {
+  createCloudflareRuntimeAdapter,
+  type RuntimeAdapter,
+  type RuntimeAdapterFactory,
+} from "./runtime/adapter";
 import {
   fetchCloudflareImage,
   isImagePresetName,
@@ -38,13 +40,27 @@ type ResolverEnv = Env & {
   META_CACHE?: MetaCacheBinding;
 };
 
+type MediaResolverHandler<AdapterEnv, AdapterContext> = {
+  fetch(
+    request: Request,
+    env: AdapterEnv,
+    ctx: AdapterContext,
+  ): Promise<Response>;
+};
+
+type CreateMediaResolverHandlerOptions<AdapterEnv, AdapterContext> = {
+  runtimeAdapter?: RuntimeAdapterFactory<AdapterEnv, AdapterContext>;
+};
+
 type ResolveContext = {
-  ctx: ExecutionContext;
+  fetch: typeof fetch;
   cache: MetaCacheBinding | undefined;
   cacheTtlSeconds: number;
+  imageTransformer: RuntimeAdapter["imageTransformer"];
   imagePreset: ImagePresetName;
   maxHtmlBytes: number;
   maxImageProbeBytes: number;
+  schedule: (task: Promise<unknown>) => void;
   serviceOrigin: string;
 };
 
@@ -53,36 +69,84 @@ type ImageResolution = {
   warnings: string[];
 };
 
-export default {
-  async fetch(
-    request: Request,
-    env: ResolverEnv,
-    ctx: ExecutionContext,
-  ): Promise<Response> {
-    const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") {
-      return Response.json({
-        ok: true,
-        service: "astrenza-media-resolver",
-        version: env.SERVICE_VERSION,
-      });
-    }
+export function createMediaResolverHandler(): MediaResolverHandler<
+  ResolverEnv,
+  ExecutionContext
+>;
+export function createMediaResolverHandler<
+  AdapterEnv extends ResolverEnv,
+  AdapterContext,
+>(
+  options: Required<
+    CreateMediaResolverHandlerOptions<AdapterEnv, AdapterContext>
+  >,
+): MediaResolverHandler<AdapterEnv, AdapterContext>;
+export function createMediaResolverHandler<
+  AdapterEnv extends ResolverEnv,
+  AdapterContext,
+>(
+  options: CreateMediaResolverHandlerOptions<
+    AdapterEnv,
+    AdapterContext
+  > = {},
+): MediaResolverHandler<AdapterEnv, AdapterContext> {
+  return {
+    async fetch(
+      request: Request,
+      env: AdapterEnv,
+      ctx: AdapterContext,
+    ): Promise<Response> {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/health") {
+        return Response.json({
+          ok: true,
+          service: "astrenza-media-resolver",
+          version: env.SERVICE_VERSION,
+        });
+      }
 
-    if (request.method === "GET" && url.pathname.startsWith("/v1/image/")) {
-      return handleImage(request, env);
-    }
+      const runtime = runtimeForRequest(request, env, ctx, options);
+      if (request.method === "GET" && url.pathname.startsWith("/v1/image/")) {
+        return handleImage(request, env, runtime);
+      }
 
-    if (request.method === "POST" && url.pathname === "/v1/resolve") {
-      return handleResolve(request, env, ctx);
-    }
+      if (request.method === "POST" && url.pathname === "/v1/resolve") {
+        return handleResolve(request, env, runtime);
+      }
 
-    return Response.json({ error: "not_found" }, { status: 404 });
-  },
-} satisfies ExportedHandler<ResolverEnv>;
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  };
+}
+
+function runtimeForRequest<AdapterEnv extends ResolverEnv, AdapterContext>(
+  request: Request,
+  env: AdapterEnv,
+  ctx: AdapterContext,
+  options: CreateMediaResolverHandlerOptions<AdapterEnv, AdapterContext>,
+): RuntimeAdapter {
+  if (options.runtimeAdapter) {
+    return options.runtimeAdapter({ request, env, ctx });
+  }
+
+  return createCloudflareRuntimeAdapter({
+    request,
+    env,
+    ctx: ctx as ExecutionContext,
+  });
+}
+
+export default createMediaResolverHandler<
+  ResolverEnv,
+  ExecutionContext
+>({
+  runtimeAdapter: createCloudflareRuntimeAdapter,
+}) satisfies ExportedHandler<ResolverEnv>;
 
 async function handleImage(
   request: Request,
   env: ResolverEnv,
+  runtime: RuntimeAdapter,
 ): Promise<Response> {
   const authError = await authorize(request, env);
   if (authError) return authError;
@@ -98,8 +162,10 @@ async function handleImage(
     return jsonError("missing_url", 400);
   }
 
-  const result = await fetchCloudflareImage(request, targetUrl, preset, {
-    serviceOrigin: url.origin,
+  const imageTransformer = runtime.imageTransformer ?? fetchCloudflareImage;
+  const result = await imageTransformer(request, targetUrl, preset, {
+    fetch: runtime.fetch,
+    serviceOrigin: runtime.serviceOrigin,
   });
   if (!result.ok) {
     return jsonError(result.error, result.status);
@@ -111,7 +177,7 @@ async function handleImage(
 async function handleResolve(
   request: Request,
   env: ResolverEnv,
-  ctx: ExecutionContext,
+  runtime: RuntimeAdapter,
 ): Promise<Response> {
   const authError = await authorize(request, env);
   if (authError) return authError;
@@ -127,19 +193,17 @@ async function handleResolve(
     return jsonError("invalid_request", 400);
   }
 
-  const requestUrl = new URL(request.url);
   const imagePreset = body.imagePreset ?? "timeline";
   const context: ResolveContext = {
-    ctx,
-    cache: env.META_CACHE,
-    cacheTtlSeconds: defaultCacheTtlSeconds(env.DEFAULT_CACHE_TTL_SECONDS),
+    fetch: runtime.fetch,
+    cache: runtime.metaCache,
+    cacheTtlSeconds: runtime.limits.cacheTtlSeconds,
+    imageTransformer: runtime.imageTransformer,
     imagePreset,
-    maxHtmlBytes: positiveEnvInteger(env.MAX_HTML_BYTES, MAX_HTML_BYTES),
-    maxImageProbeBytes: positiveEnvInteger(
-      env.MAX_IMAGE_PROBE_BYTES,
-      MAX_IMAGE_PROBE_BYTES,
-    ),
-    serviceOrigin: requestUrl.origin,
+    maxHtmlBytes: runtime.limits.maxHtmlBytes,
+    maxImageProbeBytes: runtime.limits.maxImageProbeBytes,
+    schedule: runtime.schedule,
+    serviceOrigin: runtime.serviceOrigin,
   };
 
   const results: ResolveResult[] = [];
@@ -204,7 +268,7 @@ async function resolveItem(
   }
 
   writeResolveCache(
-    context.ctx,
+    context.schedule,
     context.cache,
     guard.url,
     context.imagePreset,
@@ -266,6 +330,7 @@ async function resolveAutoImageItem(
   let probe: Awaited<ReturnType<typeof probeImageHeader>>;
   try {
     probe = await probeImageHeader(normalizedUrl, {
+      fetch: context.fetch,
       maxBytes: context.maxImageProbeBytes,
       timeoutMs: DEFAULT_IMAGE_PROBE_TIMEOUT_MS,
       serviceOrigin: context.serviceOrigin,
@@ -277,6 +342,7 @@ async function resolveAutoImageItem(
   if (!probe.mimeType) return null;
 
   const blurhash = await generateBlurHash(normalizedUrl, {
+    ...blurHashOptions(context),
     serviceOrigin: context.serviceOrigin,
   });
 
@@ -314,6 +380,7 @@ async function resolveHtmlItem(
   context: ResolveContext,
 ): Promise<ResolveResult> {
   const document = await fetchHtmlDocument(normalizedUrl, {
+    fetch: context.fetch,
     maxBytes: context.maxHtmlBytes,
     serviceOrigin: context.serviceOrigin,
   });
@@ -403,6 +470,7 @@ async function resolveImage(
 
   try {
     const probe = await probeImageHeader(guard.url, {
+      fetch: context.fetch,
       maxBytes: context.maxImageProbeBytes,
       timeoutMs: DEFAULT_IMAGE_PROBE_TIMEOUT_MS,
       serviceOrigin: context.serviceOrigin,
@@ -417,6 +485,7 @@ async function resolveImage(
   }
 
   const blurhash = await generateBlurHash(guard.url, {
+    ...blurHashOptions(context),
     serviceOrigin: context.serviceOrigin,
   });
   image.blurhash = blurhash.blurhash;
@@ -476,6 +545,39 @@ function safeOptimizedImageUrl(
   );
 }
 
+function blurHashOptions(
+  context: ResolveContext,
+): Pick<GenerateBlurHashOptions, "fetch" | "fetchBlurHashSource"> {
+  return {
+    fetch: context.fetch,
+    fetchBlurHashSource: context.imageTransformer
+      ? (url, signal) => fetchBlurHashSource(context, url, signal)
+      : undefined,
+  };
+}
+
+async function fetchBlurHashSource(
+  context: ResolveContext,
+  url: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  const transformer = context.imageTransformer;
+  if (!transformer) throw new Error("missing_image_transformer");
+
+  const requestUrl = new URL("/v1/image/blurhash-source", context.serviceOrigin);
+  requestUrl.searchParams.set("url", url);
+  const request = new Request(requestUrl, {
+    headers: { Accept: "image/jpeg" },
+    signal,
+  });
+  const result = await transformer(request, url, "blurhash-source", {
+    fetch: context.fetch,
+    serviceOrigin: context.serviceOrigin,
+  });
+  if (!result.ok) throw new Error(result.error);
+  return result.response;
+}
+
 function inferResolveKind(
   item: ResolveItem,
   normalizedUrl: string,
@@ -533,14 +635,6 @@ function isResolveItem(value: unknown): value is ResolveItem {
       candidate.kind === "html" ||
       candidate.kind === "image")
   );
-}
-
-function positiveEnvInteger(rawValue: string | undefined, fallback: number): number {
-  const parsed = Number(rawValue);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return parsed;
 }
 
 function jsonError(error: string, status: number): Response {
