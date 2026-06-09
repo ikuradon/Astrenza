@@ -1,5 +1,17 @@
 import SwiftUI
 
+struct RelativeTimestampText: View {
+    let createdAt: Int?
+
+    var body: some View {
+        if let createdAt {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(TimelineTimestampFormatter.relativeText(from: createdAt, now: context.date))
+            }
+        }
+    }
+}
+
 struct SensitiveTimelineContent<Content: View>: View {
     let contentWarning: TimelineContentWarning
     @ViewBuilder let content: () -> Content
@@ -68,7 +80,7 @@ struct RepostAttributionView: View {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 11, weight: .black))
 
-            Text(attribution.timestamp)
+            RelativeTimestampText(createdAt: attribution.createdAt)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.tertiary)
                 .fixedSize()
@@ -171,7 +183,7 @@ struct QuotedPostCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
 
-                    Text(quotedPost.timestamp)
+                    RelativeTimestampText(createdAt: quotedPost.createdAt)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.tertiary)
                         .fixedSize()

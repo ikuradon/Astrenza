@@ -9,8 +9,7 @@ struct NostrTimelineQuoteProjection {
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
         followedPubkeys: Set<String>,
-        avatarForItem: (NostrHomeTimelineItem) -> AvatarStyle,
-        relativeTimestamp: (Int) -> String
+        avatarForItem: (NostrHomeTimelineItem) -> AvatarStyle
     ) -> QuotedTimelinePost? {
         guard let quotedID = NostrTimelineContentProjection.quotedPostID(from: event) else { return nil }
         guard let quoted = eventsByID[quotedID] else {
@@ -37,7 +36,7 @@ struct NostrTimelineQuoteProjection {
             avatar: avatarForItem(item),
             body: richBody.displayText,
             richBody: richBody,
-            timestamp: relativeTimestamp(quoted.createdAt),
+            createdAt: quoted.createdAt,
             isAvailable: true
         )
     }
@@ -72,7 +71,7 @@ struct NostrTimelineQuoteProjection {
             ),
             body: "Quoted note is not cached yet.",
             richBody: nil,
-            timestamp: "",
+            createdAt: nil,
             isAvailable: false
         )
     }

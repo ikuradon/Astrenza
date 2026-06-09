@@ -8,7 +8,7 @@ struct TimelinePost: Identifiable {
     let avatar: AvatarStyle
     let body: String
     let richBody: NostrRichContent?
-    let timestamp: String
+    let createdAt: Int
     let replyCount: Int?
     let boostCount: Int?
     let favoriteCount: Int?
@@ -31,7 +31,7 @@ struct TimelinePost: Identifiable {
         avatar: AvatarStyle,
         body: String,
         richBody: NostrRichContent? = nil,
-        timestamp: String,
+        createdAt: Int,
         replyCount: Int?,
         boostCount: Int?,
         favoriteCount: Int?,
@@ -53,12 +53,12 @@ struct TimelinePost: Identifiable {
             nip05Status: .valid,
             pubkey: TimelineAuthor.mockPubkey(for: authorName)
         )
-        self.id = id ?? Self.stableMockID(authorKey: author.pubkey, body: body, timestamp: timestamp)
+        self.id = id ?? Self.stableMockID(authorKey: author.pubkey, body: body, createdAt: createdAt)
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
         self.richBody = richBody
-        self.timestamp = timestamp
+        self.createdAt = createdAt
         self.replyCount = replyCount
         self.boostCount = boostCount
         self.favoriteCount = favoriteCount
@@ -81,7 +81,7 @@ struct TimelinePost: Identifiable {
         avatar: AvatarStyle,
         body: String,
         richBody: NostrRichContent? = nil,
-        timestamp: String,
+        createdAt: Int,
         replyCount: Int?,
         boostCount: Int?,
         favoriteCount: Int?,
@@ -97,12 +97,12 @@ struct TimelinePost: Identifiable {
         linkSummary: TimelineLinkSummary? = nil,
         actionState: TimelinePostActionState = .none
     ) {
-        self.id = id ?? Self.stableMockID(authorKey: author.pubkey, body: body, timestamp: timestamp)
+        self.id = id ?? Self.stableMockID(authorKey: author.pubkey, body: body, createdAt: createdAt)
         self.author = author
         self.avatar = avatar.withPlaceholderSeed(author.pubkey)
         self.body = body
         self.richBody = richBody
-        self.timestamp = timestamp
+        self.createdAt = createdAt
         self.replyCount = replyCount
         self.boostCount = boostCount
         self.favoriteCount = favoriteCount
@@ -119,9 +119,61 @@ struct TimelinePost: Identifiable {
         self.actionState = actionState
     }
 
-    private static func stableMockID(authorKey: String, body: String, timestamp: String) -> String {
-        let seed = "\(authorKey)|\(timestamp)|\(body)"
+    private static func stableMockID(authorKey: String, body: String, createdAt: Int) -> String {
+        let seed = "\(authorKey)|\(createdAt)|\(body)"
         return "mock-\(TimelineAuthor.mockPubkey(for: seed).prefix(24))"
+    }
+}
+
+enum TimelineTimestampFormatter {
+    static func relativeText(from createdAt: Int, now: Date = Date()) -> String {
+        let nowSeconds = Int(now.timeIntervalSince1970)
+        let delta = max(0, nowSeconds - createdAt)
+        if delta < 60 {
+            return "\(delta)s"
+        }
+        if delta < 3_600 {
+            return "\(delta / 60)m"
+        }
+        if delta < 86_400 {
+            return "\(delta / 3_600)h"
+        }
+        return "\(delta / 86_400)d"
+    }
+
+    static func absoluteText(from createdAt: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Tokyo")
+        formatter.dateFormat = "yyyy/MM/dd HH:mm 'JST'"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdAt)))
+    }
+}
+
+enum TimelineMockClock {
+    static let referenceNow = Int(Date().timeIntervalSince1970)
+
+    static func createdAt(relative text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != "now",
+              let unit = trimmed.last,
+              let value = Int(trimmed.dropLast())
+        else {
+            return referenceNow
+        }
+
+        switch unit {
+        case "s":
+            return referenceNow - value
+        case "m":
+            return referenceNow - value * 60
+        case "h":
+            return referenceNow - value * 3_600
+        case "d":
+            return referenceNow - value * 86_400
+        default:
+            return referenceNow
+        }
     }
 }
 
@@ -334,13 +386,13 @@ struct TimelineContentWarning {
 struct TimelineRepostAttribution {
     let author: TimelineAuthor
     let avatar: AvatarStyle
-    let timestamp: String
+    let createdAt: Int
 }
 
 struct TimelineReplyContext {
     let author: TimelineAuthor
     let avatar: AvatarStyle
-    let timestamp: String
+    let createdAt: Int
     let bodyPreview: String
     let richContent: NostrRichContent?
     let isSelfReply: Bool
@@ -348,14 +400,14 @@ struct TimelineReplyContext {
     init(
         author: TimelineAuthor,
         avatar: AvatarStyle,
-        timestamp: String,
+        createdAt: Int,
         bodyPreview: String,
         richContent: NostrRichContent? = nil,
         isSelfReply: Bool
     ) {
         self.author = author
         self.avatar = avatar
-        self.timestamp = timestamp
+        self.createdAt = createdAt
         self.bodyPreview = bodyPreview
         self.richContent = richContent
         self.isSelfReply = isSelfReply
@@ -450,7 +502,7 @@ struct MockNostrEvent {
     let author: TimelineAuthor
     let avatar: AvatarStyle
     let content: String
-    let timestamp: String
+    let createdAt: Int
     let replyTo: TimelinePost?
     let replyMention: TimelineReplyMention?
     let reposts: Int?
@@ -463,7 +515,7 @@ struct MockNostrEvent {
             author: author,
             avatar: avatar,
             body: content,
-            timestamp: timestamp,
+            createdAt: createdAt,
             replyCount: nil,
             boostCount: reposts,
             favoriteCount: reactions,
@@ -480,7 +532,7 @@ struct MockNostrEvent {
         TimelineReplyContext(
             author: parent.author,
             avatar: parent.avatar,
-            timestamp: parent.timestamp,
+            createdAt: parent.createdAt,
             bodyPreview: parent.body,
             isSelfReply: author.pubkey == parent.author.pubkey
         )
@@ -492,17 +544,17 @@ struct QuotedTimelinePost {
     let avatar: AvatarStyle
     let body: String
     let richBody: NostrRichContent?
-    let timestamp: String
+    let createdAt: Int?
     let isAvailable: Bool
 
     func timelinePost() -> TimelinePost {
         TimelinePost(
-            id: "quoted-\(author.pubkey)-\(timestamp)",
+            id: "quoted-\(author.pubkey)-\(createdAt ?? 0)",
             author: author,
             avatar: avatar,
             body: body,
             richBody: richBody,
-            timestamp: timestamp,
+            createdAt: createdAt ?? 0,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,

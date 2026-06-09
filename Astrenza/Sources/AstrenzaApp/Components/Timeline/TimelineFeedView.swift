@@ -48,6 +48,9 @@ struct TimelineFeedView: View {
     private var posts: [TimelinePost] {
         displayedEntries.compactMap(\.post)
     }
+    private var sourceEntryFingerprints: [String] {
+        entries.map(entryDisplayFingerprint)
+    }
 
     init(
         posts: [TimelinePost],
@@ -238,7 +241,7 @@ struct TimelineFeedView: View {
         .onPreferenceChange(TimelineViewportSizePreferenceKey.self) { size in
             scrollRuntime.viewportSize = size
         }
-        .onChange(of: entries.map(\.id)) { _, _ in
+        .onChange(of: sourceEntryFingerprints) { _, _ in
             syncDisplayedEntriesFromSource()
         }
         .onChange(of: viewportState) { _, _ in
@@ -495,7 +498,20 @@ private extension TimelineFeedView {
 
         let oldIDs = displayedEntries.map(\.id)
         let newIDs = entries.map(\.id)
-        guard oldIDs != newIDs else { return }
+        let oldFingerprints = displayedEntries.map(entryDisplayFingerprint)
+        let newFingerprints = entries.map(entryDisplayFingerprint)
+        guard oldIDs != newIDs || oldFingerprints != newFingerprints else { return }
+
+        if oldIDs == newIDs {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            transaction.animation = nil
+            withTransaction(transaction) {
+                displayedEntries = entries
+                updateLayoutSnapshot()
+            }
+            return
+        }
 
         let shouldPreserveAnchorForPullRefresh = isPullRefreshing || isPullRefreshArmed || isUserPullingToRefresh || pullRefreshProgress > 0
         let shouldFollowNewestEntries = !shouldPreserveAnchorForPullRefresh && followsNewestEntries && entriesDidPrependNewest(oldIDs: oldIDs, newIDs: newIDs)
@@ -541,6 +557,83 @@ private extension TimelineFeedView {
               let firstOldIndexInNewEntries = newIDs.firstIndex(of: firstOldID)
         else { return false }
         return firstOldIndexInNewEntries > 0
+    }
+
+    func entryDisplayFingerprint(_ entry: TimelineFeedEntry) -> String {
+        switch entry {
+        case .post(let post):
+            return [
+                "post",
+                post.id,
+                post.author.primaryText,
+                post.author.secondaryText,
+                "\(post.author.nip05Status)",
+                "\(post.author.isMetadataResolved)",
+                "\(post.author.isFollowed)",
+                post.avatar.imageURL?.absoluteString ?? "",
+                "\(post.avatar.pictureState)",
+                post.body,
+                "\(post.createdAt)",
+                post.repostedBy?.author.primaryText ?? "",
+                post.repostedBy?.createdAt.description ?? "",
+                post.replyContext?.author.primaryText ?? "",
+                post.replyContext?.createdAt.description ?? "",
+                post.replyContext?.bodyPreview ?? "",
+                post.quotedPost?.body ?? "",
+                post.quotedPost?.createdAt?.description ?? "",
+                post.contentWarning?.displayReason ?? "",
+                mediaDisplayFingerprint(post.media),
+                post.linkSummary?.compactText ?? "",
+                "\(post.actionState.didReply)",
+                "\(post.actionState.didRepost)",
+                "\(post.actionState.didFavorite)",
+                "\(post.actionState.didZap)"
+            ].joined(separator: "\u{1f}")
+        case .gap(let gap):
+            return [
+                "gap",
+                gap.id,
+                gap.newerPostID,
+                gap.olderPostID,
+                "\(gap.missingEstimate)",
+                "\(gap.relayCount)",
+                "\(gap.state)",
+                gap.backfilledPosts.map(\.id).joined(separator: ",")
+            ].joined(separator: "\u{1f}")
+        case .deleted(let entry):
+            return "deleted\u{1f}\(entry.id)"
+        }
+    }
+
+    func mediaDisplayFingerprint(_ media: TimelineMedia?) -> String {
+        guard let media else { return "" }
+        switch media {
+        case .gallery(let tiles):
+            return tiles.map { tile in
+                [
+                    tile.id,
+                    tile.title,
+                    tile.symbolName,
+                    tile.url?.absoluteString ?? "",
+                    tile.altText ?? "",
+                    tile.width?.description ?? "",
+                    tile.height?.description ?? "",
+                    tile.blurhash ?? ""
+                ].joined(separator: "\u{1e}")
+            }.joined(separator: "\u{1d}")
+        case .linkPreview(let preview):
+            return [
+                "link",
+                preview.title,
+                preview.subtitle,
+                preview.host,
+                preview.url,
+                preview.imageURL?.absoluteString ?? "",
+                "\(preview.style)"
+            ].joined(separator: "\u{1e}")
+        case .unresolvedLink(let preview):
+            return ["unresolved", preview.host, preview.url].joined(separator: "\u{1e}")
+        }
     }
 
     func updatePullRefreshState(offset: CGFloat) {

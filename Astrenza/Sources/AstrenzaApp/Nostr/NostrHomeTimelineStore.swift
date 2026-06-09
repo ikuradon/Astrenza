@@ -2053,7 +2053,7 @@ extension NostrHomeTimelineStore {
                     placeholderSeed: id
                 ),
                 body: id,
-                timestamp: "now",
+                createdAt: TimelineMockClock.referenceNow,
                 replyCount: nil,
                 boostCount: nil,
                 favoriteCount: nil,

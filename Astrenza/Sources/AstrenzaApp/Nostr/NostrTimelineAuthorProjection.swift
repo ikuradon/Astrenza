@@ -52,17 +52,10 @@ struct NostrTimelineAuthorProjection {
     }
 
     static func relativeTimestamp(from createdAt: Int, now: Int = Int(Date().timeIntervalSince1970)) -> String {
-        let delta = max(0, now - createdAt)
-        if delta < 60 {
-            return "\(delta)s"
-        }
-        if delta < 3_600 {
-            return "\(delta / 60)m"
-        }
-        if delta < 86_400 {
-            return "\(delta / 3_600)h"
-        }
-        return "\(delta / 86_400)d"
+        TimelineTimestampFormatter.relativeText(
+            from: createdAt,
+            now: Date(timeIntervalSince1970: TimeInterval(now))
+        )
     }
 
     static func contentWarning(from event: NostrEvent) -> TimelineContentWarning? {

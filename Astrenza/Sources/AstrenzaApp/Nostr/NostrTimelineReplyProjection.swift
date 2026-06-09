@@ -11,7 +11,6 @@ struct NostrTimelineReplyProjection {
         author: TimelineAuthor,
         authorForParent: (NostrEvent) -> TimelineAuthor,
         avatarForParent: (NostrEvent) -> AvatarStyle,
-        relativeTimestamp: (Int) -> String,
         mentionDisplayForPubkey: (String) -> String?
     ) {
         self.replyContext = Self.replyContext(
@@ -19,8 +18,7 @@ struct NostrTimelineReplyProjection {
             eventsByID: eventsByID,
             fallbackAuthor: author,
             authorForParent: authorForParent,
-            avatarForParent: avatarForParent,
-            relativeTimestamp: relativeTimestamp
+            avatarForParent: avatarForParent
         )
         self.replyMention = Self.replyMention(
             from: event,
@@ -62,8 +60,7 @@ struct NostrTimelineReplyProjection {
         eventsByID: [String: NostrEvent],
         fallbackAuthor: TimelineAuthor,
         authorForParent: (NostrEvent) -> TimelineAuthor,
-        avatarForParent: (NostrEvent) -> AvatarStyle,
-        relativeTimestamp: (Int) -> String
+        avatarForParent: (NostrEvent) -> AvatarStyle
     ) -> TimelineReplyContext? {
         guard let parentID = replyParentID(from: event.tags),
               let parent = eventsByID[parentID]
@@ -74,7 +71,7 @@ struct NostrTimelineReplyProjection {
         return TimelineReplyContext(
             author: parentAuthor,
             avatar: avatarForParent(parent),
-            timestamp: relativeTimestamp(parent.createdAt),
+            createdAt: parent.createdAt,
             bodyPreview: parentRichContent.displayText,
             richContent: parentRichContent,
             isSelfReply: parent.pubkey == event.pubkey

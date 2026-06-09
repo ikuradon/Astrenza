@@ -91,7 +91,7 @@ struct TimelinePostRow: View {
                     .fixedSize()
             }
 
-            Text(post.timestamp)
+            RelativeTimestampText(createdAt: post.createdAt)
                 .font(.system(size: AstrenzaTimelineMetrics.timestampFontSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -263,7 +263,7 @@ private extension TimelinePostRow {
                 placeholderSeed: pubkey
             ),
             body: "",
-            timestamp: "",
+            createdAt: TimelineMockClock.referenceNow,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -285,7 +285,7 @@ private extension TimelinePostRow {
                 placeholderSeed: eventID
             ),
             body: "",
-            timestamp: "",
+            createdAt: TimelineMockClock.referenceNow,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,

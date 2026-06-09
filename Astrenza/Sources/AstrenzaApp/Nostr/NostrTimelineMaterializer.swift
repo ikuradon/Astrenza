@@ -261,8 +261,7 @@ enum NostrTimelineMaterializer {
                     metadataEvents: metadataEvents,
                     nip05Resolutions: nip05Resolutions,
                     followedPubkeys: followedPubkeys,
-                    avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
-                    relativeTimestamp: { NostrTimelineAuthorProjection.relativeTimestamp(from: $0) }
+                    avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
                 )
                 guard let targetEvent = eventsByID[targetID],
                       targetEvent.kind == 1
@@ -273,8 +272,7 @@ enum NostrTimelineMaterializer {
                         post: NostrTimelineRepostProjection.missingTargetPost(
                             repostEvent: repostEvent,
                             targetID: targetID,
-                            attribution: attribution,
-                            relativeTimestamp: { NostrTimelineAuthorProjection.relativeTimestamp(from: $0) }
+                            attribution: attribution
                         )
                     )
                 }

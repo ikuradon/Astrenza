@@ -49,7 +49,6 @@ struct NostrTimelinePostProjection {
                         followedPubkeys: followedPubkeys
                     ))
                 },
-                relativeTimestamp: { NostrTimelineAuthorProjection.relativeTimestamp(from: $0) },
                 mentionDisplayForPubkey: { pubkey in
                     Self.mentionDisplayName(
                         for: pubkey,
@@ -67,7 +66,7 @@ struct NostrTimelinePostProjection {
             avatar: NostrTimelineAuthorProjection.avatar(for: item),
             body: bodyText,
             richBody: richBody,
-            timestamp: NostrTimelineAuthorProjection.relativeTimestamp(from: item.createdAt),
+            createdAt: item.createdAt,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -89,8 +88,7 @@ struct NostrTimelinePostProjection {
                     metadataEvents: metadataEvents,
                     nip05Resolutions: nip05Resolutions,
                     followedPubkeys: followedPubkeys,
-                    avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
-                    relativeTimestamp: { NostrTimelineAuthorProjection.relativeTimestamp(from: $0) }
+                    avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
                 )
             },
             replyContext: replyProjection?.replyContext,

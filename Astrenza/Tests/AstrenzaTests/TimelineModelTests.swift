@@ -230,7 +230,7 @@ struct TimelineModelTests {
             author: author,
             avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
             body: "Stable body",
-            timestamp: "now",
+            createdAt: TimelineMockClock.createdAt(relative: "now"),
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -242,7 +242,7 @@ struct TimelineModelTests {
             author: author,
             avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
             body: "Stable body",
-            timestamp: "now",
+            createdAt: TimelineMockClock.createdAt(relative: "now"),
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -253,6 +253,13 @@ struct TimelineModelTests {
 
         #expect(first.id == second.id)
         #expect(first.id.hasPrefix("mock-"))
+    }
+
+    @Test("Mock relative timestamps render from createdAt without stored labels")
+    func mockRelativeTimestampsRenderFromCreatedAtWithoutStoredLabels() {
+        let createdAt = TimelineMockClock.createdAt(relative: "8m")
+
+        #expect(TimelineTimestampFormatter.relativeText(from: createdAt) == "8m")
     }
 
     @Test("Reply tree exposes ancestors and descendants from mock store")
@@ -278,7 +285,7 @@ struct TimelineModelTests {
             ),
             avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
             body: "Plain external post",
-            timestamp: "now",
+            createdAt: TimelineMockClock.createdAt(relative: "now"),
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -568,14 +575,13 @@ struct TimelineModelTests {
             metadataEvents: [],
             nip05Resolutions: [:],
             followedPubkeys: [],
-            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
-            relativeTimestamp: { "\($0)s" }
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
         ))
 
         #expect(quotedPost.isAvailable == false)
         #expect(quotedPost.author.pubkey == quotedEventID)
         #expect(quotedPost.body == "Quoted note is not cached yet.")
-        #expect(quotedPost.timestamp.isEmpty)
+        #expect(quotedPost.createdAt == nil)
     }
 
     @Test("Timeline quote projection preserves rich custom emoji")
@@ -603,8 +609,7 @@ struct TimelineModelTests {
             metadataEvents: [],
             nip05Resolutions: [:],
             followedPubkeys: [],
-            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
-            relativeTimestamp: { "\($0)s" }
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
         ))
 
         #expect(quotedPost.body == "hello :astrenza:")
@@ -642,8 +647,7 @@ struct TimelineModelTests {
             metadataEvents: [],
             nip05Resolutions: [:],
             followedPubkeys: [],
-            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
-            relativeTimestamp: { "\($0)s" }
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
         ))
 
         #expect(quotedPost.body == "photo read")
@@ -941,12 +945,11 @@ struct TimelineModelTests {
             author: .resolved(displayName: "Author", nip05: nil, nip05Status: .absent, pubkey: author, isFollowed: true),
             authorForParent: { _ in TimelineAuthor.unresolved(pubkey: parentAuthor) },
             avatarForParent: { _ in AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person") },
-            relativeTimestamp: { "\($0)s" },
             mentionDisplayForPubkey: { _ in nil }
         )
 
         #expect(projection.replyContext?.bodyPreview == "parent preview")
-        #expect(projection.replyContext?.timestamp == "90s")
+        #expect(projection.replyContext?.createdAt == parent.createdAt)
         #expect(projection.replyContext?.isSelfReply == false)
         #expect(projection.replyMention?.text == "@\(parentAuthor.prefix(10))")
         #expect(projection.replyMention?.isExternal == true)
@@ -980,7 +983,6 @@ struct TimelineModelTests {
             author: .resolved(displayName: "Author", nip05: nil, nip05Status: .absent, pubkey: author, isFollowed: true),
             authorForParent: { _ in TimelineAuthor.unresolved(pubkey: parentAuthor) },
             avatarForParent: { _ in AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person") },
-            relativeTimestamp: { "\($0)s" },
             mentionDisplayForPubkey: { _ in nil }
         )
 
@@ -1163,9 +1165,12 @@ struct TimelineModelTests {
         )
 
         #expect(post.author.primaryText == "Projection Poster")
+        #expect(post.createdAt == note.createdAt)
         #expect(post.replyContext?.bodyPreview == "parent body")
+        #expect(post.replyContext?.createdAt == parent.createdAt)
         #expect(post.replyMention?.isExternal == true)
         #expect(post.quotedPost?.body == "quoted body")
+        #expect(post.quotedPost?.createdAt == quoted.createdAt)
         #expect(post.contentWarning?.displayReason == "sensitive")
         #expect(post.bodyPresentation.collapseReason == .lowTrustLinks)
         #expect(post.linkSummary?.totalCount == 1)
@@ -6274,8 +6279,7 @@ struct TimelineModelTests {
                 )
             ],
             followedPubkeys: [reposter],
-            avatarForItem: NostrTimelineAuthorProjection.avatar(for:),
-            relativeTimestamp: { "\($0)s" }
+            avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
         )
 
         #expect(attribution.author.primaryText == "Projection Reposter")
@@ -6283,7 +6287,7 @@ struct TimelineModelTests {
         #expect(attribution.author.nip05Status == .valid)
         #expect(attribution.author.isFollowed == true)
         #expect(attribution.avatar.imageURL?.absoluteString == "https://example.test/reposter.png")
-        #expect(attribution.timestamp == "300s")
+        #expect(attribution.createdAt == repost.createdAt)
     }
 
     @Test("Nostr materializer keeps kind 6 reposts visible when the target event is missing")
@@ -6671,7 +6675,7 @@ struct TimelineModelTests {
                 ),
                 avatar: AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person"),
                 body: "Large timeline row \(index)",
-                timestamp: "\(index)m",
+                createdAt: TimelineMockClock.createdAt(relative: "\(index)m"),
                 replyCount: nil,
                 boostCount: nil,
                 favoriteCount: nil,

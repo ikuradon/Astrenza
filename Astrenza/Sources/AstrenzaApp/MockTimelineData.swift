@@ -53,7 +53,7 @@ extension MockTimelineData {
                 author: selfProfile.author,
                 avatar: selfProfile.avatar,
                 body: "Profile画面は、kind:0 と NIP-05 の状態が一目でわかるくらいがちょうどいい。細かいrelay hintは奥に置く。",
-                timestamp: "8m",
+                createdAt: TimelineMockClock.createdAt(relative: "8m"),
                 replyCount: 2,
                 boostCount: 6,
                 favoriteCount: 18,
@@ -67,7 +67,7 @@ extension MockTimelineData {
                 author: selfProfile.author,
                 avatar: selfProfile.avatar,
                 body: "Featured Hashtags はNIPの専用機能ではなく、投稿やlistから集計したクライアント側の見せ方として扱うのが自然そう。",
-                timestamp: "31m",
+                createdAt: TimelineMockClock.createdAt(relative: "31m"),
                 replyCount: nil,
                 boostCount: 3,
                 favoriteCount: 14,
@@ -85,7 +85,7 @@ extension MockTimelineData {
                 author: selfProfile.author,
                 avatar: selfProfile.avatar,
                 body: "返信込みのタブでは、会話文脈をTLと同じComponentで見せたい。",
-                timestamp: "1h",
+                createdAt: TimelineMockClock.createdAt(relative: "1h"),
                 replyCount: 1,
                 boostCount: nil,
                 favoriteCount: 7,
@@ -99,7 +99,7 @@ extension MockTimelineData {
                         pubkey: TimelineAuthor.mockPubkey(for: "profile-reply-parent")
                     ),
                     avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
-                    timestamp: "1h",
+                    createdAt: TimelineMockClock.createdAt(relative: "1h"),
                     bodyPreview: "プロフィールの投稿一覧もTLと同じ触り心地にしたい。",
                     isSelfReply: false
                 ),
@@ -115,7 +115,7 @@ extension MockTimelineData {
                 ),
                 avatar: AvatarStyle(primary: .orange, secondary: .yellow, symbolName: "cup.and.saucer.fill"),
                 body: "User Detailのヘッダーは大きく、投稿行はいつもの密度。ここが揃うとアプリ全体の手触りがかなり安定する。",
-                timestamp: "2h",
+                createdAt: TimelineMockClock.createdAt(relative: "2h"),
                 replyCount: nil,
                 boostCount: 9,
                 favoriteCount: 24,
@@ -125,7 +125,7 @@ extension MockTimelineData {
                 repostedBy: TimelineRepostAttribution(
                     author: selfProfile.author,
                     avatar: selfProfile.avatar,
-                    timestamp: "48m"
+                    createdAt: TimelineMockClock.createdAt(relative: "48m")
                 )
             )
         ]
@@ -178,7 +178,7 @@ extension MockTimelineData {
                 author: profile.author,
                 avatar: profile.avatar,
                 body: "プロフィールから見た投稿一覧のmock。TLからアバターをタップした時も、同じRowの見た目とジェスチャで動くようにしている。",
-                timestamp: "18m",
+                createdAt: TimelineMockClock.createdAt(relative: "18m"),
                 replyCount: 1,
                 boostCount: 4,
                 favoriteCount: 16,
@@ -191,7 +191,7 @@ extension MockTimelineData {
                 author: profile.author,
                 avatar: profile.avatar,
                 body: "返信込みタブでは、親投稿の文脈だけ軽く添えて密度を落とさない。",
-                timestamp: "47m",
+                createdAt: TimelineMockClock.createdAt(relative: "47m"),
                 replyCount: nil,
                 boostCount: 1,
                 favoriteCount: 9,
@@ -201,7 +201,7 @@ extension MockTimelineData {
                 replyContext: TimelineReplyContext(
                     author: selfProfile.author,
                     avatar: selfProfile.avatar,
-                    timestamp: "51m",
+                    createdAt: TimelineMockClock.createdAt(relative: "51m"),
                     bodyPreview: "プロフィール内でもTLと同じ返信Componentを使いたい。",
                     isSelfReply: false
                 ),
@@ -235,7 +235,7 @@ extension MockTimelineData {
             handle: "@alpha@mock.example",
             avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles"),
             body: "リレー構成を切り替えても、既読位置が自然に戻る体験を最優先にしたい。タイムラインは速さより迷子にならないことを大事にしたい。",
-            timestamp: "2m",
+            createdAt: TimelineMockClock.createdAt(relative: "2m"),
             replyCount: nil,
             boostCount: 7,
             favoriteCount: 18,
@@ -249,7 +249,7 @@ extension MockTimelineData {
             handle: "@beta@mock.example",
             avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
             body: "Home / Relays / Lists の切り替えを、投稿密度を崩さずに扱いたい。接続状態は少しだけ見えているくらいが気持ちよさそう。",
-            timestamp: "18m",
+            createdAt: TimelineMockClock.createdAt(relative: "18m"),
             replyCount: 2,
             boostCount: 14,
             favoriteCount: 46,
@@ -277,7 +277,7 @@ extension MockTimelineData {
             長文投稿は悪ではないけれど、TLではほかの投稿と同じ呼吸で並んでいてほしい。
             ここから先はDetailで読めばいい、という導線が自然に見えるかを確認するためのモックです。
             """,
-            timestamp: "21m",
+            createdAt: TimelineMockClock.createdAt(relative: "21m"),
             replyCount: 3,
             boostCount: 8,
             favoriteCount: 29,
@@ -295,7 +295,7 @@ extension MockTimelineData {
             docs.mock.example/research/local-cache、あと design.mock.example/timeline/height-estimates。
             関連: notes.mock.example/a/b/c, mirror.mock.example/thread/2048, archive.mock.example/client-notes。
             """,
-            timestamp: "23m",
+            createdAt: TimelineMockClock.createdAt(relative: "23m"),
             replyCount: 1,
             boostCount: 4,
             favoriteCount: 16,
@@ -323,7 +323,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .orange, secondary: .red, symbolName: "eye.slash.fill"),
             body: "フォロー外ユーザーの返信ツリー経由で入ってきたURL多めの投稿。short.mock/a short.mock/b short.mock/c short.mock/d unknown.mock.example/free-offer unknown.mock.example/more。",
-            timestamp: "24m",
+            createdAt: TimelineMockClock.createdAt(relative: "24m"),
             replyCount: nil,
             boostCount: 2,
             favoriteCount: 5,
@@ -340,7 +340,7 @@ extension MockTimelineData {
                     pubkey: TimelineAuthor.mockPubkey(for: "user-beta")
                 ),
                 avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "moon.stars.fill"),
-                timestamp: "18m",
+                createdAt: TimelineMockClock.createdAt(relative: "18m"),
                 bodyPreview: "Home / Relays / Lists の切り替えを、投稿密度を崩さずに扱いたい。",
                 isSelfReply: false
             ),
@@ -360,7 +360,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .mint, secondary: .blue, symbolName: "arrow.triangle.2.circlepath"),
             body: "週末に接続先を少し整理したら、TLの読み込みがだいぶ落ち着いた。read/write を分けて眺めるだけでも体感が変わる。",
-            timestamp: "26m",
+            createdAt: TimelineMockClock.createdAt(relative: "26m"),
             replyCount: 1,
             boostCount: 9,
             favoriteCount: 24,
@@ -379,7 +379,7 @@ extension MockTimelineData {
                     pubkey: TimelineAuthor.mockPubkey(for: "user-alpha-repost")
                 ),
                 avatar: AvatarStyle(primary: .cyan, secondary: .indigo, symbolName: "sparkles"),
-                timestamp: "5m"
+                createdAt: TimelineMockClock.createdAt(relative: "5m")
             ),
             actionState: TimelinePostActionState(didReply: false, didRepost: true, didFavorite: false, didZap: false)
         ),
@@ -391,7 +391,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .brown, secondary: .yellow, symbolName: "exclamationmark.triangle.fill"),
             body: "架空作品の最新話を観ています。\nこの先は展開に触れるので、タイムラインでは本文だけを伏せておきたい。詳細画面では理由がわかるように表示しておく。",
-            timestamp: "31m",
+            createdAt: TimelineMockClock.createdAt(relative: "31m"),
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -408,7 +408,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .pink, secondary: .orange, symbolName: "quote.bubble.fill"),
             body: "引用投稿は reply thread に混ぜず、本文の直下にカードとして置くと読みやすい。通常の返信とは見え方を分けたい。",
-            timestamp: "39m",
+            createdAt: TimelineMockClock.createdAt(relative: "39m"),
             replyCount: 2,
             boostCount: 6,
             favoriteCount: 21,
@@ -429,7 +429,7 @@ extension MockTimelineData {
                 ),
                 body: "引用参照は返信扱いにしないための手がかりになる。表示上もcount上も別物として扱いたい。",
                 richBody: nil,
-                timestamp: "31m",
+                createdAt: TimelineMockClock.createdAt(relative: "31m"),
                 isAvailable: true
             ),
             actionState: TimelinePostActionState(didReply: false, didRepost: false, didFavorite: true, didZap: false)
@@ -442,7 +442,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .blue, secondary: .indigo, symbolName: "person.crop.circle.fill"),
             body: "急いでいたので設定画面をちゃんと見直せていなかった。",
-            timestamp: "40m",
+            createdAt: TimelineMockClock.createdAt(relative: "40m"),
             replyCount: 1,
             boostCount: 2,
             favoriteCount: 11,
@@ -456,7 +456,7 @@ extension MockTimelineData {
                     pubkey: TimelineAuthor.mockPubkey(for: "user-iota")
                 ),
                 avatar: AvatarStyle(primary: .cyan, secondary: .white, symbolName: "circle.dotted"),
-                timestamp: "45m",
+                createdAt: TimelineMockClock.createdAt(relative: "45m"),
                 bodyPreview: "原因がわかったかもしれない。たぶん保存領域まわりです。",
                 isSelfReply: false
             ),
@@ -470,7 +470,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .cyan, secondary: .white, symbolName: "circle.dotted"),
             body: "言われてみれば、この端末なら接続まわりの不調も疑ったほうがよさそう。助かりました。",
-            timestamp: "41m",
+            createdAt: TimelineMockClock.createdAt(relative: "41m"),
             replyCount: nil,
             boostCount: nil,
             favoriteCount: 7,
@@ -484,7 +484,7 @@ extension MockTimelineData {
                     pubkey: TimelineAuthor.mockPubkey(for: "user-kappa")
                 ),
                 avatar: AvatarStyle(primary: .purple, secondary: .pink, symbolName: "wrench.and.screwdriver.fill"),
-                timestamp: "43m",
+                createdAt: TimelineMockClock.createdAt(relative: "43m"),
                 bodyPreview: "接続部分の状態も疑ったほうがよさそう。",
                 isSelfReply: false
             ),
@@ -499,7 +499,7 @@ extension MockTimelineData {
                 pictureState: .metadataPending
             ),
             body: "リンクプレビューが解決できないURLも、カードの高さは固定しておくと復帰位置が安定しそう。",
-            timestamp: "42m",
+            createdAt: TimelineMockClock.createdAt(relative: "42m"),
             replyCount: nil,
             boostCount: 4,
             favoriteCount: 17,
@@ -523,7 +523,7 @@ extension MockTimelineData {
                 pictureState: .missing
             ),
             body: "wss://relay-a.mock.example と wss://relay-b.mock.example は catch-up 済み。wss://relay-c.mock.example は AUTH required。",
-            timestamp: "1h",
+            createdAt: TimelineMockClock.createdAt(relative: "1h"),
             replyCount: nil,
             boostCount: 3,
             favoriteCount: 12,
@@ -545,7 +545,7 @@ extension MockTimelineData {
                 pictureState: .failed
             ),
             body: "1枚画像は横幅をしっかり使って、本文の余韻を壊さないくらいの角丸にしたい。",
-            timestamp: "1h",
+            createdAt: TimelineMockClock.createdAt(relative: "1h"),
             replyCount: 3,
             boostCount: 8,
             favoriteCount: 31,
@@ -563,7 +563,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .blue, secondary: .teal, symbolName: "camera.aperture"),
             body: "メディア grid は角丸を抑えて、余白も詰めると feed の密度が保てる。",
-            timestamp: "2h",
+            createdAt: TimelineMockClock.createdAt(relative: "2h"),
             replyCount: 4,
             boostCount: 21,
             favoriteCount: 88,
@@ -580,7 +580,7 @@ extension MockTimelineData {
             handle: "@xi@mock.example",
             avatar: AvatarStyle(primary: .teal, secondary: .mint, symbolName: "paintbrush.pointed.fill"),
             body: "3枚は上2枚、下1枚。最後の1枚を大きく見せると、投稿の締めが少し強くなる。",
-            timestamp: "2h",
+            createdAt: TimelineMockClock.createdAt(relative: "2h"),
             replyCount: 2,
             boostCount: 11,
             favoriteCount: 42,
@@ -597,7 +597,7 @@ extension MockTimelineData {
             handle: "@omicron@mock.example",
             avatar: AvatarStyle(primary: .purple, secondary: .blue, symbolName: "sparkles"),
             body: "4枚は2+2で安定。feedの中で一番スキャンしやすい構図かもしれない。",
-            timestamp: "2h",
+            createdAt: TimelineMockClock.createdAt(relative: "2h"),
             replyCount: 6,
             boostCount: 19,
             favoriteCount: 67,
@@ -615,7 +615,7 @@ extension MockTimelineData {
             handle: "@pi@mock.example",
             avatar: AvatarStyle(primary: .green, secondary: .yellow, symbolName: "leaf.fill"),
             body: "5枚以上は4枚gridの最後に +n。隠れている枚数がわかるだけで、見た目の密度が落ち着く。",
-            timestamp: "3h",
+            createdAt: TimelineMockClock.createdAt(relative: "3h"),
             replyCount: 4,
             boostCount: 16,
             favoriteCount: 59,
@@ -639,7 +639,7 @@ extension MockTimelineData {
             ),
             avatar: AvatarStyle(primary: .gray, secondary: .white, symbolName: "terminal.fill"),
             body: "まずは UI shell。次に timeline store、relay manager、event parser。順番を間違えると、見た目の気持ちよさが後で壊れがち。",
-            timestamp: "3h",
+            createdAt: TimelineMockClock.createdAt(relative: "3h"),
             replyCount: nil,
             boostCount: 5,
             favoriteCount: 23,
@@ -766,7 +766,7 @@ private struct MockTimelineStore {
                 ),
                 avatar: AvatarStyle(primary: .indigo, secondary: .cyan, symbolName: "tray.and.arrow.down.fill"),
                 body: "再接続後に relay cursor から補完されたmock投稿。EOSE後の差分として入ってきたので、Gap Rowは消えて通常の投稿Rowとして扱う。",
-                timestamp: "19m",
+                createdAt: TimelineMockClock.createdAt(relative: "19m"),
                 replyCount: nil,
                 boostCount: 4,
                 favoriteCount: 16,
@@ -784,7 +784,7 @@ private struct MockTimelineStore {
                 ),
                 avatar: AvatarStyle(primary: .purple, secondary: .blue, symbolName: "antenna.radiowaves.left.and.right"),
                 body: "secondary fetch で拾えたmock投稿。大きい範囲を一気に取らず、since/untilを狭めながら埋めていく想定。",
-                timestamp: "20m",
+                createdAt: TimelineMockClock.createdAt(relative: "20m"),
                 replyCount: 1,
                 boostCount: 2,
                 favoriteCount: 11,
@@ -836,7 +836,7 @@ private struct MockTimelineStore {
             author: root.author,
             avatar: root.avatar,
             content: "追記: これ、relay側の遅延だけじゃなくてclient側の復帰処理も絡んでいそう。",
-            timestamp: "1m",
+            createdAt: TimelineMockClock.createdAt(relative: "1m"),
             replyTo: root,
             replyMention: TimelineReplyMention(text: "@\(root.author.replyMentionHandle)", isExternal: false),
             reposts: nil,
@@ -856,7 +856,7 @@ private struct MockTimelineStore {
             author: secondReplyAuthor,
             avatar: secondReplyAvatar,
             body: "このへん、再接続後に既読位置を戻すタイミングを少し遅らせると見た目も安定しそう。",
-            timestamp: "6m",
+            createdAt: TimelineMockClock.createdAt(relative: "6m"),
             replyCount: nil,
             boostCount: 1,
             favoriteCount: 9,
@@ -869,7 +869,7 @@ private struct MockTimelineStore {
             replyContext: TimelineReplyContext(
                 author: firstReply.author,
                 avatar: firstReply.avatar,
-                timestamp: firstReply.timestamp,
+                createdAt: firstReply.createdAt,
                 bodyPreview: firstReply.body,
                 isSelfReply: secondReplyAuthor.pubkey == firstReply.author.pubkey
             ),
@@ -881,7 +881,7 @@ private struct MockTimelineStore {
             author: root.author,
             avatar: root.avatar,
             content: "さらにメモ: ツリーは表示用に作るのではなく、event の reply chain から切り出すほうが事故らない。",
-            timestamp: "8m",
+            createdAt: TimelineMockClock.createdAt(relative: "8m"),
             replyTo: secondReply,
             replyMention: TimelineReplyMention(text: "@\(secondReply.author.replyMentionHandle)", isExternal: true),
             reposts: nil,
@@ -914,7 +914,7 @@ private struct MockTimelineStore {
             author: replyContext.author,
             avatar: replyContext.avatar,
             body: replyContext.bodyPreview,
-            timestamp: replyContext.timestamp,
+            createdAt: replyContext.createdAt,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,

@@ -137,7 +137,7 @@ struct PostDetailView: View {
                 placeholderSeed: pubkey
             ),
             body: "",
-            timestamp: "",
+            createdAt: TimelineMockClock.referenceNow,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -159,7 +159,7 @@ struct PostDetailView: View {
                 placeholderSeed: eventID
             ),
             body: "",
-            timestamp: "",
+            createdAt: TimelineMockClock.referenceNow,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
@@ -278,43 +278,7 @@ private enum DetailScrollAnchor {
 
 private extension TimelinePost {
     var detailAbsoluteTimestampText: String {
-        let baseDate = DateComponents(
-            calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(identifier: "Asia/Tokyo"),
-            year: 2026,
-            month: 6,
-            day: 4,
-            hour: 20,
-            minute: 20
-        ).date ?? Date()
-
-        let elapsedSeconds = timestamp.elapsedSecondsFromRelativeTimestamp
-        let date = baseDate.addingTimeInterval(-elapsedSeconds)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "Asia/Tokyo")
-        formatter.dateFormat = "yyyy/MM/dd HH:mm 'JST'"
-        return formatter.string(from: date)
-    }
-}
-
-private extension String {
-    var elapsedSecondsFromRelativeTimestamp: TimeInterval {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let unit = trimmed.last,
-              let value = Double(trimmed.dropLast())
-        else {
-            return 0
-        }
-
-        switch unit {
-        case "m":
-            return value * 60
-        case "h":
-            return value * 60 * 60
-        default:
-            return 0
-        }
+        TimelineTimestampFormatter.absoluteText(from: createdAt)
     }
 }
 

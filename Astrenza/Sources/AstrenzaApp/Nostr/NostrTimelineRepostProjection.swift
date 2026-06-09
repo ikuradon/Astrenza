@@ -14,8 +14,7 @@ struct NostrTimelineRepostProjection {
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
         followedPubkeys: Set<String>,
-        avatarForItem: (NostrHomeTimelineItem) -> AvatarStyle,
-        relativeTimestamp: (Int) -> String
+        avatarForItem: (NostrHomeTimelineItem) -> AvatarStyle
     ) -> TimelineRepostAttribution {
         let metadata = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)[repostEvent.pubkey]
         let repostItem = NostrHomeTimelineItem(
@@ -33,15 +32,14 @@ struct NostrTimelineRepostProjection {
         return TimelineRepostAttribution(
             author: NostrTimelineAuthorProjection.author(for: repostItem),
             avatar: avatarForItem(repostItem),
-            timestamp: relativeTimestamp(repostEvent.createdAt)
+            createdAt: repostEvent.createdAt
         )
     }
 
     static func missingTargetPost(
         repostEvent: NostrEvent,
         targetID: String,
-        attribution: TimelineRepostAttribution,
-        relativeTimestamp: (Int) -> String
+        attribution: TimelineRepostAttribution
     ) -> TimelinePost {
         let targetPubkey = repostEvent.tags.first { tag in
             tag.count >= 2 && tag[0] == "p" && tag[1].count == 64
@@ -59,7 +57,7 @@ struct NostrTimelineRepostProjection {
             author: author,
             avatar: avatar,
             body: "Reposted post unavailable",
-            timestamp: relativeTimestamp(repostEvent.createdAt),
+            createdAt: repostEvent.createdAt,
             replyCount: nil,
             boostCount: nil,
             favoriteCount: nil,
