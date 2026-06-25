@@ -12,6 +12,8 @@ settings:
 packages:
   AstrenzaCore:
     path: Packages/AstrenzaCore
+  DesignSystem:
+    path: Packages/DesignSystem
   GRDB.swift:
     url: https://github.com/groue/GRDB.swift.git
     from: 7.11.0
@@ -30,6 +32,8 @@ targets:
     dependencies:
       - package: AstrenzaCore
         product: AstrenzaCore
+      - package: DesignSystem
+        product: DesignSystem
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ikuradon.Astrenza
@@ -64,3 +68,4 @@ schemes:
       targets:
         - AstrenzaTests
         - package: AstrenzaCore/AstrenzaCoreTests
+        - package: DesignSystem/DesignSystemTests
