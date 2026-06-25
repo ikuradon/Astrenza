@@ -64,6 +64,19 @@ struct TimelineResolveExpectation: Equatable, Codable, Sendable {
     var target: TimelineDelayedResolveTarget
     var initialState: TimelineProjectionResolveState
     var expectedState: TimelineProjectionResolveState
+    var requiresRemoteWork: Bool
+
+    init(
+        target: TimelineDelayedResolveTarget,
+        initialState: TimelineProjectionResolveState,
+        expectedState: TimelineProjectionResolveState,
+        requiresRemoteWork: Bool = false
+    ) {
+        self.target = target
+        self.initialState = initialState
+        self.expectedState = expectedState
+        self.requiresRemoteWork = requiresRemoteWork
+    }
 
     var isDelayedResolveTransition: Bool {
         initialState != expectedState
@@ -117,6 +130,19 @@ struct TimelineLayoutExpectation: Equatable, Codable, Sendable {
     var contract: TimelineRowLayoutContract
     var noUnlimitedHeightGrowthAfterResolve: Bool
     var isDetailOnly: Bool
+    var hasLayoutContract: Bool
+
+    init(
+        contract: TimelineRowLayoutContract,
+        noUnlimitedHeightGrowthAfterResolve: Bool,
+        isDetailOnly: Bool,
+        hasLayoutContract: Bool = true
+    ) {
+        self.contract = contract
+        self.noUnlimitedHeightGrowthAfterResolve = noUnlimitedHeightGrowthAfterResolve
+        self.isDetailOnly = isDetailOnly
+        self.hasLayoutContract = hasLayoutContract
+    }
 
     var rowKind: TimelineRowKind {
         contract.rowKind

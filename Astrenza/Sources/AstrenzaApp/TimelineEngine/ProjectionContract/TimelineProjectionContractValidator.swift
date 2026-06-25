@@ -11,6 +11,7 @@ struct TimelineProjectionValidationIssue: Equatable, Codable, Sendable {
         case quoteMustNotCreateReplyRelation
         case homeReplyParentMustBeHeaderOnly
         case homeVisibleResolveMustNotChangeHeight
+        case visibleRowRequiresLayoutContract
         case pendingNewMustWaitForUserAction
     }
 
@@ -28,6 +29,10 @@ struct TimelineProjectionContractValidator: Sendable {
         }
 
         let output = scenario.expectedOutput
+        if output.visibility.isVisibleInHome && !output.layout.hasLayoutContract {
+            issues.append(issue(.visibleRowRequiresLayoutContract, in: scenario))
+        }
+
         if output.mutation.readMarkerChanged {
             issues.append(issue(.readMarkerMustNotChange, in: scenario))
         }
@@ -104,7 +109,9 @@ struct TimelineProjectionContractValidator: Sendable {
         .linkPreviewOGP,
         .repostTarget,
         .quoteTarget,
-        .replyParentRoot
+        .replyParentRoot,
+        .stats,
+        .publishStatePlaceholder
     ]
 
     private func issue(

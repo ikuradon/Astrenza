@@ -22,6 +22,17 @@ enum TimelineProjectionFixtureBuilder {
             mutationStyle: .reconfigure
         ),
         scenario(
+            name: "ogp_resolving_keepsReservedLayout",
+            sourceSeed: "b",
+            sortAt: 1_785,
+            reason: .author,
+            resolveExpectations: [
+                resolve(.linkPreviewOGP, from: .resolving, to: .resolved)
+            ],
+            layout: homeLayout(linkPreviewMode: .fixedCompactCard),
+            mutationStyle: .reconfigure
+        ),
+        scenario(
             name: "ogp_pending_to_failed_urlOnlyFallback",
             sourceSeed: "c",
             sortAt: 1_780,
@@ -63,6 +74,22 @@ enum TimelineProjectionFixtureBuilder {
             mutationStyle: .reconfigure
         ),
         scenario(
+            name: "media_blocked_keepsBlockedPlaceholder",
+            sourceSeed: "e",
+            sortAt: 1_755,
+            reason: .author,
+            resolveExpectations: [
+                resolve(.media, from: .pending, to: .blocked)
+            ],
+            layout: homeLayout(
+                reservedMediaAspectRatio: 16.0 / 9.0,
+                reservedMediaHeight: 180
+            ),
+            visibility: visibility(.blockedPlaceholder),
+            fallback: fallback(.blockedPlaceholder),
+            mutationStyle: .reconfigure
+        ),
+        scenario(
             name: "profile_missing_to_resolved_headerOnly",
             sourceSeed: "f",
             sortAt: 1_750,
@@ -81,6 +108,18 @@ enum TimelineProjectionFixtureBuilder {
             reason: .author,
             resolveExpectations: [
                 resolve(.profile, from: .pending, to: .failed)
+            ],
+            layout: homeLayout(),
+            fallback: fallback(.npubHeaderOnly),
+            mutationStyle: .reconfigure
+        ),
+        scenario(
+            name: "profile_absent_uses_npubFallback",
+            sourceSeed: "f",
+            sortAt: 1_742,
+            reason: .author,
+            resolveExpectations: [
+                resolve(.profile, from: .pending, to: .absent)
             ],
             layout: homeLayout(),
             fallback: fallback(.npubHeaderOnly),
@@ -136,6 +175,20 @@ enum TimelineProjectionFixtureBuilder {
                 resolve(.quoteTarget, from: .pending, to: .resolved)
             ],
             layout: homeLayout(quoteMode: .collapsedCard),
+            mutationStyle: .reconfigure
+        ),
+        scenario(
+            name: "quote_target_blocked_unavailableCard",
+            sourceSeed: "5",
+            subjectSeed: "7",
+            sortAt: 1_705,
+            reason: .quote,
+            resolveExpectations: [
+                resolve(.quoteTarget, from: .pending, to: .blocked)
+            ],
+            layout: homeLayout(quoteMode: .collapsedCard),
+            visibility: visibility(.unavailablePlaceholder),
+            fallback: fallback(.targetUnavailablePlaceholder),
             mutationStyle: .reconfigure
         ),
         scenario(
@@ -200,6 +253,39 @@ enum TimelineProjectionFixtureBuilder {
             isPendingNew: true,
             userActionAllowsPendingNewInsertion: false,
             mutationStyle: .snapshot
+        ),
+        scenario(
+            name: "stats_absent_to_resolving_doesNotMutateIdentity",
+            sourceSeed: "e",
+            sortAt: 1_650,
+            reason: .author,
+            resolveExpectations: [
+                resolve(.stats, from: .absent, to: .resolving)
+            ],
+            layout: homeLayout(),
+            mutationStyle: .reconfigure
+        ),
+        scenario(
+            name: "stats_resolving_to_resolved_reconfigureOnly",
+            sourceSeed: "e",
+            sortAt: 1_640,
+            reason: .author,
+            resolveExpectations: [
+                resolve(.stats, from: .resolving, to: .resolved)
+            ],
+            layout: homeLayout(),
+            mutationStyle: .reconfigure
+        ),
+        scenario(
+            name: "publish_state_placeholder_localOnly_noReadMarkerChange",
+            sourceSeed: "e",
+            sortAt: 1_630,
+            reason: .author,
+            resolveExpectations: [
+                resolve(.publishStatePlaceholder, from: .pending, to: .resolved)
+            ],
+            layout: homeLayout(),
+            mutationStyle: .reconfigure
         )
     ]
 
