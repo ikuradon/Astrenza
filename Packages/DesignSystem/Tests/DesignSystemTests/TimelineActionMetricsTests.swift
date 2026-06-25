@@ -20,4 +20,17 @@ struct TimelineActionMetricsTests {
         #expect(metrics.targetWidth(forContentWidth: 120) == 44)
         #expect(metrics.targetWidth(forContentWidth: 300) == 60)
     }
+
+    @Test("Custom action metrics clamp interactive targets to at least 44pt")
+    func customActionMetricsClampInteractiveTargetsToMinimumHitTarget() {
+        let metrics = TimelineActionMetrics(
+            visualIconSize: 18,
+            targetWidth: 20,
+            targetHeight: 24
+        )
+
+        #expect(metrics.targetWidth == DSControlSize.minimumHitTarget)
+        #expect(metrics.targetHeight == DSControlSize.minimumHitTarget)
+        #expect(metrics.visualIconSize < metrics.targetHeight)
+    }
 }

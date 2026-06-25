@@ -18,9 +18,11 @@ public struct LinkPreviewCard: View {
     @Environment(\.appTheme) private var theme
 
     private let model: LinkPreviewCardModel
+    private let metrics: DSMediaMetrics
 
-    public init(model: LinkPreviewCardModel) {
+    public init(model: LinkPreviewCardModel, metrics: DSMediaMetrics = .timeline) {
         self.model = model
+        self.metrics = metrics
     }
 
     public var body: some View {
@@ -45,8 +47,14 @@ public struct LinkPreviewCard: View {
                     .foregroundStyle(theme.color(.textSecondary))
                     .lineLimit(2)
             }
+            .frame(
+                minHeight: CGFloat(linkPreviewMetrics.textAreaMinHeight),
+                maxHeight: CGFloat(linkPreviewMetrics.textAreaMaxHeight),
+                alignment: .topLeading
+            )
         }
         .padding(DSSpacing.xl.cgFloat)
+        .frame(maxHeight: CGFloat(linkPreviewMetrics.totalMaxHeight), alignment: .top)
         .background(theme.color(.cardBackground), in: RoundedRectangle(cornerRadius: DSRadius.card.cgFloat, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: DSRadius.card.cgFloat, style: .continuous)
@@ -54,11 +62,15 @@ public struct LinkPreviewCard: View {
         }
     }
 
+    private var linkPreviewMetrics: DSLinkPreviewMetrics {
+        metrics.linkPreview
+    }
+
     private var imageWidth: CGFloat {
-        model.mode == .urlOnly ? 0 : CGFloat(DSMediaMetrics.timeline.minimumReservedHeight * 0.64)
+        model.mode == .urlOnly ? 0 : CGFloat(linkPreviewMetrics.compactImageWidth)
     }
 
     private var imageHeight: CGFloat {
-        model.mode == .urlOnly ? 0 : CGFloat(DSMediaMetrics.timeline.minimumReservedHeight * 0.48)
+        model.mode == .urlOnly ? 0 : CGFloat(linkPreviewMetrics.compactImageHeight)
     }
 }
