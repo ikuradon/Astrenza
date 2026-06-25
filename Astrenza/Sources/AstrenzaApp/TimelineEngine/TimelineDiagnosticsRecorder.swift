@@ -48,6 +48,7 @@ struct TimelineRestoreFallbackReason: Equatable, Codable, Sendable {
     enum Kind: String, Equatable, Codable, Sendable {
         case noSavedAnchor
         case noVisibleItems
+        case invalidAnchorItemKey
         case anchorItemMissing
         case layoutAttributesMissing
         case contentSizeUnavailable
@@ -56,6 +57,22 @@ struct TimelineRestoreFallbackReason: Equatable, Codable, Sendable {
 
     var kind: Kind
     var anchorItemKey: String?
+}
+
+enum TimelineRestoreResult: Equatable, Codable, Sendable {
+    case restored
+    case skipped(reason: TimelineRestoreFallbackReason)
+    case attemptedFallback(reason: TimelineRestoreFallbackReason)
+    case failed(reason: TimelineRestoreFallbackReason)
+
+    var fallbackReason: TimelineRestoreFallbackReason? {
+        switch self {
+        case .restored:
+            nil
+        case .skipped(let reason), .attemptedFallback(let reason), .failed(let reason):
+            reason
+        }
+    }
 }
 
 struct TimelineRestoreGateMetric: Equatable, Codable, Sendable {
@@ -82,6 +99,7 @@ final class TimelineDiagnosticsRecorder {
     private(set) var restoreGateRecords: [TimelineRestoreGateDiagnostic] = []
     private(set) var restoreGateMetrics: [TimelineRestoreGateMetric] = []
 
+    @discardableResult
     func recordMutation(
         reason: TimelineSnapshotReason,
         anchorBefore: TimelineVisualAnchor?,
@@ -89,17 +107,21 @@ final class TimelineDiagnosticsRecorder {
         visibleIDsBefore: [TimelineEntryID],
         visibleIDsAfter: [TimelineEntryID],
         fallbackReason: TimelineRestoreFallbackReason? = nil,
+        readMarkerChanged: Bool = false,
         timestampMS: Int64 = TimelinePositionRecorder.currentTimeMilliseconds()
-    ) {
-        records.append(TimelineSnapshotCoordinator.makeMutationRecord(
+    ) -> TimelineSnapshotMutationRecord {
+        let record = TimelineSnapshotCoordinator.makeMutationRecord(
             reason: reason,
             anchorBefore: anchorBefore,
             anchorAfter: anchorAfter,
             visibleIDsBefore: visibleIDsBefore,
             visibleIDsAfter: visibleIDsAfter,
             timestampMS: timestampMS,
-            fallbackReason: fallbackReason
-        ))
+            fallbackReason: fallbackReason,
+            readMarkerChanged: readMarkerChanged
+        )
+        records.append(record)
+        return record
     }
 
     func recordRestoreGate(_ diagnostic: TimelineRestoreGateDiagnostic) {

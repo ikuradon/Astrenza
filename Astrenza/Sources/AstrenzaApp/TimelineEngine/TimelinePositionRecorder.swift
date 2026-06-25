@@ -151,26 +151,79 @@ final class TimelinePositionRecorder {
         anchor: TimelineVisualAnchor,
         in collectionView: UICollectionView,
         indexPathForEntryID: (TimelineEntryID) -> IndexPath?
-    ) {
-        guard
-            let indexPath = indexPathForEntryID(TimelineEntryID(rawValue: anchor.anchorItemKey)),
-            let attributes = collectionView.layoutAttributesForItem(at: indexPath)
-        else {
-            return
+    ) -> TimelineRestoreResult {
+        guard !anchor.anchorItemKey.isEmpty else {
+            return .skipped(reason: TimelineRestoreFallbackReason(
+                kind: .invalidAnchorItemKey,
+                anchorItemKey: anchor.anchorItemKey
+            ))
         }
 
-        let restoredY = Self.computeContentOffsetTarget(
-            anchorFrameMinY: Double(attributes.frame.minY),
-            savedCellTopDeltaFromViewportTop: anchor.cellTopDeltaFromViewportTop,
-            adjustedContentInsetTop: Double(collectionView.adjustedContentInset.top),
-            boundsHeight: Double(collectionView.bounds.height),
-            contentHeight: Double(collectionView.contentSize.height),
-            adjustedContentInsetBottom: Double(collectionView.adjustedContentInset.bottom)
+        let entryID = TimelineEntryID(rawValue: anchor.anchorItemKey)
+        guard let indexPath = indexPathForEntryID(entryID) else {
+            return .skipped(reason: TimelineRestoreFallbackReason(
+                kind: .anchorItemMissing,
+                anchorItemKey: anchor.anchorItemKey
+            ))
+        }
+
+        var attemptedLayoutAttributesFallback = false
+        var attributes = collectionView.layoutAttributesForItem(at: indexPath)
+        if attributes == nil {
+            attemptedLayoutAttributesFallback = true
+            collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+            collectionView.layoutIfNeeded()
+            attributes = collectionView.layoutAttributesForItem(at: indexPath)
+        }
+
+        guard let attributes else {
+            return .failed(reason: TimelineRestoreFallbackReason(
+                kind: .layoutAttributesMissing,
+                anchorItemKey: anchor.anchorItemKey
+            ))
+        }
+
+        let boundsHeight = Double(collectionView.bounds.height)
+        let contentHeight = Double(collectionView.contentSize.height)
+        guard boundsHeight.isFinite, boundsHeight > 0, contentHeight.isFinite else {
+            return .failed(reason: TimelineRestoreFallbackReason(
+                kind: .contentSizeUnavailable,
+                anchorItemKey: anchor.anchorItemKey
+            ))
+        }
+
+        let adjustedContentInsetTop = Double(collectionView.adjustedContentInset.top)
+        let adjustedContentInsetBottom = Double(collectionView.adjustedContentInset.bottom)
+        let targetY = Double(attributes.frame.minY)
+            - anchor.cellTopDeltaFromViewportTop
+            - adjustedContentInsetTop
+        let restoredY = Self.clampContentOffsetTarget(
+            targetY,
+            adjustedContentInsetTop: adjustedContentInsetTop,
+            boundsHeight: boundsHeight,
+            contentHeight: contentHeight,
+            adjustedContentInsetBottom: adjustedContentInsetBottom
         )
         collectionView.setContentOffset(
             CGPoint(x: collectionView.contentOffset.x, y: CGFloat(restoredY)),
             animated: false
         )
+
+        guard restoredY == targetY else {
+            return .attemptedFallback(reason: TimelineRestoreFallbackReason(
+                kind: .targetOffsetClamped,
+                anchorItemKey: anchor.anchorItemKey
+            ))
+        }
+
+        guard !attemptedLayoutAttributesFallback else {
+            return .attemptedFallback(reason: TimelineRestoreFallbackReason(
+                kind: .layoutAttributesMissing,
+                anchorItemKey: anchor.anchorItemKey
+            ))
+        }
+
+        return .restored
     }
 
     static func anchorDelta(before: TimelineVisualAnchor?, after: TimelineVisualAnchor?) -> Double? {

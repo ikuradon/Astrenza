@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Astrenza
 
 @Suite("TimelineEngine scaffold")
@@ -175,6 +176,65 @@ struct TimelineEngineScaffoldTests {
         #expect(bottom == 630)
     }
 
+    @MainActor
+    @Test("Position recorder restore reports fallback when anchor item is missing")
+    func positionRecorderRestoreReportsFallbackWhenAnchorItemIsMissing() {
+        let collectionView = RestoreDiagnosticsCollectionView()
+        let anchor = Self.anchor(itemKey: "home:100:a", delta: -8)
+
+        let result = Self.positionRecorder().restore(anchor: anchor, in: collectionView) { _ in
+            nil
+        }
+
+        #expect(result == .skipped(reason: TimelineRestoreFallbackReason(
+            kind: .anchorItemMissing,
+            anchorItemKey: "home:100:a"
+        )))
+        #expect(result.fallbackReason?.kind == .anchorItemMissing)
+        #expect(result.fallbackReason?.anchorItemKey == "home:100:a")
+    }
+
+    @MainActor
+    @Test("Position recorder restore reports fallback when layout attributes stay missing")
+    func positionRecorderRestoreReportsFallbackWhenLayoutAttributesStayMissing() {
+        let collectionView = RestoreDiagnosticsCollectionView()
+        let indexPath = IndexPath(item: 0, section: 0)
+        let anchor = Self.anchor(itemKey: "home:100:a", delta: -8)
+
+        let result = Self.positionRecorder().restore(anchor: anchor, in: collectionView) { _ in
+            indexPath
+        }
+
+        #expect(result == .failed(reason: TimelineRestoreFallbackReason(
+            kind: .layoutAttributesMissing,
+            anchorItemKey: "home:100:a"
+        )))
+        #expect(collectionView.scrollRequests == [indexPath])
+    }
+
+    @MainActor
+    @Test("Position recorder restore records fallback when layout attributes recover after scroll")
+    func positionRecorderRestoreRecordsFallbackWhenLayoutAttributesRecoverAfterScroll() {
+        let collectionView = RestoreDiagnosticsCollectionView()
+        let indexPath = IndexPath(item: 0, section: 0)
+        collectionView.attributesInstalledAfterScroll[indexPath] = Self.attributes(
+            indexPath: indexPath,
+            minY: 80,
+            height: 72
+        )
+        let anchor = Self.anchor(itemKey: "home:100:a", delta: -8)
+
+        let result = Self.positionRecorder().restore(anchor: anchor, in: collectionView) { _ in
+            indexPath
+        }
+
+        #expect(result == .attemptedFallback(reason: TimelineRestoreFallbackReason(
+            kind: .layoutAttributesMissing,
+            anchorItemKey: "home:100:a"
+        )))
+        #expect(collectionView.scrollRequests == [indexPath])
+    }
+
     @Test("Position recorder computes structured anchor delta for same item")
     func positionRecorderComputesStructuredAnchorDeltaForSameItem() throws {
         let before = Self.anchor(itemKey: "home:100:a", delta: -8)
@@ -245,6 +305,48 @@ struct TimelineEngineScaffoldTests {
         #expect(decoded == record)
     }
 
+    @MainActor
+    @Test("Snapshot coordinator records restore fallback reason from runtime restore")
+    func snapshotCoordinatorRecordsRestoreFallbackReasonFromRuntimeRestore() throws {
+        let anchorID = TimelineEntryID(rawValue: "home:100:a")
+        let survivingID = TimelineEntryID(rawValue: "home:099:b")
+        let indexPath = IndexPath(item: 0, section: 0)
+        let collectionView = RestoreDiagnosticsCollectionView()
+        collectionView.diagnosticVisibleIndexPaths = [indexPath]
+        collectionView.diagnosticAttributes[indexPath] = Self.attributes(
+            indexPath: indexPath,
+            minY: 80,
+            height: 72
+        )
+        let diagnosticsRecorder = TimelineDiagnosticsRecorder()
+        let coordinator = TimelineSnapshotCoordinator(
+            dataSource: Self.dataSource(for: collectionView),
+            positionRecorder: Self.positionRecorder(),
+            visibleRangeTracker: TimelineVisibleRangeTracker(),
+            diagnosticsRecorder: diagnosticsRecorder
+        )
+
+        _ = coordinator.applyPreservingPosition(
+            itemIDs: [anchorID, survivingID],
+            reason: .initialRestore,
+            in: collectionView,
+            animatingDifferences: false
+        )
+        let record = coordinator.applyPreservingPosition(
+            itemIDs: [survivingID],
+            reason: .olderPageLoaded,
+            in: collectionView,
+            animatingDifferences: false
+        )
+
+        #expect(record.fallbackReason == TimelineRestoreFallbackReason(
+            kind: .anchorItemMissing,
+            anchorItemKey: "home:100:a"
+        ))
+        #expect(record.readMarkerChanged == false)
+        #expect(diagnosticsRecorder.records.last == record)
+    }
+
     @Test("Restore fallback reason is codable and equatable")
     func restoreFallbackReasonIsCodableAndEquatable() throws {
         let reason = TimelineRestoreFallbackReason(
@@ -256,6 +358,23 @@ struct TimelineEngineScaffoldTests {
         let decoded = try JSONDecoder().decode(TimelineRestoreFallbackReason.self, from: data)
 
         #expect(decoded == reason)
+    }
+
+    @Test("Restore result carries codable fallback reason")
+    func restoreResultCarriesCodableFallbackReason() throws {
+        let result = TimelineRestoreResult.failed(reason: TimelineRestoreFallbackReason(
+            kind: .layoutAttributesMissing,
+            anchorItemKey: "home:100:a"
+        ))
+
+        let data = try JSONEncoder().encode(result)
+        let decoded = try JSONDecoder().decode(TimelineRestoreResult.self, from: data)
+
+        #expect(decoded == result)
+        #expect(decoded.fallbackReason == TimelineRestoreFallbackReason(
+            kind: .layoutAttributesMissing,
+            anchorItemKey: "home:100:a"
+        ))
     }
 
     @Test("Restore gate metric placeholder is codable")
@@ -335,6 +454,34 @@ struct TimelineEngineScaffoldTests {
         #expect(intent.deletedIDs.isEmpty)
     }
 
+    private static func positionRecorder() -> TimelinePositionRecorder {
+        TimelinePositionRecorder(
+            accountID: AccountID(rawValue: "account-a"),
+            feedID: FeedID(rawValue: 1),
+            timelineKey: TimelineKey(rawValue: "home")
+        )
+    }
+
+    @MainActor
+    private static func dataSource(
+        for collectionView: UICollectionView
+    ) -> TimelineSnapshotCoordinator.DataSource {
+        collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "cell")
+        return TimelineSnapshotCoordinator.DataSource(collectionView: collectionView) { collectionView, indexPath, _ in
+            collectionView.dequeueReusableCell(withReuseIdentifier: "cell", for: indexPath)
+        }
+    }
+
+    private static func attributes(
+        indexPath: IndexPath,
+        minY: CGFloat,
+        height: CGFloat
+    ) -> UICollectionViewLayoutAttributes {
+        let attributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+        attributes.frame = CGRect(x: 0, y: minY, width: 320, height: height)
+        return attributes
+    }
+
     private static func anchor(
         itemKey: String,
         delta: Double,
@@ -360,5 +507,42 @@ struct TimelineEngineScaffoldTests {
             capturedAtMS: capturedAtMS,
             schemaVersion: 1
         )
+    }
+}
+
+@MainActor
+private final class RestoreDiagnosticsCollectionView: UICollectionView {
+    var diagnosticVisibleIndexPaths: [IndexPath] = []
+    var diagnosticAttributes: [IndexPath: UICollectionViewLayoutAttributes] = [:]
+    var attributesInstalledAfterScroll: [IndexPath: UICollectionViewLayoutAttributes] = [:]
+    var scrollRequests: [IndexPath] = []
+
+    init() {
+        let layout = UICollectionViewFlowLayout()
+        layout.itemSize = CGSize(width: 320, height: 72)
+        super.init(frame: CGRect(x: 0, y: 0, width: 320, height: 480), collectionViewLayout: layout)
+        contentSize = CGSize(width: 320, height: 1_000)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override var indexPathsForVisibleItems: [IndexPath] {
+        diagnosticVisibleIndexPaths
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        diagnosticAttributes[indexPath]
+    }
+
+    override func scrollToItem(
+        at indexPath: IndexPath,
+        at scrollPosition: UICollectionView.ScrollPosition,
+        animated: Bool
+    ) {
+        scrollRequests.append(indexPath)
+        diagnosticAttributes.merge(attributesInstalledAfterScroll) { current, _ in current }
     }
 }

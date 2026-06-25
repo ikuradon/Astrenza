@@ -89,13 +89,14 @@ final class TimelineSnapshotCoordinator {
         )
     }
 
+    @discardableResult
     func applyPreservingPosition(
         itemIDs: [TimelineEntryID],
         reason: TimelineSnapshotReason,
         in collectionView: UICollectionView,
         reconfigureIDs: [TimelineEntryID] = [],
         animatingDifferences: Bool = true
-    ) {
+    ) -> TimelineSnapshotMutationRecord {
         let beforeVisibleIDs = visibleIDs(in: collectionView)
         let beforeAnchor = positionRecorder.capture(in: collectionView) { [dataSource] indexPath in
             dataSource.itemIdentifier(for: indexPath)
@@ -121,9 +122,13 @@ final class TimelineSnapshotCoordinator {
         dataSource.apply(snapshot, animatingDifferences: animatingDifferences)
         collectionView.layoutIfNeeded()
 
+        var restoreResult = TimelineRestoreResult.skipped(reason: TimelineRestoreFallbackReason(
+            kind: beforeVisibleIDs.isEmpty ? .noVisibleItems : .noSavedAnchor,
+            anchorItemKey: nil
+        ))
         if let beforeAnchor {
             diagnosticsRecorder.recordRestoreGate(.anchorRestoring)
-            positionRecorder.restore(anchor: beforeAnchor, in: collectionView) { [dataSource] entryID in
+            restoreResult = positionRecorder.restore(anchor: beforeAnchor, in: collectionView) { [dataSource] entryID in
                 dataSource.indexPath(for: entryID)
             }
         }
@@ -138,12 +143,13 @@ final class TimelineSnapshotCoordinator {
             diagnosticsRecorder.recordRestoreGate(.firstInteractiveScrollReady)
         }
 
-        diagnosticsRecorder.recordMutation(
+        return diagnosticsRecorder.recordMutation(
             reason: reason,
             anchorBefore: beforeAnchor,
             anchorAfter: afterAnchor,
             visibleIDsBefore: beforeVisibleIDs,
-            visibleIDsAfter: afterVisibleIDs
+            visibleIDsAfter: afterVisibleIDs,
+            fallbackReason: restoreResult.fallbackReason
         )
     }
 
