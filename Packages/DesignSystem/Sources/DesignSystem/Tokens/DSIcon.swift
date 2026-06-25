@@ -41,6 +41,10 @@ public enum DSIcon: String, CaseIterable, Codable, Sendable {
     }
 
     public func font(for context: DSIconContext, weight: Font.Weight = .semibold) -> Font {
-        .system(size: CGFloat(visualSize(for: context)), weight: weight)
+        font(size: visualSize(for: context), weight: weight)
+    }
+
+    public func font(size pointSize: Double, weight: Font.Weight = .semibold) -> Font {
+        .system(size: CGFloat(pointSize), weight: weight)
     }
 }

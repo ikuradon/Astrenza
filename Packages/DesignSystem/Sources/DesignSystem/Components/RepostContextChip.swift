@@ -14,7 +14,7 @@ public struct RepostContextChip: View {
     public var body: some View {
         HStack(spacing: DSSpacing.xs.cgFloat) {
             Image(systemName: DSIcon.repost.systemName)
-                .font(.system(size: CGFloat(metrics.iconSize), weight: .bold))
+                .font(DSIcon.repost.font(size: metrics.iconSize, weight: .bold))
 
             Text(text)
                 .font(DSTypography.captionEmphasized.font)

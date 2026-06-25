@@ -44,8 +44,8 @@ public struct TimelineActionBar: View {
             ForEach(items) { item in
                 Button(action: item.action) {
                     HStack(spacing: DSSpacing.xs.cgFloat) {
-                        Image(systemName: (item.isActive ? item.activeIcon : nil)?.systemName ?? item.icon.systemName)
-                            .font(.system(size: CGFloat(metrics.visualIconSize), weight: item.isActive ? .bold : .semibold))
+                        Image(systemName: icon(for: item).systemName)
+                            .font(icon(for: item).font(size: metrics.visualIconSize, weight: item.isActive ? .bold : .semibold))
 
                         if let countText = item.countText {
                             Text(countText)
@@ -62,5 +62,9 @@ public struct TimelineActionBar: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func icon(for item: TimelineActionBarItem) -> DSIcon {
+        (item.isActive ? item.activeIcon : nil) ?? item.icon
     }
 }

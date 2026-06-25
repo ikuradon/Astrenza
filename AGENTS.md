@@ -49,6 +49,9 @@
 - 新しい Timeline component では raw color、raw spacing、raw font size、ad-hoc icon size を使わない。
 - action button は visual icon size と hit target を分け、44x44pt 以上の hit target を保つ。
 - Timeline row height に影響する token 変更は snapshot / E2E anchor delta validation を要求する。
+- DesignSystem または future Timeline component を変更した場合は `scripts/guard_designsystem.sh` を実行する。
+- `Astrenza/Sources/AstrenzaApp/TimelineEngine`、`TimelineRows`、`TimelineV1` に追加する新しい Timeline code はこの guard に通す。
+- `scripts/guard_designsystem.sh` は legacy SwiftUI Timeline を意図的に scan しない。Tokens、Timeline metrics、DesignSystem tests は baseline / expected 値のため allowlist される。
 
 ## Security
 

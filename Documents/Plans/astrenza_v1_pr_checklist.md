@@ -23,6 +23,7 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 
 - [ ] New production Timeline work uses `UICollectionView` + `UICollectionViewDiffableDataSource` + `UIHostingConfiguration`.
 - [ ] Legacy `TimelineFeedView`, `TimelinePostRow`, and `TimelineAttachments` are not production-extended.
+- [ ] New `TimelineEngine`, `TimelineRows`, or `TimelineV1` code passes `scripts/guard_designsystem.sh`.
 - [ ] Diffable snapshot items are stable `TimelineEntryID` / `feed_items.item_key` values only.
 - [ ] Row identity is unchanged across OGP, media, profile, repost, quote, and reply-parent resolve.
 - [ ] Delayed resolve uses reconfigure-style updates, not delete/insert, for visible row enrichment.
@@ -44,6 +45,7 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 - [ ] Read marker stability: launch/sync/resolve cannot call marker advancement.
 - [ ] `pending_new` stability: new items remain out of visible snapshot until user action or explicit top-of-feed condition.
 - [ ] Delayed resolve apply path: update is `reconfigureItems` or equivalent, not delete/insert.
+- [ ] Static guard: run `scripts/guard_designsystem.sh`; it scans `Packages/DesignSystem/Sources/DesignSystem` plus existing future Timeline component paths only, and intentionally does not scan legacy SwiftUI Timeline files.
 - [ ] DesignSystem usage: no raw `Color`, numeric padding, raw `.font(.system(size:))`, or per-component SF Symbol size in new Timeline components.
 - [ ] Hit target: reply/repost/reaction/share/more actions are at least 44x44pt.
 - [ ] Launch restore: first interactive Timeline does not wait for network or relay EOSE.

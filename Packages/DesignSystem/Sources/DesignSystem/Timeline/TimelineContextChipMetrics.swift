@@ -48,6 +48,13 @@ public struct TimelineContextChipMetrics: Equatable, Codable, Sendable {
         iconSize: DSIcon.repost.visualSize(for: .compactBadge)
     )
 
+    public static let contentWarningPill = TimelineContextChipMetrics(
+        interaction: .noninteractive,
+        visualHeight: 28,
+        avatarSize: 0,
+        iconSize: DSIcon.warning.visualSize(for: .compactBadge)
+    )
+
     public static let repostInteractive = TimelineContextChipMetrics(
         interaction: .interactive,
         visualHeight: 28,

@@ -32,6 +32,18 @@ struct TimelineMetricsContractTests {
         #expect(metrics.hitTargetHeight == nil)
     }
 
+    @Test("Content warning pill is visual-only and below interactive hit target")
+    func contentWarningPillIsVisualOnlyAndBelowInteractiveHitTarget() {
+        let metrics = TimelineContextChipMetrics.contentWarningPill
+
+        #expect(metrics.interaction == .noninteractive)
+        #expect(metrics.visualHeight == 28)
+        #expect(metrics.visualHeight < DSControlSize.minimumHitTarget)
+        #expect(metrics.iconSize == DSIcon.warning.visualSize(for: .compactBadge))
+        #expect(metrics.hitTargetWidth == nil)
+        #expect(metrics.hitTargetHeight == nil)
+    }
+
     @Test("Interactive context chip metrics keep hit target separate from compact visual height")
     func interactiveContextChipMetricsKeepHitTargetSeparateFromVisualHeight() {
         let metrics = TimelineContextChipMetrics.repostInteractive
