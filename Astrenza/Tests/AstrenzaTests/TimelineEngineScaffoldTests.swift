@@ -121,6 +121,73 @@ struct TimelineEngineScaffoldTests {
         #expect(selection.lastVisibleBottomItemKey == "home:098:c")
     }
 
+    @Test("Position recorder chooses first visible candidate at or below viewport top")
+    func positionRecorderChoosesFirstVisibleCandidateAtOrBelowViewportTop() throws {
+        let frames = [
+            TimelineVisibleItemFrame(entryID: TimelineEntryID(rawValue: "home:101:above"), minY: 20, maxY: 99),
+            TimelineVisibleItemFrame(entryID: TimelineEntryID(rawValue: "home:100:anchor"), minY: 120, maxY: 180),
+            TimelineVisibleItemFrame(entryID: TimelineEntryID(rawValue: "home:099:tail"), minY: 190, maxY: 260)
+        ]
+
+        let selection = try #require(TimelinePositionRecorder.chooseAnchorCandidate(
+            visibleFrames: frames,
+            viewportTop: 100
+        ))
+
+        #expect(selection.anchorItemKey == "home:100:anchor")
+        #expect(selection.cellTopDeltaFromViewportTop == 20)
+        #expect(selection.lastVisibleTopItemKey == "home:100:anchor")
+        #expect(selection.lastVisibleBottomItemKey == "home:099:tail")
+    }
+
+    @Test("Position recorder computes unclamped restore content offset target")
+    func positionRecorderComputesUnclampedRestoreContentOffsetTarget() {
+        let target = TimelinePositionRecorder.computeContentOffsetTarget(
+            anchorFrameMinY: 240,
+            savedCellTopDeltaFromViewportTop: -12,
+            adjustedContentInsetTop: 20,
+            boundsHeight: 400,
+            contentHeight: 1_000,
+            adjustedContentInsetBottom: 30
+        )
+
+        #expect(target == 232)
+    }
+
+    @Test("Position recorder clamps restore offset to valid scroll range")
+    func positionRecorderClampsRestoreOffsetToValidScrollRange() {
+        let top = TimelinePositionRecorder.clampContentOffsetTarget(
+            -200,
+            adjustedContentInsetTop: 20,
+            boundsHeight: 400,
+            contentHeight: 1_000,
+            adjustedContentInsetBottom: 30
+        )
+        let bottom = TimelinePositionRecorder.clampContentOffsetTarget(
+            900,
+            adjustedContentInsetTop: 20,
+            boundsHeight: 400,
+            contentHeight: 1_000,
+            adjustedContentInsetBottom: 30
+        )
+
+        #expect(top == -20)
+        #expect(bottom == 630)
+    }
+
+    @Test("Position recorder computes structured anchor delta for same item")
+    func positionRecorderComputesStructuredAnchorDeltaForSameItem() throws {
+        let before = Self.anchor(itemKey: "home:100:a", delta: -8)
+        let after = Self.anchor(itemKey: "home:100:a", delta: -5)
+
+        let delta = try #require(TimelinePositionRecorder.computeAnchorDelta(before: before, after: after))
+
+        #expect(delta.anchorItemKey == "home:100:a")
+        #expect(delta.beforeCellTopDeltaFromViewportTop == -8)
+        #expect(delta.afterCellTopDeltaFromViewportTop == -5)
+        #expect(delta.deltaPoints == 3)
+    }
+
     @Test("Snapshot coordinator filters reconfigure IDs without mutating item identity")
     func snapshotCoordinatorFiltersReconfigureIDsWithoutMutatingItemIdentity() {
         let existing = [
@@ -141,5 +208,157 @@ struct TimelineEngineScaffoldTests {
         #expect(plan.reconfigureIDs == [TimelineEntryID(rawValue: "home:099:b")])
         #expect(plan.insertedIDs.isEmpty)
         #expect(plan.deletedIDs.isEmpty)
+    }
+
+    @Test("Snapshot coordinator creates codable mutation record with read marker unchanged by default")
+    func snapshotCoordinatorCreatesCodableMutationRecordWithReadMarkerUnchangedByDefault() throws {
+        let before = Self.anchor(itemKey: "home:100:a", delta: -8)
+        let after = Self.anchor(itemKey: "home:100:a", delta: -6)
+        let visibleBefore = [TimelineEntryID(rawValue: "home:100:a")]
+        let visibleAfter = [
+            TimelineEntryID(rawValue: "home:100:a"),
+            TimelineEntryID(rawValue: "home:099:b")
+        ]
+
+        let record = TimelineSnapshotCoordinator.makeMutationRecord(
+            reason: .gapFilled,
+            anchorBefore: before,
+            anchorAfter: after,
+            visibleIDsBefore: visibleBefore,
+            visibleIDsAfter: visibleAfter,
+            timestampMS: 1_735_000_000_000
+        )
+
+        #expect(record.mutationReason == .gapFilled)
+        #expect(record.anchorBefore?.anchorItemKey == "home:100:a")
+        #expect(record.anchorAfter?.anchorItemKey == "home:100:a")
+        #expect(record.anchorDelta?.deltaPoints == 2)
+        #expect(record.visibleIDsBefore == visibleBefore)
+        #expect(record.visibleIDsAfter == visibleAfter)
+        #expect(record.timestampMS == 1_735_000_000_000)
+        #expect(record.fallbackReason == nil)
+        #expect(record.readMarkerChanged == false)
+
+        let data = try JSONEncoder().encode(record)
+        let decoded = try JSONDecoder().decode(TimelineSnapshotMutationRecord.self, from: data)
+
+        #expect(decoded == record)
+    }
+
+    @Test("Restore fallback reason is codable and equatable")
+    func restoreFallbackReasonIsCodableAndEquatable() throws {
+        let reason = TimelineRestoreFallbackReason(
+            kind: .anchorItemMissing,
+            anchorItemKey: "home:100:a"
+        )
+
+        let data = try JSONEncoder().encode(reason)
+        let decoded = try JSONDecoder().decode(TimelineRestoreFallbackReason.self, from: data)
+
+        #expect(decoded == reason)
+    }
+
+    @Test("Restore gate metric placeholder is codable")
+    func restoreGateMetricPlaceholderIsCodable() throws {
+        let metric = TimelineRestoreGateMetric(
+            stage: .anchorRestoring,
+            durationMS: 12,
+            timestampMS: 1_735_000_000_123,
+            exceededBudget: false
+        )
+
+        let data = try JSONEncoder().encode(metric)
+        let decoded = try JSONDecoder().decode(TimelineRestoreGateMetric.self, from: data)
+
+        #expect(decoded == metric)
+    }
+
+    @Test("Snapshot coordinator identifies reconfigure-only mutations")
+    func snapshotCoordinatorIdentifiesReconfigureOnlyMutations() {
+        let existing = [
+            TimelineEntryID(rawValue: "home:100:a"),
+            TimelineEntryID(rawValue: "home:099:b")
+        ]
+        let plan = TimelineSnapshotCoordinator.makeMutationPlan(
+            currentIDs: existing,
+            proposedIDs: existing,
+            reconfigureIDs: [TimelineEntryID(rawValue: "home:099:b")],
+            reason: .reconfigure(.media)
+        )
+
+        #expect(TimelineSnapshotCoordinator.isReconfigureOnlyMutation(plan))
+    }
+
+    @Test("Pending new insertion requires explicit user insertion reason")
+    func pendingNewInsertionRequiresExplicitUserInsertionReason() {
+        let pendingID = TimelineEntryID(rawValue: "home:pending:new")
+
+        #expect(TimelineSnapshotCoordinator.pendingNewInsertionDecision(
+            pendingNewIDs: [pendingID],
+            reason: .userInsertedPendingNew
+        ) == .allowed)
+        #expect(TimelineSnapshotCoordinator.pendingNewInsertionDecision(
+            pendingNewIDs: [pendingID],
+            reason: .initialRestore
+        ) == .blocked)
+        #expect(TimelineSnapshotCoordinator.pendingNewInsertionDecision(
+            pendingNewIDs: [],
+            reason: .initialRestore
+        ) == .allowed)
+    }
+
+    @Test("Resolve intent preserves IDs and reports skipped unknown IDs")
+    func resolveIntentPreservesIDsAndReportsSkippedUnknownIDs() {
+        let existing = [
+            TimelineEntryID(rawValue: "home:100:a"),
+            TimelineEntryID(rawValue: "home:099:b")
+        ]
+        let skipped = TimelineEntryID(rawValue: "home:098:unknown")
+
+        let intent = TimelineResolveApplyCoordinator().reconfigureIntent(
+            resolvedIDs: [
+                TimelineEntryID(rawValue: "home:099:b"),
+                skipped,
+                TimelineEntryID(rawValue: "home:100:a")
+            ],
+            existingIDs: existing,
+            reason: .media
+        )
+
+        #expect(intent.mutationStyle == .reconfigure)
+        #expect(intent.entryIDs == [
+            TimelineEntryID(rawValue: "home:099:b"),
+            TimelineEntryID(rawValue: "home:100:a")
+        ])
+        #expect(intent.skippedIDs == [skipped])
+        #expect(intent.insertedIDs.isEmpty)
+        #expect(intent.deletedIDs.isEmpty)
+    }
+
+    private static func anchor(
+        itemKey: String,
+        delta: Double,
+        capturedAtMS: Int64 = 1_735_000_000_000
+    ) -> TimelineVisualAnchor {
+        TimelineVisualAnchor(
+            accountID: AccountID(rawValue: "account-a"),
+            feedID: FeedID(rawValue: 1),
+            timelineKey: TimelineKey(rawValue: "home"),
+            anchorItemKey: itemKey,
+            anchorEventID: nil,
+            anchorSortAt: 100,
+            anchorTieBreakID: itemKey,
+            cellTopDeltaFromViewportTop: delta,
+            viewportHeight: 844,
+            viewportWidth: 390,
+            contentInsetTop: 0,
+            contentInsetBottom: 34,
+            lastVisibleTopItemKey: itemKey,
+            lastVisibleBottomItemKey: itemKey,
+            markerEventID: nil,
+            markerSortAt: nil,
+            capturedAtMS: capturedAtMS,
+            schemaVersion: 1
+        )
     }
 }

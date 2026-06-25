@@ -47,6 +47,48 @@ final class TimelineSnapshotCoordinator {
         )
     }
 
+    nonisolated static func isReconfigureOnlyMutation(_ plan: TimelineSnapshotMutationPlan) -> Bool {
+        plan.mutationStyle == .reconfigure
+            && !plan.reconfigureIDs.isEmpty
+            && plan.insertedIDs.isEmpty
+            && plan.deletedIDs.isEmpty
+            && plan.itemIDs.count > 0
+    }
+
+    nonisolated static func pendingNewInsertionDecision(
+        pendingNewIDs: [TimelineEntryID],
+        reason: TimelineSnapshotReason
+    ) -> TimelinePendingNewInsertionDecision {
+        guard !pendingNewIDs.isEmpty else {
+            return .allowed
+        }
+
+        return reason == .userInsertedPendingNew ? .allowed : .blocked
+    }
+
+    nonisolated static func makeMutationRecord(
+        reason: TimelineSnapshotReason,
+        anchorBefore: TimelineVisualAnchor?,
+        anchorAfter: TimelineVisualAnchor?,
+        visibleIDsBefore: [TimelineEntryID],
+        visibleIDsAfter: [TimelineEntryID],
+        timestampMS: Int64,
+        fallbackReason: TimelineRestoreFallbackReason? = nil,
+        readMarkerChanged: Bool = false
+    ) -> TimelineSnapshotMutationRecord {
+        TimelineSnapshotMutationRecord(
+            mutationReason: reason,
+            anchorBefore: anchorBefore.map { TimelineAnchorSnapshot(anchor: $0) },
+            anchorAfter: anchorAfter.map { TimelineAnchorSnapshot(anchor: $0) },
+            anchorDelta: TimelinePositionRecorder.computeAnchorDelta(before: anchorBefore, after: anchorAfter),
+            visibleIDsBefore: visibleIDsBefore,
+            visibleIDsAfter: visibleIDsAfter,
+            timestampMS: timestampMS,
+            fallbackReason: fallbackReason,
+            readMarkerChanged: readMarkerChanged
+        )
+    }
+
     func applyPreservingPosition(
         itemIDs: [TimelineEntryID],
         reason: TimelineSnapshotReason,
@@ -92,14 +134,16 @@ final class TimelineSnapshotCoordinator {
         }
         let afterVisibleIDs = visibleIDs(in: collectionView)
         _ = visibleRangeTracker.recordVisibleIDs(afterVisibleIDs)
+        if reason == .initialRestore {
+            diagnosticsRecorder.recordRestoreGate(.firstInteractiveScrollReady)
+        }
 
         diagnosticsRecorder.recordMutation(
             reason: reason,
             anchorBefore: beforeAnchor,
             anchorAfter: afterAnchor,
             visibleIDsBefore: beforeVisibleIDs,
-            visibleIDsAfter: afterVisibleIDs,
-            restoreGate: reason == .initialRestore ? .firstInteractiveScrollReady : nil
+            visibleIDsAfter: afterVisibleIDs
         )
     }
 

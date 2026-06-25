@@ -8,6 +8,10 @@ struct TimelineResolveReconfigureIntent: Equatable, Sendable {
     var missingIDs: [TimelineEntryID]
     var insertedIDs: [TimelineEntryID]
     var deletedIDs: [TimelineEntryID]
+
+    var skippedIDs: [TimelineEntryID] {
+        missingIDs
+    }
 }
 
 final class TimelineResolveApplyCoordinator {

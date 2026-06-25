@@ -135,6 +135,11 @@ enum TimelineMutationStyle: String, Equatable, Codable, Sendable {
     case reconfigure
 }
 
+enum TimelinePendingNewInsertionDecision: String, Equatable, Codable, Sendable {
+    case allowed
+    case blocked
+}
+
 struct TimelineSnapshotMutationPlan: Equatable, Sendable {
     var reason: TimelineSnapshotReason
     var mutationStyle: TimelineMutationStyle

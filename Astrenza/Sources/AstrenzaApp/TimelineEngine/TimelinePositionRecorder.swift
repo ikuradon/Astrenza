@@ -36,6 +36,13 @@ final class TimelinePositionRecorder {
         visibleFrames: [TimelineVisibleItemFrame],
         viewportTop: Double
     ) -> TimelineAnchorSelection? {
+        chooseAnchorCandidate(visibleFrames: visibleFrames, viewportTop: viewportTop)
+    }
+
+    static func chooseAnchorCandidate(
+        visibleFrames: [TimelineVisibleItemFrame],
+        viewportTop: Double
+    ) -> TimelineAnchorSelection? {
         let sortedFrames = visibleFrames.sorted { lhs, rhs in
             if lhs.minY == rhs.minY {
                 lhs.entryID.rawValue < rhs.entryID.rawValue
@@ -55,6 +62,40 @@ final class TimelinePositionRecorder {
             lastVisibleTopItemKey: candidates.first?.entryID.rawValue ?? sortedFrames.first?.entryID.rawValue,
             lastVisibleBottomItemKey: candidates.last?.entryID.rawValue ?? sortedFrames.last?.entryID.rawValue
         )
+    }
+
+    static func computeContentOffsetTarget(
+        anchorFrameMinY: Double,
+        savedCellTopDeltaFromViewportTop: Double,
+        adjustedContentInsetTop: Double,
+        boundsHeight: Double,
+        contentHeight: Double,
+        adjustedContentInsetBottom: Double
+    ) -> Double {
+        let target = anchorFrameMinY - savedCellTopDeltaFromViewportTop - adjustedContentInsetTop
+        return clampContentOffsetTarget(
+            target,
+            adjustedContentInsetTop: adjustedContentInsetTop,
+            boundsHeight: boundsHeight,
+            contentHeight: contentHeight,
+            adjustedContentInsetBottom: adjustedContentInsetBottom
+        )
+    }
+
+    static func clampContentOffsetTarget(
+        _ target: Double,
+        adjustedContentInsetTop: Double,
+        boundsHeight: Double,
+        contentHeight: Double,
+        adjustedContentInsetBottom: Double
+    ) -> Double {
+        let minimumOffsetY = -adjustedContentInsetTop
+        let maximumOffsetY = max(
+            minimumOffsetY,
+            contentHeight + adjustedContentInsetBottom - boundsHeight
+        )
+
+        return min(max(target, minimumOffsetY), maximumOffsetY)
     }
 
     @MainActor
@@ -118,16 +159,28 @@ final class TimelinePositionRecorder {
             return
         }
 
-        let restoredY = attributes.frame.minY
-            - CGFloat(anchor.cellTopDeltaFromViewportTop)
-            - collectionView.adjustedContentInset.top
+        let restoredY = Self.computeContentOffsetTarget(
+            anchorFrameMinY: Double(attributes.frame.minY),
+            savedCellTopDeltaFromViewportTop: anchor.cellTopDeltaFromViewportTop,
+            adjustedContentInsetTop: Double(collectionView.adjustedContentInset.top),
+            boundsHeight: Double(collectionView.bounds.height),
+            contentHeight: Double(collectionView.contentSize.height),
+            adjustedContentInsetBottom: Double(collectionView.adjustedContentInset.bottom)
+        )
         collectionView.setContentOffset(
-            CGPoint(x: collectionView.contentOffset.x, y: restoredY),
+            CGPoint(x: collectionView.contentOffset.x, y: CGFloat(restoredY)),
             animated: false
         )
     }
 
     static func anchorDelta(before: TimelineVisualAnchor?, after: TimelineVisualAnchor?) -> Double? {
+        computeAnchorDelta(before: before, after: after)?.deltaPoints
+    }
+
+    static func computeAnchorDelta(
+        before: TimelineVisualAnchor?,
+        after: TimelineVisualAnchor?
+    ) -> TimelineAnchorDelta? {
         guard
             let before,
             let after,
@@ -136,7 +189,12 @@ final class TimelinePositionRecorder {
             return nil
         }
 
-        return after.cellTopDeltaFromViewportTop - before.cellTopDeltaFromViewportTop
+        return TimelineAnchorDelta(
+            anchorItemKey: before.anchorItemKey,
+            beforeCellTopDeltaFromViewportTop: before.cellTopDeltaFromViewportTop,
+            afterCellTopDeltaFromViewportTop: after.cellTopDeltaFromViewportTop,
+            deltaPoints: after.cellTopDeltaFromViewportTop - before.cellTopDeltaFromViewportTop
+        )
     }
 
     static func currentTimeMilliseconds(date: Date = Date()) -> Int64 {
