@@ -104,6 +104,33 @@ struct TimelineRowProjectionBoundaryTests {
         expectBoundaryIssue(.missingLayoutContract, in: missingLayoutContract)
     }
 
+    @Test("Every row projection issue kind has explicit negative coverage")
+    func everyRowProjectionIssueKindHasExplicitNegativeCoverage() throws {
+        let coverageCases = rowProjectionIssueCoverageCases
+        let coveredKinds = Set(coverageCases.map { $0.kind.rawValue })
+        let allKinds = Set(TimelineRowProjectionIssue.Kind.allCases.map(\.rawValue))
+
+        #expect(
+            allKinds.subtracting(coveredKinds).isEmpty,
+            "Missing row projection issue coverage for \(allKinds.subtracting(coveredKinds).sorted())"
+        )
+        #expect(
+            coveredKinds.subtracting(allKinds).isEmpty,
+            "Stale row projection issue coverage for \(coveredKinds.subtracting(allKinds).sorted())"
+        )
+
+        for coverageCase in coverageCases {
+            let input = try coverageCase.makeInput()
+            let output = boundary.project(input)
+
+            #expect(output.draft == nil, "\(coverageCase.testCaseName) should reject the draft")
+            #expect(
+                output.issues.contains { $0.kind == coverageCase.kind },
+                "\(coverageCase.testCaseName) expected \(coverageCase.kind), got \(output.issues)"
+            )
+        }
+    }
+
     @Test("Draft preserves item key TimelineEntryID and source subject distinction")
     func draftPreservesItemKeyTimelineEntryIDAndSourceSubjectDistinction() throws {
         let scenario = try fixture(named: "repost_target_pending_to_resolved")
@@ -301,6 +328,176 @@ struct TimelineRowProjectionBoundaryTests {
 
         #expect(output.draft == nil)
         #expect(output.issues.contains { $0.kind == kind }, "Expected \(kind), got \(output.issues)")
+    }
+
+    private var rowProjectionIssueCoverageCases: [RowProjectionIssueCoverageCase] {
+        // New issue kinds must add a direct negative case here before they can ship.
+        [
+            RowProjectionIssueCoverageCase(
+                kind: .adapterIssue,
+                testCaseName: "invalidAdapterInputsBecomeTypedRowProjectionIssues"
+            ) {
+                var invalid = try fixture(named: "ogp_pending_to_resolved")
+                invalid.expectedOutput.identity.itemKey += ":resolved"
+                invalid.expectedOutput.mutation.finalEntryID = invalid.expectedOutput.identity.entryID
+                let adapterOutput = adapter.project(TimelineProjectionAdapterInput(scenario: invalid))
+                return TimelineRowProjectionInput(adapterOutput: adapterOutput)
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingEntryID,
+                testCaseName: "missing entry ID adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.entryID = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingItemKey,
+                testCaseName: "missing item key adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.itemKey = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingSourceEventID,
+                testCaseName: "missing source event ID adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.sourceEventID = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingSortAt,
+                testCaseName: "missing sort_at adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.sortAt = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingTieBreakID,
+                testCaseName: "missing tie-break adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.tieBreakID = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingFeedItemReason,
+                testCaseName: "missing feed item reason adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.feedItemReason = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingMutationExpectation,
+                testCaseName: "missing mutation expectation adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.mutationExpectation = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingLayoutDecision,
+                testCaseName: "missing layout decision adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.layoutDecision = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingLayoutContract,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "textOnly_author_visible") { output in
+                    output.layoutDecision?.hasLayoutContract = false
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingVisibilityDecision,
+                testCaseName: "missing visibility decision adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.visibilityDecision = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .missingFallback,
+                testCaseName: "missing fallback adapter output"
+            ) {
+                try input(named: "textOnly_author_visible") { $0.fallback = nil }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .delayedResolveMustReconfigure,
+                testCaseName: "malformed delayed resolve mutation"
+            ) {
+                try input(named: "ogp_pending_to_resolved") { output in
+                    output.mutationExpectation?.style = .none
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .deleteInsertMutationIntroduced,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "ogp_pending_to_resolved") { output in
+                    let entryID = try #require(output.entryID)
+                    output.mutationExpectation?.deletedIDs = [entryID]
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .pendingNewVisibilityRequiresExplicitUserAction,
+                testCaseName: "pendingNewRemainsHiddenUnlessAdapterAndBoundaryHaveExplicitUserAction"
+            ) {
+                let scenario = try fixture(named: "pending_new_not_visible_until_user_action")
+                let entryID = scenario.expectedOutput.identity.entryID
+                let adapterOutput = adapter.project(TimelineProjectionAdapterInput(
+                    scenario: scenario,
+                    pendingNewEntryIDs: [entryID],
+                    userActionAllowsPendingNewInsertion: true
+                ))
+                return TimelineRowProjectionInput(adapterOutput: adapterOutput)
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .readMarkerChanged,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "profile_missing_to_resolved_headerOnly") {
+                    $0.diagnostics.readMarkerChanged = true
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .requiresNetworkWork,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                    $0.diagnostics.requiresNetworkWork = true
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .requiresDBWork,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                    $0.diagnostics.requiresDBWork = true
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .quoteTargetBecameReplyParent,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "quote_target_pending_to_resolved") {
+                    $0.mutationExpectation?.quoteCreatesReplyRelation = true
+                }
+            },
+            RowProjectionIssueCoverageCase(
+                kind: .homeReplyParentMustBeHeaderOnly,
+                testCaseName: "malformedAdapterOutputsProduceTypedRowProjectionIssues"
+            ) {
+                try input(named: "reply_parent_pending_to_resolved_headerOnly") { output in
+                    output.layoutDecision?.contract.replyHeaderMode = .inlineParentInDetail
+                    output.layoutDecision?.contract.allowsInlineParentPreviewInHome = true
+                }
+            }
+        ]
+    }
+
+    private func input(
+        named name: String,
+        mutate: (inout TimelineProjectionAdapterOutput) throws -> Void
+    ) throws -> TimelineRowProjectionInput {
+        var output = try adapterOutput(named: name)
+        try mutate(&output)
+        return TimelineRowProjectionInput(adapterOutput: output)
+    }
+
+    private struct RowProjectionIssueCoverageCase {
+        var kind: TimelineRowProjectionIssue.Kind
+        var testCaseName: String
+        var makeInput: () throws -> TimelineRowProjectionInput
     }
 
     private func assertSendable<T: Sendable>(_ type: T.Type) {}

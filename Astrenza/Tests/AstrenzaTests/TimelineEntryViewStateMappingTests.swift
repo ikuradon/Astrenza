@@ -325,6 +325,33 @@ struct TimelineEntryViewStateMappingTests {
         expectIssue(.homeReplyParentMustBeHeaderOnly, in: replyInline)
     }
 
+    @Test("Every view state mapping issue kind has explicit negative coverage")
+    func everyViewStateMappingIssueKindHasExplicitNegativeCoverage() throws {
+        let coverageCases = viewStateMappingIssueCoverageCases
+        let coveredKinds = Set(coverageCases.map { $0.kind.rawValue })
+        let allKinds = Set(TimelineEntryViewStateMappingIssue.Kind.allCases.map(\.rawValue))
+
+        #expect(
+            allKinds.subtracting(coveredKinds).isEmpty,
+            "Missing view state mapping issue coverage for \(allKinds.subtracting(coveredKinds).sorted())"
+        )
+        #expect(
+            coveredKinds.subtracting(allKinds).isEmpty,
+            "Stale view state mapping issue coverage for \(coveredKinds.subtracting(allKinds).sorted())"
+        )
+
+        for coverageCase in coverageCases {
+            let input = try coverageCase.makeInput()
+            let output = mapper.map(input)
+
+            #expect(output.viewState == nil, "\(coverageCase.testCaseName) should reject the view state")
+            #expect(
+                output.issues.contains { $0.kind == coverageCase.kind },
+                "\(coverageCase.testCaseName) expected \(coverageCase.kind), got \(output.issues)"
+            )
+        }
+    }
+
     private func projectedDraft(for scenario: TimelineProjectionScenario) throws -> TimelineProjectedRowDraft {
         let adapterOutput = adapter.project(TimelineProjectionAdapterInput(scenario: scenario))
         let output = boundary.project(TimelineRowProjectionInput(adapterOutput: adapterOutput))
@@ -379,6 +406,133 @@ struct TimelineEntryViewStateMappingTests {
 
         #expect(output.viewState == nil)
         #expect(output.issues.contains { $0.kind == kind }, "Expected \(kind), got \(output.issues)")
+    }
+
+    private var viewStateMappingIssueCoverageCases: [ViewStateMappingIssueCoverageCase] {
+        // New issue kinds must add a direct negative case here before they can ship.
+        [
+            ViewStateMappingIssueCoverageCase(
+                kind: .unstableIdentity,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "ogp_pending_to_resolved") {
+                    $0.itemKey += ":different"
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .sourceEventMismatch,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "textOnly_author_visible") {
+                    $0.sourceEventID = EventID(hex: String(repeating: "9", count: 64))
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .sortKeyMismatch,
+                testCaseName: "sort key mismatch draft"
+            ) {
+                try input(named: "textOnly_author_visible") {
+                    $0.sortAt += 1
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .missingLayoutContract,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "textOnly_author_visible") {
+                    $0.layoutDecision.hasLayoutContract = false
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .delayedResolveMustReconfigure,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "media_imeta_present_aspect_reserved") {
+                    $0.mutationExpectation.style = .none
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .deleteInsertMutationIntroduced,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "profile_missing_to_resolved_headerOnly") {
+                    $0.mutationExpectation.deletedIDs = [$0.id]
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .readMarkerChanged,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "profile_missing_to_resolved_headerOnly") {
+                    $0.mutationExpectation.readMarkerChanged = true
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .requiresNetworkWork,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                    $0.diagnostics.requiresNetworkWork = true
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .requiresDBWork,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                    $0.diagnostics.requiresDBWork = true
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .pendingNewVisibilityRequiresExplicitUserAction,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "pending_new_not_visible_until_user_action") {
+                    $0.visibilityDecision.pendingNewVisible = true
+                    $0.visibilityDecision.includedInVisibleSnapshot = true
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .quoteTargetBecameReplyParent,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "quote_target_pending_to_resolved") {
+                    $0.mutationExpectation.quoteCreatesReplyRelation = true
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .homeReplyParentMustBeHeaderOnly,
+                testCaseName: "invalidRowProjectionDraftsProduceTypedMappingIssues"
+            ) {
+                try input(named: "reply_parent_pending_to_resolved_headerOnly") {
+                    $0.layoutDecision.contract.replyHeaderMode = .inlineParentInDetail
+                    $0.layoutDecision.contract.allowsInlineParentPreviewInHome = true
+                }
+            },
+            ViewStateMappingIssueCoverageCase(
+                kind: .homeVisibleResolveMustNotChangeHeight,
+                testCaseName: "home visible delayed resolve height-change draft"
+            ) {
+                try input(named: "ogp_pending_to_resolved") {
+                    $0.layoutDecision.contract.canChangeHeightAfterFirstDisplay = true
+                }
+            }
+        ]
+    }
+
+    private func input(
+        named name: String,
+        mutate: (inout TimelineProjectedRowDraft) throws -> Void
+    ) throws -> TimelineEntryViewStateMappingInput {
+        var draft = try projectedDraft(for: try fixture(named: name))
+        try mutate(&draft)
+        return TimelineEntryViewStateMappingInput(draft: draft)
+    }
+
+    private struct ViewStateMappingIssueCoverageCase {
+        var kind: TimelineEntryViewStateMappingIssue.Kind
+        var testCaseName: String
+        var makeInput: () throws -> TimelineEntryViewStateMappingInput
     }
 
     private func assertSendable<T: Sendable>(_ type: T.Type) {}

@@ -46,7 +46,7 @@ struct TimelineRowProjectionOutput: Equatable, Codable, Sendable {
 }
 
 struct TimelineRowProjectionIssue: Equatable, Codable, Sendable {
-    enum Kind: String, Codable, Sendable {
+    enum Kind: String, CaseIterable, Codable, Sendable {
         case adapterIssue
         case missingEntryID
         case missingItemKey

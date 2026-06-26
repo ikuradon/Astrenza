@@ -25,7 +25,7 @@ struct TimelineEntryViewStateMappingOutput: Equatable, Codable, Sendable {
 }
 
 struct TimelineEntryViewStateMappingIssue: Equatable, Codable, Sendable {
-    enum Kind: String, Codable, Sendable {
+    enum Kind: String, CaseIterable, Codable, Sendable {
         case unstableIdentity
         case sourceEventMismatch
         case sortKeyMismatch
