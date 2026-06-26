@@ -355,6 +355,43 @@ struct TimelineDiagnosticsExport: Equatable, Codable, Sendable {
     var summary: TimelineDiagnosticsExportSummary {
         TimelineDiagnosticsAggregator.summarize(self)
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case mutationRecords
+        case restoreGateRecords
+        case restoreGateMetrics
+        case restoreGateDiagnostics
+        case summary
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.mutationRecords = try container.decodeIfPresent(
+            [TimelineSnapshotMutationRecord].self,
+            forKey: .mutationRecords
+        ) ?? []
+        self.restoreGateRecords = try container.decodeIfPresent(
+            [TimelineRestoreGateDiagnostic].self,
+            forKey: .restoreGateRecords
+        ) ?? []
+        self.restoreGateMetrics = try container.decodeIfPresent(
+            [TimelineRestoreGateMetric].self,
+            forKey: .restoreGateMetrics
+        ) ?? []
+        self.restoreGateDiagnostics = try container.decodeIfPresent(
+            [TimelineRestoreGateDiagnostics].self,
+            forKey: .restoreGateDiagnostics
+        ) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(mutationRecords, forKey: .mutationRecords)
+        try container.encode(restoreGateRecords, forKey: .restoreGateRecords)
+        try container.encode(restoreGateMetrics, forKey: .restoreGateMetrics)
+        try container.encode(restoreGateDiagnostics, forKey: .restoreGateDiagnostics)
+        try container.encode(summary, forKey: .summary)
+    }
 }
 
 struct TimelineDiagnosticsExportSummary: Equatable, Codable, Sendable {

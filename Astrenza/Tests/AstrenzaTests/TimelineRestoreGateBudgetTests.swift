@@ -429,4 +429,156 @@ struct TimelineRestoreGateBudgetTests {
         #expect(summary.readMarkerChanged)
         #expect(summary.releaseBlockingCount == 1)
     }
+
+    @Test("Fixture-backed export JSON has stable artifact shape")
+    func fixtureBackedExportJSONHasStableArtifactShape() throws {
+        let export = TimelineDiagnosticsExportJSONFixture.mixedRestoreGateExport()
+        let data = try TimelineDiagnosticsExportJSONFixture.encode(export)
+        let encoded = try #require(String(data: data, encoding: .utf8))
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        #expect(Set(json.keys) == [
+            "mutationRecords",
+            "restoreGateRecords",
+            "restoreGateMetrics",
+            "restoreGateDiagnostics",
+            "summary"
+        ])
+        #expect(json["restoreGateRecords"] as? [String] == [
+            "localInitialWindowQuery",
+            "restoreGate"
+        ])
+
+        let diagnostics = try #require(json["restoreGateDiagnostics"] as? [[String: Any]])
+        #expect(diagnostics.count == 3)
+        #expect(diagnostics.allSatisfy { TimelineDiagnosticsExportJSONFixture.bool($0["readMarkerChanged"]) == false })
+
+        let summary = try #require(json["summary"] as? [String: Any])
+        let restoreGateSummary = try #require(summary["restoreGateMetrics"] as? [String: Any])
+        #expect(Set(restoreGateSummary.keys) == [
+            "totalAttempts",
+            "withinBudgetCount",
+            "overTargetCount",
+            "exceededBudgetCount",
+            "releaseBlockingCount",
+            "networkWaitedBeforeInteractiveScrollViolationCount",
+            "maxRestoreGateDurationMS",
+            "maxLocalInitialWindowQueryMS",
+            "maxInitialSnapshotApplyMS",
+            "maxAnchorRestoreMS",
+            "maxNetworkWaitedBeforeInteractiveScrollMS",
+            "latestFallbackReason",
+            "readMarkerChanged",
+            "continuesSplash",
+            "requiresNetworkWork",
+            "requiresDBWork"
+        ])
+        #expect(TimelineDiagnosticsExportJSONFixture.int(restoreGateSummary["totalAttempts"]) == 3)
+        #expect(TimelineDiagnosticsExportJSONFixture.int(restoreGateSummary["withinBudgetCount"]) == 1)
+        #expect(TimelineDiagnosticsExportJSONFixture.int(restoreGateSummary["overTargetCount"]) == 1)
+        #expect(TimelineDiagnosticsExportJSONFixture.int(restoreGateSummary["exceededBudgetCount"]) == 1)
+        #expect(TimelineDiagnosticsExportJSONFixture.int(restoreGateSummary["releaseBlockingCount"]) == 1)
+        #expect(
+            TimelineDiagnosticsExportJSONFixture.int(
+                restoreGateSummary["networkWaitedBeforeInteractiveScrollViolationCount"]
+            ) == 1
+        )
+        #expect(TimelineDiagnosticsExportJSONFixture.double(restoreGateSummary["maxRestoreGateDurationMS"]) == 501)
+        #expect(TimelineDiagnosticsExportJSONFixture.double(restoreGateSummary["maxLocalInitialWindowQueryMS"]) == 301)
+        #expect(TimelineDiagnosticsExportJSONFixture.double(restoreGateSummary["maxInitialSnapshotApplyMS"]) == 201)
+        #expect(TimelineDiagnosticsExportJSONFixture.double(restoreGateSummary["maxAnchorRestoreMS"]) == 51)
+        #expect(
+            TimelineDiagnosticsExportJSONFixture.double(
+                restoreGateSummary["maxNetworkWaitedBeforeInteractiveScrollMS"]
+            ) == 7
+        )
+        #expect(restoreGateSummary["latestFallbackReason"] as? String == "restoreGateDurationExceededHardLimit")
+        #expect(TimelineDiagnosticsExportJSONFixture.bool(restoreGateSummary["readMarkerChanged"]) == false)
+
+        let decoded = try JSONDecoder().decode(TimelineDiagnosticsExport.self, from: data)
+        #expect(decoded == export)
+        #expect(decoded.summary.restoreGateMetrics.releaseBlockingCount == 1)
+        #expect(decoded.summary.restoreGateMetrics.networkWaitedBeforeInteractiveScrollViolationCount == 1)
+
+        for forbiddenFragment in [
+            ["n", "sec"].joined(),
+            ["sec", "ret"].joined(),
+            ["raw", " event JSON"].joined(),
+            ["priv", "ate key material"].joined()
+        ] {
+            #expect(!encoded.localizedCaseInsensitiveContains(forbiddenFragment))
+        }
+    }
+}
+
+private enum TimelineDiagnosticsExportJSONFixture {
+    static func mixedRestoreGateExport() -> TimelineDiagnosticsExport {
+        let recorder = TimelineDiagnosticsRecorder()
+        recorder.recordRestoreGate(.localInitialWindowQuery)
+        recorder.recordRestoreGate(.restoreGate)
+        recorder.recordRestoreGateMetric(
+            TimelineRestoreGateMetricBuilder.metric(
+                stage: .localInitialWindowQuery,
+                durationMS: 42,
+                budget: .localInitialWindowQuery,
+                timestampMS: 1_735_000_000_000
+            )
+        )
+        recorder.recordRestoreGateDiagnostics(
+            TimelineRestoreGateMetricBuilder.diagnostics(
+                localInitialWindowQueryDurationMS: 42,
+                initialSnapshotApplyDurationMS: 61,
+                anchorRestoreDurationMS: 12,
+                restoreGateDurationMS: 180,
+                firstInteractiveScrollAllowedAtMS: 1_735_000_000_180,
+                timestampMS: 1_735_000_000_000
+            )
+        )
+        recorder.recordRestoreGateDiagnostics(
+            TimelineRestoreGateMetricBuilder.diagnostics(
+                localInitialWindowQueryDurationMS: 180,
+                initialSnapshotApplyDurationMS: 120,
+                anchorRestoreDurationMS: 44,
+                restoreGateDurationMS: 300,
+                firstInteractiveScrollAllowedAtMS: 1_735_000_001_300,
+                timestampMS: 1_735_000_001_000
+            )
+        )
+        recorder.recordRestoreGateDiagnostics(
+            TimelineRestoreGateMetricBuilder.diagnostics(
+                localInitialWindowQueryDurationMS: 301,
+                initialSnapshotApplyDurationMS: 201,
+                anchorRestoreDurationMS: 51,
+                restoreGateDurationMS: 501,
+                firstInteractiveScrollAllowedAtMS: 1_735_000_002_501,
+                networkWaitedBeforeInteractiveScrollMS: 7,
+                fallbackPresentation: .inlineSkeleton,
+                timestampMS: 1_735_000_002_000
+            )
+        )
+        return recorder.export()
+    }
+
+    static func encode(_ export: TimelineDiagnosticsExport) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(export)
+    }
+
+    static func int(_ value: Any?) -> Int? {
+        (value as? NSNumber)?.intValue
+    }
+
+    static func double(_ value: Any?) -> Double? {
+        (value as? NSNumber)?.doubleValue
+    }
+
+    static func bool(_ value: Any?) -> Bool? {
+        if let value = value as? Bool {
+            return value
+        }
+        return (value as? NSNumber)?.boolValue
+    }
 }
