@@ -327,6 +327,33 @@ struct TimelineResolveApplyExpectationTests {
         #expect(expectation.issues.contains { $0.kind == .deleteInsertMutationIntroduced })
     }
 
+    @Test("Every resolve apply expectation issue kind has explicit negative coverage")
+    func everyResolveApplyExpectationIssueKindHasExplicitNegativeCoverage() throws {
+        let coverageCases = resolveApplyIssueCoverageCases
+        let coveredKinds = Set(coverageCases.map { $0.kind.rawValue })
+        let allKinds = Set(TimelineResolveApplyExpectationIssue.Kind.allCases.map(\.rawValue))
+
+        #expect(
+            allKinds.subtracting(coveredKinds).isEmpty,
+            "Missing resolve apply issue coverage for \(allKinds.subtracting(coveredKinds).sorted())"
+        )
+        #expect(
+            coveredKinds.subtracting(allKinds).isEmpty,
+            "Stale resolve apply issue coverage for \(coveredKinds.subtracting(allKinds).sorted())"
+        )
+
+        for coverageCase in coverageCases {
+            let expectation = try coverageCase.makeExpectation()
+
+            #expect(!coverageCase.testCaseName.isEmpty, "\(coverageCase.kind) coverage must name its test case")
+            #expect(expectation.style == .invalid, "\(coverageCase.testCaseName) should reject the expectation")
+            #expect(
+                expectation.issues.contains { $0.kind == coverageCase.kind },
+                "\(coverageCase.testCaseName) expected \(coverageCase.kind), got \(expectation.issues)"
+            )
+        }
+    }
+
     private func viewStatePair(
         for scenario: TimelineProjectionScenario
     ) throws -> (before: TimelineEntryViewState, after: TimelineEntryViewState) {
@@ -487,5 +514,126 @@ struct TimelineResolveApplyExpectationTests {
 
     private func fixture(named name: String) throws -> TimelineProjectionScenario {
         try #require(TimelineProjectionFixtureBuilder.scenario(named: name))
+    }
+
+    private var resolveApplyIssueCoverageCases: [ResolveApplyIssueCoverageCase] {
+        [
+            ResolveApplyIssueCoverageCase(
+                kind: .identityChanged,
+                testCaseName: "identityMismatchProducesTypedInvalidIssue"
+            ) {
+                let pair = try viewStatePair(for: try fixture(named: "ogp_pending_to_resolved"))
+                let mismatched = replacing(
+                    pair.after,
+                    id: TimelineEntryID(rawValue: pair.after.id.rawValue + ":resolved")
+                )
+                return builder.expectation(before: pair.before, after: mismatched, existingIDs: [pair.before.id])
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .readMarkerChanged,
+                testCaseName: "readMarkerChangedTrueProducesTypedInvalidIssue"
+            ) {
+                try expectation(named: "profile_missing_to_resolved_headerOnly") {
+                    $0.diagnostics.readMarkerChanged = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .requiresNetworkWork,
+                testCaseName: "requiresNetworkOrDBWorkTrueProducesTypedInvalidIssue"
+            ) {
+                try expectation(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                    $0.diagnostics.requiresNetworkWork = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .requiresDBWork,
+                testCaseName: "requiresNetworkOrDBWorkTrueProducesTypedInvalidIssue"
+            ) {
+                try expectation(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                    $0.diagnostics.requiresDBWork = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .delayedResolveMustReconfigure,
+                testCaseName: "delayed resolve mutation style mismatch"
+            ) {
+                try expectation(named: "media_imeta_present_aspect_reserved") {
+                    $0.diagnostics.mutationStyle = .none
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .deleteInsertMutationIntroduced,
+                testCaseName: "deleteInsertDelayedResolveExpectationIsRejected"
+            ) {
+                try expectation(named: "media_imeta_present_aspect_reserved") {
+                    $0.diagnostics.insertedIDs = [TimelineEntryID(rawValue: "unexpected:insert")]
+                    $0.diagnostics.deletedIDs = [$0.id]
+                    $0.diagnostics.allowsDeleteInsertForDelayedResolve = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .pendingNewInsertRequiresExplicitUserAction,
+                testCaseName: "explicitPendingNewUserActionIsOnlyAllowedInsertStyleExpectation"
+            ) {
+                let scenario = try fixture(named: "pending_new_not_visible_until_user_action")
+                let entryID = scenario.expectedOutput.identity.entryID
+                let viewState = try mappedViewState(
+                    for: scenario,
+                    pendingNewEntryIDs: [entryID],
+                    allowsPendingNewVisibility: true
+                )
+                return builder.expectation(before: nil, after: viewState, existingIDs: [])
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .failedResolveRemovedSourceNote,
+                testCaseName: "failed resolve removes source note mutation"
+            ) {
+                try expectation(named: "ogp_pending_to_failed_urlOnlyFallback") {
+                    $0.visibility.keepsSourceNoteVisible = false
+                    $0.visibility.removesSourceNote = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .quoteTargetBecameReplyParent,
+                testCaseName: "quote target became reply parent mutation"
+            ) {
+                try expectation(named: "quote_target_pending_to_resolved") {
+                    $0.diagnostics.quoteCreatesReplyRelation = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .replyParentMustRemainHeaderOnly,
+                testCaseName: "reply parent inline Home mutation"
+            ) {
+                try expectation(named: "reply_parent_pending_to_resolved_headerOnly") {
+                    $0.layoutContract.replyHeaderMode = .inlineParentInDetail
+                    $0.layoutContract.allowsInlineParentPreviewInHome = true
+                }
+            },
+            ResolveApplyIssueCoverageCase(
+                kind: .homeVisibleResolveCanChangeHeight,
+                testCaseName: "home visible resolve height-change mutation"
+            ) {
+                let pair = try viewStatePair(for: try fixture(named: "ogp_pending_to_resolved"))
+                var after = pair.after
+                after.layoutContract.canChangeHeightAfterFirstDisplay = true
+                return builder.expectation(before: pair.before, after: after, existingIDs: [after.id])
+            }
+        ]
+    }
+
+    private func expectation(
+        named name: String,
+        mutate: (inout TimelineEntryViewState) throws -> Void
+    ) throws -> TimelineResolveApplyExpectation {
+        var viewState = try mappedViewState(for: try fixture(named: name))
+        try mutate(&viewState)
+        return builder.expectation(before: nil, after: viewState, existingIDs: [viewState.id])
+    }
+
+    private struct ResolveApplyIssueCoverageCase {
+        var kind: TimelineResolveApplyExpectationIssue.Kind
+        var testCaseName: String
+        var makeExpectation: () throws -> TimelineResolveApplyExpectation
     }
 }

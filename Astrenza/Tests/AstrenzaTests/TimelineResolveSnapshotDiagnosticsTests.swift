@@ -238,6 +238,34 @@ struct TimelineResolveSnapshotDiagnosticsTests {
         }
     }
 
+    @Test("Every resolve snapshot diagnostics issue kind has explicit negative coverage")
+    func everyResolveSnapshotDiagnosticsIssueKindHasExplicitNegativeCoverage() throws {
+        let coverageCases = resolveSnapshotDiagnosticsIssueCoverageCases
+        let coveredKinds = Set(coverageCases.map { $0.kind.rawValue })
+        let allKinds = Set(TimelineResolveSnapshotDiagnosticsIssue.Kind.allCases.map(\.rawValue))
+
+        #expect(
+            allKinds.subtracting(coveredKinds).isEmpty,
+            "Missing resolve snapshot diagnostics issue coverage for \(allKinds.subtracting(coveredKinds).sorted())"
+        )
+        #expect(
+            coveredKinds.subtracting(allKinds).isEmpty,
+            "Stale resolve snapshot diagnostics issue coverage for \(coveredKinds.subtracting(allKinds).sorted())"
+        )
+
+        for coverageCase in coverageCases {
+            let diagnostics = try coverageCase.makeDiagnostics()
+
+            #expect(!coverageCase.testCaseName.isEmpty, "\(coverageCase.kind) coverage must name its test case")
+            #expect(!diagnostics.isClean, "\(coverageCase.testCaseName) should reject the diagnostics")
+            #expect(diagnostics.mutationRecord == nil, "\(coverageCase.testCaseName) should not record clean mutation")
+            #expect(
+                diagnostics.issues.contains { $0.kind == coverageCase.kind },
+                "\(coverageCase.testCaseName) expected \(coverageCase.kind), got \(diagnostics.issues)"
+            )
+        }
+    }
+
     private func diagnosticsAcceptance(named name: String) throws -> TimelineResolveSnapshotDiagnosticsAcceptance {
         let pair = try viewStatePair(for: try fixture(named: name))
         let visibleIDs = [
@@ -459,6 +487,298 @@ struct TimelineResolveSnapshotDiagnosticsTests {
 
     private func fixture(named name: String) throws -> TimelineProjectionScenario {
         try #require(TimelineProjectionFixtureBuilder.scenario(named: name))
+    }
+
+    private var resolveSnapshotDiagnosticsIssueCoverageCases: [ResolveSnapshotDiagnosticsIssueCoverageCase] {
+        [
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .identityChanged,
+                testCaseName: "invalidResolveExpectationsCannotCreateCleanSnapshotDiagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    let pair = try viewStatePair(for: try fixture(named: "ogp_pending_to_resolved"))
+                    var after = pair.after
+                    after = replacing(after, id: TimelineEntryID(rawValue: after.id.rawValue + ":resolved"))
+                    return applyBuilder.expectation(before: pair.before, after: after, existingIDs: [pair.before.id])
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .readMarkerChanged,
+                testCaseName: "invalidResolveExpectationsCannotCreateCleanSnapshotDiagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "profile_missing_to_resolved_headerOnly") {
+                        $0.diagnostics.readMarkerChanged = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .requiresNetworkWork,
+                testCaseName: "invalidResolveExpectationsCannotCreateCleanSnapshotDiagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                        $0.diagnostics.requiresNetworkWork = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .requiresDBWork,
+                testCaseName: "invalidResolveExpectationsCannotCreateCleanSnapshotDiagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "publish_state_placeholder_localOnly_noReadMarkerChange") {
+                        $0.diagnostics.requiresDBWork = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .delayedResolveMustReconfigure,
+                testCaseName: "delayed resolve mutation style mismatch diagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "media_imeta_present_aspect_reserved") {
+                        $0.diagnostics.mutationStyle = .none
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .deleteInsertMutationIntroduced,
+                testCaseName: "invalidResolveExpectationsCannotCreateCleanSnapshotDiagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "media_imeta_present_aspect_reserved") {
+                        $0.diagnostics.insertedIDs = [TimelineEntryID(rawValue: "unexpected:insert")]
+                        $0.diagnostics.deletedIDs = [$0.id]
+                        $0.diagnostics.allowsDeleteInsertForDelayedResolve = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .pendingNewInsertRequiresExplicitUserAction,
+                testCaseName: "pending new visible without user action diagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    let scenario = try fixture(named: "pending_new_not_visible_until_user_action")
+                    let entryID = scenario.expectedOutput.identity.entryID
+                    let viewState = try mappedViewState(
+                        for: scenario,
+                        pendingNewEntryIDs: [entryID],
+                        allowsPendingNewVisibility: true
+                    )
+                    return applyBuilder.expectation(before: nil, after: viewState, existingIDs: [])
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .failedResolveRemovedSourceNote,
+                testCaseName: "failed resolve removes source note diagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "ogp_pending_to_failed_urlOnlyFallback") {
+                        $0.visibility.keepsSourceNoteVisible = false
+                        $0.visibility.removesSourceNote = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .quoteTargetBecameReplyParent,
+                testCaseName: "quote target became reply parent diagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "quote_target_pending_to_resolved") {
+                        $0.diagnostics.quoteCreatesReplyRelation = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .replyParentMustRemainHeaderOnly,
+                testCaseName: "reply parent inline Home diagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "reply_parent_pending_to_resolved_headerOnly") {
+                        $0.layoutContract.replyHeaderMode = .inlineParentInDetail
+                        $0.layoutContract.allowsInlineParentPreviewInHome = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .homeVisibleResolveCanChangeHeight,
+                testCaseName: "home visible resolve height-change diagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    let pair = try viewStatePair(for: try fixture(named: "ogp_pending_to_resolved"))
+                    var after = pair.after
+                    after.layoutContract.canChangeHeightAfterFirstDisplay = true
+                    return applyBuilder.expectation(before: pair.before, after: after, existingIDs: [after.id])
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .invalidResolveApplyExpectation,
+                testCaseName: "invalidResolveExpectationsCannotCreateCleanSnapshotDiagnostics"
+            ) {
+                try invalidApplyDiagnostics {
+                    try applyExpectation(named: "profile_missing_to_resolved_headerOnly") {
+                        $0.diagnostics.readMarkerChanged = true
+                    }
+                }
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .missingReconfigureIntent,
+                testCaseName: "missing reconfigure intent diagnostics"
+            ) {
+                let acceptance = try diagnosticsAcceptance(named: "ogp_pending_to_resolved")
+                var applyExpectation = acceptance.applyExpectation
+                applyExpectation.reconfigureIntent = nil
+                return diagnostics(
+                    applyExpectation,
+                    scenarioName: acceptance.after.diagnostics.scenarioName,
+                    visibleIDsBefore: acceptance.visibleIDs,
+                    visibleIDsAfter: acceptance.visibleIDs,
+                    anchorBefore: acceptance.anchorBefore,
+                    anchorAfter: acceptance.anchorAfter
+                )
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .visibleIDsChangedForReconfigure,
+                testCaseName: "visible IDs changed for reconfigure diagnostics"
+            ) {
+                let acceptance = try diagnosticsAcceptance(named: "ogp_pending_to_resolved")
+                let changedTailID = TimelineEntryID(rawValue: "home:changed:tail")
+                return diagnostics(
+                    acceptance.applyExpectation,
+                    scenarioName: acceptance.after.diagnostics.scenarioName,
+                    visibleIDsBefore: acceptance.visibleIDs,
+                    visibleIDsAfter: [acceptance.after.id, changedTailID],
+                    anchorBefore: acceptance.anchorBefore,
+                    anchorAfter: acceptance.anchorAfter
+                )
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .anchorIdentityChanged,
+                testCaseName: "anchor identity changed diagnostics"
+            ) {
+                let acceptance = try diagnosticsAcceptance(named: "ogp_pending_to_resolved")
+                let tailID = try #require(acceptance.visibleIDs.last)
+                return diagnostics(
+                    acceptance.applyExpectation,
+                    scenarioName: acceptance.after.diagnostics.scenarioName,
+                    visibleIDsBefore: acceptance.visibleIDs,
+                    visibleIDsAfter: acceptance.visibleIDs,
+                    anchorBefore: acceptance.anchorBefore,
+                    anchorAfter: anchor(for: tailID, delta: -8)
+                )
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .fallbackReasonMustBeNil,
+                testCaseName: "fallback reason must be nil diagnostics"
+            ) {
+                let acceptance = try diagnosticsAcceptance(named: "ogp_pending_to_resolved")
+                return diagnostics(
+                    acceptance.applyExpectation,
+                    scenarioName: acceptance.after.diagnostics.scenarioName,
+                    visibleIDsBefore: acceptance.visibleIDs,
+                    visibleIDsAfter: acceptance.visibleIDs,
+                    anchorBefore: acceptance.anchorBefore,
+                    anchorAfter: acceptance.anchorAfter,
+                    fallbackReason: TimelineRestoreFallbackReason(
+                        kind: .anchorItemMissing,
+                        anchorItemKey: acceptance.after.id.rawValue
+                    )
+                )
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .pendingNewInsertMutationMismatch,
+                testCaseName: "pending new insert mutation mismatch diagnostics"
+            ) {
+                let scenario = try fixture(named: "pending_new_not_visible_until_user_action")
+                let entryID = scenario.expectedOutput.identity.entryID
+                let viewState = try mappedViewState(
+                    for: scenario,
+                    pendingNewEntryIDs: [entryID],
+                    allowsPendingNewVisibility: true
+                )
+                let userAction = TimelineResolveApplyUserAction(
+                    pendingNewEntryIDs: [entryID],
+                    allowsPendingNewInsertion: true
+                )
+                let applyExpectation = applyBuilder.expectation(
+                    before: nil,
+                    after: viewState,
+                    existingIDs: [],
+                    userAction: userAction
+                )
+                return diagnostics(
+                    applyExpectation,
+                    scenarioName: scenario.name,
+                    visibleIDsBefore: [],
+                    visibleIDsAfter: [TimelineEntryID(rawValue: "home:unexpected:pending-new")]
+                )
+            },
+            ResolveSnapshotDiagnosticsIssueCoverageCase(
+                kind: .networkWaitedBeforeInteractiveScroll,
+                testCaseName: "network waited before interactive scroll diagnostics"
+            ) {
+                let acceptance = try diagnosticsAcceptance(named: "publish_state_placeholder_localOnly_noReadMarkerChange")
+                return diagnostics(
+                    acceptance.applyExpectation,
+                    scenarioName: acceptance.after.diagnostics.scenarioName,
+                    visibleIDsBefore: acceptance.visibleIDs,
+                    visibleIDsAfter: acceptance.visibleIDs,
+                    anchorBefore: acceptance.anchorBefore,
+                    anchorAfter: acceptance.anchorAfter,
+                    networkWaitedBeforeInteractiveScroll: true
+                )
+            }
+        ]
+    }
+
+    private func invalidApplyDiagnostics(
+        makeExpectation: () throws -> TimelineResolveApplyExpectation
+    ) throws -> TimelineResolveSnapshotDiagnosticsExpectation {
+        try diagnostics(
+            makeExpectation(),
+            scenarioName: "invalid",
+            visibleIDsBefore: [TimelineEntryID(rawValue: "home:stable")],
+            visibleIDsAfter: [TimelineEntryID(rawValue: "home:stable")]
+        )
+    }
+
+    private func applyExpectation(
+        named name: String,
+        mutate: (inout TimelineEntryViewState) throws -> Void
+    ) throws -> TimelineResolveApplyExpectation {
+        var viewState = try mappedViewState(for: try fixture(named: name))
+        try mutate(&viewState)
+        return applyBuilder.expectation(before: nil, after: viewState, existingIDs: [viewState.id])
+    }
+
+    private func diagnostics(
+        _ applyExpectation: TimelineResolveApplyExpectation,
+        scenarioName: String,
+        visibleIDsBefore: [TimelineEntryID],
+        visibleIDsAfter: [TimelineEntryID],
+        anchorBefore: TimelineVisualAnchor? = nil,
+        anchorAfter: TimelineVisualAnchor? = nil,
+        fallbackReason: TimelineRestoreFallbackReason? = nil,
+        networkWaitedBeforeInteractiveScroll: Bool = false
+    ) -> TimelineResolveSnapshotDiagnosticsExpectation {
+        diagnosticsBuilder.expectation(
+            scenarioName: scenarioName,
+            resolveApplyExpectation: applyExpectation,
+            visibleIDsBefore: visibleIDsBefore,
+            visibleIDsAfter: visibleIDsAfter,
+            anchorBefore: anchorBefore,
+            anchorAfter: anchorAfter,
+            fallbackReason: fallbackReason,
+            networkWaitedBeforeInteractiveScroll: networkWaitedBeforeInteractiveScroll,
+            timestampMS: 1_735_000_000_000
+        )
+    }
+
+    private struct ResolveSnapshotDiagnosticsIssueCoverageCase {
+        var kind: TimelineResolveSnapshotDiagnosticsIssue.Kind
+        var testCaseName: String
+        var makeDiagnostics: () throws -> TimelineResolveSnapshotDiagnosticsExpectation
     }
 
     private struct TimelineResolveSnapshotDiagnosticsAcceptance {
