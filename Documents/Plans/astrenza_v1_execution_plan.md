@@ -177,6 +177,7 @@ Deliverables:
 - Root shell first-paint policy separated from Timeline restore gate.
 - `TimelineRestoreGate` limited to Timeline area and local snapshot/anchor restore.
 - Diagnostics for root shell first paint, local query, initial snapshot apply, anchor restore, first interactive scroll, and network wait.
+- `TimelineDiagnosticsExport` artifact contract documented at `Documents/Plans/timeline_diagnostics_artifact_contract.md` as local/offline/debug/failure-artifact data only, with no external telemetry upload without an explicit future privacy decision.
 - E2E scenarios for offline relay, cached anchor restore, empty cache, and slow DB fallback to inline skeleton.
 
 Acceptance criteria:
@@ -184,6 +185,8 @@ Acceptance criteria:
 - first interactive timeline scroll waits 0ms for network.
 - cached anchor restores without transient newest/top flash.
 - restore gate duration respects the v1 budget or switches to inline skeleton.
+- `summary.restoreGateMetrics` remains decodable by offline consumers without Home/Timeline runtime wiring, DB queries, relay startup, or network work.
+- `networkWaitedBeforeInteractiveScrollMS > 0` and `readMarkerChanged == true` are release-blocking diagnostics.
 
 Likely test commands:
 - `xcodebuild test -scheme Astrenza -destination 'platform=iOS Simulator,name=<available iPhone simulator>' -only-testing:AstrenzaUITests`
@@ -195,13 +198,14 @@ Deliverables:
 - Snapshot matrix for text, long Japanese, OGP, media, profile fallback, repost, quote, reply, Dynamic Type, high contrast, and black theme.
 - E2E matrix for launch restore, pending_new, delayed resolve, visible mute, pruning fallback, publish partial failure, account switch, and Dynamic Type XXL.
 - Benchmark seeds for 10k, 100k, and eventually 1M events.
-- Failure artifacts: before/after screenshots, visible item keys, anchor frames, read marker diff, DB/resolve diagnostics.
+- Failure artifacts: before/after screenshots, visible item keys, anchor frames, read marker diff, DB/resolve diagnostics, and `TimelineDiagnosticsExport` JSON when privacy checks pass.
 
 Acceptance criteria:
 - Timeline/resolve PRs fail on anchor delta > 2pt in representative scenarios.
 - Release blockers from v1 spec are covered by tests or documented manual audits.
 - Benchmark output JSON is stored with device/runtime metadata.
 - CI policy distinguishes PR small set, nightly full matrix, and release benchmark gates.
+- Failure artifacts do not include `nsec`, secret key material, raw event JSON, raw private content, or private relay/account material.
 
 Likely test commands:
 - `swift test --package-path Packages/AstrenzaCore`

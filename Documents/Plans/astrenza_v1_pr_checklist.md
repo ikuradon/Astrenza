@@ -17,6 +17,7 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 - [ ] Protocol/relay changes include fixtures, FakeRelay tests, or integration-test notes.
 - [ ] New or changed UI controls have stable `accessibilityIdentifier` coverage where E2E needs them.
 - [ ] Snapshot baseline changes include a reason.
+- [ ] Timeline diagnostics artifact changes follow `Documents/Plans/timeline_diagnostics_artifact_contract.md`.
 - [ ] Final PR notes list commands/tests run, failures, unrun tests, and follow-up work.
 
 ## Timeline / Resolve PR DoD
@@ -49,6 +50,9 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 - [ ] DesignSystem usage: no raw `Color`, numeric padding, raw `.font(.system(size:))`, or per-component SF Symbol size in new Timeline components.
 - [ ] Hit target: reply/repost/reaction/share/more actions are at least 44x44pt.
 - [ ] Launch restore: first interactive Timeline does not wait for network or relay EOSE.
+- [ ] Diagnostics export: `summary.restoreGateMetrics` is readable offline, and `networkWaitedBeforeInteractiveScrollMS > 0` is treated as release-blocking.
+- [ ] Diagnostics export privacy: no `nsec`, secret key material, raw event JSON, raw private content, or private relay/account material appears in JSON, logs, fixtures, screenshots, or failure artifacts.
+- [ ] Diagnostics export boundary: reading a JSON artifact does not require production Home/Timeline wiring, DB queries, relay startup, network work, or a debug screen UI.
 - [ ] Fallback display: failed OGP/media/profile/repost/quote/reply resolve does not remove the note row.
 - [ ] Security: no `nsec` or secret material appears in DB, logs, crash output, screenshots, or fixtures.
 
@@ -58,6 +62,8 @@ A PR or release is blocked if any of the following is true:
 
 - Opening the app advances read marker.
 - Launch Screen, splash, or restore gate waits for network sync or EOSE.
+- `TimelineDiagnosticsExport` records `networkWaitedBeforeInteractiveScrollMS > 0`.
+- `TimelineDiagnosticsExport` records `readMarkerChanged == true` for launch, restore, sync, EOSE, foreground, or resolve work.
 - Launch briefly shows newest/top before jumping to saved anchor.
 - Relay sync or resolve moves visible Timeline by one or more cells.
 - `nsec` or secret material appears in DB, logs, crash output, or fixtures.
