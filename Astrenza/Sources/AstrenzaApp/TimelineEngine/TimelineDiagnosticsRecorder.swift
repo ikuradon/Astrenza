@@ -2,8 +2,11 @@ import Foundation
 
 enum TimelineRestoreGateDiagnostic: String, Equatable, Codable, Sendable {
     case notStarted
+    case localInitialWindowQuery
+    case initialSnapshotApplying
     case localSnapshotApplying
     case anchorRestoring
+    case restoreGate
     case firstInteractiveScrollReady
 }
 
@@ -75,11 +78,248 @@ enum TimelineRestoreResult: Equatable, Codable, Sendable {
     }
 }
 
+enum TimelineRestoreGateBudgetResult: String, Equatable, Codable, Sendable {
+    case withinBudget
+    case overTarget
+    case exceededBudget
+}
+
+struct TimelineRestoreGateBudget: Equatable, Codable, Sendable {
+    var targetDurationMS: Double
+    var hardLimitDurationMS: Double
+
+    init(targetDurationMS: Double, hardLimitDurationMS: Double) {
+        self.targetDurationMS = targetDurationMS
+        self.hardLimitDurationMS = hardLimitDurationMS
+    }
+
+    func classify(durationMS: Double?) -> TimelineRestoreGateBudgetResult {
+        guard let durationMS else {
+            return .withinBudget
+        }
+        if durationMS <= targetDurationMS {
+            return .withinBudget
+        }
+        if durationMS <= hardLimitDurationMS {
+            return .overTarget
+        }
+        return .exceededBudget
+    }
+
+    static let localInitialWindowQuery = TimelineRestoreGateBudget(
+        targetDurationMS: 120,
+        hardLimitDurationMS: 300
+    )
+    static let initialSnapshotApply = TimelineRestoreGateBudget(
+        targetDurationMS: 80,
+        hardLimitDurationMS: 200
+    )
+    static let anchorRestore = TimelineRestoreGateBudget(
+        targetDurationMS: 16,
+        hardLimitDurationMS: 50
+    )
+    static let restoreGate = TimelineRestoreGateBudget(
+        targetDurationMS: 250,
+        hardLimitDurationMS: 500
+    )
+}
+
+enum TimelineRestoreGateExceededReason: String, Equatable, Codable, Sendable {
+    case localInitialWindowQueryExceededHardLimit
+    case initialSnapshotApplyExceededHardLimit
+    case anchorRestoreExceededHardLimit
+    case restoreGateDurationExceededHardLimit
+    case networkWaitedBeforeInteractiveScroll
+    case readMarkerChangedDuringRestoreGate
+}
+
+enum TimelineRestoreGateFallbackPresentation: String, Equatable, Codable, Sendable {
+    case inlineSkeleton
+    case emptyState
+    case recoverableState
+}
+
 struct TimelineRestoreGateMetric: Equatable, Codable, Sendable {
     var stage: TimelineRestoreGateDiagnostic
     var durationMS: Double?
     var timestampMS: Int64
     var exceededBudget: Bool
+    var budget: TimelineRestoreGateBudget?
+    var budgetResult: TimelineRestoreGateBudgetResult
+    var exceededReason: TimelineRestoreGateExceededReason?
+
+    init(
+        stage: TimelineRestoreGateDiagnostic,
+        durationMS: Double?,
+        timestampMS: Int64,
+        exceededBudget: Bool,
+        budget: TimelineRestoreGateBudget? = nil,
+        budgetResult: TimelineRestoreGateBudgetResult = .withinBudget,
+        exceededReason: TimelineRestoreGateExceededReason? = nil
+    ) {
+        self.stage = stage
+        self.durationMS = durationMS
+        self.timestampMS = timestampMS
+        self.exceededBudget = exceededBudget
+        self.budget = budget
+        self.budgetResult = budgetResult
+        self.exceededReason = exceededReason
+    }
+}
+
+struct TimelineRestoreGateDiagnostics: Equatable, Codable, Sendable {
+    var metrics: [TimelineRestoreGateMetric]
+    var firstInteractiveScrollAllowedAtMS: Int64
+    var networkWaitedBeforeInteractiveScrollMS: Double
+    var readMarkerChanged: Bool
+    var fallbackPresentation: TimelineRestoreGateFallbackPresentation?
+    var continuesSplash: Bool
+    var requiresNetworkWork: Bool
+    var requiresDBWork: Bool
+
+    init(
+        metrics: [TimelineRestoreGateMetric],
+        firstInteractiveScrollAllowedAtMS: Int64,
+        networkWaitedBeforeInteractiveScrollMS: Double,
+        readMarkerChanged: Bool = false,
+        fallbackPresentation: TimelineRestoreGateFallbackPresentation? = nil,
+        continuesSplash: Bool = false,
+        requiresNetworkWork: Bool = false,
+        requiresDBWork: Bool = false
+    ) {
+        self.metrics = metrics
+        self.firstInteractiveScrollAllowedAtMS = firstInteractiveScrollAllowedAtMS
+        self.networkWaitedBeforeInteractiveScrollMS = networkWaitedBeforeInteractiveScrollMS
+        self.readMarkerChanged = readMarkerChanged
+        self.fallbackPresentation = fallbackPresentation
+        self.continuesSplash = continuesSplash
+        self.requiresNetworkWork = requiresNetworkWork
+        self.requiresDBWork = requiresDBWork
+    }
+
+    var budgetResult: TimelineRestoreGateBudgetResult {
+        if metrics.contains(where: { $0.budgetResult == .exceededBudget }) {
+            return .exceededBudget
+        }
+        if metrics.contains(where: { $0.budgetResult == .overTarget }) {
+            return .overTarget
+        }
+        return .withinBudget
+    }
+
+    var exceededReasons: [TimelineRestoreGateExceededReason] {
+        metrics.compactMap(\.exceededReason)
+    }
+
+    var releaseBlockingReasons: [TimelineRestoreGateExceededReason] {
+        var reasons: [TimelineRestoreGateExceededReason] = []
+        if networkWaitedBeforeInteractiveScrollMS > 0 {
+            reasons.append(.networkWaitedBeforeInteractiveScroll)
+        }
+        if readMarkerChanged {
+            reasons.append(.readMarkerChangedDuringRestoreGate)
+        }
+        return reasons
+    }
+
+    var isValidForRelease: Bool {
+        releaseBlockingReasons.isEmpty
+    }
+
+    func metric(for stage: TimelineRestoreGateDiagnostic) -> TimelineRestoreGateMetric? {
+        metrics.first { $0.stage == stage }
+    }
+}
+
+struct TimelineRestoreGateMetricBuilder: Sendable {
+    static func metric(
+        stage: TimelineRestoreGateDiagnostic,
+        durationMS: Double?,
+        budget: TimelineRestoreGateBudget,
+        timestampMS: Int64
+    ) -> TimelineRestoreGateMetric {
+        let result = budget.classify(durationMS: durationMS)
+        let exceededReason = result == .exceededBudget ? exceededReason(for: stage) : nil
+        return TimelineRestoreGateMetric(
+            stage: stage,
+            durationMS: durationMS,
+            timestampMS: timestampMS,
+            exceededBudget: result == .exceededBudget,
+            budget: budget,
+            budgetResult: result,
+            exceededReason: exceededReason
+        )
+    }
+
+    static func diagnostics(
+        localInitialWindowQueryDurationMS: Double,
+        initialSnapshotApplyDurationMS: Double,
+        anchorRestoreDurationMS: Double,
+        restoreGateDurationMS: Double,
+        firstInteractiveScrollAllowedAtMS: Int64,
+        networkWaitedBeforeInteractiveScrollMS: Double = 0,
+        readMarkerChanged: Bool = false,
+        fallbackPresentation: TimelineRestoreGateFallbackPresentation? = nil,
+        timestampMS: Int64
+    ) -> TimelineRestoreGateDiagnostics {
+        let metrics = [
+            metric(
+                stage: .localInitialWindowQuery,
+                durationMS: localInitialWindowQueryDurationMS,
+                budget: .localInitialWindowQuery,
+                timestampMS: timestampMS
+            ),
+            metric(
+                stage: .initialSnapshotApplying,
+                durationMS: initialSnapshotApplyDurationMS,
+                budget: .initialSnapshotApply,
+                timestampMS: timestampMS
+            ),
+            metric(
+                stage: .anchorRestoring,
+                durationMS: anchorRestoreDurationMS,
+                budget: .anchorRestore,
+                timestampMS: timestampMS
+            ),
+            metric(
+                stage: .restoreGate,
+                durationMS: restoreGateDurationMS,
+                budget: .restoreGate,
+                timestampMS: timestampMS
+            ),
+            TimelineRestoreGateMetric(
+                stage: .firstInteractiveScrollReady,
+                durationMS: Double(max(0, firstInteractiveScrollAllowedAtMS - timestampMS)),
+                timestampMS: firstInteractiveScrollAllowedAtMS,
+                exceededBudget: false
+            )
+        ]
+
+        return TimelineRestoreGateDiagnostics(
+            metrics: metrics,
+            firstInteractiveScrollAllowedAtMS: firstInteractiveScrollAllowedAtMS,
+            networkWaitedBeforeInteractiveScrollMS: networkWaitedBeforeInteractiveScrollMS,
+            readMarkerChanged: readMarkerChanged,
+            fallbackPresentation: fallbackPresentation
+        )
+    }
+
+    private static func exceededReason(
+        for stage: TimelineRestoreGateDiagnostic
+    ) -> TimelineRestoreGateExceededReason? {
+        switch stage {
+        case .localInitialWindowQuery:
+            .localInitialWindowQueryExceededHardLimit
+        case .initialSnapshotApplying, .localSnapshotApplying:
+            .initialSnapshotApplyExceededHardLimit
+        case .anchorRestoring:
+            .anchorRestoreExceededHardLimit
+        case .restoreGate:
+            .restoreGateDurationExceededHardLimit
+        case .notStarted, .firstInteractiveScrollReady:
+            nil
+        }
+    }
 }
 
 struct TimelineSnapshotMutationRecord: Equatable, Codable, Sendable {
