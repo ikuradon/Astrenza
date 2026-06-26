@@ -26,6 +26,18 @@ artifact contract は production Home または production Timeline runtime wiri
 
 将来の CI job がこの JSON を failure artifact として保存する場合、その job は上記の禁止 material に対する privacy check を先に通す必要がある。privacy check は artifact upload より前に実行する。
 
+この privacy check は repository 全体や docs ではなく、生成済みの diagnostics artifact JSON だけに対して実行する。
+
+```bash
+scripts/guard_timeline_diagnostics_artifact.sh <path-to-timeline-diagnostics-export.json>
+```
+
+directory を渡す場合、この guard は配下の `*.json` だけを検査する。fixture または CI job を追加する前には、guard 自体の safe/unsafe behavior も確認できる。
+
+```bash
+scripts/guard_timeline_diagnostics_artifact.sh --self-test
+```
+
 ## Allowed Consumers
 
 現在許可される consumer:
@@ -106,6 +118,7 @@ budget over-target value は diagnostic warning になり得るが、hard-limit 
 この artifact contract を変える docs または code change では、次を含める。
 
 - DesignSystem または new Timeline path を触る場合の `scripts/guard_designsystem.sh`。
+- diagnostics export JSON shape、fixture path、failure-artifact upload path、または artifact privacy boundary を触る場合の `scripts/guard_timeline_diagnostics_artifact.sh <path-to-json-or-dir>`。
 - `git diff --check`.
 - current v1 baseline としての `swift test --package-path Packages/DesignSystem`。
 - DTO shape、summary aggregation、restore gate release-blocking behavior を変える場合の targeted `xcodebuild test` for `AstrenzaTests/TimelineRestoreGateBudgetTests`。

@@ -58,6 +58,7 @@
 - `nsec`、secret key、signing material は DB、logs、crash output、analytics、test fixtures に入れない。
 - secret を `debugDescription`、error message、fixture、screenshot、commit message に含めない。
 - key/security まわりの変更は redaction test または documented manual audit を残す。
+- `TimelineDiagnosticsExport` または diagnostics artifact JSON を変更する場合は `scripts/guard_timeline_diagnostics_artifact.sh <artifact.json-or-dir>` を実行する。この guard は生成済み artifact JSON 専用であり、repository 全体や docs を scan しない。
 
 ## Validation And Final Response
 
