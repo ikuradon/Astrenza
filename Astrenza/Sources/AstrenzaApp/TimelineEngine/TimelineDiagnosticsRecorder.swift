@@ -334,10 +334,30 @@ struct TimelineSnapshotMutationRecord: Equatable, Codable, Sendable {
     var readMarkerChanged: Bool = false
 }
 
+struct TimelineDiagnosticsExport: Equatable, Codable, Sendable {
+    var mutationRecords: [TimelineSnapshotMutationRecord]
+    var restoreGateRecords: [TimelineRestoreGateDiagnostic]
+    var restoreGateMetrics: [TimelineRestoreGateMetric]
+    var restoreGateDiagnostics: [TimelineRestoreGateDiagnostics]
+
+    init(
+        mutationRecords: [TimelineSnapshotMutationRecord] = [],
+        restoreGateRecords: [TimelineRestoreGateDiagnostic] = [],
+        restoreGateMetrics: [TimelineRestoreGateMetric] = [],
+        restoreGateDiagnostics: [TimelineRestoreGateDiagnostics] = []
+    ) {
+        self.mutationRecords = mutationRecords
+        self.restoreGateRecords = restoreGateRecords
+        self.restoreGateMetrics = restoreGateMetrics
+        self.restoreGateDiagnostics = restoreGateDiagnostics
+    }
+}
+
 final class TimelineDiagnosticsRecorder {
     private(set) var records: [TimelineSnapshotMutationRecord] = []
     private(set) var restoreGateRecords: [TimelineRestoreGateDiagnostic] = []
     private(set) var restoreGateMetrics: [TimelineRestoreGateMetric] = []
+    private(set) var restoreGateDiagnostics: [TimelineRestoreGateDiagnostics] = []
 
     @discardableResult
     func recordMutation(
@@ -368,7 +388,26 @@ final class TimelineDiagnosticsRecorder {
         restoreGateRecords.append(diagnostic)
     }
 
-    func recordRestoreGateMetric(_ metric: TimelineRestoreGateMetric) {
+    @discardableResult
+    func recordRestoreGateMetric(_ metric: TimelineRestoreGateMetric) -> TimelineRestoreGateMetric {
         restoreGateMetrics.append(metric)
+        return metric
+    }
+
+    @discardableResult
+    func recordRestoreGateDiagnostics(
+        _ diagnostics: TimelineRestoreGateDiagnostics
+    ) -> TimelineRestoreGateDiagnostics {
+        restoreGateDiagnostics.append(diagnostics)
+        return diagnostics
+    }
+
+    func export() -> TimelineDiagnosticsExport {
+        TimelineDiagnosticsExport(
+            mutationRecords: records,
+            restoreGateRecords: restoreGateRecords,
+            restoreGateMetrics: restoreGateMetrics,
+            restoreGateDiagnostics: restoreGateDiagnostics
+        )
     }
 }

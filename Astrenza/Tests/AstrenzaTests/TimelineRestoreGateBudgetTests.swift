@@ -156,4 +156,121 @@ struct TimelineRestoreGateBudgetTests {
 
         #expect(decoded == diagnostics)
     }
+
+    @Test("Recorder exports within-budget restore gate diagnostics")
+    func recorderExportsWithinBudgetRestoreGateDiagnostics() throws {
+        let recorder = TimelineDiagnosticsRecorder()
+        let diagnostics = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 180,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_000_180,
+            networkWaitedBeforeInteractiveScrollMS: 0,
+            timestampMS: 1_735_000_000_000
+        )
+
+        let recorded = recorder.recordRestoreGateDiagnostics(diagnostics)
+        let export = recorder.export()
+        let exported = try #require(export.restoreGateDiagnostics.first)
+        let firstInteractiveMetric = try #require(exported.metric(for: .firstInteractiveScrollReady))
+
+        #expect(recorded == diagnostics)
+        #expect(export.restoreGateDiagnostics == [diagnostics])
+        #expect(exported.metric(for: .localInitialWindowQuery)?.durationMS == 42)
+        #expect(exported.metric(for: .initialSnapshotApplying)?.durationMS == 61)
+        #expect(exported.metric(for: .anchorRestoring)?.durationMS == 12)
+        #expect(exported.metric(for: .restoreGate)?.durationMS == 180)
+        #expect(exported.firstInteractiveScrollAllowedAtMS == 1_735_000_000_180)
+        #expect(firstInteractiveMetric.timestampMS == 1_735_000_000_180)
+        #expect(firstInteractiveMetric.durationMS == 180)
+        #expect(exported.networkWaitedBeforeInteractiveScrollMS == 0)
+        #expect(exported.budgetResult == .withinBudget)
+        #expect(exported.releaseBlockingReasons.isEmpty)
+        #expect(!exported.readMarkerChanged)
+        #expect(!exported.requiresNetworkWork)
+        #expect(!exported.requiresDBWork)
+        #expect(export.mutationRecords.isEmpty)
+
+        let data = try JSONEncoder().encode(export)
+        let decoded = try JSONDecoder().decode(TimelineDiagnosticsExport.self, from: data)
+
+        #expect(decoded == export)
+    }
+
+    @Test("Recorder exports exceeded restore gate fallback reason")
+    func recorderExportsExceededRestoreGateFallbackReason() throws {
+        let recorder = TimelineDiagnosticsRecorder()
+        let diagnostics = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 501,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_000_501,
+            networkWaitedBeforeInteractiveScrollMS: 0,
+            fallbackPresentation: .inlineSkeleton,
+            timestampMS: 1_735_000_000_000
+        )
+
+        recorder.recordRestoreGateDiagnostics(diagnostics)
+        let exported = try #require(recorder.export().restoreGateDiagnostics.first)
+        let restoreGateMetric = try #require(exported.metric(for: .restoreGate))
+
+        #expect(exported.budgetResult == .exceededBudget)
+        #expect(exported.exceededReasons == [.restoreGateDurationExceededHardLimit])
+        #expect(exported.fallbackPresentation == .inlineSkeleton)
+        #expect(restoreGateMetric.budgetResult == .exceededBudget)
+        #expect(restoreGateMetric.exceededBudget)
+        #expect(restoreGateMetric.exceededReason == .restoreGateDurationExceededHardLimit)
+        #expect(exported.networkWaitedBeforeInteractiveScrollMS == 0)
+        #expect(exported.releaseBlockingReasons.isEmpty)
+        #expect(!exported.readMarkerChanged)
+    }
+
+    @Test("Recorder keeps network wait release-blocking after export")
+    func recorderKeepsNetworkWaitReleaseBlockingAfterExport() throws {
+        let recorder = TimelineDiagnosticsRecorder()
+        let diagnostics = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 180,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_000_180,
+            networkWaitedBeforeInteractiveScrollMS: 1,
+            timestampMS: 1_735_000_000_000
+        )
+
+        recorder.recordRestoreGateDiagnostics(diagnostics)
+        let exported = try #require(recorder.export().restoreGateDiagnostics.first)
+
+        #expect(!exported.isValidForRelease)
+        #expect(exported.releaseBlockingReasons == [.networkWaitedBeforeInteractiveScroll])
+        #expect(exported.networkWaitedBeforeInteractiveScrollMS == 1)
+        #expect(!exported.readMarkerChanged)
+    }
+
+    @Test("Recorder exports standalone restore gate metric without private raw content")
+    func recorderExportsStandaloneRestoreGateMetricWithoutPrivateRawContent() throws {
+        let recorder = TimelineDiagnosticsRecorder()
+        let metric = TimelineRestoreGateMetricBuilder.metric(
+            stage: .localInitialWindowQuery,
+            durationMS: 42,
+            budget: .localInitialWindowQuery,
+            timestampMS: 1_735_000_000_000
+        )
+
+        recorder.recordRestoreGateMetric(metric)
+        let export = recorder.export()
+
+        #expect(export.restoreGateMetrics == [metric])
+        #expect(export.restoreGateDiagnostics.isEmpty)
+        #expect(export.mutationRecords.isEmpty)
+
+        let data = try JSONEncoder().encode(export)
+        let encoded = try #require(String(data: data, encoding: .utf8))
+
+        for forbiddenFragment in ["n" + "sec", "sec" + "ret", "priv" + "ate"] {
+            #expect(!encoded.localizedCaseInsensitiveContains(forbiddenFragment))
+        }
+    }
 }
