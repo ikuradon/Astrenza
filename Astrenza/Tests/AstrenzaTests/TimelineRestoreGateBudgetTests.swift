@@ -513,6 +513,268 @@ struct TimelineRestoreGateBudgetTests {
     }
 }
 
+@Suite("Timeline diagnostics export consumer")
+struct TimelineDiagnosticsExportConsumerTests {
+    @Test("Consumer decodes fixture JSON and reads restore gate metrics summary")
+    func consumerDecodesFixtureJSONAndReadsRestoreGateMetricsSummary() throws {
+        let consumer = try TimelineDiagnosticsExportConsumer(data: TimelineDiagnosticsExportConsumerFixture.allWithinBudget)
+        let metrics = consumer.restoreGateMetrics
+
+        #expect(consumer.export.restoreGateDiagnostics.count == 1)
+        #expect(metrics.totalAttempts == 1)
+        #expect(metrics.withinBudgetCount == 1)
+        #expect(metrics.overTargetCount == 0)
+        #expect(metrics.exceededBudgetCount == 0)
+        #expect(metrics.releaseBlockingCount == 0)
+        #expect(metrics.networkWaitedBeforeInteractiveScrollViolationCount == 0)
+        #expect(metrics.maxRestoreGateDurationMS == 180)
+        #expect(metrics.latestFallbackReason == nil)
+    }
+
+    @Test("Consumer detects no release blockers for all-within-budget fixture")
+    func consumerDetectsNoReleaseBlockersForAllWithinBudgetFixture() throws {
+        let consumer = try TimelineDiagnosticsExportConsumer(data: TimelineDiagnosticsExportConsumerFixture.allWithinBudget)
+        let summary = consumer.artifactSummary()
+
+        #expect(!consumer.hasReleaseBlockers)
+        #expect(summary.releaseBlockingCount == 0)
+        #expect(summary.networkWaitedBeforeInteractiveScrollViolationCount == 0)
+    }
+
+    @Test("Consumer detects release blockers for network-wait fixture")
+    func consumerDetectsReleaseBlockersForNetworkWaitFixture() throws {
+        let consumer = try TimelineDiagnosticsExportConsumer(data: TimelineDiagnosticsExportConsumerFixture.networkWaitReleaseBlocker)
+        let summary = consumer.artifactSummary()
+
+        #expect(consumer.hasReleaseBlockers)
+        #expect(summary.releaseBlockingCount == 1)
+        #expect(summary.networkWaitedBeforeInteractiveScrollViolationCount == 1)
+        #expect(summary.exceededBudgetCount == 1)
+        #expect(summary.latestFallbackReason == "restoreGateDurationExceededHardLimit")
+    }
+
+    @Test("Consumer builds deterministic artifact summary without runtime Timeline wiring")
+    func consumerBuildsDeterministicArtifactSummaryWithoutRuntimeTimelineWiring() throws {
+        let consumer = try TimelineDiagnosticsExportConsumer(data: TimelineDiagnosticsExportConsumerFixture.networkWaitReleaseBlocker)
+        let summary = consumer.artifactSummary()
+
+        #expect(summary == TimelineDiagnosticsArtifactSummary(
+            totalAttempts: 1,
+            withinBudgetCount: 0,
+            overTargetCount: 0,
+            exceededBudgetCount: 1,
+            releaseBlockingCount: 1,
+            networkWaitedBeforeInteractiveScrollViolationCount: 1,
+            maxRestoreGateDurationMS: 501,
+            latestFallbackReason: "restoreGateDurationExceededHardLimit",
+            requiresNetworkWork: false,
+            requiresDBWork: false
+        ))
+        #expect(summary.debugSummary == "attempts=1 within=0 overTarget=0 exceeded=1 releaseBlockers=1 networkWaitViolations=1 maxRestoreGateMS=501 latestFallback=restoreGateDurationExceededHardLimit")
+    }
+
+    @Test("Consumer fixture remains offline and sensitive-material-free")
+    func consumerFixtureRemainsOfflineAndSensitiveMaterialFree() throws {
+        let fixture = TimelineDiagnosticsExportConsumerFixture.networkWaitReleaseBlocker
+        let consumer = try TimelineDiagnosticsExportConsumer(data: fixture)
+        let encoded = try #require(String(data: fixture, encoding: .utf8))
+
+        #expect(!consumer.restoreGateMetrics.requiresNetworkWork)
+        #expect(!consumer.restoreGateMetrics.requiresDBWork)
+        #expect(!consumer.restoreGateMetrics.continuesSplash)
+        #expect(!consumer.restoreGateMetrics.readMarkerChanged)
+        #expect(consumer.export.mutationRecords.isEmpty)
+
+        for forbiddenFragment in TimelineDiagnosticsExportConsumerFixture.forbiddenRuntimeOrSensitiveFragments {
+            #expect(!encoded.localizedCaseInsensitiveContains(forbiddenFragment))
+        }
+    }
+}
+
+private struct TimelineDiagnosticsExportConsumer {
+    let export: TimelineDiagnosticsExport
+
+    init(data: Data, decoder: JSONDecoder = JSONDecoder()) throws {
+        self.export = try decoder.decode(TimelineDiagnosticsExport.self, from: data)
+    }
+
+    var restoreGateMetrics: TimelineRestoreGateMetricsSummary {
+        export.summary.restoreGateMetrics
+    }
+
+    var hasReleaseBlockers: Bool {
+        restoreGateMetrics.releaseBlockingCount > 0
+    }
+
+    func artifactSummary() -> TimelineDiagnosticsArtifactSummary {
+        TimelineDiagnosticsArtifactSummary(metrics: restoreGateMetrics)
+    }
+}
+
+private struct TimelineDiagnosticsArtifactSummary: Equatable {
+    var totalAttempts: Int
+    var withinBudgetCount: Int
+    var overTargetCount: Int
+    var exceededBudgetCount: Int
+    var releaseBlockingCount: Int
+    var networkWaitedBeforeInteractiveScrollViolationCount: Int
+    var maxRestoreGateDurationMS: Double?
+    var latestFallbackReason: String?
+    var requiresNetworkWork: Bool
+    var requiresDBWork: Bool
+
+    init(
+        totalAttempts: Int,
+        withinBudgetCount: Int,
+        overTargetCount: Int,
+        exceededBudgetCount: Int,
+        releaseBlockingCount: Int,
+        networkWaitedBeforeInteractiveScrollViolationCount: Int,
+        maxRestoreGateDurationMS: Double?,
+        latestFallbackReason: String?,
+        requiresNetworkWork: Bool,
+        requiresDBWork: Bool
+    ) {
+        self.totalAttempts = totalAttempts
+        self.withinBudgetCount = withinBudgetCount
+        self.overTargetCount = overTargetCount
+        self.exceededBudgetCount = exceededBudgetCount
+        self.releaseBlockingCount = releaseBlockingCount
+        self.networkWaitedBeforeInteractiveScrollViolationCount = networkWaitedBeforeInteractiveScrollViolationCount
+        self.maxRestoreGateDurationMS = maxRestoreGateDurationMS
+        self.latestFallbackReason = latestFallbackReason
+        self.requiresNetworkWork = requiresNetworkWork
+        self.requiresDBWork = requiresDBWork
+    }
+
+    init(metrics: TimelineRestoreGateMetricsSummary) {
+        self.init(
+            totalAttempts: metrics.totalAttempts,
+            withinBudgetCount: metrics.withinBudgetCount,
+            overTargetCount: metrics.overTargetCount,
+            exceededBudgetCount: metrics.exceededBudgetCount,
+            releaseBlockingCount: metrics.releaseBlockingCount,
+            networkWaitedBeforeInteractiveScrollViolationCount: metrics.networkWaitedBeforeInteractiveScrollViolationCount,
+            maxRestoreGateDurationMS: metrics.maxRestoreGateDurationMS,
+            latestFallbackReason: metrics.latestFallbackReason?.rawValue,
+            requiresNetworkWork: metrics.requiresNetworkWork,
+            requiresDBWork: metrics.requiresDBWork
+        )
+    }
+
+    var debugSummary: String {
+        [
+            "attempts=\(totalAttempts)",
+            "within=\(withinBudgetCount)",
+            "overTarget=\(overTargetCount)",
+            "exceeded=\(exceededBudgetCount)",
+            "releaseBlockers=\(releaseBlockingCount)",
+            "networkWaitViolations=\(networkWaitedBeforeInteractiveScrollViolationCount)",
+            "maxRestoreGateMS=\(Self.format(maxRestoreGateDurationMS))",
+            "latestFallback=\(latestFallbackReason ?? "none")"
+        ].joined(separator: " ")
+    }
+
+    private static func format(_ value: Double?) -> String {
+        guard let value else {
+            return "none"
+        }
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(value)
+    }
+}
+
+private enum TimelineDiagnosticsExportConsumerFixture {
+    static let allWithinBudget = Data("""
+    {
+      "mutationRecords": [],
+      "restoreGateRecords": [
+        "restoreGate"
+      ],
+      "restoreGateMetrics": [],
+      "restoreGateDiagnostics": [
+        {
+          "metrics": [
+            {
+              "stage": "restoreGate",
+              "durationMS": 180,
+              "timestampMS": 1735000000000,
+              "exceededBudget": false,
+              "budget": {
+                "targetDurationMS": 250,
+                "hardLimitDurationMS": 500
+              },
+              "budgetResult": "withinBudget"
+            }
+          ],
+          "firstInteractiveScrollAllowedAtMS": 1735000000180,
+          "networkWaitedBeforeInteractiveScrollMS": 0,
+          "readMarkerChanged": false,
+          "continuesSplash": false,
+          "requiresNetworkWork": false,
+          "requiresDBWork": false
+        }
+      ]
+    }
+    """.utf8)
+
+    static let networkWaitReleaseBlocker = Data("""
+    {
+      "mutationRecords": [],
+      "restoreGateRecords": [
+        "restoreGate"
+      ],
+      "restoreGateMetrics": [],
+      "restoreGateDiagnostics": [
+        {
+          "metrics": [
+            {
+              "stage": "restoreGate",
+              "durationMS": 501,
+              "timestampMS": 1735000002000,
+              "exceededBudget": true,
+              "budget": {
+                "targetDurationMS": 250,
+                "hardLimitDurationMS": 500
+              },
+              "budgetResult": "exceededBudget",
+              "exceededReason": "restoreGateDurationExceededHardLimit"
+            }
+          ],
+          "firstInteractiveScrollAllowedAtMS": 1735000002501,
+          "networkWaitedBeforeInteractiveScrollMS": 7,
+          "readMarkerChanged": false,
+          "fallbackPresentation": "inlineSkeleton",
+          "continuesSplash": false,
+          "requiresNetworkWork": false,
+          "requiresDBWork": false
+        }
+      ]
+    }
+    """.utf8)
+
+    static let forbiddenRuntimeOrSensitiveFragments: [String] = [
+        ["n", "sec"].joined(),
+        ["sec", "ret"].joined(),
+        ["priv", "ate key material"].joined(),
+        ["raw", " event JSON"].joined(),
+        ["URL", "Session"].joined(),
+        ["Web", "Socket"].joined(),
+        ["Re", "lay"].joined(),
+        ["GR", "DB"].joined(),
+        ["Data", "base"].joined(),
+        ["Timeline", "CollectionViewController"].joined(),
+        ["Home", "Timeline"].joined(),
+        ["Root", "Shell"].joined(),
+        ["Resolve", "Coordinator"].joined(),
+        ["data", "Source.apply"].joined(),
+        ["delete", "Items"].joined(),
+        ["insert", "Items"].joined()
+    ]
+}
+
 private enum TimelineDiagnosticsExportJSONFixture {
     static func mixedRestoreGateExport() -> TimelineDiagnosticsExport {
         let recorder = TimelineDiagnosticsRecorder()
