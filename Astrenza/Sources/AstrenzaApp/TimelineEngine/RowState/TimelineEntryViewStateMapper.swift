@@ -184,6 +184,9 @@ struct TimelineEntryViewStateMapper: Sendable {
             scenarioName: draft.diagnostics.scenarioName,
             initialEntryID: draft.mutationExpectation.initialEntryID,
             finalEntryID: draft.mutationExpectation.finalEntryID,
+            delayedResolveTargets: draft.resolveExpectations
+                .filter(\.isDelayedResolveTransition)
+                .map(\.target),
             mutationStyle: draft.mutationExpectation.style,
             delayedResolveMutationStyle: draft.mutationExpectation.delayedResolveStyle,
             reconfigureEntryIDs: draft.mutationExpectation.style == .reconfigure ? [draft.id] : [],

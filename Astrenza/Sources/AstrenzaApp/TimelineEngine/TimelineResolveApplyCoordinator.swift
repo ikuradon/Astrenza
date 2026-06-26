@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-struct TimelineResolveReconfigureIntent: Equatable, Sendable {
+struct TimelineResolveReconfigureIntent: Equatable, Codable, Sendable {
     var reason: ResolveApplyReason
     var mutationStyle: TimelineMutationStyle
     var entryIDs: [TimelineEntryID]

@@ -79,6 +79,7 @@ enum TimelineSection: Hashable, Codable, Sendable {
 
 enum ResolveApplyReason: Equatable, Codable, Sendable {
     case profile
+    case bodyMention
     case media
     case linkPreview
     case repost
@@ -86,6 +87,7 @@ enum ResolveApplyReason: Equatable, Codable, Sendable {
     case replyParent
     case stats
     case visibility
+    case publishStatePlaceholder
     case debug
 
     var snapshotReason: TimelineSnapshotReason {

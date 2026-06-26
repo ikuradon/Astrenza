@@ -202,6 +202,7 @@ struct TimelineEntryViewStateDiagnostics: Equatable, Codable, Sendable {
     var scenarioName: String
     var initialEntryID: TimelineEntryID
     var finalEntryID: TimelineEntryID
+    var delayedResolveTargets: [TimelineDelayedResolveTarget]
     var mutationStyle: TimelineProjectionMutationExpectation.Style
     var delayedResolveMutationStyle: TimelineProjectionMutationExpectation.Style?
     var reconfigureEntryIDs: [TimelineEntryID]
