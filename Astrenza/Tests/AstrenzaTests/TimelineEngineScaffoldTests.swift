@@ -264,6 +264,95 @@ struct TimelineEngineScaffoldTests {
         #expect(collectionView.scrollRequests == [indexPath])
     }
 
+    @MainActor
+    @Test("Position recorder restore reports targetOffsetClamped and diagnostics keep read marker unchanged")
+    func positionRecorderRestoreReportsTargetOffsetClampedAndDiagnosticsKeepReadMarkerUnchanged() throws {
+        let collectionView = RestoreDiagnosticsCollectionView()
+        let indexPath = IndexPath(item: 0, section: 0)
+        let entryID = TimelineEntryID(rawValue: "home:100:a")
+        collectionView.diagnosticAttributes[indexPath] = Self.attributes(
+            indexPath: indexPath,
+            minY: 700,
+            height: 72
+        )
+        let anchor = Self.anchor(itemKey: entryID.rawValue, delta: -8)
+
+        let result = Self.positionRecorder().restore(anchor: anchor, in: collectionView) { requestedID in
+            #expect(requestedID == entryID)
+            return indexPath
+        }
+
+        let expectedReason = TimelineRestoreFallbackReason(
+            kind: .targetOffsetClamped,
+            anchorItemKey: entryID.rawValue
+        )
+        #expect(result == .attemptedFallback(reason: expectedReason))
+        #expect(result.fallbackReason == expectedReason)
+        #expect(Double(collectionView.contentOffset.y) == 520)
+
+        let diagnosticsRecorder = TimelineDiagnosticsRecorder()
+        let record = diagnosticsRecorder.recordMutation(
+            reason: .initialRestore,
+            anchorBefore: anchor,
+            anchorAfter: anchor,
+            visibleIDsBefore: [entryID],
+            visibleIDsAfter: [entryID],
+            fallbackReason: result.fallbackReason,
+            timestampMS: 1_735_000_000_000
+        )
+
+        #expect(record.fallbackReason == expectedReason)
+        #expect(record.readMarkerChanged == false)
+        #expect(record.anchorBefore?.anchorItemKey == entryID.rawValue)
+        #expect(record.anchorAfter?.anchorItemKey == entryID.rawValue)
+        #expect(diagnosticsRecorder.records.last == record)
+    }
+
+    @MainActor
+    @Test("Position recorder restore reports contentSizeUnavailable and diagnostics keep read marker unchanged")
+    func positionRecorderRestoreReportsContentSizeUnavailableAndDiagnosticsKeepReadMarkerUnchanged() throws {
+        let collectionView = RestoreDiagnosticsCollectionView()
+        collectionView.bounds = CGRect(x: 0, y: 0, width: 320, height: 0)
+        let indexPath = IndexPath(item: 0, section: 0)
+        let entryID = TimelineEntryID(rawValue: "home:100:a")
+        collectionView.diagnosticAttributes[indexPath] = Self.attributes(
+            indexPath: indexPath,
+            minY: 80,
+            height: 72
+        )
+        let anchor = Self.anchor(itemKey: entryID.rawValue, delta: -8)
+
+        let result = Self.positionRecorder().restore(anchor: anchor, in: collectionView) { requestedID in
+            #expect(requestedID == entryID)
+            return indexPath
+        }
+
+        let expectedReason = TimelineRestoreFallbackReason(
+            kind: .contentSizeUnavailable,
+            anchorItemKey: entryID.rawValue
+        )
+        #expect(result == .failed(reason: expectedReason))
+        #expect(result.fallbackReason == expectedReason)
+        #expect(collectionView.contentOffset == .zero)
+
+        let diagnosticsRecorder = TimelineDiagnosticsRecorder()
+        let record = diagnosticsRecorder.recordMutation(
+            reason: .initialRestore,
+            anchorBefore: anchor,
+            anchorAfter: nil,
+            visibleIDsBefore: [entryID],
+            visibleIDsAfter: [],
+            fallbackReason: result.fallbackReason,
+            timestampMS: 1_735_000_000_000
+        )
+
+        #expect(record.fallbackReason == expectedReason)
+        #expect(record.readMarkerChanged == false)
+        #expect(record.anchorBefore?.anchorItemKey == entryID.rawValue)
+        #expect(record.anchorAfter == nil)
+        #expect(diagnosticsRecorder.records.last == record)
+    }
+
     @Test("Position recorder computes structured anchor delta for same item")
     func positionRecorderComputesStructuredAnchorDeltaForSameItem() throws {
         let before = Self.anchor(itemKey: "home:100:a", delta: -8)
