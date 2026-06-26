@@ -351,6 +351,95 @@ struct TimelineDiagnosticsExport: Equatable, Codable, Sendable {
         self.restoreGateMetrics = restoreGateMetrics
         self.restoreGateDiagnostics = restoreGateDiagnostics
     }
+
+    var summary: TimelineDiagnosticsExportSummary {
+        TimelineDiagnosticsAggregator.summarize(self)
+    }
+}
+
+struct TimelineDiagnosticsExportSummary: Equatable, Codable, Sendable {
+    var restoreGateMetrics: TimelineRestoreGateMetricsSummary
+}
+
+struct TimelineRestoreGateMetricsSummary: Equatable, Codable, Sendable {
+    var totalAttempts: Int
+    var withinBudgetCount: Int
+    var overTargetCount: Int
+    var exceededBudgetCount: Int
+    var releaseBlockingCount: Int
+    var networkWaitedBeforeInteractiveScrollViolationCount: Int
+    var maxRestoreGateDurationMS: Double?
+    var maxLocalInitialWindowQueryMS: Double?
+    var maxInitialSnapshotApplyMS: Double?
+    var maxAnchorRestoreMS: Double?
+    var maxNetworkWaitedBeforeInteractiveScrollMS: Double?
+    var latestFallbackReason: TimelineRestoreGateExceededReason?
+    var readMarkerChanged: Bool
+    var continuesSplash: Bool
+    var requiresNetworkWork: Bool
+    var requiresDBWork: Bool
+}
+
+enum TimelineDiagnosticsAggregator {
+    static func summarize(_ export: TimelineDiagnosticsExport) -> TimelineDiagnosticsExportSummary {
+        TimelineDiagnosticsExportSummary(
+            restoreGateMetrics: summarizeRestoreGateMetrics(export.restoreGateDiagnostics)
+        )
+    }
+
+    static func summarizeRestoreGateMetrics(
+        _ diagnostics: [TimelineRestoreGateDiagnostics]
+    ) -> TimelineRestoreGateMetricsSummary {
+        TimelineRestoreGateMetricsSummary(
+            totalAttempts: diagnostics.count,
+            withinBudgetCount: count(.withinBudget, in: diagnostics),
+            overTargetCount: count(.overTarget, in: diagnostics),
+            exceededBudgetCount: count(.exceededBudget, in: diagnostics),
+            releaseBlockingCount: diagnostics.filter { !$0.isValidForRelease }.count,
+            networkWaitedBeforeInteractiveScrollViolationCount: diagnostics.filter {
+                $0.networkWaitedBeforeInteractiveScrollMS > 0
+            }.count,
+            maxRestoreGateDurationMS: maxDuration(in: diagnostics, for: .restoreGate),
+            maxLocalInitialWindowQueryMS: maxDuration(in: diagnostics, for: .localInitialWindowQuery),
+            maxInitialSnapshotApplyMS: maxDuration(in: diagnostics, for: .initialSnapshotApplying),
+            maxAnchorRestoreMS: maxDuration(in: diagnostics, for: .anchorRestoring),
+            maxNetworkWaitedBeforeInteractiveScrollMS: diagnostics
+                .map(\.networkWaitedBeforeInteractiveScrollMS)
+                .max(),
+            latestFallbackReason: latestFallbackReason(in: diagnostics),
+            readMarkerChanged: diagnostics.contains(where: \.readMarkerChanged),
+            continuesSplash: diagnostics.contains(where: \.continuesSplash),
+            requiresNetworkWork: diagnostics.contains(where: \.requiresNetworkWork),
+            requiresDBWork: diagnostics.contains(where: \.requiresDBWork)
+        )
+    }
+
+    private static func count(
+        _ result: TimelineRestoreGateBudgetResult,
+        in diagnostics: [TimelineRestoreGateDiagnostics]
+    ) -> Int {
+        diagnostics.filter { $0.budgetResult == result }.count
+    }
+
+    private static func maxDuration(
+        in diagnostics: [TimelineRestoreGateDiagnostics],
+        for stage: TimelineRestoreGateDiagnostic
+    ) -> Double? {
+        diagnostics
+            .compactMap { $0.metric(for: stage)?.durationMS }
+            .max()
+    }
+
+    private static func latestFallbackReason(
+        in diagnostics: [TimelineRestoreGateDiagnostics]
+    ) -> TimelineRestoreGateExceededReason? {
+        for diagnostic in diagnostics.reversed() {
+            if let reason = diagnostic.exceededReasons.last {
+                return reason
+            }
+        }
+        return nil
+    }
 }
 
 final class TimelineDiagnosticsRecorder {

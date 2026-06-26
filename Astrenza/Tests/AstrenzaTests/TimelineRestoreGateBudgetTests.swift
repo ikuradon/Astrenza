@@ -273,4 +273,160 @@ struct TimelineRestoreGateBudgetTests {
             #expect(!encoded.localizedCaseInsensitiveContains(forbiddenFragment))
         }
     }
+
+    @Test("Recorder exports multiple standalone restore gate metrics in order")
+    func recorderExportsMultipleStandaloneRestoreGateMetricsInOrder() {
+        let recorder = TimelineDiagnosticsRecorder()
+        let first = TimelineRestoreGateMetricBuilder.metric(
+            stage: .localInitialWindowQuery,
+            durationMS: 42,
+            budget: .localInitialWindowQuery,
+            timestampMS: 1_735_000_000_000
+        )
+        let second = TimelineRestoreGateMetricBuilder.metric(
+            stage: .restoreGate,
+            durationMS: 180,
+            budget: .restoreGate,
+            timestampMS: 1_735_000_000_180
+        )
+
+        recorder.recordRestoreGateMetric(first)
+        recorder.recordRestoreGateMetric(second)
+
+        #expect(recorder.export().restoreGateMetrics == [first, second])
+    }
+
+    @Test("Export summary aggregates multiple within-budget restore attempts")
+    func exportSummaryAggregatesMultipleWithinBudgetRestoreAttempts() throws {
+        let recorder = TimelineDiagnosticsRecorder()
+        let first = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 180,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_000_180,
+            timestampMS: 1_735_000_000_000
+        )
+        let second = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 48,
+            initialSnapshotApplyDurationMS: 70,
+            anchorRestoreDurationMS: 15,
+            restoreGateDurationMS: 220,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_001_220,
+            timestampMS: 1_735_000_001_000
+        )
+
+        recorder.recordRestoreGateDiagnostics(first)
+        recorder.recordRestoreGateDiagnostics(second)
+        let export = recorder.export()
+        let summary = export.summary.restoreGateMetrics
+
+        #expect(export.restoreGateDiagnostics == [first, second])
+        #expect(summary.totalAttempts == 2)
+        #expect(summary.withinBudgetCount == 2)
+        #expect(summary.overTargetCount == 0)
+        #expect(summary.exceededBudgetCount == 0)
+        #expect(summary.releaseBlockingCount == 0)
+        #expect(summary.networkWaitedBeforeInteractiveScrollViolationCount == 0)
+        #expect(summary.maxRestoreGateDurationMS == 220)
+        #expect(summary.maxLocalInitialWindowQueryMS == 48)
+        #expect(summary.maxInitialSnapshotApplyMS == 70)
+        #expect(summary.maxAnchorRestoreMS == 15)
+        #expect(summary.maxNetworkWaitedBeforeInteractiveScrollMS == 0)
+        #expect(summary.latestFallbackReason == nil)
+        #expect(!summary.readMarkerChanged)
+        #expect(!summary.continuesSplash)
+        #expect(!summary.requiresNetworkWork)
+        #expect(!summary.requiresDBWork)
+
+        let data = try JSONEncoder().encode(export.summary)
+        let decoded = try JSONDecoder().decode(TimelineDiagnosticsExportSummary.self, from: data)
+
+        #expect(decoded == export.summary)
+    }
+
+    @Test("Export summary counts mixed budget and network release blockers")
+    func exportSummaryCountsMixedBudgetAndNetworkReleaseBlockers() {
+        let recorder = TimelineDiagnosticsRecorder()
+        let withinBudget = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 180,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_000_180,
+            timestampMS: 1_735_000_000_000
+        )
+        let overTarget = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 180,
+            initialSnapshotApplyDurationMS: 120,
+            anchorRestoreDurationMS: 44,
+            restoreGateDurationMS: 300,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_001_300,
+            timestampMS: 1_735_000_001_000
+        )
+        let exceededBudget = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 301,
+            initialSnapshotApplyDurationMS: 201,
+            anchorRestoreDurationMS: 51,
+            restoreGateDurationMS: 501,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_002_501,
+            networkWaitedBeforeInteractiveScrollMS: 7,
+            fallbackPresentation: .inlineSkeleton,
+            timestampMS: 1_735_000_002_000
+        )
+
+        recorder.recordRestoreGateDiagnostics(withinBudget)
+        recorder.recordRestoreGateDiagnostics(overTarget)
+        recorder.recordRestoreGateDiagnostics(exceededBudget)
+        let summary = recorder.export().summary.restoreGateMetrics
+
+        #expect(summary.totalAttempts == 3)
+        #expect(summary.withinBudgetCount == 1)
+        #expect(summary.overTargetCount == 1)
+        #expect(summary.exceededBudgetCount == 1)
+        #expect(summary.releaseBlockingCount == 1)
+        #expect(summary.networkWaitedBeforeInteractiveScrollViolationCount == 1)
+        #expect(summary.maxRestoreGateDurationMS == 501)
+        #expect(summary.maxLocalInitialWindowQueryMS == 301)
+        #expect(summary.maxInitialSnapshotApplyMS == 201)
+        #expect(summary.maxAnchorRestoreMS == 51)
+        #expect(summary.maxNetworkWaitedBeforeInteractiveScrollMS == 7)
+        #expect(summary.latestFallbackReason == .restoreGateDurationExceededHardLimit)
+        #expect(!summary.readMarkerChanged)
+        #expect(!summary.continuesSplash)
+        #expect(!summary.requiresNetworkWork)
+        #expect(!summary.requiresDBWork)
+    }
+
+    @Test("Export summary keeps read marker unchanged unless a record says otherwise")
+    func exportSummaryKeepsReadMarkerUnchangedUnlessARecordSaysOtherwise() {
+        let recorder = TimelineDiagnosticsRecorder()
+        let unchanged = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 180,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_000_180,
+            timestampMS: 1_735_000_000_000
+        )
+
+        recorder.recordRestoreGateDiagnostics(unchanged)
+        #expect(!recorder.export().summary.restoreGateMetrics.readMarkerChanged)
+
+        let changed = TimelineRestoreGateMetricBuilder.diagnostics(
+            localInitialWindowQueryDurationMS: 42,
+            initialSnapshotApplyDurationMS: 61,
+            anchorRestoreDurationMS: 12,
+            restoreGateDurationMS: 180,
+            firstInteractiveScrollAllowedAtMS: 1_735_000_001_180,
+            readMarkerChanged: true,
+            timestampMS: 1_735_000_001_000
+        )
+
+        recorder.recordRestoreGateDiagnostics(changed)
+        let summary = recorder.export().summary.restoreGateMetrics
+
+        #expect(summary.readMarkerChanged)
+        #expect(summary.releaseBlockingCount == 1)
+    }
 }
