@@ -55,6 +55,55 @@ struct TimelineRowProjectionBoundaryTests {
         }, "Expected adapter issue mapping, got \(output.issues)")
     }
 
+    @Test("Malformed adapter outputs produce typed row projection issues")
+    func malformedAdapterOutputsProduceTypedRowProjectionIssues() throws {
+        var network = try adapterOutput(named: "publish_state_placeholder_localOnly_noReadMarkerChange")
+        network.diagnostics.requiresNetworkWork = true
+        expectBoundaryIssue(.requiresNetworkWork, in: network)
+
+        var database = try adapterOutput(named: "publish_state_placeholder_localOnly_noReadMarkerChange")
+        database.diagnostics.requiresDBWork = true
+        expectBoundaryIssue(.requiresDBWork, in: database)
+
+        var deleteInsert = try adapterOutput(named: "ogp_pending_to_resolved")
+        var deleteInsertMutation = try #require(deleteInsert.mutationExpectation)
+        deleteInsertMutation.deletedIDs = [deleteInsertMutation.initialEntryID]
+        deleteInsert.mutationExpectation = deleteInsertMutation
+        expectBoundaryIssue(.deleteInsertMutationIntroduced, in: deleteInsert)
+
+        var quoteReply = try adapterOutput(named: "quote_target_pending_to_resolved")
+        var quoteReplyMutation = try #require(quoteReply.mutationExpectation)
+        quoteReplyMutation.quoteCreatesReplyRelation = true
+        quoteReply.mutationExpectation = quoteReplyMutation
+        expectBoundaryIssue(.quoteTargetBecameReplyParent, in: quoteReply)
+
+        var replyInline = try adapterOutput(named: "reply_parent_pending_to_resolved_headerOnly")
+        var replyInlineLayout = try #require(replyInline.layoutDecision)
+        replyInlineLayout.contract.replyHeaderMode = .inlineParentInDetail
+        replyInlineLayout.contract.allowsInlineParentPreviewInHome = true
+        replyInline.layoutDecision = replyInlineLayout
+        expectBoundaryIssue(.homeReplyParentMustBeHeaderOnly, in: replyInline)
+
+        let pendingNewScenario = try fixture(named: "pending_new_not_visible_until_user_action")
+        let pendingNewEntryID = pendingNewScenario.expectedOutput.identity.entryID
+        let pendingNewVisible = adapter.project(TimelineProjectionAdapterInput(
+            scenario: pendingNewScenario,
+            pendingNewEntryIDs: [pendingNewEntryID],
+            userActionAllowsPendingNewInsertion: true
+        ))
+        expectBoundaryIssue(.pendingNewVisibilityRequiresExplicitUserAction, in: pendingNewVisible)
+
+        var readMarker = try adapterOutput(named: "profile_missing_to_resolved_headerOnly")
+        readMarker.diagnostics.readMarkerChanged = true
+        expectBoundaryIssue(.readMarkerChanged, in: readMarker)
+
+        var missingLayoutContract = try adapterOutput(named: "textOnly_author_visible")
+        var layout = try #require(missingLayoutContract.layoutDecision)
+        layout.hasLayoutContract = false
+        missingLayoutContract.layoutDecision = layout
+        expectBoundaryIssue(.missingLayoutContract, in: missingLayoutContract)
+    }
+
     @Test("Draft preserves item key TimelineEntryID and source subject distinction")
     func draftPreservesItemKeyTimelineEntryIDAndSourceSubjectDistinction() throws {
         let scenario = try fixture(named: "repost_target_pending_to_resolved")
@@ -232,8 +281,26 @@ struct TimelineRowProjectionBoundaryTests {
         return output
     }
 
+    private func adapterOutput(named name: String) throws -> TimelineProjectionAdapterOutput {
+        adapter.project(TimelineProjectionAdapterInput(scenario: try fixture(named: name)))
+    }
+
     private func fixture(named name: String) throws -> TimelineProjectionScenario {
         try #require(TimelineProjectionFixtureBuilder.scenario(named: name))
+    }
+
+    private func expectBoundaryIssue(
+        _ kind: TimelineRowProjectionIssue.Kind,
+        in adapterOutput: TimelineProjectionAdapterOutput,
+        userActionContext: TimelineRowProjectionUserActionContext = TimelineRowProjectionUserActionContext()
+    ) {
+        let output = boundary.project(TimelineRowProjectionInput(
+            adapterOutput: adapterOutput,
+            userActionContext: userActionContext
+        ))
+
+        #expect(output.draft == nil)
+        #expect(output.issues.contains { $0.kind == kind }, "Expected \(kind), got \(output.issues)")
     }
 
     private func assertSendable<T: Sendable>(_ type: T.Type) {}

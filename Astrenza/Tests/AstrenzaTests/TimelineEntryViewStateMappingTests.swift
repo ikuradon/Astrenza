@@ -306,6 +306,10 @@ struct TimelineEntryViewStateMappingTests {
         database.diagnostics.requiresDBWork = true
         expectIssue(.requiresDBWork, in: database)
 
+        var missingLayoutContract = try projectedDraft(for: try fixture(named: "textOnly_author_visible"))
+        missingLayoutContract.layoutDecision.hasLayoutContract = false
+        expectIssue(.missingLayoutContract, in: missingLayoutContract)
+
         var pendingNew = try projectedDraft(for: try fixture(named: "pending_new_not_visible_until_user_action"))
         pendingNew.visibilityDecision.pendingNewVisible = true
         pendingNew.visibilityDecision.includedInVisibleSnapshot = true

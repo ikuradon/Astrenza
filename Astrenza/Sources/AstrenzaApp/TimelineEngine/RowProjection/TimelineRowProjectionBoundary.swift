@@ -56,6 +56,7 @@ struct TimelineRowProjectionIssue: Equatable, Codable, Sendable {
         case missingFeedItemReason
         case missingMutationExpectation
         case missingLayoutDecision
+        case missingLayoutContract
         case missingVisibilityDecision
         case missingFallback
         case delayedResolveMustReconfigure
@@ -269,6 +270,11 @@ struct FixtureBackedTimelineRowProjectionBoundary: TimelineRowProjectionBoundary
         layoutDecision: TimelineProjectionLayoutDecision,
         to issues: inout [TimelineRowProjectionIssue]
     ) {
+        if adapterOutput.visibilityDecision?.includedInVisibleSnapshot == true
+            && !layoutDecision.hasLayoutContract {
+            issues.append(issue(.missingLayoutContract, scenarioName: adapterOutput.scenarioName))
+        }
+
         guard adapterOutput.resolveExpectations.contains(where: { $0.target == .replyParentRoot }),
               layoutDecision.contract.rowKind == .home
         else {
