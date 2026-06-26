@@ -2,18 +2,30 @@ import AstrenzaCore
 import SwiftUI
 
 struct AstrenzaRootView: View {
-    @StateObject private var sessionStore = NostrSessionStore()
+    @StateObject private var sessionStore: NostrSessionStore
     @StateObject private var homeTimelineStore: NostrHomeTimelineStore
     @State private var isStartupSplashVisible = true
     @State private var hasPresentedStartupTimeline = false
     @State private var startupSplashStartDate = Date()
     @State private var startupSplashDismissTask: Task<Void, Never>?
     @AppStorage(AstrenzaThemeMode.storageKey) private var selectedThemeMode = AstrenzaThemeMode.system.rawValue
-    private let launchMode = AstrenzaLaunchMode()
+    private let launchMode: AstrenzaLaunchMode
     private let startupSplashMinimumDuration: TimeInterval = 0.45
 
-    init() {
-        _homeTimelineStore = StateObject(wrappedValue: NostrHomeTimelineStore(
+    init(launchMode: AstrenzaLaunchMode = AstrenzaLaunchMode()) {
+        self.launchMode = launchMode
+        _sessionStore = StateObject(wrappedValue: NostrSessionStore(
+            restoreAccount: !launchMode.disablesNetworkStartup
+        ))
+        _homeTimelineStore = StateObject(wrappedValue: Self.makeHomeTimelineStore(launchMode: launchMode))
+    }
+
+    private static func makeHomeTimelineStore(launchMode: AstrenzaLaunchMode) -> NostrHomeTimelineStore {
+        guard !launchMode.disablesNetworkStartup else {
+            return NostrHomeTimelineStore()
+        }
+
+        return NostrHomeTimelineStore(
             relayRuntime: NostrRelayRuntime { _ in
                 NostrURLSessionRelayTransport()
             },
@@ -24,7 +36,7 @@ struct AstrenzaRootView: View {
                     return NostrMediaResolverServiceClient(configuration: serviceConfiguration)
                 }
             )
-        ))
+        )
     }
 
     var body: some View {

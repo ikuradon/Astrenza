@@ -5,6 +5,35 @@ import UIKit
 
 @Suite("TimelineEngine scaffold")
 struct TimelineEngineScaffoldTests {
+    @Test("App-hosted XCTest disables startup network without forcing mock timeline")
+    func appHostedXCTestDisablesStartupNetworkWithoutForcingMockTimeline() {
+        let launchMode = AstrenzaLaunchMode(
+            arguments: ["/tmp/Astrenza.app/Astrenza"],
+            environment: ["XCTestConfigurationFilePath": "/tmp/AstrenzaTests.xctestconfiguration"],
+            userDefaults: nil
+        )
+
+        #expect(launchMode.disablesNetworkStartup)
+        #expect(!launchMode.usesMockTimeline)
+    }
+
+    @Test("Production launch keeps startup network enabled unless explicitly disabled")
+    func productionLaunchKeepsStartupNetworkEnabledUnlessExplicitlyDisabled() {
+        let productionLaunchMode = AstrenzaLaunchMode(
+            arguments: ["/Applications/Astrenza.app/Astrenza"],
+            environment: [:],
+            userDefaults: nil
+        )
+        let explicitlyDisabledLaunchMode = AstrenzaLaunchMode(
+            arguments: ["-AstrenzaDisableNetworkStartup"],
+            environment: [:],
+            userDefaults: nil
+        )
+
+        #expect(!productionLaunchMode.disablesNetworkStartup)
+        #expect(explicitlyDisabledLaunchMode.disablesNetworkStartup)
+    }
+
     @Test("TimelineEntryID identity is stable item key only")
     func timelineEntryIDIdentityIsStableItemKeyOnly() throws {
         let eventID = EventID(hex: String(repeating: "a", count: 64))

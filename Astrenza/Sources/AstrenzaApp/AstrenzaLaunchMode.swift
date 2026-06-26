@@ -22,4 +22,19 @@ struct AstrenzaLaunchMode {
             || environment["ASTRENZA_ROUTE"] == "mock"
             || userDefaults?.bool(forKey: "AstrenzaMockTimeline") == true
     }
+
+    var disablesNetworkStartup: Bool {
+        arguments.contains("-AstrenzaDisableNetworkStartup")
+            || arguments.contains { $0.contains("AstrenzaDisableNetworkStartup") }
+            || environment["ASTRENZA_DISABLE_NETWORK_STARTUP"] == "1"
+            || userDefaults?.bool(forKey: "AstrenzaDisableNetworkStartup") == true
+            || isAppHostedXCTest
+    }
+
+    private var isAppHostedXCTest: Bool {
+        environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
+            || arguments.contains { $0.contains(".xctest") }
+    }
 }
