@@ -317,18 +317,28 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
             feedItem("note:valid", sourceEventID: "valid", sortAt: 10)
         ])
 
+        let before = try database.auditCounts()
         let output = try adapter.initialWindow(
             databasePath: database.path,
             policy: .initialRestore(maxVisibleCount: 10)
         )
+        let visibleRows = try adapter.visibleRows(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let after = try database.auditCounts()
 
+        #expect(before == after)
         #expect(output.initialWindow.visibleItemKeys == ["note:valid"])
+        #expect(visibleRows.rows.map(\.itemKey) == ["note:valid"])
+        #expect(!visibleRows.rows.contains { $0.sourceEventID == EventID(hex: "bad-reason") })
         #expect(output.issues.contains { issue in
             issue.kind == .invalidPersistedFeedItemReason
                 && issue.itemKey == "note:bad-reason"
                 && issue.rawValue == "unknown"
         })
         #expect(output.diagnostics.invalidPersistenceRowCount == 1)
+        assertAdapterStayedReadOnly(output)
     }
 
     @Test("invalid item_key returns typed issue")
@@ -339,17 +349,247 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
             feedItem("note:valid", sourceEventID: "valid", sortAt: 10)
         ])
 
+        let before = try database.auditCounts()
         let output = try adapter.initialWindow(
             databasePath: database.path,
             policy: .initialRestore(maxVisibleCount: 10)
         )
+        let visibleRows = try adapter.visibleRows(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let after = try database.auditCounts()
 
+        #expect(before == after)
         #expect(output.initialWindow.visibleItemKeys == ["note:valid"])
+        #expect(visibleRows.rows.map(\.itemKey) == ["note:valid"])
+        #expect(!visibleRows.rows.contains { $0.sourceEventID == EventID(hex: "invalid-item") })
         #expect(output.issues.contains { issue in
             issue.kind == .invalidPersistedItemKey
                 && issue.itemKey == "   "
                 && issue.eventID == EventID(hex: "invalid-item")
         })
+        assertAdapterStayedReadOnly(output)
+    }
+
+    @Test("invalid persisted sort key returns typed issue")
+    func invalidPersistedSortKeyReturnsTypedIssue() {
+        let output = adapter.mapMalformedRowsForIssueCoverage([
+            TimelineRepositoryDBFeedItemRow(
+                itemKey: "note:invalid-sort",
+                sourceEventID: "invalid-sort",
+                subjectEventID: nil,
+                reason: "author",
+                actorPubkey: "pubkey",
+                sortAt: nil,
+                tieBreakID: "invalid-sort",
+                hiddenReason: nil,
+                collapsed: false,
+                pendingNew: false
+            ),
+            TimelineRepositoryDBFeedItemRow(
+                itemKey: "note:valid",
+                sourceEventID: "valid",
+                subjectEventID: nil,
+                reason: "author",
+                actorPubkey: "pubkey",
+                sortAt: 10,
+                tieBreakID: "valid",
+                hiddenReason: nil,
+                collapsed: false,
+                pendingNew: false
+            )
+        ])
+
+        #expect(output.rows.map(\.itemKey) == ["note:valid"])
+        #expect(!output.rows.contains { $0.itemKey == "note:invalid-sort" })
+        #expect(output.issues.contains { issue in
+            issue.kind == .invalidPersistedSortKey
+                && issue.itemKey == "note:invalid-sort"
+                && issue.eventID == EventID(hex: "invalid-sort")
+        })
+        #expect(output.diagnostics.invalidPersistenceRowCount == 1)
+        assertReadOnlyDiagnostics(output.diagnostics, performedLocalDBRead: false)
+    }
+
+    @Test("invalid read-state anchor shape returns typed issue and marker fallback")
+    func invalidReadStateAnchorShapeReturnsTypedIssueAndMarkerFallback() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:newest", sourceEventID: "newest", sortAt: 20),
+            feedItem("note:marker", sourceEventID: "marker", sortAt: 10)
+        ])
+        try database.seedReadState(readState(
+            markerEventID: "marker",
+            markerSortAt: 10,
+            scrollAnchorItemKey: "note:invalid-anchor"
+        ))
+
+        let before = try database.auditCounts()
+        let output = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 2)
+        )
+        let after = try database.auditCounts()
+
+        #expect(before == after)
+        #expect(output.initialWindow.visibleItemKeys == ["note:newest", "note:marker"])
+        #expect(output.initialWindow.anchorItemKey == "note:marker")
+        #expect(output.initialWindow.anchorSource == .readMarker)
+        #expect(output.initialWindow.diagnostics.fallbackReason == .markerEventFound)
+        #expect(output.issues.contains { issue in
+            issue.kind == .invalidReadStateAnchorShape
+                && issue.itemKey == "note:invalid-anchor"
+        })
+        #expect(output.diagnostics.invalidPersistenceRowCount == 1)
+        assertAdapterStayedReadOnly(output)
+    }
+
+    @Test("missing feed returns empty fallback and no adapter writes")
+    func missingFeedReturnsEmptyFallbackAndNoAdapterWrites() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:visible", sourceEventID: "visible", sortAt: 20)
+        ])
+        let missingFeedAdapter = TimelineRepositoryDBAdapter(configuration: TimelineRepositoryDBAdapterConfiguration(
+            accountID: .debug,
+            databaseAccountID: TimelineRepositoryDBAdapterConfiguration.testDefault.databaseAccountID,
+            feedID: FeedID(rawValue: 999),
+            timelineKey: .home
+        ))
+
+        let before = try database.auditCounts()
+        let output = try missingFeedAdapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let after = try database.auditCounts()
+
+        #expect(before == after)
+        #expect(output.initialWindow.visibleRows.isEmpty)
+        #expect(output.initialWindow.anchorSource == .none)
+        #expect(output.initialWindow.diagnostics.fallbackReason == .noVisibleRows)
+        #expect(output.issues.isEmpty)
+        #expect(output.diagnostics.feedItemRowCount == 0)
+        #expect(output.diagnostics.sqlVisibleRowCount == 0)
+        assertAdapterStayedReadOnly(output)
+    }
+
+    @Test("hidden and pending anchor exclusions stay typed and read-only")
+    func hiddenAndPendingAnchorExclusionsStayTypedAndReadOnly() throws {
+        let hiddenOutput = try outputForExcludedAnchor(
+            excludedAnchor: feedItem(
+                "note:hidden-anchor",
+                sourceEventID: "hidden-anchor",
+                sortAt: 20,
+                hiddenReason: "muted"
+            )
+        )
+        let pendingOutput = try outputForExcludedAnchor(
+            excludedAnchor: feedItem(
+                "note:pending-anchor",
+                sourceEventID: "pending-anchor",
+                sortAt: 20,
+                pendingNew: true
+            )
+        )
+
+        #expect(hiddenOutput.initialWindow.anchorItemKey == "note:marker")
+        #expect(hiddenOutput.initialWindow.anchorSource == .readMarker)
+        #expect(hiddenOutput.initialWindow.diagnostics.fallbackReason == .missingAnchorUsedMarker)
+        #expect(hiddenOutput.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:hidden-anchor" })
+        #expect(hiddenOutput.diagnostics.sqlExcludedHiddenCount == 1)
+        assertAdapterStayedReadOnly(hiddenOutput)
+
+        #expect(pendingOutput.initialWindow.anchorItemKey == "note:marker")
+        #expect(pendingOutput.initialWindow.anchorSource == .readMarker)
+        #expect(pendingOutput.initialWindow.diagnostics.fallbackReason == .missingAnchorUsedMarker)
+        #expect(pendingOutput.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:pending-anchor" })
+        #expect(pendingOutput.diagnostics.sqlExcludedPendingNewCount == 1)
+        assertAdapterStayedReadOnly(pendingOutput)
+    }
+
+    @Test("read-state missing event marker and last-visible fallbacks stay typed")
+    func readStateMissingEventMarkerAndLastVisibleFallbacksStayTyped() throws {
+        let missingScrollEvent = try outputForReadStateIssue(
+            readState(scrollAnchorEventID: "missing-scroll-event")
+        )
+        let missingMarker = try outputForReadStateIssue(
+            readState(markerEventID: "missing-marker")
+        )
+        let missingLastVisible = try outputForReadStateIssue(
+            readState(lastVisibleTopItemKey: "note:missing-visible")
+        )
+
+        #expect(missingScrollEvent.issues.contains {
+            $0.kind == .missingScrollAnchorEvent
+                && $0.eventID == EventID(hex: "missing-scroll-event")
+        })
+        #expect(missingScrollEvent.initialWindow.anchorItemKey == "note:newest")
+        #expect(missingScrollEvent.initialWindow.diagnostics.fallbackReason == .noReadStateUsedNewest)
+        assertAdapterStayedReadOnly(missingScrollEvent)
+
+        #expect(missingMarker.issues.contains {
+            $0.kind == .missingMarker
+                && $0.eventID == EventID(hex: "missing-marker")
+        })
+        #expect(missingMarker.initialWindow.anchorItemKey == "note:newest")
+        #expect(missingMarker.initialWindow.diagnostics.fallbackReason == .missingMarkerUsedNewest)
+        assertAdapterStayedReadOnly(missingMarker)
+
+        #expect(missingLastVisible.issues.contains {
+            $0.kind == .missingLastVisible
+                && $0.itemKey == "note:missing-visible"
+        })
+        #expect(missingLastVisible.initialWindow.anchorItemKey == "note:newest")
+        #expect(missingLastVisible.initialWindow.diagnostics.fallbackReason == .noReadStateUsedNewest)
+        assertAdapterStayedReadOnly(missingLastVisible)
+    }
+
+    @Test("repository boundary issue mapping remains typed for adapter issues")
+    func repositoryBoundaryIssueMappingRemainsTypedForAdapterIssues() {
+        let mappedIssues = TimelineRepositoryBoundaryIssue.Kind.allCases.map { kind in
+            TimelineRepositoryDBAdapterIssue(TimelineRepositoryBoundaryIssue(
+                kind: kind,
+                itemKey: "note:\(kind.rawValue)",
+                eventID: EventID(hex: "event:\(kind.rawValue)")
+            ))
+        }
+        let mappedKinds = Set(mappedIssues.map(\.kind))
+
+        #expect(mappedKinds.isSuperset(of: [
+            .duplicateItemKey,
+            .missingAnchor,
+            .missingScrollAnchorEvent,
+            .missingMarker,
+            .missingLastVisible,
+            .invalidPersistedSortKey,
+            .invalidPersistedItemKey,
+            .pendingNewVisibleWithoutExplicitUserAction,
+            .hiddenRowVisibleWithoutPolicy,
+            .timelineEntriesOnlyAnchorDerivationAttempted,
+            .readMarkerAdvanceAttempted
+        ]))
+        #expect(mappedIssues.contains {
+            $0.kind == .pendingNewVisibleWithoutExplicitUserAction
+                && $0.itemKey == "note:pendingNewIncludedWithoutExplicitUserAction"
+        })
+        #expect(mappedIssues.contains {
+            $0.kind == .hiddenRowVisibleWithoutPolicy
+                && $0.itemKey == "note:hiddenRowIncludedByMistake"
+        })
+    }
+
+    @Test("issue coverage matrix covers every TimelineRepositoryDBAdapterIssue kind")
+    func issueCoverageMatrixCoversEveryTimelineRepositoryDBAdapterIssueKind() {
+        let entries = dbAdapterIssueCoverageEntries()
+        let coveredKinds = Set(entries.map(\.kind))
+
+        #expect(coveredKinds == Set(TimelineRepositoryDBAdapterIssue.Kind.allCases))
+        #expect(entries.count == coveredKinds.count)
+        for entry in entries {
+            #expect(!entry.coverageName.isEmpty, "Missing named coverage entry for \(entry.kind)")
+        }
     }
 
     @Test("adapter does not mutate read marker pending rows resolve jobs or diagnostics")
@@ -466,14 +706,140 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         markerEventID: String? = nil,
         markerSortAt: Int64? = nil,
         scrollAnchorItemKey: String? = nil,
-        scrollAnchorEventID: String? = nil
+        scrollAnchorEventID: String? = nil,
+        lastVisibleTopItemKey: String? = nil,
+        lastVisibleBottomItemKey: String? = nil
     ) -> TimelineRepositoryDBFixtureReadState {
         TimelineRepositoryDBFixtureReadState(
             markerEventID: markerEventID,
             markerSortAt: markerSortAt,
             scrollAnchorItemKey: scrollAnchorItemKey,
-            scrollAnchorEventID: scrollAnchorEventID
+            scrollAnchorEventID: scrollAnchorEventID,
+            lastVisibleTopItemKey: lastVisibleTopItemKey,
+            lastVisibleBottomItemKey: lastVisibleBottomItemKey
         )
+    }
+
+    private func outputForExcludedAnchor(
+        excludedAnchor: TimelineRepositoryDBFixtureFeedItem
+    ) throws -> TimelineRepositoryDBAdapterOutput {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:newest", sourceEventID: "newest", sortAt: 30),
+            excludedAnchor,
+            feedItem("note:marker", sourceEventID: "marker", sortAt: 10)
+        ])
+        try database.seedReadState(readState(
+            markerEventID: "marker",
+            markerSortAt: 10,
+            scrollAnchorItemKey: excludedAnchor.itemKey
+        ))
+        let before = try database.auditCounts()
+        let output = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let after = try database.auditCounts()
+
+        #expect(before == after)
+        return output
+    }
+
+    private func outputForReadStateIssue(
+        _ readState: TimelineRepositoryDBFixtureReadState
+    ) throws -> TimelineRepositoryDBAdapterOutput {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:newest", sourceEventID: "newest", sortAt: 20),
+            feedItem("note:older", sourceEventID: "older", sortAt: 10)
+        ])
+        try database.seedReadState(readState)
+        let before = try database.auditCounts()
+        let output = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 2)
+        )
+        let after = try database.auditCounts()
+
+        #expect(before == after)
+        return output
+    }
+
+    private func assertAdapterStayedReadOnly(_ output: TimelineRepositoryDBAdapterOutput) {
+        assertReadOnlyDiagnostics(output.diagnostics)
+        #expect(!output.initialWindow.diagnostics.readMarkerChanged)
+        #expect(!output.initialWindow.diagnostics.requiresNetworkWork)
+        #expect(!output.initialWindow.diagnostics.requiresDBWork)
+    }
+
+    private func assertReadOnlyDiagnostics(
+        _ diagnostics: TimelineRepositoryDBAdapterDiagnostics,
+        performedLocalDBRead: Bool = true
+    ) {
+        #expect(!diagnostics.readMarkerChanged)
+        #expect(!diagnostics.requiresNetworkWork)
+        #expect(!diagnostics.requiresExternalDBWork)
+        #expect(diagnostics.performedLocalDBRead == performedLocalDBRead)
+        #expect(diagnostics.writeAttemptCount == 0)
+        #expect(diagnostics.resolveJobWriteCount == 0)
+        #expect(diagnostics.diagnosticsWriteCount == 0)
+    }
+
+    private func dbAdapterIssueCoverageEntries() -> [TimelineRepositoryDBAdapterIssueCoverageEntry] {
+        [
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .invalidPersistedFeedItemReason,
+                coverageName: "invalidPersistedReasonReturnsTypedIssue"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .invalidPersistedItemKey,
+                coverageName: "invalidItemKeyReturnsTypedIssue"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .invalidPersistedSortKey,
+                coverageName: "invalidPersistedSortKeyReturnsTypedIssue"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .invalidReadStateAnchorShape,
+                coverageName: "invalidReadStateAnchorShapeReturnsTypedIssueAndMarkerFallback"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .pendingNewVisibleWithoutExplicitUserAction,
+                coverageName: "repositoryBoundaryIssueMappingRemainsTypedForAdapterIssues"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .hiddenRowVisibleWithoutPolicy,
+                coverageName: "repositoryBoundaryIssueMappingRemainsTypedForAdapterIssues"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .readMarkerAdvanceAttempted,
+                coverageName: "repositoryBoundaryIssueMappingRemainsTypedForAdapterIssues"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .duplicateItemKey,
+                coverageName: "repositoryBoundaryIssueMappingRemainsTypedForAdapterIssues"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .missingAnchor,
+                coverageName: "hiddenAndPendingAnchorExclusionsStayTypedAndReadOnly"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .missingScrollAnchorEvent,
+                coverageName: "readStateMissingEventMarkerAndLastVisibleFallbacksStayTyped"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .missingMarker,
+                coverageName: "readStateMissingEventMarkerAndLastVisibleFallbacksStayTyped"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .missingLastVisible,
+                coverageName: "readStateMissingEventMarkerAndLastVisibleFallbacksStayTyped"
+            ),
+            TimelineRepositoryDBAdapterIssueCoverageEntry(
+                kind: .timelineEntriesOnlyAnchorDerivationAttempted,
+                coverageName: "repositoryBoundaryIssueMappingRemainsTypedForAdapterIssues"
+            )
+        ]
     }
 
     private func assertSendable<T: Sendable>(_ type: T.Type) {}
@@ -483,6 +849,11 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         let decoded = try JSONDecoder().decode(T.self, from: data)
 
         #expect(decoded == value)
+    }
+
+    private struct TimelineRepositoryDBAdapterIssueCoverageEntry {
+        var kind: TimelineRepositoryDBAdapterIssue.Kind
+        var coverageName: String
     }
 }
 
@@ -501,7 +872,7 @@ private struct TimelineRepositoryDBAdapterConfiguration: Equatable, Codable, Sen
 }
 
 private struct TimelineRepositoryDBAdapterIssue: Equatable, Codable, Sendable {
-    enum Kind: String, Codable, Sendable {
+    enum Kind: String, CaseIterable, Codable, Sendable {
         case invalidPersistedFeedItemReason
         case invalidPersistedItemKey
         case invalidPersistedSortKey
@@ -681,6 +1052,35 @@ private struct TimelineRepositoryDBAdapter: Sendable {
                 sqlCounts: sqlCounts,
                 invalidPersistenceRowCount: issues.filter(\.isInvalidPersistenceIssue).count,
                 readStatePresent: false
+            )
+        )
+    }
+
+    func mapMalformedRowsForIssueCoverage(
+        _ rawRows: [TimelineRepositoryDBFeedItemRow]
+    ) -> TimelineRepositoryDBVisibleRowsOutput {
+        var issues: [TimelineRepositoryDBAdapterIssue] = []
+        let rows = rawRows.compactMap { row in
+            mapFeedItem(row, issues: &issues)
+        }
+
+        return TimelineRepositoryDBVisibleRowsOutput(
+            rows: rows,
+            issues: issues,
+            diagnostics: TimelineRepositoryDBAdapterDiagnostics(
+                feedItemRowCount: rawRows.count,
+                readStatePresent: false,
+                invalidPersistenceRowCount: issues.filter(\.isInvalidPersistenceIssue).count,
+                readMarkerChanged: false,
+                requiresNetworkWork: false,
+                requiresExternalDBWork: false,
+                performedLocalDBRead: false,
+                sqlVisibleRowCount: rows.count,
+                sqlExcludedPendingNewCount: 0,
+                sqlExcludedHiddenCount: 0,
+                writeAttemptCount: 0,
+                resolveJobWriteCount: 0,
+                diagnosticsWriteCount: 0
             )
         )
     }
