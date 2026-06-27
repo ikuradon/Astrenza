@@ -1072,3 +1072,383 @@ struct TimelineDBBridgeSourceModelTests {
         #expect(decoded == value)
     }
 }
+
+@Suite("TimelineRepositoryBoundary source-model contract")
+struct TimelineRepositoryBoundaryContractTests {
+    private let boundary = FixtureTimelineRepositoryBoundary()
+
+    @Test("Initial window orders feed item drafts deterministically")
+    func initialWindowOrdersFeedItemDraftsDeterministically() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:older-b", sortAt: 10, tieBreakID: "b"),
+            row("note:newest", sortAt: 20, tieBreakID: "z"),
+            row("note:older-a", sortAt: 10, tieBreakID: "a")
+        ], policy: .initialRestore(maxVisibleCount: 10)))
+
+        #expect(draft.issues.isEmpty)
+        #expect(draft.visibleItemKeys == ["note:newest", "note:older-a", "note:older-b"])
+        #expect(draft.diagnostics.inputCount == 3)
+        #expect(draft.diagnostics.visibleOutputCount == 3)
+        #expect(draft.diagnostics.fallbackReason == .noReadStateUsedNewest)
+    }
+
+    @Test("Pending new rows are excluded by default")
+    func pendingNewRowsAreExcludedByDefault() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:visible", sortAt: 10),
+            row("note:pending", sortAt: 20, pendingNew: true)
+        ], policy: .initialRestore(maxVisibleCount: 10)))
+
+        #expect(draft.visibleItemKeys == ["note:visible"])
+        #expect(draft.diagnostics.excludedPendingNewCount == 1)
+        #expect(draft.diagnostics.pendingNewIncludedCount == 0)
+        #expect(draft.diagnostics.pendingNewInclusionReason == nil)
+    }
+
+    @Test("Explicit pending new user action includes pending rows")
+    func explicitPendingNewUserActionIncludesPendingRows() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:visible", sortAt: 10),
+            row("note:pending", sortAt: 20, pendingNew: true)
+        ], policy: .explicitUserPendingNew(itemKeys: ["note:pending"], maxVisibleCount: 10)))
+
+        #expect(draft.issues.isEmpty)
+        #expect(draft.visibleItemKeys == ["note:pending", "note:visible"])
+        #expect(draft.diagnostics.excludedPendingNewCount == 0)
+        #expect(draft.diagnostics.pendingNewIncludedCount == 1)
+        #expect(draft.diagnostics.pendingNewInclusionReason == .explicitUserAction)
+    }
+
+    @Test("Hidden rows are excluded")
+    func hiddenRowsAreExcluded() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:visible", sortAt: 10),
+            row("note:hidden", sortAt: 20, hiddenReason: "deleted")
+        ], policy: .initialRestore(maxVisibleCount: 10)))
+
+        #expect(draft.visibleItemKeys == ["note:visible"])
+        #expect(draft.diagnostics.excludedHiddenCount == 1)
+    }
+
+    @Test("Collapsed rows remain represented")
+    func collapsedRowsRemainRepresented() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:collapsed", sortAt: 20, collapsed: true),
+            row("note:visible", sortAt: 10)
+        ], policy: .initialRestore(maxVisibleCount: 10)))
+
+        #expect(draft.visibleItemKeys == ["note:collapsed", "note:visible"])
+        #expect(draft.visibleRows.first?.collapsed == true)
+        #expect(draft.diagnostics.collapsedCount == 1)
+    }
+
+    @Test("Missing repost or quote target fallback capable row remains visible")
+    func missingTargetFallbackCapableRowRemainsVisible() {
+        let draft = boundary.initialWindow(request(rows: [
+            row(
+                "repost:source-001",
+                sourceEventID: "source-001",
+                subjectEventID: nil,
+                reason: .repost,
+                isMissingTargetFallbackCapable: true
+            )
+        ]))
+
+        #expect(draft.visibleItemKeys == ["repost:source-001"])
+        #expect(draft.visibleRows.first?.isMissingTargetFallbackCapable == true)
+    }
+
+    @Test("Anchor item found creates anchor-centered window")
+    func anchorItemFoundCreatesAnchorCenteredWindow() {
+        let draft = boundary.initialWindow(request(
+            rows: fiveRows(),
+            readState: TimelineReadStateDraft(
+                scrollAnchorItemKey: "note:c",
+                scrollAnchorSortAt: 30,
+                scrollAnchorTieBreakID: "c",
+                markerItemKey: "note:e",
+                markerEventID: eventID("event-e"),
+                markerSortAt: 50
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        ))
+
+        #expect(draft.issues.isEmpty)
+        #expect(draft.anchorItemKey == "note:c")
+        #expect(draft.anchorSource == .scrollAnchor)
+        #expect(draft.visibleItemKeys == ["note:d", "note:c", "note:b"])
+        #expect(draft.diagnostics.fallbackReason == .anchorFound)
+        #expect(!draft.diagnostics.readMarkerChanged)
+    }
+
+    @Test("Missing anchor falls back with typed fallback reason")
+    func missingAnchorFallsBackWithTypedFallbackReason() {
+        let draft = boundary.initialWindow(request(
+            rows: [
+                row("note:newest", sortAt: 20),
+                row("note:older", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:missing")
+        ))
+
+        #expect(draft.visibleItemKeys == ["note:newest", "note:older"])
+        #expect(draft.anchorItemKey == "note:newest")
+        #expect(draft.anchorSource == .newest)
+        #expect(draft.diagnostics.fallbackReason == .missingAnchorUsedNewest)
+        #expect(draft.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:missing" })
+    }
+
+    @Test("Marker fallback is distinct from scroll anchor")
+    func markerFallbackIsDistinctFromScrollAnchor() {
+        let draft = boundary.initialWindow(request(
+            rows: fiveRows(),
+            readState: TimelineReadStateDraft(
+                scrollAnchorItemKey: "note:missing",
+                markerItemKey: "note:b",
+                markerEventID: eventID("event-b"),
+                markerSortAt: 20
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        ))
+
+        #expect(draft.anchorItemKey == "note:b")
+        #expect(draft.anchorSource == .readMarker)
+        #expect(draft.visibleItemKeys == ["note:c", "note:b", "note:a"])
+        #expect(draft.diagnostics.fallbackReason == .missingAnchorUsedMarker)
+        #expect(draft.diagnostics.readMarkerChanged == false)
+        #expect(draft.issues.contains { $0.kind == .missingAnchor })
+    }
+
+    @Test("Marker sort fallback uses represented nearest row")
+    func markerSortFallbackUsesRepresentedNearestRow() {
+        let draft = boundary.initialWindow(request(
+            rows: fiveRows(),
+            readState: TimelineReadStateDraft(markerSortAt: 25),
+            policy: .initialRestore(maxVisibleCount: 3)
+        ))
+
+        #expect(draft.issues.isEmpty)
+        #expect(draft.anchorItemKey == "note:c")
+        #expect(draft.anchorSource == .readMarker)
+        #expect(draft.visibleItemKeys == ["note:d", "note:c", "note:b"])
+        #expect(draft.diagnostics.fallbackReason == .markerFound)
+    }
+
+    @Test("Missing marker returns typed issue and newest fallback")
+    func missingMarkerReturnsTypedIssueAndNewestFallback() {
+        let draft = boundary.initialWindow(request(
+            rows: [
+                row("note:newest", sortAt: 20),
+                row("note:older", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(
+                markerItemKey: "note:missing",
+                markerEventID: eventID("event-missing")
+            )
+        ))
+
+        #expect(draft.anchorItemKey == "note:newest")
+        #expect(draft.anchorSource == .newest)
+        #expect(draft.diagnostics.fallbackReason == .missingMarkerUsedNewest)
+        #expect(draft.issues.contains { issue in
+            issue.kind == .missingMarker
+                && issue.itemKey == "note:missing"
+                && issue.eventID == eventID("event-missing")
+        })
+    }
+
+    @Test("Newest fallback is used when no anchor or marker exists")
+    func newestFallbackIsUsedWhenNoAnchorOrMarkerExists() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:newest", sortAt: 20),
+            row("note:older", sortAt: 10)
+        ]))
+
+        #expect(draft.anchorItemKey == "note:newest")
+        #expect(draft.anchorSource == .newest)
+        #expect(draft.diagnostics.fallbackReason == .noReadStateUsedNewest)
+    }
+
+    @Test("Initial window never requires network DB work or read marker mutation")
+    func initialWindowNeverRequiresNetworkDBWorkOrReadMarkerMutation() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:visible")
+        ]))
+
+        #expect(!draft.diagnostics.readMarkerChanged)
+        #expect(!draft.diagnostics.requiresNetworkWork)
+        #expect(!draft.diagnostics.requiresDBWork)
+    }
+
+    @Test("Duplicate item keys dedupe deterministically and record issue")
+    func duplicateItemKeysDedupeDeterministicallyAndRecordIssue() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:dup", sourceEventID: "event-newer", sortAt: 30, tieBreakID: "b"),
+            row("note:other", sourceEventID: "event-other", sortAt: 20, tieBreakID: "c"),
+            row("note:dup", sourceEventID: "event-older", sortAt: 10, tieBreakID: "a")
+        ], policy: .initialRestore(maxVisibleCount: 10)))
+
+        #expect(draft.visibleItemKeys == ["note:dup", "note:other"])
+        #expect(draft.visibleRows.first?.sourceEventID == eventID("event-newer"))
+        #expect(draft.diagnostics.duplicateItemKeyCount == 1)
+        #expect(draft.issues.contains { $0.kind == .duplicateItemKey && $0.itemKey == "note:dup" })
+    }
+
+    @Test("Invalid item key returns typed issue")
+    func invalidItemKeyReturnsTypedIssue() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("   ", sortAt: 20),
+            row("note:valid", sortAt: 10)
+        ]))
+
+        #expect(draft.visibleItemKeys == ["note:valid"])
+        #expect(draft.issues.contains { $0.kind == .invalidItemKey })
+    }
+
+    @Test("Invalid sort key returns typed issue")
+    func invalidSortKeyReturnsTypedIssue() {
+        let draft = boundary.initialWindow(request(rows: [
+            row("note:invalid", sortAt: nil),
+            row("note:valid", sortAt: 10)
+        ]))
+
+        #expect(draft.visibleItemKeys == ["note:valid"])
+        #expect(draft.issues.contains { $0.kind == .invalidSortKey && $0.itemKey == "note:invalid" })
+    }
+
+    @Test("Unsafe boundary attempts are rejected as typed issues")
+    func unsafeBoundaryAttemptsAreRejectedAsTypedIssues() {
+        let unsafePolicy = TimelineVisibleWindowPolicy(
+            maxVisibleCount: 10,
+            includePendingNew: true,
+            pendingNewInclusionReason: nil,
+            explicitPendingNewItemKeys: ["note:pending"],
+            forcedHiddenItemKeys: ["note:hidden"]
+        )
+        let draft = boundary.initialWindow(TimelineInitialWindowRequest(
+            feedID: .debugHome,
+            rows: [
+                row("note:pending", sortAt: 30, pendingNew: true),
+                row("note:hidden", sortAt: 20, hiddenReason: "muted"),
+                row("note:visible", sortAt: 10)
+            ],
+            readState: nil,
+            policy: unsafePolicy,
+            attemptsTimelineEntriesOnlyAnchorDerivation: true,
+            attemptsReadMarkerAdvance: true
+        ))
+        let kinds = Set(draft.issues.map(\.kind))
+
+        #expect(draft.visibleItemKeys == ["note:visible"])
+        #expect(kinds.isSuperset(of: [
+            .pendingNewIncludedWithoutExplicitUserAction,
+            .hiddenRowIncludedByMistake,
+            .timelineEntriesOnlyAnchorDerivationAttempted,
+            .readMarkerAdvanceAttempted
+        ]))
+        #expect(!draft.diagnostics.readMarkerChanged)
+    }
+
+    @Test("Models are Codable Equatable and Sendable where appropriate")
+    func modelsAreCodableEquatableAndSendableWhereAppropriate() throws {
+        assertSendable(TimelineRepositoryBoundaryProtocol.self)
+        assertSendable(TimelineInitialWindowRequest.self)
+        assertSendable(TimelineInitialWindowDraft.self)
+        assertSendable(TimelineReadStateDraft.self)
+        assertSendable(TimelineVisibleWindowPolicy.self)
+        assertSendable(TimelineRepositoryFeedItemDraftRow.self)
+        assertSendable(TimelineRepositoryFeedItemReason.self)
+        assertSendable(TimelineRepositoryBoundaryIssue.self)
+        assertSendable(TimelineRepositoryBoundaryDiagnostics.self)
+        assertSendable(FixtureTimelineRepositoryBoundary.self)
+
+        let request = request(rows: [row("note:codable")])
+        let draft = boundary.initialWindow(request)
+
+        try assertCodableRoundTrip(request)
+        try assertCodableRoundTrip(draft)
+        try assertCodableRoundTrip(FixtureTimelineRepositoryBoundary())
+    }
+
+    @Test("Boundary source imports no DB network relay or resolve actor APIs")
+    func boundarySourceImportsNoDBNetworkRelayOrResolveActorAPIs() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/AstrenzaApp/TimelineEngine/TimelineEngineTypes.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let importLines = source
+            .split(separator: "\n")
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("import ") }
+            .map(String.init)
+
+        for forbidden in ["GRDB", "Database", "URLSession", "WebSocket", "Relay"] {
+            #expect(!importLines.contains("import \(forbidden)"))
+        }
+        #expect(!source.contains("actor ResolveCoordinator"))
+    }
+
+    private func request(
+        rows: [TimelineRepositoryFeedItemDraftRow],
+        readState: TimelineReadStateDraft? = nil,
+        policy: TimelineVisibleWindowPolicy = .initialRestore(maxVisibleCount: 10)
+    ) -> TimelineInitialWindowRequest {
+        TimelineInitialWindowRequest(
+            feedID: .debugHome,
+            rows: rows,
+            readState: readState,
+            policy: policy
+        )
+    }
+
+    private func row(
+        _ itemKey: String,
+        sourceEventID: String? = nil,
+        subjectEventID: String? = nil,
+        reason: TimelineRepositoryFeedItemReason = .author,
+        sortAt: Int64? = 10,
+        tieBreakID: String? = nil,
+        hiddenReason: String? = nil,
+        collapsed: Bool = false,
+        pendingNew: Bool = false,
+        isMissingTargetFallbackCapable: Bool = false
+    ) -> TimelineRepositoryFeedItemDraftRow {
+        TimelineRepositoryFeedItemDraftRow(
+            itemKey: itemKey,
+            sourceEventID: eventID(sourceEventID ?? itemKey),
+            subjectEventID: subjectEventID.map(eventID),
+            reason: reason,
+            actorPubkey: "pubkey",
+            sortAt: sortAt,
+            tieBreakID: tieBreakID ?? itemKey,
+            hiddenReason: hiddenReason,
+            collapsed: collapsed,
+            pendingNew: pendingNew,
+            isMissingTargetFallbackCapable: isMissingTargetFallbackCapable
+        )
+    }
+
+    private func fiveRows() -> [TimelineRepositoryFeedItemDraftRow] {
+        [
+            row("note:e", sourceEventID: "event-e", sortAt: 50, tieBreakID: "e"),
+            row("note:d", sourceEventID: "event-d", sortAt: 40, tieBreakID: "d"),
+            row("note:c", sourceEventID: "event-c", sortAt: 30, tieBreakID: "c"),
+            row("note:b", sourceEventID: "event-b", sortAt: 20, tieBreakID: "b"),
+            row("note:a", sourceEventID: "event-a", sortAt: 10, tieBreakID: "a")
+        ]
+    }
+
+    private func eventID(_ value: String) -> EventID {
+        EventID(hex: value)
+    }
+
+    private func assertSendable<T: Sendable>(_ type: T.Type) {}
+
+    private func assertCodableRoundTrip<T: Codable & Equatable>(_ value: T) throws {
+        let data = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(T.self, from: data)
+
+        #expect(decoded == value)
+    }
+}
