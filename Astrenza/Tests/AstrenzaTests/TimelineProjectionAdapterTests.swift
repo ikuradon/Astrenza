@@ -319,7 +319,7 @@ private struct TimelineLegacyEventRecordDraft: Codable, Equatable, Sendable {
     var tags: [[String]]
 }
 
-private enum TimelineFeedItemDraftReason: String, Codable, Sendable {
+private enum TimelineFeedItemDraftReason: String, CaseIterable, Codable, Sendable {
     case author
     case reply
     case repost
@@ -329,7 +329,6 @@ private enum TimelineFeedItemDraftReason: String, Codable, Sendable {
     case zap
     case follow
     case manual
-    case unknown
 }
 
 private enum TimelineFeedItemDraftVisibility: Equatable, Codable, Sendable {
@@ -382,14 +381,17 @@ private struct TimelineFeedItemDraftIssue: Equatable, Codable, Sendable {
         case missingEventID
         case missingEvent
         case duplicateItemKey
+        case unsupportedSourceKind
     }
 
     var kind: Kind
     var eventID: String?
+    var eventKind: Int?
 
-    init(kind: Kind, eventID: String? = nil) {
+    init(kind: Kind, eventID: String? = nil, eventKind: Int? = nil) {
         self.kind = kind
         self.eventID = eventID
+        self.eventKind = eventKind
     }
 }
 
@@ -397,6 +399,7 @@ private struct TimelineFeedItemDraftDiagnostics: Equatable, Codable, Sendable {
     var inputCount: Int
     var outputCount: Int
     var droppedCount: Int
+    var unsupportedKindCount: Int
     var pendingNewCount: Int
     var unresolvedTargetCount: Int
     var readMarkerChanged: Bool
@@ -419,6 +422,7 @@ private struct TimelineFeedItemDraftAdapter: Sendable {
         var issues: [TimelineFeedItemDraftIssue] = []
         var seenItemKeys: Set<String> = []
         var droppedCount = 0
+        var unsupportedKindCount = 0
 
         for entry in entries {
             guard let eventID = entry.eventID, !eventID.isEmpty else {
@@ -430,6 +434,17 @@ private struct TimelineFeedItemDraftAdapter: Sendable {
             guard let event = events[eventID] else {
                 issues.append(TimelineFeedItemDraftIssue(kind: .missingEvent, eventID: eventID))
                 droppedCount += 1
+                continue
+            }
+
+            guard isSupportedSourceEventKind(event.kind) else {
+                issues.append(TimelineFeedItemDraftIssue(
+                    kind: .unsupportedSourceKind,
+                    eventID: eventID,
+                    eventKind: event.kind
+                ))
+                droppedCount += 1
+                unsupportedKindCount += 1
                 continue
             }
 
@@ -451,6 +466,7 @@ private struct TimelineFeedItemDraftAdapter: Sendable {
             inputCount: entries.count,
             outputCount: sortedDrafts.count,
             droppedCount: droppedCount,
+            unsupportedKindCount: unsupportedKindCount,
             pendingNewCount: sortedDrafts.filter(\.pendingNew).count,
             unresolvedTargetCount: unresolvedTargetCount,
             readMarkerChanged: false,
@@ -542,7 +558,7 @@ private struct TimelineFeedItemDraftAdapter: Sendable {
         return DraftShape(
             itemKey: "note:\(event.eventID)",
             subjectEventID: event.eventID,
-            reason: event.kind == 1 ? .author : .unknown,
+            reason: .author,
             filterPolicy: .sourceOnly,
             futureResolveCandidates: candidates
         )
@@ -643,6 +659,10 @@ private struct TimelineFeedItemDraftAdapter: Sendable {
         }.first
     }
 
+    private func isSupportedSourceEventKind(_ kind: Int) -> Bool {
+        kind == 1 || kind == 6
+    }
+
     private func appendUnique(
         _ candidate: TimelineFeedItemDraftResolveCandidate,
         to candidates: inout [TimelineFeedItemDraftResolveCandidate]
@@ -673,6 +693,72 @@ private func sortForVisibleWindow(_ drafts: [TimelineFeedItemDraft]) -> [Timelin
 struct TimelineDBBridgeSourceModelTests {
     private let adapter = TimelineFeedItemDraftAdapter()
 
+    @Test("Draft reasons stay within v0.2 feed_items reason contract")
+    func draftReasonsStayWithinV02FeedItemsReasonContract() {
+        let v02AllowedReasons: Set<String> = [
+            "author",
+            "reply",
+            "repost",
+            "quote",
+            "mention",
+            "reaction",
+            "zap",
+            "follow",
+            "manual"
+        ]
+        let draftReasonRawValues = Set(TimelineFeedItemDraftReason.allCases.map(\.rawValue))
+        let unsupportedID = "unsupported-reason-kind"
+        let output = adapter.map(
+            entries: [legacyEntry(eventID: unsupportedID)],
+            events: [
+                unsupportedID: legacyEvent(eventID: unsupportedID, kind: 30_023)
+            ]
+        )
+
+        #expect(draftReasonRawValues.isSubset(of: v02AllowedReasons))
+        #expect(!draftReasonRawValues.contains("unknown"))
+        #expect(output.drafts.isEmpty)
+        #expect(output.drafts.allSatisfy { v02AllowedReasons.contains($0.reason.rawValue) })
+        #expect(output.issues == [
+            TimelineFeedItemDraftIssue(
+                kind: .unsupportedSourceKind,
+                eventID: unsupportedID,
+                eventKind: 30_023
+            )
+        ])
+        #expect(output.diagnostics.unsupportedKindCount == 1)
+    }
+
+    @Test("Unsupported source event kind returns typed issue and no draft row")
+    func unsupportedSourceEventKindReturnsTypedIssueAndNoDraftRow() {
+        let unsupportedID = "unsupported-kind-001"
+        let output = adapter.map(
+            entries: [legacyEntry(eventID: unsupportedID, pendingNew: true)],
+            events: [
+                unsupportedID: legacyEvent(eventID: unsupportedID, kind: 30_023)
+            ]
+        )
+
+        #expect(output.drafts.isEmpty)
+        #expect(output.issues == [
+            TimelineFeedItemDraftIssue(
+                kind: .unsupportedSourceKind,
+                eventID: unsupportedID,
+                eventKind: 30_023
+            )
+        ])
+        #expect(output.diagnostics.inputCount == 1)
+        #expect(output.diagnostics.outputCount == 0)
+        #expect(output.diagnostics.droppedCount == 1)
+        #expect(output.diagnostics.unsupportedKindCount == 1)
+        #expect(output.diagnostics.pendingNewCount == 0)
+        #expect(output.diagnostics.unresolvedTargetCount == 0)
+        #expect(!output.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.requiresNetworkWork)
+        #expect(!output.diagnostics.requiresDBWork)
+        #expect(TimelineFeedItemDraftAdapter.visibleWindowDrafts(output.drafts).isEmpty)
+    }
+
     @Test("Note timeline entry maps to v0.2-like feed item draft")
     func noteTimelineEntryMapsToFeedItemDraft() throws {
         let noteID = "note-001"
@@ -691,6 +777,7 @@ struct TimelineDBBridgeSourceModelTests {
         #expect(output.diagnostics.inputCount == 1)
         #expect(output.diagnostics.outputCount == 1)
         #expect(output.diagnostics.droppedCount == 0)
+        #expect(output.diagnostics.unsupportedKindCount == 0)
         #expect(draft.accountID == "account")
         #expect(draft.timelineKey == "home")
         #expect(draft.feedID == nil)
