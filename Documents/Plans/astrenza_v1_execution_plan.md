@@ -136,12 +136,13 @@ Likely test commands:
 
 ## Phase 4: Home Feed / Read-State Audit Against v0.2 Schema
 
-Status: Next priority. The audit is documented in `Documents/Plans/timeline_db_bridge_audit.md`, and the future adapter decision plan is documented in `Documents/Plans/timeline_repository_db_adapter_adr.md`; no production DB adapter, SQL schema change, migration, or dual-write is authorized yet.
+Status: Next priority. The audit is documented in `Documents/Plans/timeline_db_bridge_audit.md`, the future adapter decision plan is documented in `Documents/Plans/timeline_repository_db_adapter_adr.md`, and quote feed-item materialization policy is documented in `Documents/Plans/timeline_quote_materialization_adr.md`; no production DB adapter, SQL schema change, migration, or dual-write is authorized yet.
 
 Deliverables:
 - Gap analysis between current `NostrEventStore`/timeline entries and v0.2 `feeds`, `feed_items`, `feed_read_state`, `resolve_jobs`, and diagnostics schema.
 - Decision record for whether to migrate current `timeline_entries` into `feed_items` or maintain a temporary adapter.
 - ADR for a future real `TimelineRepositoryDBAdapter` that reads existing `feed_items` / `feed_read_state` without changing schema.
+- ADR for quote materialization policy before any production DB adapter promotion or Home feed materializer write path.
 - Read marker vs scroll anchor audit and tests.
 - A no-schema-change bridge note stating that v0.2 schema remains source-of-truth and current `NostrEventStore` still uses `timeline_entries`.
 
@@ -257,4 +258,4 @@ Likely test commands:
 
 ## Immediate Next Task
 
-Close Phase 4 with a narrow read-only adapter slice before any production Home or ResolveCoordinator work. Use `Documents/Plans/timeline_repository_db_adapter_adr.md` as the adapter boundary: start with fixture-backed SQLite/GRDB tests against existing `feed_items` / `feed_read_state`, keep schema and migration files unchanged, and preserve the current source-model contracts as the parity baseline.
+Close Phase 4 with a narrow read-only adapter slice before any production Home or ResolveCoordinator work. Use `Documents/Plans/timeline_repository_db_adapter_adr.md` as the adapter boundary and `Documents/Plans/timeline_quote_materialization_adr.md` as the quote materialization boundary: start with fixture-backed SQLite/GRDB tests against existing `feed_items` / `feed_read_state`, keep schema and migration files unchanged, preserve the current source-model contracts as the parity baseline, and do not promote production feed writes until Home quote dedupe and specialized `reason = quote` feeds are contract-tested.

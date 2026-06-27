@@ -9,7 +9,7 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 - [ ] The change keeps or deliberately migrates salvage assets: Core, DB, projection, resolver, relay diagnostics, fixtures, and Maestro intent.
 - [ ] Unit tests were added or updated for changed logic.
 - [ ] Migration-impacting changes include migration tests or an explicit no-schema-change note.
-- [ ] DB bridge changes state whether v0.2 schema remains unchanged, reference `Documents/Plans/timeline_repository_db_adapter_adr.md` when future adapter work begins, or include a spec-backed migration/backfill/rollback plan.
+- [ ] DB bridge changes state whether v0.2 schema remains unchanged, reference `Documents/Plans/timeline_repository_db_adapter_adr.md` and `Documents/Plans/timeline_quote_materialization_adr.md` when future adapter or quote materializer work begins, or include a spec-backed migration/backfill/rollback plan.
 - [ ] Secret material, `nsec`, signing keys, bearer tokens, pubkey-sensitive logs, and crash output were audited.
 - [ ] UI changes include Dynamic Type and accessibility notes.
 - [ ] Feed/order/read-state changes include anchor/read-marker validation and explain whether `feed_items` / `feed_read_state` semantics changed.
@@ -29,7 +29,7 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 - [ ] New `TimelineEngine`, `TimelineRows`, or `TimelineV1` code passes `scripts/guard_designsystem.sh`.
 - [ ] `ResolveCoordinatorBoundary` changes include a `ResolveCoordinatorBoundaryIssue.Kind.allCases` issue coverage matrix.
 - [ ] Real `ResolveCoordinator` or `resolve_jobs` changes prove UI does not directly start network/DB work and first interactive restore does not wait on queue execution.
-- [ ] DB bridge changes include either a no-schema-change note or a migration plan, and reference `Documents/Plans/timeline_db_bridge_audit.md` plus `Documents/Plans/timeline_repository_db_adapter_adr.md` when future real adapter work begins.
+- [ ] DB bridge changes include either a no-schema-change note or a migration plan, and reference `Documents/Plans/timeline_db_bridge_audit.md`, `Documents/Plans/timeline_repository_db_adapter_adr.md`, and `Documents/Plans/timeline_quote_materialization_adr.md` when future real adapter or quote materializer work begins.
 - [ ] Diffable snapshot items are stable `TimelineEntryID` / `feed_items.item_key` values only.
 - [ ] Row identity is unchanged across OGP, media, profile, repost, quote, and reply-parent resolve.
 - [ ] Delayed resolve uses reconfigure-style updates, not delete/insert, for visible row enrichment.
@@ -56,6 +56,8 @@ Use this checklist for every Astrenza v1 implementation PR. The canonical source
 - [ ] Resolve boundary coverage: run `xcodebuild test -project Astrenza.xcodeproj -scheme Astrenza -destination 'platform=iOS Simulator,name=<available iPhone simulator>' -only-testing:AstrenzaTests/ResolveCoordinatorBoundaryContractTests` when `ResolveCoordinatorBoundary` changes.
 - [ ] DB bridge audit: prove `Documents/Specifications/astrenza_local_db_schema_v0_2.sql` and `Documents/Specifications/astrenza_local_db_schema_v0_2_migration.sql` are unchanged, or include the approved migration plan.
 - [ ] Future `TimelineRepositoryDBAdapter` work follows `Documents/Plans/timeline_repository_db_adapter_adr.md`: fixture DB first, no production Home wiring, no network/resolver startup, and non-zero selected Swift Testing execution counts.
+- [ ] Quote materialization: future adapter/materializer work follows `Documents/Plans/timeline_quote_materialization_adr.md`; default Home emits one source note row plus quote render hint, while `reason = quote` remains reserved for notifications, quote search, and specialized quote feeds.
+- [ ] Targeted diff check: future DB adapter/materializer PRs prove schema/migration, production Home wiring, legacy SwiftUI Timeline, real `ResolveCoordinator`, network/resolver startup paths, `TimelinePlaceholderRow`, and `.github` are unchanged unless an approved scope explicitly includes them.
 - [ ] `feed_items` / `feed_read_state`: validate read marker and anchor separately; launch/sync/EOSE/foreground/resolve cannot advance marker, and visible snapshot queries exclude `pending_new` by default.
 - [ ] DesignSystem usage: no raw `Color`, numeric padding, raw `.font(.system(size:))`, or per-component SF Symbol size in new Timeline components.
 - [ ] Hit target: reply/repost/reaction/share/more actions are at least 44x44pt.
