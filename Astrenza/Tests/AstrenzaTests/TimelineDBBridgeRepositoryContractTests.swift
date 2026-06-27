@@ -970,6 +970,812 @@ private extension TimelineRepositoryFeedItemReason {
     }
 }
 
+private struct TimelineRepositoryPersistenceFeedItemRowDTO: Equatable, Codable, Sendable {
+    var feedID: FeedID
+    var itemKey: String
+    var sourceEventID: String
+    var subjectEventID: String?
+    var reason: String
+    var actorPubkey: String?
+    var sortAt: Int64?
+    var tieBreakID: String
+    var hiddenReason: String?
+    var collapsed: Bool
+    var pendingNew: Bool
+    var insertedAtMS: Int64?
+    var updatedAtMS: Int64?
+
+    init(
+        feedID: FeedID,
+        itemKey: String,
+        sourceEventID: String,
+        subjectEventID: String? = nil,
+        reason: String,
+        actorPubkey: String? = nil,
+        sortAt: Int64?,
+        tieBreakID: String,
+        hiddenReason: String? = nil,
+        collapsed: Bool = false,
+        pendingNew: Bool = false,
+        insertedAtMS: Int64? = nil,
+        updatedAtMS: Int64? = nil
+    ) {
+        self.feedID = feedID
+        self.itemKey = itemKey
+        self.sourceEventID = sourceEventID
+        self.subjectEventID = subjectEventID
+        self.reason = reason
+        self.actorPubkey = actorPubkey
+        self.sortAt = sortAt
+        self.tieBreakID = tieBreakID
+        self.hiddenReason = hiddenReason
+        self.collapsed = collapsed
+        self.pendingNew = pendingNew
+        self.insertedAtMS = insertedAtMS
+        self.updatedAtMS = updatedAtMS
+    }
+
+    init(
+        feedID: FeedID,
+        draft: TimelineRepositoryFeedItemDraftRow,
+        insertedAtMS: Int64?,
+        updatedAtMS: Int64?
+    ) {
+        self.init(
+            feedID: feedID,
+            itemKey: draft.itemKey,
+            sourceEventID: draft.sourceEventID.hex,
+            subjectEventID: draft.subjectEventID?.hex,
+            reason: draft.reason.rawValue,
+            actorPubkey: draft.actorPubkey,
+            sortAt: draft.sortAt,
+            tieBreakID: draft.tieBreakID,
+            hiddenReason: draft.hiddenReason,
+            collapsed: draft.collapsed,
+            pendingNew: draft.pendingNew,
+            insertedAtMS: insertedAtMS,
+            updatedAtMS: updatedAtMS
+        )
+    }
+}
+
+private struct TimelineRepositoryPersistenceReadStateRowDTO: Equatable, Codable, Sendable {
+    var accountID: AccountID
+    var feedID: FeedID
+    var markerEventID: String?
+    var markerSortAt: Int64?
+    var scrollAnchorItemKey: String?
+    var scrollAnchorEventID: String?
+    var scrollAnchorSortAt: Int64?
+    var scrollAnchorTieBreakID: String?
+    var scrollAnchorOffsetPX: Int
+    var viewportHeight: Int?
+    var viewportWidth: Int?
+    var contentInsetTop: Int?
+    var contentInsetBottom: Int?
+    var lastVisibleTopItemKey: String?
+    var lastVisibleBottomItemKey: String?
+    var restoreFallbackReason: String?
+    var savedAtMS: Int64?
+    var schemaVersion: Int?
+
+    init(
+        accountID: AccountID,
+        feedID: FeedID,
+        markerEventID: String? = nil,
+        markerSortAt: Int64? = nil,
+        scrollAnchorItemKey: String? = nil,
+        scrollAnchorEventID: String? = nil,
+        scrollAnchorSortAt: Int64? = nil,
+        scrollAnchorTieBreakID: String? = nil,
+        scrollAnchorOffsetPX: Int = 0,
+        viewportHeight: Int? = nil,
+        viewportWidth: Int? = nil,
+        contentInsetTop: Int? = nil,
+        contentInsetBottom: Int? = nil,
+        lastVisibleTopItemKey: String? = nil,
+        lastVisibleBottomItemKey: String? = nil,
+        restoreFallbackReason: String? = nil,
+        savedAtMS: Int64? = nil,
+        schemaVersion: Int? = nil
+    ) {
+        self.accountID = accountID
+        self.feedID = feedID
+        self.markerEventID = markerEventID
+        self.markerSortAt = markerSortAt
+        self.scrollAnchorItemKey = scrollAnchorItemKey
+        self.scrollAnchorEventID = scrollAnchorEventID
+        self.scrollAnchorSortAt = scrollAnchorSortAt
+        self.scrollAnchorTieBreakID = scrollAnchorTieBreakID
+        self.scrollAnchorOffsetPX = scrollAnchorOffsetPX
+        self.viewportHeight = viewportHeight
+        self.viewportWidth = viewportWidth
+        self.contentInsetTop = contentInsetTop
+        self.contentInsetBottom = contentInsetBottom
+        self.lastVisibleTopItemKey = lastVisibleTopItemKey
+        self.lastVisibleBottomItemKey = lastVisibleBottomItemKey
+        self.restoreFallbackReason = restoreFallbackReason
+        self.savedAtMS = savedAtMS
+        self.schemaVersion = schemaVersion
+    }
+
+    init(accountID: AccountID, feedID: FeedID, draft: TimelineReadStateDraft) {
+        self.init(
+            accountID: accountID,
+            feedID: feedID,
+            markerEventID: draft.markerEventID?.hex,
+            markerSortAt: draft.markerSortAt,
+            scrollAnchorItemKey: draft.scrollAnchorItemKey,
+            scrollAnchorEventID: draft.scrollAnchorEventID?.hex,
+            scrollAnchorSortAt: draft.scrollAnchorSortAt,
+            scrollAnchorTieBreakID: draft.scrollAnchorTieBreakID,
+            scrollAnchorOffsetPX: draft.scrollAnchorOffsetPX ?? 0,
+            viewportHeight: draft.viewportHeightPX,
+            viewportWidth: draft.viewportWidthPX,
+            contentInsetTop: draft.contentInsetTopPX,
+            contentInsetBottom: draft.contentInsetBottomPX,
+            lastVisibleTopItemKey: draft.lastVisibleTopItemKey,
+            lastVisibleBottomItemKey: draft.lastVisibleBottomItemKey,
+            restoreFallbackReason: draft.restoreFallbackReason?.rawValue,
+            savedAtMS: draft.savedAtMS,
+            schemaVersion: draft.schemaVersion
+        )
+    }
+}
+
+private struct TimelineRepositoryPersistenceShapeIssue: Equatable, Codable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case invalidPersistedFeedItemReason
+        case invalidPersistedItemKey
+        case invalidPersistedSortKey
+        case invalidReadStateAnchorShape
+        case readMarkerAdvanceAttempted
+        case pendingNewVisibleWithoutExplicitUserAction
+        case hiddenRowVisibleWithoutPolicy
+    }
+
+    var kind: Kind
+    var itemKey: String?
+    var eventID: EventID?
+    var rawValue: String?
+
+    init(
+        kind: Kind,
+        itemKey: String? = nil,
+        eventID: EventID? = nil,
+        rawValue: String? = nil
+    ) {
+        self.kind = kind
+        self.itemKey = itemKey
+        self.eventID = eventID
+        self.rawValue = rawValue
+    }
+}
+
+private struct TimelineRepositoryPersistenceShapeDiagnostics: Equatable, Codable, Sendable {
+    var feedItemRowCount: Int
+    var readStatePresent: Bool
+    var invalidPersistenceRowCount: Int
+    var readMarkerChanged: Bool
+    var requiresNetworkWork: Bool
+    var requiresDBWork: Bool
+}
+
+private struct TimelineRepositoryPersistenceShapeMappingOutput: Equatable, Codable, Sendable {
+    var feedItemDraftRows: [TimelineRepositoryFeedItemDraftRow]
+    var readStateDraft: TimelineReadStateDraft?
+    var issues: [TimelineRepositoryPersistenceShapeIssue]
+    var diagnostics: TimelineRepositoryPersistenceShapeDiagnostics
+}
+
+private struct TimelineRepositoryPersistenceInitialWindowOutput: Equatable, Codable, Sendable {
+    var feedItemDraftRows: [TimelineRepositoryFeedItemDraftRow]
+    var readStateDraft: TimelineReadStateDraft?
+    var issues: [TimelineRepositoryPersistenceShapeIssue]
+    var initialWindow: TimelineInitialWindowDraft
+    var diagnostics: TimelineRepositoryPersistenceShapeDiagnostics
+}
+
+private struct TimelineRepositoryPersistenceShapeMapper: Equatable, Codable, Sendable {
+    func map(
+        feedItemRows: [TimelineRepositoryPersistenceFeedItemRowDTO],
+        readStateRow: TimelineRepositoryPersistenceReadStateRowDTO?
+    ) -> TimelineRepositoryPersistenceShapeMappingOutput {
+        var issues: [TimelineRepositoryPersistenceShapeIssue] = []
+        let feedItemDraftRows = feedItemRows.compactMap { row in
+            mapFeedItemRow(row, issues: &issues)
+        }
+        let readStateDraft = readStateRow.map { row in
+            mapReadStateRow(row, issues: &issues)
+        }
+
+        return TimelineRepositoryPersistenceShapeMappingOutput(
+            feedItemDraftRows: feedItemDraftRows,
+            readStateDraft: readStateDraft,
+            issues: issues,
+            diagnostics: diagnostics(
+                feedItemRowCount: feedItemRows.count,
+                readStatePresent: readStateRow != nil,
+                issues: issues
+            )
+        )
+    }
+
+    func initialWindow(
+        feedItemRows: [TimelineRepositoryPersistenceFeedItemRowDTO],
+        readStateRow: TimelineRepositoryPersistenceReadStateRowDTO?,
+        policy: TimelineVisibleWindowPolicy,
+        attemptsReadMarkerAdvance: Bool = false
+    ) -> TimelineRepositoryPersistenceInitialWindowOutput {
+        let mapping = map(feedItemRows: feedItemRows, readStateRow: readStateRow)
+        let feedID = feedItemRows.first?.feedID ?? readStateRow?.feedID ?? .debugHome
+        let initialWindow = FixtureTimelineRepositoryBoundary().initialWindow(TimelineInitialWindowRequest(
+            feedID: feedID,
+            rows: mapping.feedItemDraftRows,
+            readState: mapping.readStateDraft,
+            policy: policy,
+            attemptsReadMarkerAdvance: attemptsReadMarkerAdvance
+        ))
+        let issues = mapping.issues + persistenceIssues(from: initialWindow.issues)
+
+        return TimelineRepositoryPersistenceInitialWindowOutput(
+            feedItemDraftRows: mapping.feedItemDraftRows,
+            readStateDraft: mapping.readStateDraft,
+            issues: issues,
+            initialWindow: initialWindow,
+            diagnostics: diagnostics(
+                feedItemRowCount: feedItemRows.count,
+                readStatePresent: readStateRow != nil,
+                issues: issues
+            )
+        )
+    }
+
+    private func mapFeedItemRow(
+        _ row: TimelineRepositoryPersistenceFeedItemRowDTO,
+        issues: inout [TimelineRepositoryPersistenceShapeIssue]
+    ) -> TimelineRepositoryFeedItemDraftRow? {
+        let trimmedItemKey = row.itemKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedItemKey.isEmpty else {
+            issues.append(TimelineRepositoryPersistenceShapeIssue(
+                kind: .invalidPersistedItemKey,
+                itemKey: row.itemKey,
+                eventID: EventID(hex: row.sourceEventID)
+            ))
+            return nil
+        }
+
+        guard let sortAt = row.sortAt else {
+            issues.append(TimelineRepositoryPersistenceShapeIssue(
+                kind: .invalidPersistedSortKey,
+                itemKey: row.itemKey,
+                eventID: EventID(hex: row.sourceEventID)
+            ))
+            return nil
+        }
+
+        guard let reason = TimelineRepositoryFeedItemReason(rawValue: row.reason) else {
+            issues.append(TimelineRepositoryPersistenceShapeIssue(
+                kind: .invalidPersistedFeedItemReason,
+                itemKey: row.itemKey,
+                eventID: EventID(hex: row.sourceEventID),
+                rawValue: row.reason
+            ))
+            return nil
+        }
+
+        return TimelineRepositoryFeedItemDraftRow(
+            itemKey: trimmedItemKey,
+            sourceEventID: EventID(hex: row.sourceEventID),
+            subjectEventID: row.subjectEventID.map(EventID.init(hex:)),
+            reason: reason,
+            actorPubkey: row.actorPubkey,
+            sortAt: sortAt,
+            tieBreakID: row.tieBreakID,
+            hiddenReason: row.hiddenReason,
+            collapsed: row.collapsed,
+            pendingNew: row.pendingNew,
+            isMissingTargetFallbackCapable: isMissingTargetFallbackCapable(
+                reason: reason,
+                subjectEventID: row.subjectEventID
+            )
+        )
+    }
+
+    private func mapReadStateRow(
+        _ row: TimelineRepositoryPersistenceReadStateRowDTO,
+        issues: inout [TimelineRepositoryPersistenceShapeIssue]
+    ) -> TimelineReadStateDraft {
+        let hasInvalidAnchorShape = row.scrollAnchorItemKey != nil
+            && (row.scrollAnchorEventID == nil
+                || row.scrollAnchorSortAt == nil
+                || row.scrollAnchorTieBreakID == nil)
+        if hasInvalidAnchorShape {
+            issues.append(TimelineRepositoryPersistenceShapeIssue(
+                kind: .invalidReadStateAnchorShape,
+                itemKey: row.scrollAnchorItemKey,
+                eventID: row.scrollAnchorEventID.map(EventID.init(hex:))
+            ))
+        }
+
+        return TimelineReadStateDraft(
+            accountID: row.accountID,
+            feedID: row.feedID,
+            timelineKey: .home,
+            scrollAnchorItemKey: hasInvalidAnchorShape ? nil : row.scrollAnchorItemKey,
+            scrollAnchorEventID: hasInvalidAnchorShape ? nil : row.scrollAnchorEventID.map(EventID.init(hex:)),
+            scrollAnchorSortAt: hasInvalidAnchorShape ? nil : row.scrollAnchorSortAt,
+            scrollAnchorTieBreakID: hasInvalidAnchorShape ? nil : row.scrollAnchorTieBreakID,
+            scrollAnchorOffsetPX: row.scrollAnchorOffsetPX,
+            viewportHeightPX: row.viewportHeight,
+            viewportWidthPX: row.viewportWidth,
+            contentInsetTopPX: row.contentInsetTop,
+            contentInsetBottomPX: row.contentInsetBottom,
+            markerEventID: row.markerEventID.map(EventID.init(hex:)),
+            markerSortAt: row.markerSortAt,
+            lastVisibleTopItemKey: row.lastVisibleTopItemKey,
+            lastVisibleBottomItemKey: row.lastVisibleBottomItemKey,
+            restoreFallbackReason: row.restoreFallbackReason
+                .flatMap(TimelineRepositoryBoundaryFallbackReason.init(rawValue:)),
+            savedAtMS: row.savedAtMS,
+            schemaVersion: row.schemaVersion
+        )
+    }
+
+    private func persistenceIssues(
+        from repositoryIssues: [TimelineRepositoryBoundaryIssue]
+    ) -> [TimelineRepositoryPersistenceShapeIssue] {
+        repositoryIssues.compactMap { issue in
+            switch issue.kind {
+            case .invalidItemKey:
+                return TimelineRepositoryPersistenceShapeIssue(
+                    kind: .invalidPersistedItemKey,
+                    itemKey: issue.itemKey,
+                    eventID: issue.eventID
+                )
+            case .invalidSortKey:
+                return TimelineRepositoryPersistenceShapeIssue(
+                    kind: .invalidPersistedSortKey,
+                    itemKey: issue.itemKey,
+                    eventID: issue.eventID
+                )
+            case .pendingNewIncludedWithoutExplicitUserAction:
+                return TimelineRepositoryPersistenceShapeIssue(
+                    kind: .pendingNewVisibleWithoutExplicitUserAction,
+                    itemKey: issue.itemKey,
+                    eventID: issue.eventID
+                )
+            case .hiddenRowIncludedByMistake:
+                return TimelineRepositoryPersistenceShapeIssue(
+                    kind: .hiddenRowVisibleWithoutPolicy,
+                    itemKey: issue.itemKey,
+                    eventID: issue.eventID
+                )
+            case .readMarkerAdvanceAttempted:
+                return TimelineRepositoryPersistenceShapeIssue(kind: .readMarkerAdvanceAttempted)
+            case .duplicateItemKey,
+                 .missingAnchor,
+                 .missingScrollAnchorEvent,
+                 .missingMarker,
+                 .missingLastVisible,
+                 .timelineEntriesOnlyAnchorDerivationAttempted:
+                return nil
+            }
+        }
+    }
+
+    private func isMissingTargetFallbackCapable(
+        reason: TimelineRepositoryFeedItemReason,
+        subjectEventID: String?
+    ) -> Bool {
+        guard subjectEventID != nil else { return false }
+        switch reason {
+        case .repost, .quote:
+            return true
+        case .author, .reply, .mention, .reaction, .zap, .follow, .manual:
+            return false
+        }
+    }
+
+    private func diagnostics(
+        feedItemRowCount: Int,
+        readStatePresent: Bool,
+        issues: [TimelineRepositoryPersistenceShapeIssue]
+    ) -> TimelineRepositoryPersistenceShapeDiagnostics {
+        TimelineRepositoryPersistenceShapeDiagnostics(
+            feedItemRowCount: feedItemRowCount,
+            readStatePresent: readStatePresent,
+            invalidPersistenceRowCount: issues.filter(isInvalidPersistenceIssue).count,
+            readMarkerChanged: false,
+            requiresNetworkWork: false,
+            requiresDBWork: false
+        )
+    }
+
+    private func isInvalidPersistenceIssue(_ issue: TimelineRepositoryPersistenceShapeIssue) -> Bool {
+        switch issue.kind {
+        case .invalidPersistedFeedItemReason,
+             .invalidPersistedItemKey,
+             .invalidPersistedSortKey,
+             .invalidReadStateAnchorShape:
+            return true
+        case .readMarkerAdvanceAttempted,
+             .pendingNewVisibleWithoutExplicitUserAction,
+             .hiddenRowVisibleWithoutPolicy:
+            return false
+        }
+    }
+}
+
+@Suite("TimelineRepositoryPersistenceShape")
+struct TimelineRepositoryPersistenceShapeTests {
+    private let mapper = TimelineRepositoryPersistenceShapeMapper()
+
+    @Test("Feed item DTO round trip preserves stable identity")
+    func feedItemDTORoundTripPreservesStableIdentity() throws {
+        let row = persistedFeedItem(
+            itemKey: "repost:source-001",
+            sourceEventID: "source-001",
+            subjectEventID: "target-001",
+            reason: "repost",
+            actorPubkey: "actor-pubkey",
+            sortAt: 50,
+            tieBreakID: "source-001"
+        )
+
+        let output = mapper.map(feedItemRows: [row], readStateRow: nil)
+        let draft = try #require(output.feedItemDraftRows.first)
+        let roundTrip = TimelineRepositoryPersistenceFeedItemRowDTO(
+            feedID: row.feedID,
+            draft: draft,
+            insertedAtMS: row.insertedAtMS,
+            updatedAtMS: row.updatedAtMS
+        )
+
+        #expect(output.issues.isEmpty)
+        #expect(roundTrip == row)
+        #expect(draft.itemKey == "repost:source-001")
+        #expect(draft.sourceEventID == eventID("source-001"))
+        #expect(draft.subjectEventID == eventID("target-001"))
+        #expect(draft.reason == .repost)
+        #expect(draft.entryID?.rawValue == "repost:source-001")
+        #expect(draft.entryID?.sourceEventID == eventID("source-001"))
+        #expect(draft.entryID?.sortAt == 50)
+        #expect(draft.entryID?.tieBreakID == "source-001")
+        #expect(output.diagnostics.feedItemRowCount == 1)
+        #expect(output.diagnostics.readStatePresent == false)
+        #expect(output.diagnostics.invalidPersistenceRowCount == 0)
+        #expect(!output.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.requiresNetworkWork)
+        #expect(!output.diagnostics.requiresDBWork)
+    }
+
+    @Test("Read-state DTO round trip preserves marker and anchor distinction")
+    func readStateDTORoundTripPreservesMarkerAndAnchorDistinction() throws {
+        let row = persistedReadState(
+            markerEventID: "marker-event",
+            markerSortAt: 10,
+            scrollAnchorItemKey: "note:anchor",
+            scrollAnchorEventID: "anchor-event",
+            scrollAnchorSortAt: 20,
+            scrollAnchorTieBreakID: "anchor-event",
+            scrollAnchorOffsetPX: 42,
+            lastVisibleTopItemKey: "note:top",
+            lastVisibleBottomItemKey: "note:bottom",
+            restoreFallbackReason: "anchorFound"
+        )
+
+        let output = mapper.map(feedItemRows: [], readStateRow: row)
+        let draft = try #require(output.readStateDraft)
+        let roundTrip = TimelineRepositoryPersistenceReadStateRowDTO(
+            accountID: row.accountID,
+            feedID: row.feedID,
+            draft: draft
+        )
+
+        #expect(output.issues.isEmpty)
+        #expect(roundTrip == row)
+        #expect(draft.markerEventID == eventID("marker-event"))
+        #expect(draft.markerSortAt == 10)
+        #expect(draft.scrollAnchorEventID == eventID("anchor-event"))
+        #expect(draft.scrollAnchorSortAt == 20)
+        #expect(draft.scrollAnchorTieBreakID == "anchor-event")
+        #expect(draft.markerEventID != draft.scrollAnchorEventID)
+        #expect(output.diagnostics.readStatePresent)
+        #expect(!output.diagnostics.readMarkerChanged)
+    }
+
+    @Test("pending_new survives persistence shape but is excluded from initial restore")
+    func pendingNewSurvivesPersistenceShapeButIsExcludedFromInitialRestore() throws {
+        let output = mapper.initialWindow(
+            feedItemRows: [
+                persistedFeedItem(itemKey: "note:visible", sourceEventID: "visible", sortAt: 10),
+                persistedFeedItem(itemKey: "note:pending", sourceEventID: "pending", sortAt: 20, pendingNew: true)
+            ],
+            readStateRow: nil,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        let pendingDraft = try #require(output.feedItemDraftRows.first { $0.itemKey == "note:pending" })
+
+        #expect(pendingDraft.pendingNew)
+        #expect(output.initialWindow.visibleItemKeys == ["note:visible"])
+        #expect(output.initialWindow.diagnostics.excludedPendingNewCount == 1)
+        #expect(output.initialWindow.diagnostics.pendingNewIncludedCount == 0)
+        #expect(output.diagnostics.feedItemRowCount == 2)
+        #expect(output.diagnostics.invalidPersistenceRowCount == 0)
+        #expect(!output.diagnostics.readMarkerChanged)
+    }
+
+    @Test("Hidden collapsed and missing target rows survive persistence shape")
+    func hiddenCollapsedAndMissingTargetRowsSurvivePersistenceShape() throws {
+        let output = mapper.initialWindow(
+            feedItemRows: [
+                persistedFeedItem(itemKey: "note:hidden", sourceEventID: "hidden", sortAt: 30, hiddenReason: "muted"),
+                persistedFeedItem(itemKey: "note:collapsed", sourceEventID: "collapsed", sortAt: 20, collapsed: true),
+                persistedFeedItem(
+                    itemKey: "repost:missing-target",
+                    sourceEventID: "repost-source",
+                    subjectEventID: "missing-target",
+                    reason: "repost",
+                    sortAt: 10
+                )
+            ],
+            readStateRow: nil,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        let hiddenDraft = try #require(output.feedItemDraftRows.first { $0.itemKey == "note:hidden" })
+        let collapsedDraft = try #require(output.feedItemDraftRows.first { $0.itemKey == "note:collapsed" })
+        let fallbackDraft = try #require(output.feedItemDraftRows.first { $0.itemKey == "repost:missing-target" })
+
+        #expect(hiddenDraft.hiddenReason == "muted")
+        #expect(collapsedDraft.collapsed)
+        #expect(fallbackDraft.isMissingTargetFallbackCapable)
+        #expect(output.initialWindow.visibleItemKeys == ["note:collapsed", "repost:missing-target"])
+        #expect(output.initialWindow.diagnostics.excludedHiddenCount == 1)
+        #expect(output.initialWindow.diagnostics.collapsedCount == 1)
+    }
+
+    @Test("Invalid persisted reason is rejected and no unknown reason is emitted")
+    func invalidPersistedReasonIsRejectedAndNoUnknownReasonIsEmitted() {
+        let output = mapper.map(feedItemRows: [
+            persistedFeedItem(itemKey: "note:bad-reason", sourceEventID: "bad-reason", reason: "unknown")
+        ], readStateRow: nil)
+
+        #expect(output.feedItemDraftRows.isEmpty)
+        #expect(output.issues.contains { issue in
+            issue.kind == .invalidPersistedFeedItemReason
+                && issue.itemKey == "note:bad-reason"
+                && issue.rawValue == "unknown"
+        })
+        #expect(output.diagnostics.invalidPersistenceRowCount == 1)
+    }
+
+    @Test("Invalid persisted item and sort keys are rejected with typed issues")
+    func invalidPersistedItemAndSortKeysAreRejectedWithTypedIssues() {
+        let output = mapper.map(feedItemRows: [
+            persistedFeedItem(itemKey: "   ", sourceEventID: "invalid-item", sortAt: 30),
+            persistedFeedItem(itemKey: "note:invalid-sort", sourceEventID: "invalid-sort", sortAt: nil),
+            persistedFeedItem(itemKey: "note:valid", sourceEventID: "valid", sortAt: 10)
+        ], readStateRow: nil)
+
+        #expect(output.feedItemDraftRows.map(\.itemKey) == ["note:valid"])
+        #expect(output.issues.contains { $0.kind == .invalidPersistedItemKey && $0.itemKey == "   " })
+        #expect(output.issues.contains { $0.kind == .invalidPersistedSortKey && $0.itemKey == "note:invalid-sort" })
+        #expect(output.diagnostics.invalidPersistenceRowCount == 2)
+    }
+
+    @Test("Invalid read-state anchor shape falls back with typed diagnostics")
+    func invalidReadStateAnchorShapeFallsBackWithTypedDiagnostics() {
+        let output = mapper.initialWindow(
+            feedItemRows: [
+                persistedFeedItem(itemKey: "note:newest", sourceEventID: "newest", sortAt: 30),
+                persistedFeedItem(itemKey: "note:marker", sourceEventID: "marker", sortAt: 10)
+            ],
+            readStateRow: persistedReadState(
+                markerEventID: "marker",
+                markerSortAt: 10,
+                scrollAnchorItemKey: "note:anchor",
+                scrollAnchorEventID: nil,
+                scrollAnchorSortAt: nil,
+                scrollAnchorTieBreakID: nil
+            ),
+            policy: .initialRestore(maxVisibleCount: 2)
+        )
+
+        #expect(output.initialWindow.anchorItemKey == "note:marker")
+        #expect(output.initialWindow.anchorSource == .readMarker)
+        #expect(output.issues.contains { $0.kind == .invalidReadStateAnchorShape && $0.itemKey == "note:anchor" })
+        #expect(output.diagnostics.invalidPersistenceRowCount == 1)
+        #expect(!output.diagnostics.readMarkerChanged)
+    }
+
+    @Test("Unsafe persistence visibility attempts return typed issues")
+    func unsafePersistenceVisibilityAttemptsReturnTypedIssues() {
+        let output = mapper.initialWindow(
+            feedItemRows: [
+                persistedFeedItem(itemKey: "note:pending", sourceEventID: "pending", sortAt: 30, pendingNew: true),
+                persistedFeedItem(itemKey: "note:hidden", sourceEventID: "hidden", sortAt: 20, hiddenReason: "muted"),
+                persistedFeedItem(itemKey: "note:visible", sourceEventID: "visible", sortAt: 10)
+            ],
+            readStateRow: nil,
+            policy: TimelineVisibleWindowPolicy(
+                maxVisibleCount: 10,
+                includePendingNew: true,
+                pendingNewInclusionReason: nil,
+                explicitPendingNewItemKeys: ["note:pending"],
+                forcedHiddenItemKeys: ["note:hidden"]
+            )
+        )
+
+        #expect(output.initialWindow.visibleItemKeys == ["note:visible"])
+        #expect(output.issues.contains { $0.kind == .pendingNewVisibleWithoutExplicitUserAction })
+        #expect(output.issues.contains { $0.kind == .hiddenRowVisibleWithoutPolicy })
+        #expect(!output.diagnostics.readMarkerChanged)
+    }
+
+    @Test("Read marker advancement attempt stays false and is typed")
+    func readMarkerAdvancementAttemptStaysFalseAndIsTyped() {
+        let output = mapper.initialWindow(
+            feedItemRows: [persistedFeedItem(itemKey: "note:visible", sourceEventID: "visible", sortAt: 10)],
+            readStateRow: persistedReadState(markerEventID: "visible", markerSortAt: 10),
+            policy: .initialRestore(maxVisibleCount: 10),
+            attemptsReadMarkerAdvance: true
+        )
+
+        #expect(output.issues.contains { $0.kind == .readMarkerAdvanceAttempted })
+        #expect(output.initialWindow.issues.contains { $0.kind == .readMarkerAdvanceAttempted })
+        #expect(!output.initialWindow.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.requiresNetworkWork)
+        #expect(!output.diagnostics.requiresDBWork)
+    }
+
+    @Test("DTO-derived drafts match direct FixtureTimelineRepositoryBoundary behavior")
+    func dtoDerivedDraftsMatchDirectFixtureRepositoryBoundaryBehavior() throws {
+        let rows = [
+            persistedFeedItem(itemKey: "note:newest", sourceEventID: "newest", sortAt: 30),
+            persistedFeedItem(itemKey: "note:anchor", sourceEventID: "anchor", sortAt: 20),
+            persistedFeedItem(itemKey: "note:older", sourceEventID: "older", sortAt: 10)
+        ]
+        let readState = persistedReadState(
+            markerEventID: "newest",
+            markerSortAt: 30,
+            scrollAnchorItemKey: "note:anchor",
+            scrollAnchorEventID: "anchor",
+            scrollAnchorSortAt: 20,
+            scrollAnchorTieBreakID: "anchor"
+        )
+
+        let dtoOutput = mapper.initialWindow(
+            feedItemRows: rows,
+            readStateRow: readState,
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let mapping = mapper.map(feedItemRows: rows, readStateRow: readState)
+        let direct = FixtureTimelineRepositoryBoundary().initialWindow(TimelineInitialWindowRequest(
+            feedID: .debugHome,
+            rows: mapping.feedItemDraftRows,
+            readState: mapping.readStateDraft,
+            policy: .initialRestore(maxVisibleCount: 3)
+        ))
+
+        #expect(mapping.issues.isEmpty)
+        #expect(dtoOutput.initialWindow == direct)
+        #expect(dtoOutput.initialWindow.anchorItemKey == "note:anchor")
+        #expect(dtoOutput.initialWindow.anchorSource == .scrollAnchor)
+        #expect(dtoOutput.diagnostics.feedItemRowCount == 3)
+        #expect(dtoOutput.diagnostics.readStatePresent)
+    }
+
+    @Test("Persistence DTO models are Codable Equatable and Sendable")
+    func persistenceDTOModelsAreCodableEquatableAndSendable() throws {
+        assertSendable(TimelineRepositoryPersistenceFeedItemRowDTO.self)
+        assertSendable(TimelineRepositoryPersistenceReadStateRowDTO.self)
+        assertSendable(TimelineRepositoryPersistenceShapeIssue.self)
+        assertSendable(TimelineRepositoryPersistenceShapeDiagnostics.self)
+        assertSendable(TimelineRepositoryPersistenceShapeMappingOutput.self)
+        assertSendable(TimelineRepositoryPersistenceInitialWindowOutput.self)
+        assertSendable(TimelineRepositoryPersistenceShapeMapper.self)
+
+        let mapping = mapper.map(
+            feedItemRows: [persistedFeedItem(itemKey: "note:codable", sourceEventID: "codable")],
+            readStateRow: persistedReadState(markerEventID: "codable", markerSortAt: 10)
+        )
+
+        try assertCodableRoundTrip(mapping)
+        try assertCodableRoundTrip(mapper)
+    }
+
+    private func persistedFeedItem(
+        feedID: FeedID = .debugHome,
+        itemKey: String,
+        sourceEventID: String,
+        subjectEventID: String? = nil,
+        reason: String = "author",
+        actorPubkey: String? = "pubkey",
+        sortAt: Int64? = 10,
+        tieBreakID: String? = nil,
+        hiddenReason: String? = nil,
+        collapsed: Bool = false,
+        pendingNew: Bool = false,
+        insertedAtMS: Int64 = 1_780_000_000_000,
+        updatedAtMS: Int64 = 1_780_000_000_001
+    ) -> TimelineRepositoryPersistenceFeedItemRowDTO {
+        TimelineRepositoryPersistenceFeedItemRowDTO(
+            feedID: feedID,
+            itemKey: itemKey,
+            sourceEventID: sourceEventID,
+            subjectEventID: subjectEventID,
+            reason: reason,
+            actorPubkey: actorPubkey,
+            sortAt: sortAt,
+            tieBreakID: tieBreakID ?? sourceEventID,
+            hiddenReason: hiddenReason,
+            collapsed: collapsed,
+            pendingNew: pendingNew,
+            insertedAtMS: insertedAtMS,
+            updatedAtMS: updatedAtMS
+        )
+    }
+
+    private func persistedReadState(
+        accountID: AccountID = .debug,
+        feedID: FeedID = .debugHome,
+        markerEventID: String? = nil,
+        markerSortAt: Int64? = nil,
+        scrollAnchorItemKey: String? = nil,
+        scrollAnchorEventID: String? = nil,
+        scrollAnchorSortAt: Int64? = nil,
+        scrollAnchorTieBreakID: String? = nil,
+        scrollAnchorOffsetPX: Int = 0,
+        viewportHeight: Int = 844,
+        viewportWidth: Int = 390,
+        contentInsetTop: Int = 8,
+        contentInsetBottom: Int = 16,
+        lastVisibleTopItemKey: String? = nil,
+        lastVisibleBottomItemKey: String? = nil,
+        restoreFallbackReason: String? = nil,
+        savedAtMS: Int64 = 1_780_000_000_100,
+        schemaVersion: Int = 2
+    ) -> TimelineRepositoryPersistenceReadStateRowDTO {
+        TimelineRepositoryPersistenceReadStateRowDTO(
+            accountID: accountID,
+            feedID: feedID,
+            markerEventID: markerEventID,
+            markerSortAt: markerSortAt,
+            scrollAnchorItemKey: scrollAnchorItemKey,
+            scrollAnchorEventID: scrollAnchorEventID,
+            scrollAnchorSortAt: scrollAnchorSortAt,
+            scrollAnchorTieBreakID: scrollAnchorTieBreakID,
+            scrollAnchorOffsetPX: scrollAnchorOffsetPX,
+            viewportHeight: viewportHeight,
+            viewportWidth: viewportWidth,
+            contentInsetTop: contentInsetTop,
+            contentInsetBottom: contentInsetBottom,
+            lastVisibleTopItemKey: lastVisibleTopItemKey,
+            lastVisibleBottomItemKey: lastVisibleBottomItemKey,
+            restoreFallbackReason: restoreFallbackReason,
+            savedAtMS: savedAtMS,
+            schemaVersion: schemaVersion
+        )
+    }
+
+    private func eventID(_ value: String) -> EventID {
+        EventID(hex: value)
+    }
+
+    private func assertSendable<T: Sendable>(_ type: T.Type) {}
+
+    private func assertCodableRoundTrip<T: Codable & Equatable>(_ value: T) throws {
+        let data = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(T.self, from: data)
+
+        #expect(decoded == value)
+    }
+}
+
 @Suite("Timeline DB bridge repository pipeline")
 struct TimelineDBBridgeRepositoryPipelineTests {
     private let pipeline = TimelineDBBridgeRepositoryPipeline()
