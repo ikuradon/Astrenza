@@ -1275,10 +1275,7 @@ private struct TimelineRepositoryPersistenceShapeMapper: Equatable, Codable, Sen
             hiddenReason: row.hiddenReason,
             collapsed: row.collapsed,
             pendingNew: row.pendingNew,
-            isMissingTargetFallbackCapable: isMissingTargetFallbackCapable(
-                reason: reason,
-                subjectEventID: row.subjectEventID
-            )
+            isMissingTargetFallbackCapable: isMissingTargetFallbackCapable(reason: reason)
         )
     }
 
@@ -1364,11 +1361,7 @@ private struct TimelineRepositoryPersistenceShapeMapper: Equatable, Codable, Sen
         }
     }
 
-    private func isMissingTargetFallbackCapable(
-        reason: TimelineRepositoryFeedItemReason,
-        subjectEventID: String?
-    ) -> Bool {
-        guard subjectEventID != nil else { return false }
+    private func isMissingTargetFallbackCapable(reason: TimelineRepositoryFeedItemReason) -> Bool {
         switch reason {
         case .repost, .quote:
             return true
@@ -1445,6 +1438,112 @@ struct TimelineRepositoryPersistenceShapeTests {
         #expect(output.diagnostics.feedItemRowCount == 1)
         #expect(output.diagnostics.readStatePresent == false)
         #expect(output.diagnostics.invalidPersistenceRowCount == 0)
+        #expect(!output.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.requiresNetworkWork)
+        #expect(!output.diagnostics.requiresDBWork)
+    }
+
+    @Test("Missing-target fallback DTO round trip preserves repost and quote rows")
+    func missingTargetFallbackDTORoundTripPreservesRepostAndQuoteRows() throws {
+        let rows = [
+            persistedFeedItem(
+                itemKey: "repost:repost-source",
+                sourceEventID: "repost-source",
+                subjectEventID: nil,
+                reason: "repost",
+                sortAt: 40
+            ),
+            persistedFeedItem(
+                itemKey: "quote:quote-source",
+                sourceEventID: "quote-source",
+                subjectEventID: nil,
+                reason: "quote",
+                sortAt: 30,
+                hiddenReason: "muted",
+                collapsed: true,
+                pendingNew: true
+            )
+        ]
+
+        let output = mapper.map(feedItemRows: rows, readStateRow: nil)
+        let repostDraft = try #require(output.feedItemDraftRows.first { $0.itemKey == "repost:repost-source" })
+        let quoteDraft = try #require(output.feedItemDraftRows.first { $0.itemKey == "quote:quote-source" })
+        let roundTripRows = output.feedItemDraftRows.map { draft in
+            TimelineRepositoryPersistenceFeedItemRowDTO(
+                feedID: .debugHome,
+                draft: draft,
+                insertedAtMS: rows.first { $0.itemKey == draft.itemKey }?.insertedAtMS,
+                updatedAtMS: rows.first { $0.itemKey == draft.itemKey }?.updatedAtMS
+            )
+        }
+
+        #expect(output.issues.isEmpty)
+        #expect(roundTripRows == rows)
+        #expect(repostDraft.sourceEventID == eventID("repost-source"))
+        #expect(repostDraft.subjectEventID == nil)
+        #expect(repostDraft.reason == .repost)
+        #expect(repostDraft.isMissingTargetFallbackCapable)
+        #expect(quoteDraft.sourceEventID == eventID("quote-source"))
+        #expect(quoteDraft.subjectEventID == nil)
+        #expect(quoteDraft.reason == .quote)
+        #expect(quoteDraft.reason != .reply)
+        #expect(quoteDraft.hiddenReason == "muted")
+        #expect(quoteDraft.collapsed)
+        #expect(quoteDraft.pendingNew)
+        #expect(quoteDraft.isMissingTargetFallbackCapable)
+        #expect(output.diagnostics.invalidPersistenceRowCount == 0)
+        #expect(!output.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.requiresNetworkWork)
+        #expect(!output.diagnostics.requiresDBWork)
+    }
+
+    @Test("Missing-target source drafts survive persistence DTO round trip")
+    func missingTargetSourceDraftsSurvivePersistenceDTORoundTrip() throws {
+        let sourceDrafts = [
+            TimelineRepositoryFeedItemDraftRow(
+                itemKey: "repost:repost-source",
+                sourceEventID: eventID("repost-source"),
+                subjectEventID: nil,
+                reason: .repost,
+                sortAt: 40,
+                tieBreakID: "repost-source",
+                isMissingTargetFallbackCapable: true
+            ),
+            TimelineRepositoryFeedItemDraftRow(
+                itemKey: "quote:quote-source",
+                sourceEventID: eventID("quote-source"),
+                subjectEventID: nil,
+                reason: .quote,
+                sortAt: 30,
+                tieBreakID: "quote-source",
+                hiddenReason: "muted",
+                collapsed: true,
+                pendingNew: true,
+                isMissingTargetFallbackCapable: true
+            )
+        ]
+        let dtoRows = sourceDrafts.map { draft in
+            TimelineRepositoryPersistenceFeedItemRowDTO(
+                feedID: .debugHome,
+                draft: draft,
+                insertedAtMS: 1_780_000_000_000,
+                updatedAtMS: 1_780_000_000_001
+            )
+        }
+
+        let output = mapper.map(feedItemRows: dtoRows, readStateRow: nil)
+        let repostRoundTrip = try #require(output.feedItemDraftRows.first { $0.itemKey == "repost:repost-source" })
+        let quoteRoundTrip = try #require(output.feedItemDraftRows.first { $0.itemKey == "quote:quote-source" })
+
+        #expect(output.issues.isEmpty)
+        #expect(repostRoundTrip == sourceDrafts[0])
+        #expect(quoteRoundTrip == sourceDrafts[1])
+        #expect(repostRoundTrip.subjectEventID == nil)
+        #expect(repostRoundTrip.isMissingTargetFallbackCapable)
+        #expect(quoteRoundTrip.subjectEventID == nil)
+        #expect(quoteRoundTrip.reason == .quote)
+        #expect(quoteRoundTrip.reason != .reply)
+        #expect(quoteRoundTrip.isMissingTargetFallbackCapable)
         #expect(!output.diagnostics.readMarkerChanged)
         #expect(!output.diagnostics.requiresNetworkWork)
         #expect(!output.diagnostics.requiresDBWork)

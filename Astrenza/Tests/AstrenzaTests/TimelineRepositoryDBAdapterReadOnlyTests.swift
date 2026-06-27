@@ -245,6 +245,103 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         #expect(fallbackRow.isMissingTargetFallbackCapable)
     }
 
+    @Test("missing-target fallback rows survive read-only DB adapter round trip")
+    func missingTargetFallbackRowsSurviveReadOnlyDBAdapterRoundTrip() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem(
+                "repost:repost-source",
+                sourceEventID: "repost-source",
+                subjectEventID: nil,
+                reason: "repost",
+                sortAt: 50
+            ),
+            feedItem(
+                "quote:quote-source",
+                sourceEventID: "quote-source",
+                subjectEventID: nil,
+                reason: "quote",
+                sortAt: 40
+            ),
+            feedItem(
+                "quote:hidden-source",
+                sourceEventID: "hidden-source",
+                subjectEventID: nil,
+                reason: "quote",
+                sortAt: 30,
+                hiddenReason: "muted"
+            ),
+            feedItem(
+                "repost:pending-source",
+                sourceEventID: "pending-source",
+                subjectEventID: nil,
+                reason: "repost",
+                sortAt: 20,
+                pendingNew: true
+            ),
+            feedItem(
+                "quote:collapsed-source",
+                sourceEventID: "collapsed-source",
+                subjectEventID: nil,
+                reason: "quote",
+                sortAt: 10,
+                collapsed: true
+            )
+        ])
+
+        let before = try database.auditCounts()
+        let defaultOutput = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let explicitPendingOutput = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .explicitUserPendingNew(itemKeys: ["repost:pending-source"], maxVisibleCount: 10)
+        )
+        let after = try database.auditCounts()
+
+        let repostRow = try #require(defaultOutput.initialWindow.visibleRows.first { $0.itemKey == "repost:repost-source" })
+        let quoteRow = try #require(defaultOutput.initialWindow.visibleRows.first { $0.itemKey == "quote:quote-source" })
+        let collapsedRow = try #require(defaultOutput.initialWindow.visibleRows.first { $0.itemKey == "quote:collapsed-source" })
+        let explicitPendingRow = try #require(explicitPendingOutput.initialWindow.visibleRows.first { $0.itemKey == "repost:pending-source" })
+
+        #expect(before == after)
+        #expect(defaultOutput.initialWindow.visibleItemKeys == [
+            "repost:repost-source",
+            "quote:quote-source",
+            "quote:collapsed-source"
+        ])
+        #expect(!defaultOutput.initialWindow.visibleRows.contains { $0.itemKey == "note:repost-source" })
+        #expect(!defaultOutput.initialWindow.visibleRows.contains { $0.itemKey == "note:quote-source" })
+        #expect(!defaultOutput.initialWindow.visibleRows.contains { $0.itemKey == "quote:hidden-source" })
+        #expect(!defaultOutput.initialWindow.visibleRows.contains { $0.itemKey == "repost:pending-source" })
+        #expect(repostRow.sourceEventID == EventID(hex: "repost-source"))
+        #expect(repostRow.subjectEventID == nil)
+        #expect(repostRow.reason == .repost)
+        #expect(repostRow.isMissingTargetFallbackCapable)
+        #expect(quoteRow.sourceEventID == EventID(hex: "quote-source"))
+        #expect(quoteRow.subjectEventID == nil)
+        #expect(quoteRow.reason == .quote)
+        #expect(quoteRow.reason != .reply)
+        #expect(quoteRow.isMissingTargetFallbackCapable)
+        #expect(collapsedRow.collapsed)
+        #expect(collapsedRow.isMissingTargetFallbackCapable)
+        #expect(explicitPendingRow.pendingNew)
+        #expect(explicitPendingRow.isMissingTargetFallbackCapable)
+        #expect(defaultOutput.initialWindow.diagnostics.excludedHiddenCount == 0)
+        #expect(defaultOutput.initialWindow.diagnostics.excludedPendingNewCount == 0)
+        #expect(defaultOutput.initialWindow.diagnostics.collapsedCount == 1)
+        #expect(defaultOutput.diagnostics.sqlExcludedHiddenCount == 1)
+        #expect(defaultOutput.diagnostics.sqlExcludedPendingNewCount == 1)
+        #expect(defaultOutput.diagnostics.writeAttemptCount == 0)
+        #expect(defaultOutput.diagnostics.resolveJobWriteCount == 0)
+        #expect(defaultOutput.diagnostics.diagnosticsWriteCount == 0)
+        #expect(before.resolveJobCount == 0)
+        #expect(after.resolveJobCount == 0)
+        assertAdapterStayedReadOnly(defaultOutput)
+        assertAdapterStayedReadOnly(explicitPendingOutput)
+    }
+
     @Test("feed_read_state anchor item restores around anchor")
     func feedReadStateAnchorItemRestoresAroundAnchor() throws {
         let database = try TimelineRepositoryDBFixtureDatabase()
@@ -1650,20 +1747,11 @@ private struct TimelineRepositoryDBAdapter: Sendable {
             hiddenReason: row.hiddenReason,
             collapsed: row.collapsed,
             pendingNew: row.pendingNew,
-            isMissingTargetFallbackCapable: isMissingTargetFallbackCapable(
-                reason: reason,
-                subjectEventID: row.subjectEventID
-            )
+            isMissingTargetFallbackCapable: isMissingTargetFallbackCapable(reason: reason)
         )
     }
 
-    private func isMissingTargetFallbackCapable(
-        reason: TimelineRepositoryFeedItemReason,
-        subjectEventID: String?
-    ) -> Bool {
-        guard subjectEventID != nil else {
-            return false
-        }
+    private func isMissingTargetFallbackCapable(reason: TimelineRepositoryFeedItemReason) -> Bool {
         switch reason {
         case .repost, .quote:
             return true
