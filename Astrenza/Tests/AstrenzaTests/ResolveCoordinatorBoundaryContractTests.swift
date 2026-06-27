@@ -335,6 +335,42 @@ struct ResolveCoordinatorBoundaryContractTests {
         #expect(plan.acceptedRequests.isEmpty)
     }
 
+    @Test("Issue coverage matrix covers every ResolveCoordinatorBoundaryIssue kind")
+    func issueCoverageMatrixCoversEveryResolveCoordinatorBoundaryIssueKind() {
+        var coveredKinds = Set<ResolveCoordinatorBoundaryIssue.Kind>()
+
+        func expectPlanIssue(
+            _ kind: ResolveCoordinatorBoundaryIssue.Kind,
+            request: ResolveRequest
+        ) {
+            let plan = boundary.plan([request])
+
+            #expect(plan.issues.contains { $0.kind == kind }, "Missing issue coverage for \(kind)")
+            coveredKinds.insert(kind)
+        }
+
+        let id = TimelineEntryID(rawValue: "unexpected:insert")
+        expectPlanIssue(.invalidTarget, request: resolveRequest(kind: .profile, isTargetValid: false))
+        expectPlanIssue(.missingTimelineEntryID, request: resolveRequest(kind: .profile, entryID: nil))
+        expectPlanIssue(.invalidScope, request: resolveRequest(kind: .profile, scope: .invalid))
+        expectPlanIssue(.invalidPriority, request: resolveRequest(kind: .profile, priority: .invalid))
+        expectPlanIssue(.unsupportedTargetKind, request: resolveRequest(kind: .unsupported))
+        expectPlanIssue(.networkRequestedInNoNetworkMode, request: resolveRequest(kind: .linkPreviewOGP, requestsNetworkWork: true))
+        expectPlanIssue(.dbRequestedInNoDBMode, request: resolveRequest(kind: .profile, requestsDBWork: true))
+        expectPlanIssue(
+            .insertDeleteAttemptedForDelayedResolve,
+            request: resolveRequest(kind: .linkPreviewOGP, attemptedInsertedIDs: [id], attemptedDeletedIDs: [id])
+        )
+        expectPlanIssue(.readMarkerAdvanceAttempted, request: resolveRequest(kind: .profile, attemptsReadMarkerAdvance: true))
+        expectPlanIssue(.requiresProductionHomeRuntime, request: resolveRequest(kind: .profile, requiresProductionHomeRuntime: true))
+        expectPlanIssue(
+            .unsafeSensitivePayload,
+            request: resolveRequest(kind: .profile, payloadPreview: "fixture " + "n" + "sec" + " material")
+        )
+
+        #expect(coveredKinds == Set(ResolveCoordinatorBoundaryIssue.Kind.allCases))
+    }
+
     @Test("Insert delete delayed resolve attempt returns typed issue")
     func insertDeleteDelayedResolveAttemptReturnsTypedIssue() {
         let id = TimelineEntryID(rawValue: "unexpected:insert")
