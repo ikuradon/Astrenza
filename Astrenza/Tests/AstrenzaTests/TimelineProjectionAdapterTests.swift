@@ -1073,6 +1073,544 @@ struct TimelineDBBridgeSourceModelTests {
     }
 }
 
+private struct TimelineDBBridgeRepositoryPipelineDiagnostics: Equatable, Codable, Sendable {
+    var sourceInputCount: Int
+    var adapterOutputCount: Int
+    var repositoryVisibleOutputCount: Int
+    var droppedRejectedCount: Int
+    var excludedPendingNewCount: Int
+    var excludedHiddenCount: Int
+    var collapsedCount: Int
+    var fallbackReason: TimelineRepositoryBoundaryFallbackReason
+    var readMarkerChanged: Bool
+    var requiresNetworkWork: Bool
+    var requiresDBWork: Bool
+}
+
+private struct TimelineDBBridgeRepositoryPipelineOutput: Equatable, Codable, Sendable {
+    var adapterIssues: [TimelineFeedItemDraftIssue]
+    var repositoryIssues: [TimelineRepositoryBoundaryIssue]
+    var initialWindow: TimelineInitialWindowDraft
+    var diagnostics: TimelineDBBridgeRepositoryPipelineDiagnostics
+}
+
+private struct TimelineDBBridgeRepositoryPipeline: Sendable {
+    private let adapter = TimelineFeedItemDraftAdapter()
+    private let repositoryBoundary = FixtureTimelineRepositoryBoundary()
+
+    func initialWindow(
+        entries: [TimelineLegacyEntryRecordDraft],
+        events: [String: TimelineLegacyEventRecordDraft],
+        feedID: FeedID = .debugHome,
+        readState: TimelineReadStateDraft? = nil,
+        policy: TimelineVisibleWindowPolicy = .initialRestore(maxVisibleCount: 10),
+        attemptsTimelineEntriesOnlyAnchorDerivation: Bool = false,
+        attemptsReadMarkerAdvance: Bool = false,
+        preservesAdapterDuplicateIssuesForRepository: Bool = false,
+        mutateRepositoryRows: ((inout [TimelineRepositoryFeedItemDraftRow]) -> Void)? = nil
+    ) -> TimelineDBBridgeRepositoryPipelineOutput {
+        let adapterOutput = adapter.map(entries: entries, events: events)
+        var repositoryRows = adapterOutput.drafts.map(repositoryRow)
+
+        if preservesAdapterDuplicateIssuesForRepository,
+           let duplicate = duplicateRepositoryRow(from: adapterOutput, entries: entries, events: events) {
+            repositoryRows.append(duplicate)
+        }
+
+        mutateRepositoryRows?(&repositoryRows)
+
+        let initialWindow = repositoryBoundary.initialWindow(TimelineInitialWindowRequest(
+            feedID: feedID,
+            rows: repositoryRows,
+            readState: readState,
+            policy: policy,
+            attemptsTimelineEntriesOnlyAnchorDerivation: attemptsTimelineEntriesOnlyAnchorDerivation,
+            attemptsReadMarkerAdvance: attemptsReadMarkerAdvance
+        ))
+
+        return TimelineDBBridgeRepositoryPipelineOutput(
+            adapterIssues: adapterOutput.issues,
+            repositoryIssues: initialWindow.issues,
+            initialWindow: initialWindow,
+            diagnostics: pipelineDiagnostics(
+                adapterOutput: adapterOutput,
+                initialWindow: initialWindow
+            )
+        )
+    }
+
+    private func repositoryRow(
+        from draft: TimelineFeedItemDraft
+    ) -> TimelineRepositoryFeedItemDraftRow {
+        TimelineRepositoryFeedItemDraftRow(
+            itemKey: draft.itemKey,
+            sourceEventID: EventID(hex: draft.sourceEventID),
+            subjectEventID: draft.subjectEventID.map(EventID.init(hex:)),
+            reason: TimelineRepositoryFeedItemReason(draft.reason),
+            actorPubkey: draft.actorPubkey,
+            sortAt: draft.sortAt,
+            tieBreakID: draft.tieBreakID,
+            hiddenReason: draft.hiddenReason,
+            collapsed: draft.collapsed,
+            pendingNew: draft.pendingNew,
+            isMissingTargetFallbackCapable: draft.futureResolveCandidates.contains { candidate in
+                candidate.kind == .repostTarget || candidate.kind == .quoteTarget
+            }
+        )
+    }
+
+    private func duplicateRepositoryRow(
+        from adapterOutput: TimelineFeedItemDraftAdapterOutput,
+        entries: [TimelineLegacyEntryRecordDraft],
+        events: [String: TimelineLegacyEventRecordDraft]
+    ) -> TimelineRepositoryFeedItemDraftRow? {
+        guard let duplicateEventID = adapterOutput.issues.first(where: { issue in
+            issue.kind == .duplicateItemKey
+        })?.eventID,
+              let duplicateEntry = entries.first(where: { $0.eventID == duplicateEventID }),
+              let duplicateEvent = events[duplicateEventID] else {
+            return nil
+        }
+
+        let duplicateDraft = adapter.map(
+            entries: [duplicateEntry],
+            events: [duplicateEventID: duplicateEvent]
+        ).drafts.first
+        return duplicateDraft.map(repositoryRow)
+    }
+
+    private func pipelineDiagnostics(
+        adapterOutput: TimelineFeedItemDraftAdapterOutput,
+        initialWindow: TimelineInitialWindowDraft
+    ) -> TimelineDBBridgeRepositoryPipelineDiagnostics {
+        let rejectedByRepositoryCount = initialWindow.issues.filter { issue in
+            switch issue.kind {
+            case .duplicateItemKey, .invalidItemKey, .invalidSortKey:
+                return true
+            case .missingAnchor,
+                 .missingMarker,
+                 .pendingNewIncludedWithoutExplicitUserAction,
+                 .hiddenRowIncludedByMistake,
+                 .timelineEntriesOnlyAnchorDerivationAttempted,
+                 .readMarkerAdvanceAttempted:
+                return false
+            }
+        }.count
+
+        return TimelineDBBridgeRepositoryPipelineDiagnostics(
+            sourceInputCount: adapterOutput.diagnostics.inputCount,
+            adapterOutputCount: adapterOutput.diagnostics.outputCount,
+            repositoryVisibleOutputCount: initialWindow.diagnostics.visibleOutputCount,
+            droppedRejectedCount: adapterOutput.diagnostics.droppedCount + rejectedByRepositoryCount,
+            excludedPendingNewCount: initialWindow.diagnostics.excludedPendingNewCount,
+            excludedHiddenCount: initialWindow.diagnostics.excludedHiddenCount,
+            collapsedCount: initialWindow.diagnostics.collapsedCount,
+            fallbackReason: initialWindow.diagnostics.fallbackReason,
+            readMarkerChanged: adapterOutput.diagnostics.readMarkerChanged
+                || initialWindow.diagnostics.readMarkerChanged,
+            requiresNetworkWork: adapterOutput.diagnostics.requiresNetworkWork
+                || initialWindow.diagnostics.requiresNetworkWork,
+            requiresDBWork: adapterOutput.diagnostics.requiresDBWork
+                || initialWindow.diagnostics.requiresDBWork
+        )
+    }
+}
+
+private extension TimelineRepositoryFeedItemReason {
+    init(_ draftReason: TimelineFeedItemDraftReason) {
+        switch draftReason {
+        case .author:
+            self = .author
+        case .reply:
+            self = .reply
+        case .repost:
+            self = .repost
+        case .quote:
+            self = .quote
+        case .mention:
+            self = .mention
+        case .reaction:
+            self = .reaction
+        case .zap:
+            self = .zap
+        case .follow:
+            self = .follow
+        case .manual:
+            self = .manual
+        }
+    }
+}
+
+@Suite("Timeline DB bridge repository pipeline")
+struct TimelineDBBridgeRepositoryPipelineTests {
+    private let pipeline = TimelineDBBridgeRepositoryPipeline()
+
+    @Test("timeline_entries-like note records map through adapter and repository into initial window")
+    func noteRecordsMapThroughAdapterAndRepositoryIntoInitialWindow() {
+        let output = pipeline.initialWindow(
+            entries: [
+                legacyEntry(eventID: "note-older", sortTimestamp: 10),
+                legacyEntry(eventID: "note-newer", sortTimestamp: 20)
+            ],
+            events: [
+                "note-older": legacyEvent(eventID: "note-older"),
+                "note-newer": legacyEvent(eventID: "note-newer")
+            ],
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(output.adapterIssues.isEmpty)
+        #expect(output.repositoryIssues.isEmpty)
+        #expect(output.initialWindow.visibleItemKeys == ["note:note-newer", "note:note-older"])
+        #expect(output.diagnostics.sourceInputCount == 2)
+        #expect(output.diagnostics.adapterOutputCount == 2)
+        #expect(output.diagnostics.repositoryVisibleOutputCount == 2)
+        #expect(output.diagnostics.droppedRejectedCount == 0)
+        #expect(output.diagnostics.excludedPendingNewCount == 0)
+        #expect(output.diagnostics.excludedHiddenCount == 0)
+        #expect(output.diagnostics.collapsedCount == 0)
+        #expect(output.diagnostics.fallbackReason == .noReadStateUsedNewest)
+        #expect(!output.diagnostics.readMarkerChanged)
+        #expect(!output.diagnostics.requiresNetworkWork)
+        #expect(!output.diagnostics.requiresDBWork)
+    }
+
+    @Test("repost source record maps through adapter and repository with stable repost item_key")
+    func repostSourceRecordMapsThroughAdapterAndRepositoryWithStableItemKey() throws {
+        let output = pipeline.initialWindow(
+            entries: [
+                legacyEntry(eventID: "repost-001", sortTimestamp: 30),
+                legacyEntry(eventID: "note-target", sortTimestamp: 20)
+            ],
+            events: [
+                "repost-001": legacyEvent(eventID: "repost-001", kind: 6, tags: [["e", "note-target"]]),
+                "note-target": legacyEvent(eventID: "note-target")
+            ]
+        )
+
+        let repost = try #require(output.initialWindow.visibleRows.first)
+
+        #expect(output.initialWindow.visibleItemKeys == ["repost:repost-001", "note:note-target"])
+        #expect(repost.itemKey == "repost:repost-001")
+        #expect(repost.sourceEventID == eventID("repost-001"))
+        #expect(repost.subjectEventID == eventID("note-target"))
+        #expect(repost.reason == .repost)
+    }
+
+    @Test("missing repost or quote target remains visible fallback capable through repository boundary")
+    func missingTargetRemainsVisibleFallbackCapableThroughRepositoryBoundary() throws {
+        let repostOutput = pipeline.initialWindow(
+            entries: [legacyEntry(eventID: "repost-missing-target", sortTimestamp: 30)],
+            events: [
+                "repost-missing-target": legacyEvent(
+                    eventID: "repost-missing-target",
+                    kind: 6,
+                    tags: [["e", "missing-target"]]
+                )
+            ]
+        )
+        let quoteOutput = pipeline.initialWindow(
+            entries: [legacyEntry(eventID: "note-with-missing-quote", sortTimestamp: 20)],
+            events: [
+                "note-with-missing-quote": legacyEvent(
+                    eventID: "note-with-missing-quote",
+                    tags: [["q", "missing-quote-target"]]
+                )
+            ]
+        )
+
+        let repostRow = try #require(repostOutput.initialWindow.visibleRows.first)
+        let quoteRow = try #require(quoteOutput.initialWindow.visibleRows.first)
+
+        #expect(repostOutput.adapterIssues.isEmpty)
+        #expect(repostOutput.repositoryIssues.isEmpty)
+        #expect(repostOutput.initialWindow.visibleItemKeys == ["repost:repost-missing-target"])
+        #expect(repostRow.isMissingTargetFallbackCapable)
+        #expect(repostRow.subjectEventID == eventID("missing-target"))
+        #expect(repostOutput.diagnostics.droppedRejectedCount == 0)
+        #expect(quoteOutput.adapterIssues.isEmpty)
+        #expect(quoteOutput.repositoryIssues.isEmpty)
+        #expect(quoteOutput.initialWindow.visibleItemKeys == ["note:note-with-missing-quote"])
+        #expect(quoteRow.isMissingTargetFallbackCapable)
+        #expect(quoteRow.sourceEventID == eventID("note-with-missing-quote"))
+        #expect(quoteOutput.diagnostics.droppedRejectedCount == 0)
+    }
+
+    @Test("unsupported source kind is rejected before repository window and does not produce output")
+    func unsupportedSourceKindIsRejectedBeforeRepositoryWindow() {
+        let output = pipeline.initialWindow(
+            entries: [legacyEntry(eventID: "unsupported-001", sortTimestamp: 30)],
+            events: [
+                "unsupported-001": legacyEvent(eventID: "unsupported-001", kind: 30_023)
+            ]
+        )
+
+        #expect(output.initialWindow.visibleRows.isEmpty)
+        #expect(output.adapterIssues == [
+            TimelineFeedItemDraftIssue(
+                kind: .unsupportedSourceKind,
+                eventID: "unsupported-001",
+                eventKind: 30_023
+            )
+        ])
+        #expect(output.repositoryIssues.isEmpty)
+        #expect(output.diagnostics.sourceInputCount == 1)
+        #expect(output.diagnostics.adapterOutputCount == 0)
+        #expect(output.diagnostics.repositoryVisibleOutputCount == 0)
+        #expect(output.diagnostics.droppedRejectedCount == 1)
+        #expect(output.diagnostics.fallbackReason == .noVisibleRows)
+    }
+
+    @Test("pending_new defaults excluded and explicit user action includes pending rows through full pipeline")
+    func pendingNewDefaultAndExplicitInclusionFlowThroughFullPipeline() {
+        let entries = [
+            legacyEntry(eventID: "note-visible", sortTimestamp: 10),
+            legacyEntry(eventID: "note-pending", sortTimestamp: 20, pendingNew: true)
+        ]
+        let events = [
+            "note-visible": legacyEvent(eventID: "note-visible"),
+            "note-pending": legacyEvent(eventID: "note-pending")
+        ]
+
+        let defaultOutput = pipeline.initialWindow(
+            entries: entries,
+            events: events,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let explicitOutput = pipeline.initialWindow(
+            entries: entries,
+            events: events,
+            policy: .explicitUserPendingNew(itemKeys: ["note:note-pending"], maxVisibleCount: 10)
+        )
+
+        #expect(defaultOutput.initialWindow.visibleItemKeys == ["note:note-visible"])
+        #expect(defaultOutput.diagnostics.excludedPendingNewCount == 1)
+        #expect(explicitOutput.initialWindow.visibleItemKeys == ["note:note-pending", "note:note-visible"])
+        #expect(explicitOutput.diagnostics.excludedPendingNewCount == 0)
+        #expect(explicitOutput.initialWindow.diagnostics.pendingNewIncludedCount == 1)
+        #expect(explicitOutput.initialWindow.diagnostics.pendingNewInclusionReason == .explicitUserAction)
+    }
+
+    @Test("hidden rows are excluded and collapsed muted rows remain represented through full pipeline")
+    func hiddenAndCollapsedBehaviorSurvivesRepositoryBoundary() throws {
+        let output = pipeline.initialWindow(
+            entries: [
+                legacyEntry(eventID: "note-visible", sortTimestamp: 30),
+                legacyEntry(eventID: "note-hidden", sortTimestamp: 20, visibility: .hidden(reason: "muted")),
+                legacyEntry(eventID: "note-collapsed", sortTimestamp: 10, visibility: .mutedCollapsed)
+            ],
+            events: [
+                "note-visible": legacyEvent(eventID: "note-visible"),
+                "note-hidden": legacyEvent(eventID: "note-hidden"),
+                "note-collapsed": legacyEvent(eventID: "note-collapsed")
+            ]
+        )
+
+        let collapsed = try #require(output.initialWindow.visibleRows.last)
+
+        #expect(output.initialWindow.visibleItemKeys == ["note:note-visible", "note:note-collapsed"])
+        #expect(collapsed.itemKey == "note:note-collapsed")
+        #expect(collapsed.collapsed)
+        #expect(output.diagnostics.excludedHiddenCount == 1)
+        #expect(output.diagnostics.collapsedCount == 1)
+    }
+
+    @Test("read-state anchor marker and newest fallbacks stay distinct through full pipeline")
+    func readStateAnchorMarkerAndNewestFallbacksStayDistinctThroughFullPipeline() {
+        let entries = [
+            legacyEntry(eventID: "note-a", sortTimestamp: 10),
+            legacyEntry(eventID: "note-b", sortTimestamp: 20),
+            legacyEntry(eventID: "note-c", sortTimestamp: 30),
+            legacyEntry(eventID: "note-d", sortTimestamp: 40),
+            legacyEntry(eventID: "note-e", sortTimestamp: 50)
+        ]
+        let events = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+            entry.eventID.map { ($0, legacyEvent(eventID: $0)) }
+        })
+
+        let anchorPresent = pipeline.initialWindow(
+            entries: entries,
+            events: events,
+            readState: TimelineReadStateDraft(
+                scrollAnchorItemKey: "note:note-c",
+                scrollAnchorSortAt: 30,
+                scrollAnchorTieBreakID: "note-c",
+                markerItemKey: "note:note-e",
+                markerEventID: eventID("note-e"),
+                markerSortAt: 50
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let missingAnchor = pipeline.initialWindow(
+            entries: entries,
+            events: events,
+            readState: TimelineReadStateDraft(
+                scrollAnchorItemKey: "note:missing",
+                markerItemKey: "note:note-b",
+                markerEventID: eventID("note-b"),
+                markerSortAt: 20
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let newestFallback = pipeline.initialWindow(
+            entries: entries,
+            events: events,
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let missingMarker = pipeline.initialWindow(
+            entries: entries,
+            events: events,
+            readState: TimelineReadStateDraft(
+                markerItemKey: "note:missing-marker",
+                markerEventID: eventID("missing-marker")
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+
+        #expect(anchorPresent.initialWindow.anchorItemKey == "note:note-c")
+        #expect(anchorPresent.initialWindow.anchorSource == .scrollAnchor)
+        #expect(anchorPresent.initialWindow.visibleItemKeys == ["note:note-d", "note:note-c", "note:note-b"])
+        #expect(anchorPresent.diagnostics.fallbackReason == .anchorFound)
+        #expect(missingAnchor.initialWindow.anchorItemKey == "note:note-b")
+        #expect(missingAnchor.initialWindow.anchorSource == .readMarker)
+        #expect(missingAnchor.diagnostics.fallbackReason == .missingAnchorUsedMarker)
+        #expect(missingAnchor.repositoryIssues.contains { $0.kind == .missingAnchor })
+        #expect(newestFallback.initialWindow.anchorItemKey == "note:note-e")
+        #expect(newestFallback.initialWindow.anchorSource == .newest)
+        #expect(newestFallback.diagnostics.fallbackReason == .noReadStateUsedNewest)
+        #expect(missingMarker.initialWindow.anchorItemKey == "note:note-e")
+        #expect(missingMarker.initialWindow.anchorSource == .newest)
+        #expect(missingMarker.diagnostics.fallbackReason == .missingMarkerUsedNewest)
+        #expect(missingMarker.repositoryIssues.contains { issue in
+            issue.kind == .missingMarker
+                && issue.itemKey == "note:missing-marker"
+                && issue.eventID == eventID("missing-marker")
+        })
+        #expect(!anchorPresent.diagnostics.readMarkerChanged)
+        #expect(!missingAnchor.diagnostics.readMarkerChanged)
+        #expect(!newestFallback.diagnostics.readMarkerChanged)
+        #expect(!missingMarker.diagnostics.readMarkerChanged)
+    }
+
+    @Test("repository boundary does not derive anchor from timeline_entries alone")
+    func repositoryBoundaryDoesNotDeriveAnchorFromTimelineEntriesAlone() {
+        let output = pipeline.initialWindow(
+            entries: [
+                legacyEntry(eventID: "note-anchorish", sortTimestamp: 30),
+                legacyEntry(eventID: "note-newest", sortTimestamp: 40)
+            ],
+            events: [
+                "note-anchorish": legacyEvent(eventID: "note-anchorish"),
+                "note-newest": legacyEvent(eventID: "note-newest")
+            ],
+            attemptsTimelineEntriesOnlyAnchorDerivation: true
+        )
+
+        #expect(output.initialWindow.anchorItemKey == "note:note-newest")
+        #expect(output.initialWindow.anchorSource == .newest)
+        #expect(output.repositoryIssues.contains { $0.kind == .timelineEntriesOnlyAnchorDerivationAttempted })
+        #expect(!output.diagnostics.readMarkerChanged)
+    }
+
+    @Test("duplicate and invalid repository issues remain typed and distinguishable from adapter issues")
+    func duplicateAndInvalidRepositoryIssuesRemainTypedAndDistinguishable() {
+        let duplicate = pipeline.initialWindow(
+            entries: [
+                legacyEntry(eventID: "note-dup", sortTimestamp: 30),
+                legacyEntry(eventID: "note-dup", sortTimestamp: 10),
+                legacyEntry(eventID: "unsupported-001", sortTimestamp: 20)
+            ],
+            events: [
+                "note-dup": legacyEvent(eventID: "note-dup"),
+                "unsupported-001": legacyEvent(eventID: "unsupported-001", kind: 30_023)
+            ],
+            preservesAdapterDuplicateIssuesForRepository: true
+        )
+        let invalidItemKey = pipeline.initialWindow(
+            entries: [legacyEntry(eventID: "note-invalid-item", sortTimestamp: 30)],
+            events: ["note-invalid-item": legacyEvent(eventID: "note-invalid-item")],
+            mutateRepositoryRows: { rows in
+                rows[0].itemKey = "   "
+            }
+        )
+        let invalidSortKey = pipeline.initialWindow(
+            entries: [legacyEntry(eventID: "note-invalid-sort", sortTimestamp: 30)],
+            events: ["note-invalid-sort": legacyEvent(eventID: "note-invalid-sort")],
+            mutateRepositoryRows: { rows in
+                rows[0].sortAt = nil
+            }
+        )
+
+        #expect(duplicate.adapterIssues.contains { $0.kind == .unsupportedSourceKind })
+        #expect(duplicate.repositoryIssues.contains { $0.kind == .duplicateItemKey })
+        #expect(invalidItemKey.adapterIssues.isEmpty)
+        #expect(invalidItemKey.repositoryIssues.contains { $0.kind == .invalidItemKey })
+        #expect(invalidSortKey.adapterIssues.isEmpty)
+        #expect(invalidSortKey.repositoryIssues.contains { $0.kind == .invalidSortKey })
+    }
+
+    @Test("pipeline models are Codable Equatable and Sendable where appropriate")
+    func pipelineModelsAreCodableEquatableAndSendable() throws {
+        assertSendable(TimelineDBBridgeRepositoryPipeline.self)
+        assertSendable(TimelineDBBridgeRepositoryPipelineOutput.self)
+        assertSendable(TimelineDBBridgeRepositoryPipelineDiagnostics.self)
+
+        let output = pipeline.initialWindow(
+            entries: [legacyEntry(eventID: "note-codable")],
+            events: ["note-codable": legacyEvent(eventID: "note-codable")]
+        )
+
+        try assertCodableRoundTrip(output.diagnostics)
+        try assertCodableRoundTrip(output)
+    }
+
+    private func legacyEntry(
+        eventID: String,
+        sortTimestamp: Int64 = 10,
+        insertedAt: Int64 = 20,
+        pendingNew: Bool = false,
+        visibility: TimelineFeedItemDraftVisibility = .visible
+    ) -> TimelineLegacyEntryRecordDraft {
+        TimelineLegacyEntryRecordDraft(
+            accountID: "account",
+            timelineKey: "home",
+            eventID: eventID,
+            sortTimestamp: sortTimestamp,
+            source: "home",
+            insertedAt: insertedAt,
+            pendingNew: pendingNew,
+            visibility: visibility
+        )
+    }
+
+    private func legacyEvent(
+        eventID: String,
+        pubkey: String = "pubkey",
+        kind: Int = 1,
+        tags: [[String]] = []
+    ) -> TimelineLegacyEventRecordDraft {
+        TimelineLegacyEventRecordDraft(
+            eventID: eventID,
+            pubkey: pubkey,
+            kind: kind,
+            tags: tags
+        )
+    }
+
+    private func eventID(_ value: String) -> EventID {
+        EventID(hex: value)
+    }
+
+    private func assertSendable<T: Sendable>(_ type: T.Type) {}
+
+    private func assertCodableRoundTrip<T: Codable & Equatable>(_ value: T) throws {
+        let data = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(T.self, from: data)
+
+        #expect(decoded == value)
+    }
+}
+
 @Suite("TimelineRepositoryBoundary source-model contract")
 struct TimelineRepositoryBoundaryContractTests {
     private let boundary = FixtureTimelineRepositoryBoundary()
