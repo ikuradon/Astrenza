@@ -29,6 +29,26 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         #expect(output.diagnostics.performedLocalDBRead)
     }
 
+    @Test("visible SQL query orders sort_at DESC and tie_break_id ASC before boundary")
+    func visibleSQLQueryOrdersSortAtDescendingAndTieBreakAscendingBeforeBoundary() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:older-b", sourceEventID: "older-b", sortAt: 10, tieBreakID: "b"),
+            feedItem("note:newest", sourceEventID: "newest", sortAt: 30, tieBreakID: "z"),
+            feedItem("note:middle", sourceEventID: "middle", sortAt: 20, tieBreakID: "m"),
+            feedItem("note:older-a", sourceEventID: "older-a", sortAt: 10, tieBreakID: "a")
+        ])
+
+        let output = try adapter.visibleRows(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(output.rows.map(\.itemKey) == ["note:newest", "note:middle", "note:older-a", "note:older-b"])
+        #expect(output.diagnostics.feedItemRowCount == 4)
+        #expect(output.diagnostics.sqlVisibleRowCount == 4)
+    }
+
     @Test("hidden_reason rows are excluded by default")
     func hiddenReasonRowsAreExcludedByDefault() throws {
         let database = try TimelineRepositoryDBFixtureDatabase()
@@ -43,7 +63,11 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         )
 
         #expect(output.initialWindow.visibleItemKeys == ["note:visible"])
-        #expect(output.initialWindow.diagnostics.excludedHiddenCount == 1)
+        #expect(output.initialWindow.diagnostics.inputCount == 1)
+        #expect(output.initialWindow.diagnostics.excludedHiddenCount == 0)
+        #expect(output.diagnostics.feedItemRowCount == 2)
+        #expect(output.diagnostics.sqlVisibleRowCount == 1)
+        #expect(output.diagnostics.sqlExcludedHiddenCount == 1)
         #expect(output.issues.isEmpty)
     }
 
@@ -61,8 +85,12 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         )
 
         #expect(output.initialWindow.visibleItemKeys == ["note:visible"])
-        #expect(output.initialWindow.diagnostics.excludedPendingNewCount == 1)
+        #expect(output.initialWindow.diagnostics.inputCount == 1)
+        #expect(output.initialWindow.diagnostics.excludedPendingNewCount == 0)
         #expect(output.initialWindow.diagnostics.pendingNewIncludedCount == 0)
+        #expect(output.diagnostics.feedItemRowCount == 2)
+        #expect(output.diagnostics.sqlVisibleRowCount == 1)
+        #expect(output.diagnostics.sqlExcludedPendingNewCount == 1)
     }
 
     @Test("explicit user action policy includes pending_new through boundary delegation")
@@ -79,8 +107,11 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         )
 
         #expect(output.initialWindow.visibleItemKeys == ["note:pending", "note:visible"])
+        #expect(output.initialWindow.diagnostics.inputCount == 2)
         #expect(output.initialWindow.diagnostics.pendingNewIncludedCount == 1)
         #expect(output.initialWindow.diagnostics.pendingNewInclusionReason == .explicitUserAction)
+        #expect(output.diagnostics.sqlVisibleRowCount == 2)
+        #expect(output.diagnostics.sqlExcludedPendingNewCount == 0)
         #expect(!output.initialWindow.diagnostics.readMarkerChanged)
     }
 
@@ -124,6 +155,99 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         #expect(output.initialWindow.anchorSource == .scrollAnchor)
         #expect(output.initialWindow.diagnostics.fallbackReason == .anchorFound)
         #expect(output.initialWindow.visibleItemKeys == ["note:newer", "note:anchor", "note:older"])
+    }
+
+    @Test("anchor lookup uses item_key and excludes hidden rows by default")
+    func anchorLookupUsesItemKeyAndExcludesHiddenRowsByDefault() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:hidden-anchor", sourceEventID: "hidden-anchor", sortAt: 30, hiddenReason: "muted"),
+            feedItem("note:marker", sourceEventID: "marker", sortAt: 20),
+            feedItem("note:older", sourceEventID: "older", sortAt: 10)
+        ])
+        try database.seedReadState(readState(
+            markerEventID: "marker",
+            markerSortAt: 20,
+            scrollAnchorItemKey: "note:hidden-anchor"
+        ))
+
+        let output = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+
+        #expect(output.initialWindow.anchorItemKey == "note:marker")
+        #expect(output.initialWindow.anchorSource == .readMarker)
+        #expect(output.initialWindow.visibleItemKeys == ["note:marker", "note:older"])
+        #expect(output.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:hidden-anchor" })
+        #expect(output.diagnostics.sqlExcludedHiddenCount == 1)
+    }
+
+    @Test("anchor pending row is missing unless explicit pending policy includes it")
+    func anchorPendingRowIsMissingUnlessExplicitPendingPolicyIncludesIt() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:newer", sourceEventID: "newer", sortAt: 30),
+            feedItem("note:pending-anchor", sourceEventID: "pending-anchor", sortAt: 20, pendingNew: true),
+            feedItem("note:marker", sourceEventID: "marker", sortAt: 10)
+        ])
+        try database.seedReadState(readState(
+            markerEventID: "marker",
+            markerSortAt: 10,
+            scrollAnchorItemKey: "note:pending-anchor"
+        ))
+
+        let defaultOutput = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let explicitOutput = try adapter.initialWindow(
+            databasePath: database.path,
+            policy: .explicitUserPendingNew(itemKeys: ["note:pending-anchor"], maxVisibleCount: 3)
+        )
+
+        #expect(defaultOutput.initialWindow.anchorItemKey == "note:marker")
+        #expect(defaultOutput.initialWindow.anchorSource == .readMarker)
+        #expect(defaultOutput.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:pending-anchor" })
+        #expect(defaultOutput.diagnostics.sqlExcludedPendingNewCount == 1)
+        #expect(explicitOutput.initialWindow.anchorItemKey == "note:pending-anchor")
+        #expect(explicitOutput.initialWindow.anchorSource == .scrollAnchor)
+        #expect(explicitOutput.initialWindow.visibleItemKeys == ["note:newer", "note:pending-anchor", "note:marker"])
+        #expect(explicitOutput.initialWindow.diagnostics.pendingNewIncludedCount == 1)
+        #expect(explicitOutput.diagnostics.sqlExcludedPendingNewCount == 0)
+    }
+
+    @Test("anchor-side SQL queries expose newer and anchor older intermediate order")
+    func anchorSideSQLQueriesExposeNewerAndAnchorOlderIntermediateOrder() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:newer-f", sourceEventID: "newer-f", sortAt: 30, tieBreakID: "f"),
+            feedItem("note:newer-e", sourceEventID: "newer-e", sortAt: 25, tieBreakID: "e"),
+            feedItem("note:same-b", sourceEventID: "same-b", sortAt: 20, tieBreakID: "b"),
+            feedItem("note:anchor", sourceEventID: "anchor", sortAt: 20, tieBreakID: "c"),
+            feedItem("note:same-d", sourceEventID: "same-d", sortAt: 20, tieBreakID: "d"),
+            feedItem("note:older-g", sourceEventID: "older-g", sortAt: 10, tieBreakID: "g")
+        ])
+
+        let window = try adapter.anchorWindow(
+            databasePath: database.path,
+            anchorItemKey: "note:anchor",
+            policy: .initialRestore(maxVisibleCount: 6)
+        )
+
+        #expect(window.anchorRow?.itemKey == "note:anchor")
+        #expect(window.newerRows.map(\.itemKey) == ["note:same-b", "note:newer-e", "note:newer-f"])
+        #expect(window.anchorAndOlderRows.map(\.itemKey) == ["note:anchor", "note:same-d", "note:older-g"])
+        #expect(window.combinedRows.map(\.itemKey) == [
+            "note:newer-f",
+            "note:newer-e",
+            "note:same-b",
+            "note:anchor",
+            "note:same-d",
+            "note:older-g"
+        ])
+        #expect(window.diagnostics.sqlVisibleRowCount == 6)
+        #expect(!window.diagnostics.readMarkerChanged)
     }
 
     @Test("missing anchor falls back to marker event")
@@ -290,6 +414,9 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
             requiresNetworkWork: false,
             requiresExternalDBWork: false,
             performedLocalDBRead: true,
+            sqlVisibleRowCount: 1,
+            sqlExcludedPendingNewCount: 0,
+            sqlExcludedHiddenCount: 0,
             writeAttemptCount: 0,
             resolveJobWriteCount: 0,
             diagnosticsWriteCount: 0
@@ -404,6 +531,9 @@ private struct TimelineRepositoryDBAdapterDiagnostics: Equatable, Codable, Senda
     var requiresNetworkWork: Bool
     var requiresExternalDBWork: Bool
     var performedLocalDBRead: Bool
+    var sqlVisibleRowCount: Int
+    var sqlExcludedPendingNewCount: Int
+    var sqlExcludedHiddenCount: Int
     var writeAttemptCount: Int
     var resolveJobWriteCount: Int
     var diagnosticsWriteCount: Int
@@ -413,6 +543,26 @@ private struct TimelineRepositoryDBAdapterOutput: Equatable, Codable, Sendable {
     var initialWindow: TimelineInitialWindowDraft
     var issues: [TimelineRepositoryDBAdapterIssue]
     var diagnostics: TimelineRepositoryDBAdapterDiagnostics
+}
+
+private struct TimelineRepositoryDBVisibleRowsOutput: Equatable, Codable, Sendable {
+    var rows: [TimelineRepositoryFeedItemDraftRow]
+    var issues: [TimelineRepositoryDBAdapterIssue]
+    var diagnostics: TimelineRepositoryDBAdapterDiagnostics
+}
+
+private struct TimelineRepositoryDBAnchorWindowOutput: Equatable, Codable, Sendable {
+    var anchorRow: TimelineRepositoryFeedItemDraftRow?
+    var newerRows: [TimelineRepositoryFeedItemDraftRow]
+    var anchorAndOlderRows: [TimelineRepositoryFeedItemDraftRow]
+    var combinedRows: [TimelineRepositoryFeedItemDraftRow]
+    var issues: [TimelineRepositoryDBAdapterIssue]
+    var diagnostics: TimelineRepositoryDBAdapterDiagnostics
+}
+
+private struct TimelineRepositorySQLPredicate {
+    var sql: String
+    var bindings: [SQLiteBinding]
 }
 
 private struct TimelineRepositoryDBAdapter: Sendable {
@@ -426,12 +576,9 @@ private struct TimelineRepositoryDBAdapter: Sendable {
             path: databasePath,
             flags: SQLITE_OPEN_READONLY
         )
-        let rawRows = try readFeedItems(from: database)
+        let visibleMapping = try visibleRows(from: database, policy: policy)
         let readStateMapping = try readState(from: database)
-        var issues: [TimelineRepositoryDBAdapterIssue] = []
-        let rows = rawRows.compactMap { row in
-            mapFeedItem(row, issues: &issues)
-        }
+        var issues = visibleMapping.issues
 
         if let issue = readStateMapping.issue {
             issues.append(issue)
@@ -440,44 +587,362 @@ private struct TimelineRepositoryDBAdapter: Sendable {
         let initialWindow = FixtureTimelineRepositoryBoundary().initialWindow(
             TimelineInitialWindowRequest(
                 feedID: configuration.feedID,
-                rows: rows,
+                rows: visibleMapping.rows,
                 readState: readStateMapping.readState,
                 policy: policy
             )
         )
         issues.append(contentsOf: initialWindow.issues.map(TimelineRepositoryDBAdapterIssue.init))
 
+        var diagnostics = visibleMapping.diagnostics
+        diagnostics.readStatePresent = readStateMapping.readState != nil
+        diagnostics.invalidPersistenceRowCount = issues.filter(\.isInvalidPersistenceIssue).count
+
         return TimelineRepositoryDBAdapterOutput(
             initialWindow: initialWindow,
             issues: issues,
-            diagnostics: TimelineRepositoryDBAdapterDiagnostics(
-                feedItemRowCount: rawRows.count,
-                readStatePresent: readStateMapping.readState != nil,
+            diagnostics: diagnostics
+        )
+    }
+
+    func visibleRows(
+        databasePath: String,
+        policy: TimelineVisibleWindowPolicy
+    ) throws -> TimelineRepositoryDBVisibleRowsOutput {
+        let database = try TimelineRepositorySQLiteDatabase(
+            path: databasePath,
+            flags: SQLITE_OPEN_READONLY
+        )
+        return try visibleRows(from: database, policy: policy)
+    }
+
+    func anchorWindow(
+        databasePath: String,
+        anchorItemKey: String,
+        policy: TimelineVisibleWindowPolicy
+    ) throws -> TimelineRepositoryDBAnchorWindowOutput {
+        let database = try TimelineRepositorySQLiteDatabase(
+            path: databasePath,
+            flags: SQLITE_OPEN_READONLY
+        )
+        let sqlCounts = try sqlCounts(from: database, policy: policy)
+        var issues: [TimelineRepositoryDBAdapterIssue] = []
+        let anchorRow = try readAnchorRow(
+            itemKey: anchorItemKey,
+            from: database,
+            policy: policy
+        ).flatMap { row in
+            mapFeedItem(row, issues: &issues)
+        }
+
+        guard let anchorRow,
+              let anchorSortAt = anchorRow.sortAt else {
+            return TimelineRepositoryDBAnchorWindowOutput(
+                anchorRow: nil,
+                newerRows: [],
+                anchorAndOlderRows: [],
+                combinedRows: [],
+                issues: issues,
+                diagnostics: adapterDiagnostics(
+                    sqlCounts: sqlCounts,
+                    invalidPersistenceRowCount: issues.filter(\.isInvalidPersistenceIssue).count,
+                    readStatePresent: false
+                )
+            )
+        }
+
+        let newerLimit = policy.maxVisibleCount / 2
+        let anchorAndOlderLimit = max(0, policy.maxVisibleCount - newerLimit)
+        let newerRows = try readNewerRows(
+            thanSortAt: anchorSortAt,
+            tieBreakID: anchorRow.tieBreakID,
+            limit: newerLimit,
+            from: database,
+            policy: policy,
+            issues: &issues
+        )
+        let anchorAndOlderRows = try readAnchorAndOlderRows(
+            fromSortAt: anchorSortAt,
+            tieBreakID: anchorRow.tieBreakID,
+            limit: anchorAndOlderLimit,
+            from: database,
+            policy: policy,
+            issues: &issues
+        )
+        let combinedRows = (newerRows + anchorAndOlderRows).sorted(by: rowSort)
+
+        return TimelineRepositoryDBAnchorWindowOutput(
+            anchorRow: anchorRow,
+            newerRows: newerRows,
+            anchorAndOlderRows: anchorAndOlderRows,
+            combinedRows: combinedRows,
+            issues: issues,
+            diagnostics: adapterDiagnostics(
+                sqlCounts: sqlCounts,
                 invalidPersistenceRowCount: issues.filter(\.isInvalidPersistenceIssue).count,
-                readMarkerChanged: false,
-                requiresNetworkWork: false,
-                requiresExternalDBWork: false,
-                performedLocalDBRead: true,
-                writeAttemptCount: 0,
-                resolveJobWriteCount: 0,
-                diagnosticsWriteCount: 0
+                readStatePresent: false
             )
         )
     }
 
     private func readFeedItems(
-        from database: TimelineRepositorySQLiteDatabase
+        from database: TimelineRepositorySQLiteDatabase,
+        policy: TimelineVisibleWindowPolicy
     ) throws -> [TimelineRepositoryDBFeedItemRow] {
-        try database.query(
+        let predicate = visiblePredicate(for: policy)
+        return try queryFeedItemRows(
             """
-            SELECT item_key, source_event_id, subject_event_id, reason, actor_pubkey,
-                   sort_at, tie_break_id, hidden_reason, collapsed, pending_new
+            SELECT \(feedItemColumns)
             FROM feed_items
-            WHERE feed_id = ?
+            WHERE \(predicate.sql)
             ORDER BY sort_at DESC, tie_break_id ASC
             """,
-            bindings: [.int64(configuration.feedID.rawValue)]
-        ) { row in
+            bindings: predicate.bindings,
+            from: database
+        )
+    }
+
+    private func visibleRows(
+        from database: TimelineRepositorySQLiteDatabase,
+        policy: TimelineVisibleWindowPolicy
+    ) throws -> TimelineRepositoryDBVisibleRowsOutput {
+        let sqlCounts = try sqlCounts(from: database, policy: policy)
+        let rawRows = try readFeedItems(from: database, policy: policy)
+        var issues: [TimelineRepositoryDBAdapterIssue] = []
+        let rows = rawRows.compactMap { row in
+            mapFeedItem(row, issues: &issues)
+        }
+
+        return TimelineRepositoryDBVisibleRowsOutput(
+            rows: rows,
+            issues: issues,
+            diagnostics: adapterDiagnostics(
+                sqlCounts: sqlCounts,
+                invalidPersistenceRowCount: issues.filter(\.isInvalidPersistenceIssue).count,
+                readStatePresent: false
+            )
+        )
+    }
+
+    private func readAnchorRow(
+        itemKey: String,
+        from database: TimelineRepositorySQLiteDatabase,
+        policy: TimelineVisibleWindowPolicy
+    ) throws -> TimelineRepositoryDBFeedItemRow? {
+        var predicate = visiblePredicate(for: policy)
+        predicate.sql += "\n  AND item_key = ?"
+        predicate.bindings.append(.text(itemKey))
+
+        return try queryFeedItemRows(
+            """
+            SELECT \(feedItemColumns)
+            FROM feed_items
+            WHERE \(predicate.sql)
+            LIMIT 1
+            """,
+            bindings: predicate.bindings,
+            from: database
+        ).first
+    }
+
+    private func readNewerRows(
+        thanSortAt sortAt: Int64,
+        tieBreakID: String,
+        limit: Int,
+        from database: TimelineRepositorySQLiteDatabase,
+        policy: TimelineVisibleWindowPolicy,
+        issues: inout [TimelineRepositoryDBAdapterIssue]
+    ) throws -> [TimelineRepositoryFeedItemDraftRow] {
+        guard limit > 0 else { return [] }
+        var predicate = visiblePredicate(for: policy)
+        predicate.sql += """
+
+          AND (sort_at > ? OR (sort_at = ? AND tie_break_id < ?))
+        """
+        predicate.bindings.append(.int64(sortAt))
+        predicate.bindings.append(.int64(sortAt))
+        predicate.bindings.append(.text(tieBreakID))
+        predicate.bindings.append(.int(limit))
+
+        let rawRows = try queryFeedItemRows(
+            """
+            SELECT \(feedItemColumns)
+            FROM feed_items
+            WHERE \(predicate.sql)
+            ORDER BY sort_at ASC, tie_break_id DESC
+            LIMIT ?
+            """,
+            bindings: predicate.bindings,
+            from: database
+        )
+        return rawRows.compactMap { row in
+            mapFeedItem(row, issues: &issues)
+        }
+    }
+
+    private func readAnchorAndOlderRows(
+        fromSortAt sortAt: Int64,
+        tieBreakID: String,
+        limit: Int,
+        from database: TimelineRepositorySQLiteDatabase,
+        policy: TimelineVisibleWindowPolicy,
+        issues: inout [TimelineRepositoryDBAdapterIssue]
+    ) throws -> [TimelineRepositoryFeedItemDraftRow] {
+        guard limit > 0 else { return [] }
+        var predicate = visiblePredicate(for: policy)
+        predicate.sql += """
+
+          AND (sort_at < ? OR (sort_at = ? AND tie_break_id >= ?))
+        """
+        predicate.bindings.append(.int64(sortAt))
+        predicate.bindings.append(.int64(sortAt))
+        predicate.bindings.append(.text(tieBreakID))
+        predicate.bindings.append(.int(limit))
+
+        let rawRows = try queryFeedItemRows(
+            """
+            SELECT \(feedItemColumns)
+            FROM feed_items
+            WHERE \(predicate.sql)
+            ORDER BY sort_at DESC, tie_break_id ASC
+            LIMIT ?
+            """,
+            bindings: predicate.bindings,
+            from: database
+        )
+        return rawRows.compactMap { row in
+            mapFeedItem(row, issues: &issues)
+        }
+    }
+
+    private func sqlCounts(
+        from database: TimelineRepositorySQLiteDatabase,
+        policy: TimelineVisibleWindowPolicy
+    ) throws -> (
+        feedItemRowCount: Int,
+        sqlVisibleRowCount: Int,
+        sqlExcludedPendingNewCount: Int,
+        sqlExcludedHiddenCount: Int
+    ) {
+        let visiblePredicate = visiblePredicate(for: policy)
+        let feedIDBinding: [SQLiteBinding] = [.int64(configuration.feedID.rawValue)]
+        let excludedPendingNewCount: Int
+        if let explicitPendingKeys = explicitPendingKeys(for: policy),
+           explicitPendingKeys.isEmpty {
+            excludedPendingNewCount = 0
+        } else {
+            var sql = """
+            SELECT COUNT(*)
+            FROM feed_items
+            WHERE feed_id = ?
+              AND hidden_reason IS NULL
+              AND pending_new = 1
+            """
+            var bindings = feedIDBinding
+            if let explicitPendingKeys = explicitPendingKeys(for: policy) {
+                sql += "\n  AND item_key NOT IN (\(placeholders(count: explicitPendingKeys.count)))"
+                bindings.append(contentsOf: explicitPendingKeys.map(SQLiteBinding.text))
+            }
+            excludedPendingNewCount = try database.scalarInt(sql, bindings: bindings)
+        }
+
+        return (
+            feedItemRowCount: try database.scalarInt(
+                """
+                SELECT COUNT(*)
+                FROM feed_items
+                WHERE feed_id = ?
+                """,
+                bindings: feedIDBinding
+            ),
+            sqlVisibleRowCount: try database.scalarInt(
+                """
+                SELECT COUNT(*)
+                FROM feed_items
+                WHERE \(visiblePredicate.sql)
+                """,
+                bindings: visiblePredicate.bindings
+            ),
+            sqlExcludedPendingNewCount: excludedPendingNewCount,
+            sqlExcludedHiddenCount: try database.scalarInt(
+                """
+                SELECT COUNT(*)
+                FROM feed_items
+                WHERE feed_id = ?
+                  AND hidden_reason IS NOT NULL
+                """,
+                bindings: feedIDBinding
+            )
+        )
+    }
+
+    private func adapterDiagnostics(
+        sqlCounts: (
+            feedItemRowCount: Int,
+            sqlVisibleRowCount: Int,
+            sqlExcludedPendingNewCount: Int,
+            sqlExcludedHiddenCount: Int
+        ),
+        invalidPersistenceRowCount: Int,
+        readStatePresent: Bool
+    ) -> TimelineRepositoryDBAdapterDiagnostics {
+        TimelineRepositoryDBAdapterDiagnostics(
+            feedItemRowCount: sqlCounts.feedItemRowCount,
+            readStatePresent: readStatePresent,
+            invalidPersistenceRowCount: invalidPersistenceRowCount,
+            readMarkerChanged: false,
+            requiresNetworkWork: false,
+            requiresExternalDBWork: false,
+            performedLocalDBRead: true,
+            sqlVisibleRowCount: sqlCounts.sqlVisibleRowCount,
+            sqlExcludedPendingNewCount: sqlCounts.sqlExcludedPendingNewCount,
+            sqlExcludedHiddenCount: sqlCounts.sqlExcludedHiddenCount,
+            writeAttemptCount: 0,
+            resolveJobWriteCount: 0,
+            diagnosticsWriteCount: 0
+        )
+    }
+
+    private func visiblePredicate(for policy: TimelineVisibleWindowPolicy) -> TimelineRepositorySQLPredicate {
+        var clauses = [
+            "feed_id = ?",
+            "hidden_reason IS NULL"
+        ]
+        var bindings: [SQLiteBinding] = [.int64(configuration.feedID.rawValue)]
+
+        if let explicitPendingKeys = explicitPendingKeys(for: policy) {
+            if !explicitPendingKeys.isEmpty {
+                clauses.append("(pending_new = 0 OR item_key IN (\(placeholders(count: explicitPendingKeys.count))))")
+                bindings.append(contentsOf: explicitPendingKeys.map(SQLiteBinding.text))
+            }
+        } else {
+            clauses.append("pending_new = 0")
+        }
+
+        return TimelineRepositorySQLPredicate(
+            sql: clauses.joined(separator: "\n  AND "),
+            bindings: bindings
+        )
+    }
+
+    private func explicitPendingKeys(for policy: TimelineVisibleWindowPolicy) -> [String]? {
+        guard policy.includePendingNew,
+              policy.pendingNewInclusionReason == .explicitUserAction else {
+            return nil
+        }
+        return policy.explicitPendingNewItemKeys
+    }
+
+    private func placeholders(count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ", ")
+    }
+
+    private func queryFeedItemRows(
+        _ sql: String,
+        bindings: [SQLiteBinding],
+        from database: TimelineRepositorySQLiteDatabase
+    ) throws -> [TimelineRepositoryDBFeedItemRow] {
+        try database.query(sql, bindings: bindings) { row in
             TimelineRepositoryDBFeedItemRow(
                 itemKey: row.string(0) ?? "",
                 sourceEventID: row.string(1) ?? "",
@@ -491,6 +956,13 @@ private struct TimelineRepositoryDBAdapter: Sendable {
                 pendingNew: row.bool(9)
             )
         }
+    }
+
+    private var feedItemColumns: String {
+        """
+        item_key, source_event_id, subject_event_id, reason, actor_pubkey,
+        sort_at, tie_break_id, hidden_reason, collapsed, pending_new
+        """
     }
 
     private func readState(
@@ -642,6 +1114,16 @@ private struct TimelineRepositoryDBAdapter: Sendable {
         case .author, .reply, .mention, .reaction, .zap, .follow, .manual:
             return false
         }
+    }
+
+    private func rowSort(
+        lhs: TimelineRepositoryFeedItemDraftRow,
+        rhs: TimelineRepositoryFeedItemDraftRow
+    ) -> Bool {
+        if lhs.sortAt != rhs.sortAt {
+            return (lhs.sortAt ?? .min) > (rhs.sortAt ?? .min)
+        }
+        return lhs.tieBreakID < rhs.tieBreakID
     }
 }
 
