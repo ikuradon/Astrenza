@@ -1188,7 +1188,9 @@ private struct TimelineDBBridgeRepositoryPipeline: Sendable {
             case .duplicateItemKey, .invalidItemKey, .invalidSortKey:
                 return true
             case .missingAnchor,
+                 .missingScrollAnchorEvent,
                  .missingMarker,
+                 .missingLastVisible,
                  .pendingNewIncludedWithoutExplicitUserAction,
                  .hiddenRowIncludedByMistake,
                  .timelineEntriesOnlyAnchorDerivationAttempted,
@@ -1701,12 +1703,26 @@ struct TimelineRepositoryBoundaryContractTests {
         let draft = boundary.initialWindow(request(
             rows: fiveRows(),
             readState: TimelineReadStateDraft(
+                accountID: AccountID(rawValue: "account-a"),
+                feedID: .debugHome,
+                timelineKey: TimelineKey(rawValue: "home"),
                 scrollAnchorItemKey: "note:c",
+                scrollAnchorEventID: eventID("event-c"),
                 scrollAnchorSortAt: 30,
                 scrollAnchorTieBreakID: "c",
+                scrollAnchorOffsetPX: 12,
+                viewportHeightPX: 844,
+                viewportWidthPX: 390,
+                contentInsetTopPX: 8,
+                contentInsetBottomPX: 16,
                 markerItemKey: "note:e",
                 markerEventID: eventID("event-e"),
-                markerSortAt: 50
+                markerSortAt: 50,
+                lastVisibleTopItemKey: "note:d",
+                lastVisibleBottomItemKey: "note:b",
+                restoreFallbackReason: .anchorFound,
+                savedAtMS: 1_780_000_000_000,
+                schemaVersion: 2
             ),
             policy: .initialRestore(maxVisibleCount: 3)
         ))
@@ -1716,6 +1732,34 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(draft.anchorSource == .scrollAnchor)
         #expect(draft.visibleItemKeys == ["note:d", "note:c", "note:b"])
         #expect(draft.diagnostics.fallbackReason == .anchorFound)
+        #expect(draft.diagnostics.fallbackItemKey == "note:c")
+        #expect(draft.diagnostics.requestedAnchorItemKey == "note:c")
+        #expect(draft.diagnostics.requestedAnchorEventID == eventID("event-c"))
+        #expect(draft.diagnostics.requestedMarkerEventID == eventID("event-e"))
+        #expect(draft.diagnostics.requestedLastVisibleTopItemKey == "note:d")
+        #expect(draft.diagnostics.requestedLastVisibleBottomItemKey == "note:b")
+        #expect(!draft.diagnostics.readMarkerChanged)
+    }
+
+    @Test("Scroll anchor event fallback works when anchor item key is missing")
+    func scrollAnchorEventFallbackWorksWhenAnchorItemKeyMissing() {
+        let draft = boundary.initialWindow(request(
+            rows: fiveRows(),
+            readState: TimelineReadStateDraft(
+                scrollAnchorItemKey: "note:missing",
+                scrollAnchorEventID: eventID("event-c"),
+                markerEventID: eventID("event-b")
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        ))
+
+        #expect(draft.anchorItemKey == "note:c")
+        #expect(draft.anchorSource == .scrollAnchor)
+        #expect(draft.visibleItemKeys == ["note:d", "note:c", "note:b"])
+        #expect(draft.diagnostics.fallbackReason == .missingAnchorUsedScrollEvent)
+        #expect(draft.diagnostics.fallbackItemKey == "note:c")
+        #expect(draft.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:missing" })
+        #expect(!draft.issues.contains { $0.kind == .missingMarker })
         #expect(!draft.diagnostics.readMarkerChanged)
     }
 
@@ -1736,13 +1780,12 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(draft.issues.contains { $0.kind == .missingAnchor && $0.itemKey == "note:missing" })
     }
 
-    @Test("Marker fallback is distinct from scroll anchor")
-    func markerFallbackIsDistinctFromScrollAnchor() {
+    @Test("Marker event fallback is distinct from scroll anchor")
+    func markerEventFallbackIsDistinctFromScrollAnchor() {
         let draft = boundary.initialWindow(request(
             rows: fiveRows(),
             readState: TimelineReadStateDraft(
                 scrollAnchorItemKey: "note:missing",
-                markerItemKey: "note:b",
                 markerEventID: eventID("event-b"),
                 markerSortAt: 20
             ),
@@ -1753,6 +1796,7 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(draft.anchorSource == .readMarker)
         #expect(draft.visibleItemKeys == ["note:c", "note:b", "note:a"])
         #expect(draft.diagnostics.fallbackReason == .missingAnchorUsedMarker)
+        #expect(draft.diagnostics.fallbackItemKey == "note:b")
         #expect(draft.diagnostics.readMarkerChanged == false)
         #expect(draft.issues.contains { $0.kind == .missingAnchor })
     }
@@ -1761,15 +1805,47 @@ struct TimelineRepositoryBoundaryContractTests {
     func markerSortFallbackUsesRepresentedNearestRow() {
         let draft = boundary.initialWindow(request(
             rows: fiveRows(),
-            readState: TimelineReadStateDraft(markerSortAt: 25),
+            readState: TimelineReadStateDraft(
+                markerEventID: eventID("event-missing-marker"),
+                markerSortAt: 25
+            ),
             policy: .initialRestore(maxVisibleCount: 3)
         ))
 
-        #expect(draft.issues.isEmpty)
         #expect(draft.anchorItemKey == "note:c")
         #expect(draft.anchorSource == .readMarker)
         #expect(draft.visibleItemKeys == ["note:d", "note:c", "note:b"])
-        #expect(draft.diagnostics.fallbackReason == .markerFound)
+        #expect(draft.diagnostics.fallbackReason == .markerSortFound)
+        #expect(draft.diagnostics.fallbackItemKey == "note:c")
+        #expect(draft.issues.contains { issue in
+            issue.kind == .missingMarker
+                && issue.eventID == eventID("event-missing-marker")
+        })
+    }
+
+    @Test("Last visible fallback works after anchor and marker targets are unavailable")
+    func lastVisibleFallbackWorksAfterAnchorAndMarkerTargetsAreUnavailable() {
+        let draft = boundary.initialWindow(request(
+            rows: fiveRows(),
+            readState: TimelineReadStateDraft(
+                scrollAnchorItemKey: "note:missing-anchor",
+                scrollAnchorEventID: eventID("event-missing-anchor"),
+                markerEventID: eventID("event-missing-marker"),
+                lastVisibleTopItemKey: "note:d",
+                lastVisibleBottomItemKey: "note:b"
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        ))
+
+        #expect(draft.anchorItemKey == "note:d")
+        #expect(draft.anchorSource == .lastVisible)
+        #expect(draft.visibleItemKeys == ["note:e", "note:d", "note:c"])
+        #expect(draft.diagnostics.fallbackReason == .missingAnchorAndMarkerUsedLastVisibleTop)
+        #expect(draft.diagnostics.fallbackItemKey == "note:d")
+        #expect(draft.issues.contains { $0.kind == .missingAnchor })
+        #expect(draft.issues.contains { $0.kind == .missingScrollAnchorEvent })
+        #expect(draft.issues.contains { $0.kind == .missingMarker })
+        #expect(!draft.diagnostics.readMarkerChanged)
     }
 
     @Test("Missing marker returns typed issue and newest fallback")
@@ -1788,6 +1864,7 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(draft.anchorItemKey == "note:newest")
         #expect(draft.anchorSource == .newest)
         #expect(draft.diagnostics.fallbackReason == .missingMarkerUsedNewest)
+        #expect(draft.diagnostics.fallbackItemKey == "note:newest")
         #expect(draft.issues.contains { issue in
             issue.kind == .missingMarker
                 && issue.itemKey == "note:missing"
@@ -1805,6 +1882,7 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(draft.anchorItemKey == "note:newest")
         #expect(draft.anchorSource == .newest)
         #expect(draft.diagnostics.fallbackReason == .noReadStateUsedNewest)
+        #expect(draft.diagnostics.fallbackItemKey == "note:newest")
     }
 
     @Test("Initial window never requires network DB work or read marker mutation")
@@ -1816,6 +1894,121 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(!draft.diagnostics.readMarkerChanged)
         #expect(!draft.diagnostics.requiresNetworkWork)
         #expect(!draft.diagnostics.requiresDBWork)
+    }
+
+    @Test("Read marker changed stays false for every fallback path")
+    func readMarkerChangedStaysFalseForEveryFallbackPath() {
+        let rows = fiveRows()
+        let drafts = [
+            boundary.initialWindow(request(
+                rows: rows,
+                readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:c"),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )),
+            boundary.initialWindow(request(
+                rows: rows,
+                readState: TimelineReadStateDraft(
+                    scrollAnchorItemKey: "note:missing",
+                    scrollAnchorEventID: eventID("event-c")
+                ),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )),
+            boundary.initialWindow(request(
+                rows: rows,
+                readState: TimelineReadStateDraft(markerEventID: eventID("event-b")),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )),
+            boundary.initialWindow(request(
+                rows: rows,
+                readState: TimelineReadStateDraft(markerSortAt: 25),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )),
+            boundary.initialWindow(request(
+                rows: rows,
+                readState: TimelineReadStateDraft(lastVisibleTopItemKey: "note:d"),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )),
+            boundary.initialWindow(request(rows: rows, policy: .initialRestore(maxVisibleCount: 3))),
+            boundary.initialWindow(request(rows: []))
+        ]
+
+        #expect(Set(drafts.map(\.diagnostics.fallbackReason)) == Set<TimelineRepositoryBoundaryFallbackReason>([
+            .anchorFound,
+            .missingAnchorUsedScrollEvent,
+            .markerEventFound,
+            .markerSortFound,
+            .lastVisibleTopFound,
+            .noReadStateUsedNewest,
+            .noVisibleRows
+        ]))
+        for draft in drafts {
+            #expect(!draft.diagnostics.readMarkerChanged)
+            #expect(!draft.diagnostics.requiresNetworkWork)
+            #expect(!draft.diagnostics.requiresDBWork)
+        }
+    }
+
+    @Test("Pending hidden collapsed and fallback-capable anchors follow visible query policy")
+    func pendingHiddenCollapsedAndFallbackCapableAnchorsFollowVisibleQueryPolicy() {
+        let defaultPending = boundary.initialWindow(request(
+            rows: [
+                row("note:pending", sortAt: 30, pendingNew: true),
+                row("note:fallback", sortAt: 20, isMissingTargetFallbackCapable: true),
+                row("note:visible", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:pending"),
+            policy: .initialRestore(maxVisibleCount: 10)
+        ))
+        let explicitPending = boundary.initialWindow(request(
+            rows: [
+                row("note:pending", sortAt: 30, pendingNew: true),
+                row("note:visible", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:pending"),
+            policy: .explicitUserPendingNew(itemKeys: ["note:pending"], maxVisibleCount: 10)
+        ))
+        let hidden = boundary.initialWindow(request(
+            rows: [
+                row("note:hidden", sortAt: 30, hiddenReason: "muted"),
+                row("note:visible", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:hidden"),
+            policy: .initialRestore(maxVisibleCount: 10)
+        ))
+        let collapsed = boundary.initialWindow(request(
+            rows: [
+                row("note:collapsed", sortAt: 30, collapsed: true),
+                row("note:visible", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:collapsed"),
+            policy: .initialRestore(maxVisibleCount: 10)
+        ))
+        let fallbackCapable = boundary.initialWindow(request(
+            rows: [
+                row("note:fallback", sortAt: 30, isMissingTargetFallbackCapable: true),
+                row("note:visible", sortAt: 10)
+            ],
+            readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:fallback"),
+            policy: .initialRestore(maxVisibleCount: 10)
+        ))
+
+        #expect(defaultPending.visibleItemKeys == ["note:fallback", "note:visible"])
+        #expect(defaultPending.anchorItemKey == "note:fallback")
+        #expect(defaultPending.diagnostics.fallbackReason == .missingAnchorUsedNewest)
+        #expect(defaultPending.diagnostics.excludedPendingNewCount == 1)
+        #expect(explicitPending.visibleItemKeys == ["note:pending", "note:visible"])
+        #expect(explicitPending.anchorItemKey == "note:pending")
+        #expect(explicitPending.diagnostics.fallbackReason == .anchorFound)
+        #expect(hidden.visibleItemKeys == ["note:visible"])
+        #expect(hidden.anchorItemKey == "note:visible")
+        #expect(hidden.diagnostics.fallbackReason == .missingAnchorUsedNewest)
+        #expect(hidden.diagnostics.excludedHiddenCount == 1)
+        #expect(collapsed.anchorItemKey == "note:collapsed")
+        #expect(collapsed.diagnostics.fallbackReason == .anchorFound)
+        #expect(collapsed.visibleRows.first?.collapsed == true)
+        #expect(fallbackCapable.anchorItemKey == "note:fallback")
+        #expect(fallbackCapable.diagnostics.fallbackReason == .anchorFound)
+        #expect(fallbackCapable.visibleRows.first?.isMissingTargetFallbackCapable == true)
     }
 
     @Test("Duplicate item keys dedupe deterministically and record issue")
@@ -2033,6 +2226,21 @@ struct TimelineRepositoryBoundaryContractTests {
                 #expect(draft.diagnostics.fallbackReason == .missingAnchorUsedNewest)
             },
             RepositoryBoundaryIssueCoverageEntry(
+                kind: .missingScrollAnchorEvent,
+                request: request(
+                    rows: [
+                        row("note:newest", sortAt: 20),
+                        row("note:older", sortAt: 10)
+                    ],
+                    readState: TimelineReadStateDraft(scrollAnchorEventID: eventID("event-missing-anchor"))
+                ),
+                expectedEventID: eventID("event-missing-anchor")
+            ) { draft in
+                #expect(draft.anchorItemKey == "note:newest")
+                #expect(draft.anchorSource == .newest)
+                #expect(draft.diagnostics.fallbackReason == .noReadStateUsedNewest)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
                 kind: .missingMarker,
                 request: request(
                     rows: [
@@ -2050,6 +2258,21 @@ struct TimelineRepositoryBoundaryContractTests {
                 #expect(draft.anchorItemKey == "note:newest")
                 #expect(draft.anchorSource == .newest)
                 #expect(draft.diagnostics.fallbackReason == .missingMarkerUsedNewest)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .missingLastVisible,
+                request: request(
+                    rows: [
+                        row("note:newest", sortAt: 20),
+                        row("note:older", sortAt: 10)
+                    ],
+                    readState: TimelineReadStateDraft(lastVisibleTopItemKey: "note:missing-visible")
+                ),
+                expectedItemKey: "note:missing-visible"
+            ) { draft in
+                #expect(draft.anchorItemKey == "note:newest")
+                #expect(draft.anchorSource == .newest)
+                #expect(draft.diagnostics.fallbackReason == .noReadStateUsedNewest)
             },
             RepositoryBoundaryIssueCoverageEntry(
                 kind: .invalidSortKey,

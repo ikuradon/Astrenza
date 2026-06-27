@@ -218,27 +218,69 @@ struct TimelineRepositoryFeedItemDraftRow: Equatable, Codable, Sendable {
 }
 
 struct TimelineReadStateDraft: Equatable, Codable, Sendable {
+    var accountID: AccountID?
+    var feedID: FeedID?
+    var timelineKey: TimelineKey?
     var scrollAnchorItemKey: String?
+    var scrollAnchorEventID: EventID?
     var scrollAnchorSortAt: Int64?
     var scrollAnchorTieBreakID: String?
+    var scrollAnchorOffsetPX: Int?
+    var viewportHeightPX: Int?
+    var viewportWidthPX: Int?
+    var contentInsetTopPX: Int?
+    var contentInsetBottomPX: Int?
     var markerItemKey: String?
     var markerEventID: EventID?
     var markerSortAt: Int64?
+    var lastVisibleTopItemKey: String?
+    var lastVisibleBottomItemKey: String?
+    var restoreFallbackReason: TimelineRepositoryBoundaryFallbackReason?
+    var savedAtMS: Int64?
+    var schemaVersion: Int?
 
     init(
+        accountID: AccountID? = nil,
+        feedID: FeedID? = nil,
+        timelineKey: TimelineKey? = nil,
         scrollAnchorItemKey: String? = nil,
+        scrollAnchorEventID: EventID? = nil,
         scrollAnchorSortAt: Int64? = nil,
         scrollAnchorTieBreakID: String? = nil,
+        scrollAnchorOffsetPX: Int? = nil,
+        viewportHeightPX: Int? = nil,
+        viewportWidthPX: Int? = nil,
+        contentInsetTopPX: Int? = nil,
+        contentInsetBottomPX: Int? = nil,
         markerItemKey: String? = nil,
         markerEventID: EventID? = nil,
-        markerSortAt: Int64? = nil
+        markerSortAt: Int64? = nil,
+        lastVisibleTopItemKey: String? = nil,
+        lastVisibleBottomItemKey: String? = nil,
+        restoreFallbackReason: TimelineRepositoryBoundaryFallbackReason? = nil,
+        savedAtMS: Int64? = nil,
+        schemaVersion: Int? = nil
     ) {
+        self.accountID = accountID
+        self.feedID = feedID
+        self.timelineKey = timelineKey
         self.scrollAnchorItemKey = scrollAnchorItemKey
+        self.scrollAnchorEventID = scrollAnchorEventID
         self.scrollAnchorSortAt = scrollAnchorSortAt
         self.scrollAnchorTieBreakID = scrollAnchorTieBreakID
+        self.scrollAnchorOffsetPX = scrollAnchorOffsetPX
+        self.viewportHeightPX = viewportHeightPX
+        self.viewportWidthPX = viewportWidthPX
+        self.contentInsetTopPX = contentInsetTopPX
+        self.contentInsetBottomPX = contentInsetBottomPX
         self.markerItemKey = markerItemKey
         self.markerEventID = markerEventID
         self.markerSortAt = markerSortAt
+        self.lastVisibleTopItemKey = lastVisibleTopItemKey
+        self.lastVisibleBottomItemKey = lastVisibleBottomItemKey
+        self.restoreFallbackReason = restoreFallbackReason
+        self.savedAtMS = savedAtMS
+        self.schemaVersion = schemaVersion
     }
 }
 
@@ -312,14 +354,23 @@ struct TimelineInitialWindowRequest: Equatable, Codable, Sendable {
 enum TimelineInitialWindowAnchorSource: String, Codable, Sendable {
     case scrollAnchor
     case readMarker
+    case lastVisible
     case newest
     case none
 }
 
 enum TimelineRepositoryBoundaryFallbackReason: String, Codable, Sendable {
     case anchorFound
+    case scrollAnchorEventFound
     case markerFound
+    case markerEventFound
+    case markerSortFound
+    case lastVisibleTopFound
+    case lastVisibleBottomFound
+    case missingAnchorUsedScrollEvent
     case missingAnchorUsedMarker
+    case missingAnchorAndMarkerUsedLastVisibleTop
+    case missingAnchorAndMarkerUsedLastVisibleBottom
     case missingAnchorUsedNewest
     case missingAnchorAndMarkerUsedNewest
     case missingMarkerUsedNewest
@@ -331,7 +382,9 @@ struct TimelineRepositoryBoundaryIssue: Equatable, Codable, Sendable {
     enum Kind: String, CaseIterable, Codable, Sendable {
         case duplicateItemKey
         case missingAnchor
+        case missingScrollAnchorEvent
         case missingMarker
+        case missingLastVisible
         case invalidSortKey
         case invalidItemKey
         case pendingNewIncludedWithoutExplicitUserAction
@@ -365,6 +418,12 @@ struct TimelineRepositoryBoundaryDiagnostics: Equatable, Codable, Sendable {
     var collapsedCount: Int
     var duplicateItemKeyCount: Int
     var fallbackReason: TimelineRepositoryBoundaryFallbackReason
+    var fallbackItemKey: String?
+    var requestedAnchorItemKey: String?
+    var requestedAnchorEventID: EventID?
+    var requestedMarkerEventID: EventID?
+    var requestedLastVisibleTopItemKey: String?
+    var requestedLastVisibleBottomItemKey: String?
     var readMarkerChanged: Bool
     var requiresNetworkWork: Bool
     var requiresDBWork: Bool
@@ -420,7 +479,8 @@ struct FixtureTimelineRepositoryBoundary: TimelineRepositoryBoundaryProtocol, Eq
                 visibleCandidates: visibleCandidates,
                 dedupedRows: dedupedRows,
                 duplicateItemKeyCount: issues.filter { $0.kind == .duplicateItemKey }.count,
-                fallbackReason: anchor.fallbackReason
+                fallbackReason: anchor.fallbackReason,
+                fallbackItemKey: anchor.itemKey
             ),
             issues: issues
         )
@@ -563,54 +623,92 @@ struct FixtureTimelineRepositoryBoundary: TimelineRepositoryBoundaryProtocol, Eq
                 itemKey: anchorItemKey
             ))
 
-            if let markerRow = markerRow(readState: readState, visibleRows: visibleRows) {
-                return (markerRow.itemKey, .readMarker, .missingAnchorUsedMarker)
+            if let scrollAnchorEventRow = scrollAnchorEventRow(readState: readState, visibleRows: visibleRows) {
+                return (scrollAnchorEventRow.itemKey, .scrollAnchor, .missingAnchorUsedScrollEvent)
+            }
+            appendMissingScrollAnchorEventIssueIfNeeded(readState, issues: &issues)
+
+            if let markerFallback = markerFallback(readState: readState, visibleRows: visibleRows, issues: &issues) {
+                return (markerFallback.row.itemKey, .readMarker, .missingAnchorUsedMarker)
             }
 
+            if let lastVisibleFallback = lastVisibleFallback(readState: readState, visibleRows: visibleRows) {
+                let reason: TimelineRepositoryBoundaryFallbackReason = lastVisibleFallback.reason == .lastVisibleTopFound
+                    ? .missingAnchorAndMarkerUsedLastVisibleTop
+                    : .missingAnchorAndMarkerUsedLastVisibleBottom
+                return (lastVisibleFallback.row.itemKey, .lastVisible, reason)
+            }
+
+            appendMissingLastVisibleIssueIfNeeded(readState, issues: &issues)
+
             if readState.hasMarker {
-                issues.append(TimelineRepositoryBoundaryIssue(
-                    kind: .missingMarker,
-                    itemKey: readState.markerItemKey,
-                    eventID: readState.markerEventID
-                ))
+                appendMissingMarkerIssueIfNeeded(readState, issues: &issues)
                 return (visibleRows[0].itemKey, .newest, .missingAnchorAndMarkerUsedNewest)
             }
 
             return (visibleRows[0].itemKey, .newest, .missingAnchorUsedNewest)
         }
 
+        if let scrollAnchorEventRow = scrollAnchorEventRow(readState: readState, visibleRows: visibleRows) {
+            return (scrollAnchorEventRow.itemKey, .scrollAnchor, .scrollAnchorEventFound)
+        }
+        appendMissingScrollAnchorEventIssueIfNeeded(readState, issues: &issues)
+
+        if let markerFallback = markerFallback(readState: readState, visibleRows: visibleRows, issues: &issues) {
+            return (markerFallback.row.itemKey, .readMarker, markerFallback.reason)
+        }
+
         if readState.hasMarker {
-            if let markerRow = markerRow(readState: readState, visibleRows: visibleRows) {
-                return (markerRow.itemKey, .readMarker, .markerFound)
+            appendMissingMarkerIssueIfNeeded(readState, issues: &issues)
+            return (visibleRows[0].itemKey, .newest, .missingMarkerUsedNewest)
+        }
+
+        if let lastVisibleFallback = lastVisibleFallback(readState: readState, visibleRows: visibleRows) {
+            return (lastVisibleFallback.row.itemKey, .lastVisible, lastVisibleFallback.reason)
+        }
+        appendMissingLastVisibleIssueIfNeeded(readState, issues: &issues)
+
+        return (visibleRows[0].itemKey, .newest, .noReadStateUsedNewest)
+    }
+
+    private func scrollAnchorEventRow(
+        readState: TimelineReadStateDraft,
+        visibleRows: [TimelineRepositoryFeedItemDraftRow]
+    ) -> TimelineRepositoryFeedItemDraftRow? {
+        guard let scrollAnchorEventID = readState.scrollAnchorEventID else { return nil }
+        return visibleRows.sorted(by: rowSort).first { row in
+            row.sourceEventID == scrollAnchorEventID || row.subjectEventID == scrollAnchorEventID
+        }
+    }
+
+    private func markerFallback(
+        readState: TimelineReadStateDraft,
+        visibleRows: [TimelineRepositoryFeedItemDraftRow],
+        issues: inout [TimelineRepositoryBoundaryIssue]
+    ) -> (
+        row: TimelineRepositoryFeedItemDraftRow,
+        reason: TimelineRepositoryBoundaryFallbackReason
+    )? {
+        let sortedRows = visibleRows.sorted(by: rowSort)
+
+        if let markerItemKey = readState.markerItemKey,
+           let row = sortedRows.first(where: { $0.itemKey == markerItemKey }) {
+            return (row, .markerFound)
+        }
+        if let markerEventID = readState.markerEventID {
+            if let row = sortedRows.first(where: { row in
+                row.sourceEventID == markerEventID || row.subjectEventID == markerEventID
+            }) {
+                return (row, .markerEventFound)
             }
             issues.append(TimelineRepositoryBoundaryIssue(
                 kind: .missingMarker,
                 itemKey: readState.markerItemKey,
                 eventID: readState.markerEventID
             ))
-            return (visibleRows[0].itemKey, .newest, .missingMarkerUsedNewest)
-        }
-
-        return (visibleRows[0].itemKey, .newest, .noReadStateUsedNewest)
-    }
-
-    private func markerRow(
-        readState: TimelineReadStateDraft,
-        visibleRows: [TimelineRepositoryFeedItemDraftRow]
-    ) -> TimelineRepositoryFeedItemDraftRow? {
-        let sortedRows = visibleRows.sorted(by: rowSort)
-
-        if let markerItemKey = readState.markerItemKey,
-           let row = sortedRows.first(where: { $0.itemKey == markerItemKey }) {
-            return row
-        }
-        if let markerEventID = readState.markerEventID {
-            return sortedRows.first { row in
-                row.sourceEventID == markerEventID || row.subjectEventID == markerEventID
-            }
         }
         if let markerSortAt = readState.markerSortAt {
-            return sortedRows.min { lhs, rhs in
+            let row = sortedRows.min { lhs, rhs in
                 let lhsDistance = abs(Double(lhs.sortAt ?? .min) - Double(markerSortAt))
                 let rhsDistance = abs(Double(rhs.sortAt ?? .min) - Double(markerSortAt))
 
@@ -620,8 +718,68 @@ struct FixtureTimelineRepositoryBoundary: TimelineRepositoryBoundaryProtocol, Eq
 
                 return rowSort(lhs: lhs, rhs: rhs)
             }
+            return row.map { ($0, .markerSortFound) }
         }
         return nil
+    }
+
+    private func lastVisibleFallback(
+        readState: TimelineReadStateDraft,
+        visibleRows: [TimelineRepositoryFeedItemDraftRow]
+    ) -> (
+        row: TimelineRepositoryFeedItemDraftRow,
+        reason: TimelineRepositoryBoundaryFallbackReason
+    )? {
+        let sortedRows = visibleRows.sorted(by: rowSort)
+        if let topItemKey = readState.lastVisibleTopItemKey,
+           let row = sortedRows.first(where: { $0.itemKey == topItemKey }) {
+            return (row, .lastVisibleTopFound)
+        }
+        if let bottomItemKey = readState.lastVisibleBottomItemKey,
+           let row = sortedRows.first(where: { $0.itemKey == bottomItemKey }) {
+            return (row, .lastVisibleBottomFound)
+        }
+        return nil
+    }
+
+    private func appendMissingScrollAnchorEventIssueIfNeeded(
+        _ readState: TimelineReadStateDraft,
+        issues: inout [TimelineRepositoryBoundaryIssue]
+    ) {
+        guard readState.scrollAnchorEventID != nil else { return }
+        issues.append(TimelineRepositoryBoundaryIssue(
+            kind: .missingScrollAnchorEvent,
+            eventID: readState.scrollAnchorEventID
+        ))
+    }
+
+    private func appendMissingMarkerIssueIfNeeded(
+        _ readState: TimelineReadStateDraft,
+        issues: inout [TimelineRepositoryBoundaryIssue]
+    ) {
+        guard readState.hasMarker else { return }
+        let alreadyRecorded = issues.contains { issue in
+            issue.kind == .missingMarker
+                && issue.itemKey == readState.markerItemKey
+                && issue.eventID == readState.markerEventID
+        }
+        guard !alreadyRecorded else { return }
+        issues.append(TimelineRepositoryBoundaryIssue(
+            kind: .missingMarker,
+            itemKey: readState.markerItemKey,
+            eventID: readState.markerEventID
+        ))
+    }
+
+    private func appendMissingLastVisibleIssueIfNeeded(
+        _ readState: TimelineReadStateDraft,
+        issues: inout [TimelineRepositoryBoundaryIssue]
+    ) {
+        guard readState.hasLastVisible else { return }
+        issues.append(TimelineRepositoryBoundaryIssue(
+            kind: .missingLastVisible,
+            itemKey: readState.lastVisibleTopItemKey ?? readState.lastVisibleBottomItemKey
+        ))
     }
 
     private func windowRows(
@@ -649,7 +807,8 @@ struct FixtureTimelineRepositoryBoundary: TimelineRepositoryBoundaryProtocol, Eq
         visibleCandidates: [TimelineRepositoryFeedItemDraftRow],
         dedupedRows: [TimelineRepositoryFeedItemDraftRow],
         duplicateItemKeyCount: Int,
-        fallbackReason: TimelineRepositoryBoundaryFallbackReason
+        fallbackReason: TimelineRepositoryBoundaryFallbackReason,
+        fallbackItemKey: String?
     ) -> TimelineRepositoryBoundaryDiagnostics {
         TimelineRepositoryBoundaryDiagnostics(
             inputCount: request.rows.count,
@@ -665,6 +824,12 @@ struct FixtureTimelineRepositoryBoundary: TimelineRepositoryBoundaryProtocol, Eq
             collapsedCount: visibleRows.filter(\.collapsed).count,
             duplicateItemKeyCount: duplicateItemKeyCount,
             fallbackReason: fallbackReason,
+            fallbackItemKey: fallbackItemKey,
+            requestedAnchorItemKey: request.readState?.scrollAnchorItemKey,
+            requestedAnchorEventID: request.readState?.scrollAnchorEventID,
+            requestedMarkerEventID: request.readState?.markerEventID,
+            requestedLastVisibleTopItemKey: request.readState?.lastVisibleTopItemKey,
+            requestedLastVisibleBottomItemKey: request.readState?.lastVisibleBottomItemKey,
             readMarkerChanged: false,
             requiresNetworkWork: false,
             requiresDBWork: false
@@ -685,5 +850,9 @@ struct FixtureTimelineRepositoryBoundary: TimelineRepositoryBoundaryProtocol, Eq
 private extension TimelineReadStateDraft {
     var hasMarker: Bool {
         markerItemKey != nil || markerEventID != nil || markerSortAt != nil
+    }
+
+    var hasLastVisible: Bool {
+        lastVisibleTopItemKey != nil || lastVisibleBottomItemKey != nil
     }
 }
