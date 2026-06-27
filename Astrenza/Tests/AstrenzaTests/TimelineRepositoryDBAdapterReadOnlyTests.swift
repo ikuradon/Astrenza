@@ -49,6 +49,111 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         #expect(output.diagnostics.sqlVisibleRowCount == 4)
     }
 
+    @Test("visible SQL query keeps feed rows and diagnostics isolated")
+    func visibleSQLQueryKeepsFeedRowsAndDiagnosticsIsolated() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        let otherFeedID = FeedID(rawValue: 200)
+        try database.seedFeed(id: otherFeedID, paramsJSON: "{\"scope\":\"other\"}")
+        try database.seedFeedItems([
+            feedItem("note:shared", sourceEventID: "shared", actorPubkey: "feed-a", sortAt: 30),
+            feedItem("note:feed-a-only", sourceEventID: "feed-a-only", actorPubkey: "feed-a", sortAt: 20)
+        ])
+        try database.seedFeedItems([
+            feedItem("note:shared", sourceEventID: "shared", actorPubkey: "feed-b", sortAt: 100),
+            feedItem("note:feed-b-only", sourceEventID: "feed-b-only", actorPubkey: "feed-b", sortAt: 90)
+        ], feedID: otherFeedID)
+
+        let beforeA = try database.auditCounts()
+        let beforeB = try database.auditCounts(feedID: otherFeedID)
+        let output = try adapter.visibleRows(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let afterA = try database.auditCounts()
+        let afterB = try database.auditCounts(feedID: otherFeedID)
+
+        #expect(beforeA == afterA)
+        #expect(beforeB == afterB)
+        #expect(output.rows.map(\.itemKey) == ["note:shared", "note:feed-a-only"])
+        #expect(output.rows.allSatisfy { $0.actorPubkey == "feed-a" })
+        #expect(!output.rows.contains { $0.itemKey == "note:feed-b-only" })
+        #expect(output.diagnostics.feedItemRowCount == 2)
+        #expect(output.diagnostics.sqlVisibleRowCount == 2)
+        assertReadOnlyDiagnostics(output.diagnostics)
+    }
+
+    @Test("visible SQL query filters hidden and pending rows before applying limit")
+    func visibleSQLQueryFiltersHiddenAndPendingRowsBeforeApplyingLimit() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:hidden-top", sourceEventID: "hidden-top", sortAt: 100, hiddenReason: "muted"),
+            feedItem("note:pending-top", sourceEventID: "pending-top", sortAt: 99, pendingNew: true),
+            feedItem("note:visible-a", sourceEventID: "visible-a", sortAt: 98),
+            feedItem("note:hidden-between", sourceEventID: "hidden-between", sortAt: 97, hiddenReason: "muted"),
+            feedItem("note:visible-b", sourceEventID: "visible-b", sortAt: 96),
+            feedItem("note:pending-between", sourceEventID: "pending-between", sortAt: 95, pendingNew: true),
+            feedItem("note:visible-c", sourceEventID: "visible-c", sortAt: 94),
+            feedItem("note:visible-d", sourceEventID: "visible-d", sortAt: 93)
+        ])
+
+        let output = try adapter.visibleRows(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+
+        #expect(output.rows.map(\.itemKey) == ["note:visible-a", "note:visible-b", "note:visible-c"])
+        #expect(output.diagnostics.feedItemRowCount == 8)
+        #expect(output.diagnostics.sqlVisibleRowCount == 4)
+        #expect(output.diagnostics.sqlExcludedHiddenCount == 2)
+        #expect(output.diagnostics.sqlExcludedPendingNewCount == 2)
+        assertReadOnlyDiagnostics(output.diagnostics)
+    }
+
+    @Test("large visible SQL window is limited deterministic and duplicate free")
+    func largeVisibleSQLWindowIsLimitedDeterministicAndDuplicateFree() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        let rows = (0..<240).map { index in
+            feedItem(
+                "note:\(String(format: "%03d", index))",
+                sourceEventID: "event-\(String(format: "%03d", index))",
+                sortAt: 10_000 - Int64(index),
+                tieBreakID: String(format: "tie-%03d", index),
+                hiddenReason: index.isMultiple(of: 17) ? "muted" : nil,
+                pendingNew: index.isMultiple(of: 19)
+            )
+        }
+        try database.seedFeedItems(rows)
+
+        let before = try database.auditCounts()
+        let output = try adapter.visibleRows(
+            databasePath: database.path,
+            policy: .initialRestore(maxVisibleCount: 50)
+        )
+        let after = try database.auditCounts()
+        let expectedVisible = rows
+            .filter { $0.hiddenReason == nil && !$0.pendingNew }
+            .sorted { lhs, rhs in
+                if lhs.sortAt != rhs.sortAt {
+                    return lhs.sortAt > rhs.sortAt
+                }
+                return lhs.tieBreakID < rhs.tieBreakID
+            }
+            .prefix(50)
+            .map(\.itemKey)
+
+        #expect(before == after)
+        #expect(output.rows.map(\.itemKey) == Array(expectedVisible))
+        #expect(output.rows.count == 50)
+        #expect(Set(output.rows.map(\.itemKey)).count == output.rows.count)
+        #expect(output.rows.first?.itemKey == expectedVisible.first)
+        #expect(output.rows.last?.itemKey == expectedVisible.last)
+        #expect(output.diagnostics.feedItemRowCount == 240)
+        #expect(output.diagnostics.sqlVisibleRowCount > output.rows.count)
+        #expect(output.diagnostics.sqlExcludedHiddenCount > 0)
+        #expect(output.diagnostics.sqlExcludedPendingNewCount > 0)
+        assertReadOnlyDiagnostics(output.diagnostics)
+    }
+
     @Test("hidden_reason rows are excluded by default")
     func hiddenReasonRowsAreExcludedByDefault() throws {
         let database = try TimelineRepositoryDBFixtureDatabase()
@@ -250,6 +355,49 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         #expect(!window.diagnostics.readMarkerChanged)
     }
 
+    @Test("anchor-side SQL queries keep strict boundaries and exclude hidden pending rows")
+    func anchorSideSQLQueriesKeepStrictBoundariesAndExcludeHiddenPendingRows() throws {
+        let database = try TimelineRepositoryDBFixtureDatabase()
+        try database.seedFeedItems([
+            feedItem("note:hidden-newer", sourceEventID: "hidden-newer", sortAt: 50, hiddenReason: "muted"),
+            feedItem("note:pending-newer", sourceEventID: "pending-newer", sortAt: 45, pendingNew: true),
+            feedItem("note:newer", sourceEventID: "newer", sortAt: 40, tieBreakID: "newer"),
+            feedItem("note:same-smaller", sourceEventID: "same-smaller", sortAt: 30, tieBreakID: "b"),
+            feedItem("note:anchor", sourceEventID: "anchor", sortAt: 30, tieBreakID: "c"),
+            feedItem("note:same-larger", sourceEventID: "same-larger", sortAt: 30, tieBreakID: "d"),
+            feedItem("note:older", sourceEventID: "older", sortAt: 20, tieBreakID: "older"),
+            feedItem("note:hidden-older", sourceEventID: "hidden-older", sortAt: 10, hiddenReason: "muted"),
+            feedItem("note:pending-older", sourceEventID: "pending-older", sortAt: 5, pendingNew: true)
+        ])
+
+        let window = try adapter.anchorWindow(
+            databasePath: database.path,
+            anchorItemKey: "note:anchor",
+            policy: .initialRestore(maxVisibleCount: 5)
+        )
+
+        #expect(window.anchorRow?.itemKey == "note:anchor")
+        #expect(window.newerRows.map(\.itemKey) == ["note:same-smaller", "note:newer"])
+        #expect(!window.newerRows.contains { $0.itemKey == "note:anchor" })
+        #expect(!window.newerRows.contains { $0.itemKey == "note:same-larger" })
+        #expect(!window.newerRows.contains { $0.itemKey == "note:older" })
+        #expect(window.anchorAndOlderRows.map(\.itemKey) == ["note:anchor", "note:same-larger", "note:older"])
+        #expect(!window.anchorAndOlderRows.contains { $0.itemKey == "note:same-smaller" })
+        #expect(!window.anchorAndOlderRows.contains { $0.itemKey == "note:newer" })
+        #expect(window.combinedRows.map(\.itemKey) == [
+            "note:newer",
+            "note:same-smaller",
+            "note:anchor",
+            "note:same-larger",
+            "note:older"
+        ])
+        #expect(!window.combinedRows.contains { $0.hiddenReason != nil || $0.pendingNew })
+        #expect(window.diagnostics.sqlVisibleRowCount == 5)
+        #expect(window.diagnostics.sqlExcludedHiddenCount == 2)
+        #expect(window.diagnostics.sqlExcludedPendingNewCount == 2)
+        assertReadOnlyDiagnostics(window.diagnostics)
+    }
+
     @Test("missing anchor falls back to marker event")
     func missingAnchorFallsBackToMarkerEvent() throws {
         let database = try TimelineRepositoryDBFixtureDatabase()
@@ -307,6 +455,7 @@ struct TimelineRepositoryDBAdapterReadOnlyTests {
         #expect(emptyOutput.initialWindow.visibleRows.isEmpty)
         #expect(emptyOutput.initialWindow.anchorSource == .none)
         #expect(emptyOutput.initialWindow.diagnostics.fallbackReason == .noVisibleRows)
+        #expect(!emptyOutput.initialWindow.diagnostics.readMarkerChanged)
     }
 
     @Test("invalid persisted reason returns typed issue")
@@ -947,7 +1096,7 @@ private struct TimelineRepositoryDBAdapter: Sendable {
             path: databasePath,
             flags: SQLITE_OPEN_READONLY
         )
-        let visibleMapping = try visibleRows(from: database, policy: policy)
+        let visibleMapping = try visibleRows(from: database, policy: policy, appliesLimit: false)
         let readStateMapping = try readState(from: database)
         var issues = visibleMapping.issues
 
@@ -1087,27 +1236,34 @@ private struct TimelineRepositoryDBAdapter: Sendable {
 
     private func readFeedItems(
         from database: TimelineRepositorySQLiteDatabase,
-        policy: TimelineVisibleWindowPolicy
+        policy: TimelineVisibleWindowPolicy,
+        appliesLimit: Bool
     ) throws -> [TimelineRepositoryDBFeedItemRow] {
         let predicate = visiblePredicate(for: policy)
+        var bindings = predicate.bindings
+        if appliesLimit {
+            bindings.append(.int(max(0, policy.maxVisibleCount)))
+        }
         return try queryFeedItemRows(
             """
             SELECT \(feedItemColumns)
             FROM feed_items
             WHERE \(predicate.sql)
             ORDER BY sort_at DESC, tie_break_id ASC
+            \(appliesLimit ? "LIMIT ?" : "")
             """,
-            bindings: predicate.bindings,
+            bindings: bindings,
             from: database
         )
     }
 
     private func visibleRows(
         from database: TimelineRepositorySQLiteDatabase,
-        policy: TimelineVisibleWindowPolicy
+        policy: TimelineVisibleWindowPolicy,
+        appliesLimit: Bool = true
     ) throws -> TimelineRepositoryDBVisibleRowsOutput {
         let sqlCounts = try sqlCounts(from: database, policy: policy)
-        let rawRows = try readFeedItems(from: database, policy: policy)
+        let rawRows = try readFeedItems(from: database, policy: policy, appliesLimit: appliesLimit)
         var issues: [TimelineRepositoryDBAdapterIssue] = []
         let rows = rawRows.compactMap { row in
             mapFeedItem(row, issues: &issues)
@@ -1697,7 +1853,29 @@ private final class TimelineRepositoryDBFixtureDatabase {
         try? FileManager.default.removeItem(at: directoryURL)
     }
 
-    func seedFeedItems(_ items: [TimelineRepositoryDBFixtureFeedItem]) throws {
+    func seedFeed(
+        id feedID: FeedID,
+        paramsJSON: String
+    ) throws {
+        try database.execute(
+            """
+            INSERT INTO feeds (id, account_id, type, params_json, created_at_ms, updated_at_ms)
+            VALUES (?, ?, 'home', ?, ?, ?)
+            """,
+            bindings: [
+                .int64(feedID.rawValue),
+                .int64(TimelineRepositoryDBAdapterConfiguration.testDefault.databaseAccountID),
+                .text(paramsJSON),
+                .int64(1_780_000_000_000),
+                .int64(1_780_000_000_001)
+            ]
+        )
+    }
+
+    func seedFeedItems(
+        _ items: [TimelineRepositoryDBFixtureFeedItem],
+        feedID: FeedID = TimelineRepositoryDBAdapterConfiguration.testDefault.feedID
+    ) throws {
         if allowInvalidFixtureRows {
             try database.execute("PRAGMA ignore_check_constraints = ON")
         }
@@ -1722,7 +1900,7 @@ private final class TimelineRepositoryDBFixtureDatabase {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 bindings: [
-                    .int64(TimelineRepositoryDBAdapterConfiguration.testDefault.feedID.rawValue),
+                    .int64(feedID.rawValue),
                     .text(item.itemKey),
                     .text(item.sourceEventID),
                     item.subjectEventID.map(SQLiteBinding.text) ?? .null,
@@ -1780,20 +1958,46 @@ private final class TimelineRepositoryDBFixtureDatabase {
         )
     }
 
-    func auditCounts() throws -> TimelineRepositoryDBFixtureAuditCounts {
+    func auditCounts(
+        feedID: FeedID = TimelineRepositoryDBAdapterConfiguration.testDefault.feedID
+    ) throws -> TimelineRepositoryDBFixtureAuditCounts {
         TimelineRepositoryDBFixtureAuditCounts(
             feedItemCount: try database.scalarInt(
                 "SELECT COUNT(*) FROM feed_items WHERE feed_id = ?",
-                bindings: [.int64(TimelineRepositoryDBAdapterConfiguration.testDefault.feedID.rawValue)]
+                bindings: [.int64(feedID.rawValue)]
             ),
             pendingNewCount: try database.scalarInt(
                 "SELECT COUNT(*) FROM feed_items WHERE feed_id = ? AND pending_new = 1",
-                bindings: [.int64(TimelineRepositoryDBAdapterConfiguration.testDefault.feedID.rawValue)]
+                bindings: [.int64(feedID.rawValue)]
             ),
             resolveJobCount: try database.scalarInt("SELECT COUNT(*) FROM resolve_jobs"),
             diagnosticsCount: try database.scalarInt("SELECT COUNT(*) FROM timeline_snapshot_diagnostics"),
-            markerEventID: try database.scalarString("SELECT marker_event_id FROM feed_read_state LIMIT 1"),
-            markerSortAt: try database.scalarInt64("SELECT marker_sort_at FROM feed_read_state LIMIT 1")
+            markerEventID: try database.scalarString(
+                """
+                SELECT marker_event_id
+                FROM feed_read_state
+                WHERE account_id = ?
+                  AND feed_id = ?
+                LIMIT 1
+                """,
+                bindings: [
+                    .int64(TimelineRepositoryDBAdapterConfiguration.testDefault.databaseAccountID),
+                    .int64(feedID.rawValue)
+                ]
+            ),
+            markerSortAt: try database.scalarInt64(
+                """
+                SELECT marker_sort_at
+                FROM feed_read_state
+                WHERE account_id = ?
+                  AND feed_id = ?
+                LIMIT 1
+                """,
+                bindings: [
+                    .int64(TimelineRepositoryDBAdapterConfiguration.testDefault.databaseAccountID),
+                    .int64(feedID.rawValue)
+                ]
+            )
         )
     }
 
