@@ -1349,6 +1349,31 @@ struct TimelineRepositoryBoundaryContractTests {
         #expect(!draft.diagnostics.readMarkerChanged)
     }
 
+    @Test("Issue coverage matrix covers every TimelineRepositoryBoundaryIssue kind")
+    func issueCoverageMatrixCoversEveryTimelineRepositoryBoundaryIssueKind() {
+        let entries = repositoryBoundaryIssueCoverageEntries()
+        let coveredKinds = Set(entries.map(\.kind))
+
+        #expect(coveredKinds == Set(TimelineRepositoryBoundaryIssue.Kind.allCases))
+        #expect(entries.count == coveredKinds.count)
+
+        for entry in entries {
+            let draft = boundary.initialWindow(entry.request)
+            let issueKinds = Set(draft.issues.map(\.kind))
+            let matchingIssues = draft.issues.filter { $0.kind == entry.kind }
+
+            #expect(issueKinds == entry.expectedIssueKinds, "Unexpected issue mix for \(entry.kind): \(issueKinds)")
+            #expect(!matchingIssues.isEmpty, "Missing direct negative scenario for \(entry.kind)")
+            if let expectedItemKey = entry.expectedItemKey {
+                #expect(matchingIssues.contains { $0.itemKey == expectedItemKey })
+            }
+            if let expectedEventID = entry.expectedEventID {
+                #expect(matchingIssues.contains { $0.eventID == expectedEventID })
+            }
+            entry.validate(draft)
+        }
+    }
+
     @Test("Models are Codable Equatable and Sendable where appropriate")
     func modelsAreCodableEquatableAndSendableWhereAppropriate() throws {
         assertSendable(TimelineRepositoryBoundaryProtocol.self)
@@ -1439,6 +1464,143 @@ struct TimelineRepositoryBoundaryContractTests {
         ]
     }
 
+    private func repositoryBoundaryIssueCoverageEntries() -> [RepositoryBoundaryIssueCoverageEntry] {
+        [
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .duplicateItemKey,
+                request: request(rows: [
+                    row("note:dup", sourceEventID: "event-newer", sortAt: 30, tieBreakID: "b"),
+                    row("note:other", sourceEventID: "event-other", sortAt: 20, tieBreakID: "c"),
+                    row("note:dup", sourceEventID: "event-older", sortAt: 10, tieBreakID: "a")
+                ]),
+                expectedItemKey: "note:dup",
+                expectedEventID: eventID("event-older")
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:dup", "note:other"])
+                #expect(draft.diagnostics.duplicateItemKeyCount == 1)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .missingAnchor,
+                request: request(
+                    rows: [
+                        row("note:newest", sortAt: 20),
+                        row("note:older", sortAt: 10)
+                    ],
+                    readState: TimelineReadStateDraft(scrollAnchorItemKey: "note:missing")
+                ),
+                expectedItemKey: "note:missing"
+            ) { draft in
+                #expect(draft.anchorItemKey == "note:newest")
+                #expect(draft.anchorSource == .newest)
+                #expect(draft.diagnostics.fallbackReason == .missingAnchorUsedNewest)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .missingMarker,
+                request: request(
+                    rows: [
+                        row("note:newest", sortAt: 20),
+                        row("note:older", sortAt: 10)
+                    ],
+                    readState: TimelineReadStateDraft(
+                        markerItemKey: "note:missing",
+                        markerEventID: eventID("event-missing")
+                    )
+                ),
+                expectedItemKey: "note:missing",
+                expectedEventID: eventID("event-missing")
+            ) { draft in
+                #expect(draft.anchorItemKey == "note:newest")
+                #expect(draft.anchorSource == .newest)
+                #expect(draft.diagnostics.fallbackReason == .missingMarkerUsedNewest)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .invalidSortKey,
+                request: request(rows: [
+                    row("note:invalid", sourceEventID: "event-invalid-sort", sortAt: nil),
+                    row("note:valid", sortAt: 10)
+                ]),
+                expectedItemKey: "note:invalid",
+                expectedEventID: eventID("event-invalid-sort")
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:valid"])
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .invalidItemKey,
+                request: request(rows: [
+                    row("   ", sourceEventID: "event-invalid-item", sortAt: 20),
+                    row("note:valid", sortAt: 10)
+                ]),
+                expectedItemKey: "   ",
+                expectedEventID: eventID("event-invalid-item")
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:valid"])
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .pendingNewIncludedWithoutExplicitUserAction,
+                request: request(
+                    rows: [
+                        row("note:pending", sourceEventID: "event-pending", sortAt: 20, pendingNew: true),
+                        row("note:visible", sortAt: 10)
+                    ],
+                    policy: TimelineVisibleWindowPolicy(
+                        maxVisibleCount: 10,
+                        includePendingNew: true,
+                        pendingNewInclusionReason: nil,
+                        explicitPendingNewItemKeys: ["note:pending"]
+                    )
+                ),
+                expectedItemKey: "note:pending",
+                expectedEventID: eventID("event-pending")
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:visible"])
+                #expect(draft.diagnostics.excludedPendingNewCount == 1)
+                #expect(draft.diagnostics.pendingNewIncludedCount == 0)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .hiddenRowIncludedByMistake,
+                request: request(
+                    rows: [
+                        row("note:hidden", sourceEventID: "event-hidden", sortAt: 20, hiddenReason: "muted"),
+                        row("note:visible", sortAt: 10)
+                    ],
+                    policy: TimelineVisibleWindowPolicy(
+                        maxVisibleCount: 10,
+                        forcedHiddenItemKeys: ["note:hidden"]
+                    )
+                ),
+                expectedItemKey: "note:hidden",
+                expectedEventID: eventID("event-hidden")
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:visible"])
+                #expect(draft.diagnostics.excludedHiddenCount == 1)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .timelineEntriesOnlyAnchorDerivationAttempted,
+                request: TimelineInitialWindowRequest(
+                    feedID: .debugHome,
+                    rows: [row("note:visible")],
+                    policy: .initialRestore(maxVisibleCount: 10),
+                    attemptsTimelineEntriesOnlyAnchorDerivation: true
+                )
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:visible"])
+                #expect(!draft.diagnostics.readMarkerChanged)
+            },
+            RepositoryBoundaryIssueCoverageEntry(
+                kind: .readMarkerAdvanceAttempted,
+                request: TimelineInitialWindowRequest(
+                    feedID: .debugHome,
+                    rows: [row("note:visible")],
+                    policy: .initialRestore(maxVisibleCount: 10),
+                    attemptsReadMarkerAdvance: true
+                )
+            ) { draft in
+                #expect(draft.visibleItemKeys == ["note:visible"])
+                #expect(!draft.diagnostics.readMarkerChanged)
+            }
+        ]
+    }
+
     private func eventID(_ value: String) -> EventID {
         EventID(hex: value)
     }
@@ -1450,5 +1612,30 @@ struct TimelineRepositoryBoundaryContractTests {
         let decoded = try JSONDecoder().decode(T.self, from: data)
 
         #expect(decoded == value)
+    }
+
+    private struct RepositoryBoundaryIssueCoverageEntry {
+        var kind: TimelineRepositoryBoundaryIssue.Kind
+        var request: TimelineInitialWindowRequest
+        var expectedIssueKinds: Set<TimelineRepositoryBoundaryIssue.Kind>
+        var expectedItemKey: String?
+        var expectedEventID: EventID?
+        var validate: (TimelineInitialWindowDraft) -> Void
+
+        init(
+            kind: TimelineRepositoryBoundaryIssue.Kind,
+            request: TimelineInitialWindowRequest,
+            expectedIssueKinds: Set<TimelineRepositoryBoundaryIssue.Kind>? = nil,
+            expectedItemKey: String? = nil,
+            expectedEventID: EventID? = nil,
+            validate: @escaping (TimelineInitialWindowDraft) -> Void = { _ in }
+        ) {
+            self.kind = kind
+            self.request = request
+            self.expectedIssueKinds = expectedIssueKinds ?? [kind]
+            self.expectedItemKey = expectedItemKey
+            self.expectedEventID = expectedEventID
+            self.validate = validate
+        }
     }
 }
