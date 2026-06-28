@@ -356,7 +356,8 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
         let readState = try readState(
             db: db,
             feedID: request.feedID,
-            databaseAccountID: request.databaseAccountID
+            databaseAccountID: request.databaseAccountID,
+            issues: &issues
         )
         let visibleRows = try visibleRows(
             db: db,
@@ -427,6 +428,21 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
         feedID: Int64,
         databaseAccountID: Int64?
     ) throws -> TimelineRepositoryReadStateRow? {
+        var ignoredIssues: [TimelineRepositoryStoreIssue] = []
+        return try readState(
+            db: db,
+            feedID: feedID,
+            databaseAccountID: databaseAccountID,
+            issues: &ignoredIssues
+        )
+    }
+
+    private func readState(
+        db: Database,
+        feedID: Int64,
+        databaseAccountID: Int64?,
+        issues: inout [TimelineRepositoryStoreIssue]
+    ) throws -> TimelineRepositoryReadStateRow? {
         var arguments: StatementArguments = [feedID]
         var accountClause = ""
         if let databaseAccountID {
@@ -450,7 +466,7 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
             """,
             arguments: arguments
         )
-        return row.map(decodeReadStateRow)
+        return row.map { decodeReadStateRow($0, issues: &issues) }
     }
 
     private func decodeFeedItemRow(
@@ -470,6 +486,12 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
             return nil
         }
 
+        let sortAtValue: DatabaseValue = row["sort_at"]
+        guard let sortAt = Int64.fromDatabaseValue(sortAtValue) else {
+            issues.append(TimelineRepositoryStoreIssue(kind: .invalidSortKey, feedID: feedID, itemKey: itemKey))
+            return nil
+        }
+
         return TimelineRepositoryFeedItemRow(
             feedID: feedID,
             itemKey: itemKey,
@@ -477,7 +499,7 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
             subjectEventID: row["subject_event_id"],
             reason: reason,
             actorPubkey: row["actor_pubkey"],
-            sortAt: row["sort_at"],
+            sortAt: sortAt,
             tieBreakID: row["tie_break_id"],
             hiddenReason: row["hidden_reason"],
             collapsed: (row["collapsed"] as Int64) == 1,
@@ -487,16 +509,27 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
         )
     }
 
-    private func decodeReadStateRow(_ row: Row) -> TimelineRepositoryReadStateRow {
-        TimelineRepositoryReadStateRow(
+    private func decodeReadStateRow(
+        _ row: Row,
+        issues: inout [TimelineRepositoryStoreIssue]
+    ) -> TimelineRepositoryReadStateRow {
+        let feedID: Int64 = row["feed_id"]
+        let rawScrollAnchorItemKey: String? = row["scroll_anchor_item_key"]
+        let scrollAnchorItemKey = rawScrollAnchorItemKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasMalformedScrollAnchorItemKey = rawScrollAnchorItemKey != nil && (scrollAnchorItemKey?.isEmpty ?? true)
+        if hasMalformedScrollAnchorItemKey {
+            issues.append(TimelineRepositoryStoreIssue(kind: .malformedReadState, feedID: feedID))
+        }
+
+        return TimelineRepositoryReadStateRow(
             databaseAccountID: row["account_id"],
-            feedID: row["feed_id"],
+            feedID: feedID,
             markerSortAt: row["marker_sort_at"],
             markerEventID: row["marker_event_id"],
-            scrollAnchorItemKey: row["scroll_anchor_item_key"],
-            scrollAnchorEventID: row["scroll_anchor_event_id"],
-            scrollAnchorSortAt: row["scroll_anchor_sort_at"],
-            scrollAnchorTieBreakID: row["scroll_anchor_tie_break_id"],
+            scrollAnchorItemKey: hasMalformedScrollAnchorItemKey ? nil : rawScrollAnchorItemKey,
+            scrollAnchorEventID: hasMalformedScrollAnchorItemKey ? nil : row["scroll_anchor_event_id"],
+            scrollAnchorSortAt: hasMalformedScrollAnchorItemKey ? nil : row["scroll_anchor_sort_at"],
+            scrollAnchorTieBreakID: hasMalformedScrollAnchorItemKey ? nil : row["scroll_anchor_tie_break_id"],
             scrollAnchorOffsetPX: row["scroll_anchor_offset_px"],
             viewportHeightPX: row["viewport_height_px"],
             viewportWidthPX: row["viewport_width_px"],

@@ -213,12 +213,11 @@ struct TimelineRepositoryStoreReadOnlyTests {
         #expect(try fixture.readStateSnapshot() == beforeReadState)
     }
 
-    @Test("invalid persisted reason and invalid item key return typed issues")
-    func invalidPersistedReasonAndInvalidItemKeyReturnTypedIssues() async throws {
+    @Test("invalid persisted reason returns typed issue and no invalid DTO row")
+    func invalidPersistedReasonReturnsTypedIssueAndNoInvalidDTORow() async throws {
         let fixture = try TimelineRepositoryStoreFixtureDatabase()
         try fixture.seedFeedItems([
-            fixture.feedItem(itemKey: "note:valid", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a"),
-            fixture.feedItem(itemKey: "", sourceEventID: eventID("b"), sortAt: 20, tieBreakID: "b")
+            fixture.feedItem(itemKey: "note:valid", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a")
         ])
         try fixture.seedInvalidReasonItem(
             itemKey: "note:invalid-reason",
@@ -226,6 +225,8 @@ struct TimelineRepositoryStoreReadOnlyTests {
             reason: "unsupported"
         )
 
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
         let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
         let window = try await store.fetchInitialWindow(
             TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
@@ -233,13 +234,40 @@ struct TimelineRepositoryStoreReadOnlyTests {
         )
 
         #expect(window.rows.map(\.itemKey) == ["note:valid"])
-        #expect(window.issues.map(\.kind).contains(.invalidPersistedReason))
-        #expect(window.issues.map(\.kind).contains(.invalidItemKey))
+        assertIssue(window, kind: .invalidPersistedReason, itemKey: "note:invalid-reason")
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("invalid item key returns typed issue and no invalid DTO row")
+    func invalidItemKeyReturnsTypedIssueAndNoInvalidDTORow() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:valid", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a"),
+            fixture.feedItem(itemKey: "", sourceEventID: eventID("b"), sortAt: 20, tieBreakID: "b")
+        ])
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let window = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(window.rows.map(\.itemKey) == ["note:valid"])
+        assertIssue(window, kind: .invalidItemKey)
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
     }
 
     @Test("missing feed returns typed issue and empty initial window")
     func missingFeedReturnsTypedIssueAndEmptyInitialWindow() async throws {
         let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
         let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
 
         let window = try await store.fetchInitialWindow(
@@ -250,6 +278,173 @@ struct TimelineRepositoryStoreReadOnlyTests {
         #expect(window.rows.isEmpty)
         #expect(window.readState == nil)
         #expect(window.issues.map(\.kind) == [.missingFeed])
+        assertNegativeReadOnlyWindow(window, performedLocalDBRead: true)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("missing anchor returns typed issue and does not restore absent row")
+    func missingAnchorReturnsTypedIssueAndDoesNotRestoreAbsentRow() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:visible", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a")
+        ])
+        try fixture.seedReadState(scrollAnchorItemKey: "note:missing-anchor")
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let window = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(window.rows.map(\.itemKey) == ["note:visible"])
+        #expect(window.anchorItemKey == nil)
+        assertIssue(window, kind: .missingAnchor, itemKey: "note:missing-anchor")
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("hidden anchor returns typed issue and is not restored as visible")
+    func hiddenAnchorReturnsTypedIssueAndIsNotRestoredAsVisible() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:visible", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a"),
+            fixture.feedItem(
+                itemKey: "note:hidden-anchor",
+                sourceEventID: eventID("b"),
+                sortAt: 40,
+                tieBreakID: "b",
+                hiddenReason: "muted"
+            )
+        ])
+        try fixture.seedReadState(scrollAnchorItemKey: "note:hidden-anchor")
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let window = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(window.rows.map(\.itemKey) == ["note:visible"])
+        #expect(window.anchorItemKey == nil)
+        #expect(!window.rows.contains { $0.itemKey == "note:hidden-anchor" })
+        assertIssue(window, kind: .hiddenAnchor, itemKey: "note:hidden-anchor")
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("pending anchor returns typed issue unless explicit pending policy allows it")
+    func pendingAnchorReturnsTypedIssueUnlessExplicitPendingPolicyAllowsIt() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:visible", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a"),
+            fixture.feedItem(
+                itemKey: "note:pending-anchor",
+                sourceEventID: eventID("b"),
+                sortAt: 40,
+                tieBreakID: "b",
+                pendingNew: true
+            )
+        ])
+        try fixture.seedReadState(scrollAnchorItemKey: "note:pending-anchor")
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let defaultWindow = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+        let explicitPendingWindow = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .explicitUserPendingNew(itemKeys: ["note:pending-anchor"], maxVisibleCount: 10)
+        )
+
+        #expect(defaultWindow.rows.map(\.itemKey) == ["note:visible"])
+        #expect(defaultWindow.anchorItemKey == nil)
+        assertIssue(defaultWindow, kind: .pendingAnchor, itemKey: "note:pending-anchor")
+        assertNegativeReadOnlyWindow(defaultWindow)
+
+        #expect(explicitPendingWindow.rows.map(\.itemKey) == ["note:pending-anchor", "note:visible"])
+        #expect(explicitPendingWindow.anchorItemKey == "note:pending-anchor")
+        #expect(!explicitPendingWindow.issues.contains { $0.kind == .pendingAnchor })
+        assertNegativeReadOnlyWindow(explicitPendingWindow)
+
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("invalid sort key returns typed issue and no invalid DTO row")
+    func invalidSortKeyReturnsTypedIssueAndNoInvalidDTORow() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:valid", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a")
+        ])
+        try fixture.seedInvalidSortKeyItem(
+            itemKey: "note:invalid-sort",
+            sourceEventID: eventID("b"),
+            sortAtSQL: "'not-an-int'"
+        )
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let window = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(window.rows.map(\.itemKey) == ["note:valid"])
+        assertIssue(window, kind: .invalidSortKey, itemKey: "note:invalid-sort")
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("malformed read state returns typed issue and sanitized anchor fallback")
+    func malformedReadStateReturnsTypedIssueAndSanitizedAnchorFallback() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:visible", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a")
+        ])
+        try fixture.seedReadState(
+            scrollAnchorItemKey: "",
+            scrollAnchorEventID: eventID("b"),
+            scrollAnchorSortAt: 30,
+            scrollAnchorTieBreakID: "a",
+            markerEventID: eventID("a"),
+            markerSortAt: 30
+        )
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let window = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(window.rows.map(\.itemKey) == ["note:visible"])
+        #expect(window.anchorItemKey == nil)
+        #expect(window.readState?.scrollAnchorItemKey == nil)
+        assertIssue(window, kind: .malformedReadState)
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("issue coverage matrix covers every TimelineRepositoryStoreIssue kind")
+    func issueCoverageMatrixCoversEveryTimelineRepositoryStoreIssueKind() {
+        let entries = TimelineRepositoryStoreIssueCoverageEntry.all
+
+        #expect(Set(entries.map(\.kind)) == Set(TimelineRepositoryStoreIssue.Kind.allCases))
+        #expect(entries.allSatisfy { !$0.coverageName.isEmpty })
     }
 
     @Test("Core DTOs are Codable Equatable Sendable and do not import app TimelineEngine types")
@@ -280,13 +475,53 @@ struct TimelineRepositoryStoreReadOnlyTests {
         assertSendable(TimelineRepositoryStoreDiagnostics.self)
         assertSendable(TimelineRepositoryVisiblePolicy.self)
 
-        let source = try String(contentsOf: TimelineRepositoryStoreFixtureDatabase.storeSourceURL())
+        let source = try String(contentsOf: TimelineRepositoryStoreFixtureDatabase.storeSourceURL(), encoding: .utf8)
         #expect(!source.contains("TimelineEngineTypes"))
         #expect(!source.contains("TimelineRepositoryFeedItemDraftRow"))
         #expect(!source.contains("TimelineReadStateDraft"))
         #expect(!source.contains("TimelineEntryID"))
         #expect(!source.contains("import Astrenza"))
     }
+}
+
+private struct TimelineRepositoryStoreIssueCoverageEntry {
+    var kind: TimelineRepositoryStoreIssue.Kind
+    var coverageName: String
+
+    static let all: [TimelineRepositoryStoreIssueCoverageEntry] = [
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .missingFeed,
+            coverageName: "missingFeedReturnsTypedIssueAndEmptyInitialWindow"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .missingAnchor,
+            coverageName: "missingAnchorReturnsTypedIssueAndDoesNotRestoreAbsentRow"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .hiddenAnchor,
+            coverageName: "hiddenAnchorReturnsTypedIssueAndIsNotRestoredAsVisible"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .pendingAnchor,
+            coverageName: "pendingAnchorReturnsTypedIssueUnlessExplicitPendingPolicyAllowsIt"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .invalidPersistedReason,
+            coverageName: "invalidPersistedReasonReturnsTypedIssueAndNoInvalidDTORow"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .invalidItemKey,
+            coverageName: "invalidItemKeyReturnsTypedIssueAndNoInvalidDTORow"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .invalidSortKey,
+            coverageName: "invalidSortKeyReturnsTypedIssueAndNoInvalidDTORow"
+        ),
+        TimelineRepositoryStoreIssueCoverageEntry(
+            kind: .malformedReadState,
+            coverageName: "malformedReadStateReturnsTypedIssueAndSanitizedAnchorFallback"
+        )
+    ]
 }
 
 private final class TimelineRepositoryStoreFixtureDatabase {
@@ -376,6 +611,22 @@ private final class TimelineRepositoryStoreFixtureDatabase {
             );
             """)
             try database.exec("PRAGMA ignore_check_constraints = OFF;")
+        }
+    }
+
+    func seedInvalidSortKeyItem(itemKey: String, sourceEventID: String, sortAtSQL: String) throws {
+        try withDatabase { database in
+            try seedEventIfNeeded(sourceEventID, pubkey: pubkey("7"), database: database)
+            try database.exec("""
+            INSERT INTO feed_items (
+              feed_id, item_key, source_event_id, subject_event_id, reason,
+              actor_pubkey, sort_at, tie_break_id, hidden_reason, collapsed,
+              pending_new, inserted_at_ms, updated_at_ms
+            ) VALUES (
+              10, '\(Self.sql(itemKey))', '\(sourceEventID)', NULL, 'author',
+              '\(pubkey("7"))', \(sortAtSQL), 'invalid-sort', NULL, 0, 0, 1, 1
+            );
+            """)
         }
     }
 
@@ -518,7 +769,7 @@ private final class TimelineRepositoryStoreFixtureDatabase {
             let candidate = directory
                 .appendingPathComponent("Documents/Specifications/astrenza_local_db_schema_v0_2.sql")
             if FileManager.default.fileExists(atPath: candidate.path) {
-                return try String(contentsOf: candidate)
+                return try String(contentsOf: candidate, encoding: .utf8)
             }
             directory.deleteLastPathComponent()
         }
@@ -614,6 +865,28 @@ private struct SQLiteFixtureError: Error, CustomStringConvertible {
     init(_ description: String) {
         self.description = description
     }
+}
+
+private func assertIssue(
+    _ window: TimelineRepositoryInitialWindow,
+    kind: TimelineRepositoryStoreIssue.Kind,
+    itemKey: String? = nil
+) {
+    #expect(window.issues.contains { issue in
+        issue.kind == kind && (itemKey == nil || issue.itemKey == itemKey)
+    })
+}
+
+private func assertNegativeReadOnlyWindow(
+    _ window: TimelineRepositoryInitialWindow,
+    performedLocalDBRead: Bool = true
+) {
+    #expect(window.diagnostics.readMarkerChanged == false)
+    #expect(window.diagnostics.requiresNetworkWork == false)
+    #expect(window.diagnostics.requiresExternalMutation == false)
+    #expect(window.diagnostics.performedLocalDBRead == performedLocalDBRead)
+    #expect(window.diagnostics.resolveJobRowCount == 0)
+    #expect(window.diagnostics.diagnosticRowCount == 0)
 }
 
 private func eventID(_ seed: Character) -> String {
