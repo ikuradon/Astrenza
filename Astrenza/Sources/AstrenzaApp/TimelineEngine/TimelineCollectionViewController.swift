@@ -2,6 +2,13 @@ import DesignSystem
 import SwiftUI
 import UIKit
 
+struct TimelineCollectionViewControllerSurfaceState: Equatable, Sendable {
+    var isViewLoaded: Bool
+    var hasCollectionView: Bool
+    var isAttachedToWindow: Bool
+    var itemIDs: [TimelineEntryID]
+}
+
 @MainActor
 final class TimelineCollectionViewController: UIViewController {
     private let accountID: AccountID
@@ -51,6 +58,15 @@ final class TimelineCollectionViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable for TimelineCollectionViewController")
+    }
+
+    var surfaceState: TimelineCollectionViewControllerSurfaceState {
+        TimelineCollectionViewControllerSurfaceState(
+            isViewLoaded: isViewLoaded,
+            hasCollectionView: collectionView != nil,
+            isAttachedToWindow: viewIfLoaded?.window != nil,
+            itemIDs: snapshotCoordinator?.currentItemIDs ?? pendingItemIDs
+        )
     }
 
     override func viewDidLoad() {

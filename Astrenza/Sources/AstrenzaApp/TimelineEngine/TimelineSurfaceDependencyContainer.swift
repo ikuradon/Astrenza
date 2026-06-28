@@ -1,4 +1,5 @@
 import AstrenzaCore
+import DesignSystem
 import Foundation
 
 protocol TimelineRepositoryStoreWindowComposing: Sendable {
@@ -166,6 +167,23 @@ struct TimelineSurfaceDependencyContainer: Sendable {
         initialRestore.makePlan(
             composition: composition,
             requestedAnchorItemKey: requestedAnchorItemKey
+        )
+    }
+
+    @MainActor
+    func makeController(
+        for plan: TimelineInitialRestorePlan,
+        accountID: AccountID = .debug,
+        feedID: FeedID = .debugHome,
+        timelineKey: TimelineKey = .home,
+        theme: AppTheme = .system
+    ) -> TimelineCollectionViewController {
+        TimelineCollectionViewController(
+            accountID: accountID,
+            feedID: feedID,
+            timelineKey: timelineKey,
+            initialItemIDs: plan.snapshotPlan.itemIDs,
+            theme: theme
         )
     }
 }
