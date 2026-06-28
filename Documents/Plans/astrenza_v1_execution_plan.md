@@ -1,7 +1,7 @@
 # Astrenza v1 Execution Plan
 
-Status: Phase 0/1 complete; Phase 5 scaffold complete; Phase 6 fixture contracts mostly complete; Phase 4 DB/read-state bridge audit is the next priority.
-Updated: 2026-06-27
+Status: Phase 0/1 complete; Phase 5 scaffold complete; Phase 6 fixture contracts mostly complete; Phase 4 DB/read-state bridge promotion boundary is the next priority.
+Updated: 2026-06-28
 Scope: living planning and audit document. This plan does not authorize production DB wiring, production Home Timeline wiring, SQL schema changes, or legacy SwiftUI Timeline extension by itself.
 
 ## Current Repo State Summary
@@ -23,7 +23,7 @@ Scope: living planning and audit document. This plan does not authorize producti
 - Phase 5 TimelineEngine scaffold is complete enough for offline scaffold tests: `TimelineSurface`, `TimelineCollectionViewController`, diffable data source, snapshot coordinator, position recorder, visible range tracker, prefetch coordinator, and diagnostics recorder exist under `Astrenza/Sources/AstrenzaApp/TimelineEngine`. It is not wired into production Home.
 - Phase 6 row-state / projection / resolve apply contracts are mostly complete for fixture-backed offline work: `TimelineEntryViewState`, row projection boundary, resolve apply expectations, resolve snapshot diagnostics, and `ResolveCoordinatorBoundary` fake boundary tests exist. A real DB-backed `ResolveCoordinator` actor and resolver runtime are still intentionally absent.
 - Phase 7 diagnostics / restore gate / artifact contracts are complete enough for the offline phase: `TimelineDiagnosticsExport`, restore gate budget tests, and `Documents/Plans/timeline_diagnostics_artifact_contract.md` exist. Production root shell restore integration and E2E coverage remain pending.
-- Phase 4 DB/read-state bridge is now the next priority. `Documents/Specifications/astrenza_local_db_schema_v0_2.sql` remains the source-of-truth schema and should not be changed yet. Current `Packages/AstrenzaCore/Sources/AstrenzaCore/NostrEventStore.swift` still uses `timeline_entries`, so real DB-backed Timeline and ResolveCoordinator work must wait for a bridge/adaptor decision.
+- Phase 4 DB/read-state bridge is now the next priority. `Documents/Specifications/astrenza_local_db_schema_v0_2.sql` remains the source-of-truth schema and should not be changed yet. Current `Packages/AstrenzaCore/Sources/AstrenzaCore/NostrEventStore.swift` still uses `timeline_entries`, so real DB-backed Timeline and ResolveCoordinator work must wait for the core/store-owned read-only boundary in `Documents/Plans/timeline_repository_adapter_promotion_adr.md`.
 
 ## Source-Of-Truth Hierarchy
 
@@ -136,13 +136,14 @@ Likely test commands:
 
 ## Phase 4: Home Feed / Read-State Audit Against v0.2 Schema
 
-Status: Next priority. The audit is documented in `Documents/Plans/timeline_db_bridge_audit.md`, the future adapter decision plan is documented in `Documents/Plans/timeline_repository_db_adapter_adr.md`, and quote feed-item materialization policy is documented in `Documents/Plans/timeline_quote_materialization_adr.md`; no production DB adapter, SQL schema change, migration, or dual-write is authorized yet.
+Status: Next priority. The audit is documented in `Documents/Plans/timeline_db_bridge_audit.md`, the future adapter decision plan is documented in `Documents/Plans/timeline_repository_db_adapter_adr.md`, quote feed-item materialization policy is documented in `Documents/Plans/timeline_quote_materialization_adr.md`, and the production promotion boundary is documented in `Documents/Plans/timeline_repository_adapter_promotion_adr.md`; no production DB adapter, SQL schema change, migration, Home wiring, or dual-write is authorized yet.
 
 Deliverables:
 - Gap analysis between current `NostrEventStore`/timeline entries and v0.2 `feeds`, `feed_items`, `feed_read_state`, `resolve_jobs`, and diagnostics schema.
 - Decision record for whether to migrate current `timeline_entries` into `feed_items` or maintain a temporary adapter.
 - ADR for a future real `TimelineRepositoryDBAdapter` that reads existing `feed_items` / `feed_read_state` without changing schema.
 - ADR for quote materialization policy before any production DB adapter promotion or Home feed materializer write path.
+- ADR for the promotion boundary: keep the test-private SQLite adapter test-only and define a core/store-owned read-only `TimelineRepositoryStore` boundary before any production adapter implementation.
 - Read marker vs scroll anchor audit and tests.
 - A no-schema-change bridge note stating that v0.2 schema remains source-of-truth and current `NostrEventStore` still uses `timeline_entries`.
 
@@ -258,4 +259,4 @@ Likely test commands:
 
 ## Immediate Next Task
 
-Close Phase 4 with a narrow read-only adapter slice before any production Home or ResolveCoordinator work. Use `Documents/Plans/timeline_repository_db_adapter_adr.md` as the adapter boundary and `Documents/Plans/timeline_quote_materialization_adr.md` as the quote materialization boundary: start with fixture-backed SQLite/GRDB tests against existing `feed_items` / `feed_read_state`, keep schema and migration files unchanged, preserve the current source-model contracts as the parity baseline, and do not promote production feed writes until Home quote dedupe and specialized `reason = quote` feeds are contract-tested.
+Close Phase 4 with a narrow core/store-owned read-only repository boundary before any production Home or ResolveCoordinator work. Use `Documents/Plans/timeline_repository_db_adapter_adr.md` as the adapter behavior boundary, `Documents/Plans/timeline_quote_materialization_adr.md` as the quote materialization boundary, and `Documents/Plans/timeline_repository_adapter_promotion_adr.md` as the production promotion boundary: define a `TimelineRepositoryStore`-style read-only boundary in Core/Store first, keep the current SQLite adapter test-only until GRDB/DDL parity is proven, keep schema and migration files unchanged, preserve the current source-model contracts as the parity baseline, and do not promote production feed writes until Home quote dedupe and specialized `reason = quote` feeds are contract-tested.

@@ -2,13 +2,15 @@
 
 Status: accepted for future implementation planning
 Updated: 2026-06-27
-Scope: docs-only ADR and implementation plan. This document does not authorize production DB adapter code, SQL schema changes, DB migrations, production Home Timeline wiring, legacy SwiftUI Timeline changes, a real `ResolveCoordinator` actor, URLSession/WebSocket/relay/media/OGP resolver startup, external telemetry, debug-screen exposure, production diagnostics upload, or GitHub Actions changes.
+Scope: docs-only ADR and implementation plan. This document does not authorize production DB adapter code, DB write paths, SQL schema changes, DB migrations, production Home Timeline wiring, legacy SwiftUI Timeline changes, a real `ResolveCoordinator` actor, URLSession/WebSocket/relay/media/OGP resolver startup, external telemetry, debug-screen exposure, production diagnostics upload, or GitHub Actions changes.
+Follow-up boundary: `Documents/Plans/timeline_repository_adapter_promotion_adr.md` decides that the current test-private SQLite adapter should not be copied into `TimelineEngine`; the first production promotion boundary should be a core/store-owned read-only `TimelineRepositoryStore` boundary.
 
 ## Decision Summary
 
 - Schema v0.2 remains unchanged.
 - No migration is approved yet.
-- The future real adapter will read and write the existing v0.2 `feed_items` and `feed_read_state` tables.
+- The first future real adapter slice will read the existing v0.2 `feed_items` and `feed_read_state` tables only.
+- Any future write adapter, feed materialization write path, read marker write path, anchor persistence write path, diagnostics persistence write path, dual-write, backfill, or migration execution requires a separate ADR and test plan.
 - The current `timeline_entries` path remains a legacy/bridge source until a real adapter, temporary adapter, or dual-write decision is implemented.
 - The immediate next implementation after this ADR is still a narrow `TimelineRepositoryDBAdapter` slice against controlled data, not production Home wiring.
 - Diagnostics for this slice must remain offline, redacted, artifact-only where exported, and covered by the diagnostics artifact guard when JSON shape or fixtures change.
@@ -154,6 +156,7 @@ Future real DB adapter work must add or update focused tests for:
 
 A future DB adapter PR still must not:
 
+- add DB write paths, including feed materialization writes, read marker writes, anchor persistence writes, diagnostics persistence writes, `resolve_jobs` writes, dual-write, backfill, or production migration execution;
 - wire production Home;
 - modify legacy SwiftUI Timeline;
 - implement a real `ResolveCoordinator` actor;
