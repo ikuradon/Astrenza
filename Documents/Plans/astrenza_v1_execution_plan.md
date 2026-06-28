@@ -162,12 +162,13 @@ Likely test commands:
 
 ## Phase 5: UICollectionView TimelineEngine Scaffold
 
-Status: Scaffold complete for offline tests. Production Home wiring is still blocked until Phase 4 bridge and restore/read-state boundaries are closed.
+Status: Scaffold complete for offline tests. Production Home wiring is still blocked until Phase 4 bridge and restore/read-state boundaries are closed. The future Home wiring strategy is documented in `Documents/Plans/timeline_home_wiring_adr.md`; it is docs-only and does not authorize production wiring.
 
 Deliverables:
 - New TimelineEngine scaffold separate from legacy SwiftUI Timeline path.
 - `TimelineSurface` bridge, `TimelineCollectionViewController`, `UICollectionViewDiffableDataSource`, `CellRegistration`, and `UIHostingConfiguration` row body.
 - `TimelineSnapshotCoordinator`, `TimelinePositionRecorder`, `TimelineVisibleRangeTracker`, `TimelinePrefetchCoordinator`, and diagnostics hooks.
+- ADR for future production Home wiring of the read-only restore pipeline, feature flag, rollback, and validation gates.
 
 Acceptance criteria:
 - Snapshot items are stable `TimelineEntryID` values only.
@@ -205,7 +206,7 @@ Likely test commands:
 
 ## Phase 7: Launch Restore Gate And No-Network-Wait E2E
 
-Status: Offline diagnostics and artifact contracts are complete enough for planning. Production root shell restore gate wiring, DB-backed local query integration, and E2E coverage remain pending.
+Status: Offline diagnostics and artifact contracts are complete enough for planning. Production root shell restore gate wiring, DB-backed local query integration, and E2E coverage remain pending. `Documents/Plans/timeline_home_wiring_adr.md` records the root-shell and Timeline-area restore-gate separation required before collection view Home rollout.
 
 Deliverables:
 - Root shell first-paint policy separated from Timeline restore gate.
