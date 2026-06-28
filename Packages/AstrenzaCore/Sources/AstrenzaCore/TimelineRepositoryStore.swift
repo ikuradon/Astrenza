@@ -365,12 +365,15 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
             policy: policy,
             issues: &issues
         )
-        let anchorItemKey = request.anchorItemKey ?? readState?.scrollAnchorItemKey
-        if let anchorItemKey, !visibleRows.contains(where: { $0.itemKey == anchorItemKey }) {
-            if let issue = try anchorIssue(db: db, feedID: request.feedID, itemKey: anchorItemKey, policy: policy) {
-                issues.append(issue)
-            }
-        }
+        let anchorItemKey = try selectedAnchorItemKey(
+            db: db,
+            feedID: request.feedID,
+            requestAnchorItemKey: request.anchorItemKey,
+            readState: readState,
+            visibleRows: visibleRows,
+            policy: policy,
+            issues: &issues
+        )
 
         let rows = limitedRows(visibleRows, anchorItemKey: anchorItemKey, maxCount: policy.maxVisibleCount)
         return TimelineRepositoryInitialWindow(
@@ -387,6 +390,97 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
                 readStatePresent: readState != nil
             )
         )
+    }
+
+    private func selectedAnchorItemKey(
+        db: Database,
+        feedID: Int64,
+        requestAnchorItemKey: String?,
+        readState: TimelineRepositoryReadStateRow?,
+        visibleRows: [TimelineRepositoryFeedItemRow],
+        policy: TimelineRepositoryVisiblePolicy,
+        issues: inout [TimelineRepositoryStoreIssue]
+    ) throws -> String? {
+        guard !visibleRows.isEmpty else {
+            return nil
+        }
+
+        if let requestAnchorItemKey {
+            if visibleRows.contains(where: { $0.itemKey == requestAnchorItemKey }) {
+                return requestAnchorItemKey
+            }
+            if let issue = try anchorIssue(db: db, feedID: feedID, itemKey: requestAnchorItemKey, policy: policy) {
+                issues.append(issue)
+                guard issue.kind == .missingAnchor else {
+                    return nil
+                }
+            }
+            return fallbackAnchorItemKey(readState: readState, visibleRows: visibleRows)
+        }
+
+        if let scrollAnchorItemKey = readState?.scrollAnchorItemKey {
+            if visibleRows.contains(where: { $0.itemKey == scrollAnchorItemKey }) {
+                return scrollAnchorItemKey
+            }
+            if let issue = try anchorIssue(db: db, feedID: feedID, itemKey: scrollAnchorItemKey, policy: policy) {
+                issues.append(issue)
+                guard issue.kind == .missingAnchor else {
+                    return nil
+                }
+            }
+        }
+
+        return fallbackAnchorItemKey(readState: readState, visibleRows: visibleRows)
+    }
+
+    private func fallbackAnchorItemKey(
+        readState: TimelineRepositoryReadStateRow?,
+        visibleRows: [TimelineRepositoryFeedItemRow]
+    ) -> String? {
+        guard !visibleRows.isEmpty else {
+            return nil
+        }
+
+        if let scrollAnchorEventID = readState?.scrollAnchorEventID,
+           let row = visibleRows.first(where: { matchesEventID($0, eventID: scrollAnchorEventID) }) {
+            return row.itemKey
+        }
+
+        if let markerEventID = readState?.markerEventID,
+           let row = visibleRows.first(where: { matchesEventID($0, eventID: markerEventID) }) {
+            return row.itemKey
+        }
+
+        if let markerSortAt = readState?.markerSortAt,
+           let row = visibleRows.min(by: { lhs, rhs in
+               let lhsDistance = abs(Double(lhs.sortAt) - Double(markerSortAt))
+               let rhsDistance = abs(Double(rhs.sortAt) - Double(markerSortAt))
+               if lhsDistance != rhsDistance {
+                   return lhsDistance < rhsDistance
+               }
+               return rowSort(lhs: lhs, rhs: rhs)
+           }) {
+            return row.itemKey
+        }
+
+        if let lastVisibleTopID = readState?.lastVisibleTopID,
+           visibleRows.contains(where: { $0.itemKey == lastVisibleTopID }) {
+            return lastVisibleTopID
+        }
+
+        if let lastVisibleBottomID = readState?.lastVisibleBottomID,
+           visibleRows.contains(where: { $0.itemKey == lastVisibleBottomID }) {
+            return lastVisibleBottomID
+        }
+
+        return visibleRows.first?.itemKey
+    }
+
+    private func matchesEventID(
+        _ row: TimelineRepositoryFeedItemRow,
+        eventID: String
+    ) -> Bool {
+        row.sourceEventID == eventID || row.subjectEventID == eventID
     }
 
     private func feedExists(db: Database, feedID: Int64) throws -> Bool {
@@ -638,8 +732,19 @@ public final class GRDBTimelineRepositoryStore: TimelineRepositoryStore, @unchec
             return Array(rows.prefix(maxCount))
         }
 
-        let start = min(max(0, anchorIndex), max(0, rows.count - maxCount))
+        let halfWindow = maxCount / 2
+        let start = min(max(0, anchorIndex - halfWindow), max(0, rows.count - maxCount))
         return Array(rows[start..<min(rows.count, start + maxCount)])
+    }
+
+    private func rowSort(
+        lhs: TimelineRepositoryFeedItemRow,
+        rhs: TimelineRepositoryFeedItemRow
+    ) -> Bool {
+        if lhs.sortAt != rhs.sortAt {
+            return lhs.sortAt > rhs.sortAt
+        }
+        return lhs.tieBreakID < rhs.tieBreakID
     }
 
     private func visiblePredicate(

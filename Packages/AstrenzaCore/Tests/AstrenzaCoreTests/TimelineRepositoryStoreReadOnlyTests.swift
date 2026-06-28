@@ -283,8 +283,8 @@ struct TimelineRepositoryStoreReadOnlyTests {
         #expect(try fixture.readStateSnapshot() == beforeReadState)
     }
 
-    @Test("missing anchor returns typed issue and does not restore absent row")
-    func missingAnchorReturnsTypedIssueAndDoesNotRestoreAbsentRow() async throws {
+    @Test("missing anchor returns typed issue and falls back to newest visible row")
+    func missingAnchorReturnsTypedIssueAndFallsBackToNewestVisibleRow() async throws {
         let fixture = try TimelineRepositoryStoreFixtureDatabase()
         try fixture.seedFeedItems([
             fixture.feedItem(itemKey: "note:visible", sourceEventID: eventID("a"), sortAt: 30, tieBreakID: "a")
@@ -300,7 +300,7 @@ struct TimelineRepositoryStoreReadOnlyTests {
         )
 
         #expect(window.rows.map(\.itemKey) == ["note:visible"])
-        #expect(window.anchorItemKey == nil)
+        #expect(window.anchorItemKey == "note:visible")
         assertIssue(window, kind: .missingAnchor, itemKey: "note:missing-anchor")
         assertNegativeReadOnlyWindow(window)
         #expect(try fixture.auditCounts() == before)
@@ -380,6 +380,305 @@ struct TimelineRepositoryStoreReadOnlyTests {
         #expect(try fixture.readStateSnapshot() == beforeReadState)
     }
 
+    @Test("anchor window returns anchor with newer and older side rows")
+    func anchorWindowReturnsAnchorWithNewerAndOlderSideRows() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:newest", sourceEventID: eventID("a"), sortAt: 500, tieBreakID: "a"),
+            fixture.feedItem(itemKey: "note:newer", sourceEventID: eventID("b"), sortAt: 400, tieBreakID: "b"),
+            fixture.feedItem(itemKey: "note:anchor", sourceEventID: eventID("c"), sortAt: 300, tieBreakID: "c"),
+            fixture.feedItem(itemKey: "note:older", sourceEventID: eventID("d"), sortAt: 200, tieBreakID: "d"),
+            fixture.feedItem(itemKey: "note:oldest", sourceEventID: eventID("e"), sortAt: 100, tieBreakID: "e")
+        ])
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let window = try await store.fetchAnchorWindow(
+            feedID: 10,
+            anchorItemKey: "note:anchor",
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+
+        #expect(window.rows.map(\.itemKey) == [
+            "note:newer",
+            "note:anchor",
+            "note:older"
+        ])
+        #expect(window.anchorItemKey == "note:anchor")
+        #expect(window.rows.contains { $0.itemKey == "note:anchor" })
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("same sort anchor window uses tie break strict side ordering")
+    func sameSortAnchorWindowUsesTieBreakStrictSideOrdering() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        try fixture.seedFeedItems([
+            fixture.feedItem(itemKey: "note:same-a", sourceEventID: eventID("a"), sortAt: 100, tieBreakID: "a"),
+            fixture.feedItem(itemKey: "note:same-b", sourceEventID: eventID("b"), sortAt: 100, tieBreakID: "b"),
+            fixture.feedItem(itemKey: "note:same-c", sourceEventID: eventID("c"), sortAt: 100, tieBreakID: "c"),
+            fixture.feedItem(itemKey: "note:same-d", sourceEventID: eventID("d"), sortAt: 100, tieBreakID: "d")
+        ])
+
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+        let anchorBWindow = try await store.fetchAnchorWindow(
+            feedID: 10,
+            anchorItemKey: "note:same-b",
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+        let anchorCWindow = try await store.fetchAnchorWindow(
+            feedID: 10,
+            anchorItemKey: "note:same-c",
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+
+        #expect(anchorBWindow.rows.map(\.itemKey) == [
+            "note:same-a",
+            "note:same-b",
+            "note:same-c"
+        ])
+        #expect(anchorBWindow.anchorItemKey == "note:same-b")
+        #expect(anchorCWindow.rows.map(\.itemKey) == [
+            "note:same-b",
+            "note:same-c",
+            "note:same-d"
+        ])
+        #expect(anchorCWindow.anchorItemKey == "note:same-c")
+        assertNegativeReadOnlyWindow(anchorBWindow)
+        assertNegativeReadOnlyWindow(anchorCWindow)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
+    @Test("missing requested anchor falls back to marker then newest without read marker mutation")
+    func missingRequestedAnchorFallsBackToMarkerThenNewestWithoutReadMarkerMutation() async throws {
+        let markerFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try markerFixture.seedFeedItems([
+            markerFixture.feedItem(itemKey: "note:newest", sourceEventID: eventID("a"), sortAt: 300, tieBreakID: "a"),
+            markerFixture.feedItem(itemKey: "note:marker", sourceEventID: eventID("b"), sortAt: 200, tieBreakID: "b"),
+            markerFixture.feedItem(itemKey: "note:older", sourceEventID: eventID("c"), sortAt: 100, tieBreakID: "c")
+        ])
+        try markerFixture.seedReadState(
+            scrollAnchorItemKey: "note:missing-anchor",
+            markerEventID: eventID("b"),
+            markerSortAt: 200
+        )
+
+        let markerBefore = try markerFixture.auditCounts()
+        let markerReadStateBefore = try markerFixture.readStateSnapshot()
+        let markerStore = try GRDBTimelineRepositoryStore(databasePath: markerFixture.path)
+        let markerWindow = try await markerStore.fetchInitialWindow(
+            TimelineRepositoryReadRequest(
+                feedID: 10,
+                databaseAccountID: 1,
+                anchorItemKey: "note:requested-missing"
+            ),
+            policy: .initialRestore(maxVisibleCount: 3)
+        )
+
+        #expect(markerWindow.anchorItemKey == "note:marker")
+        #expect(markerWindow.rows.map(\.itemKey) == [
+            "note:newest",
+            "note:marker",
+            "note:older"
+        ])
+        assertIssue(markerWindow, kind: .missingAnchor, itemKey: "note:requested-missing")
+        assertNegativeReadOnlyWindow(markerWindow)
+        #expect(try markerFixture.auditCounts() == markerBefore)
+        #expect(try markerFixture.readStateSnapshot() == markerReadStateBefore)
+
+        let newestFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try newestFixture.seedFeedItems([
+            newestFixture.feedItem(itemKey: "note:newest", sourceEventID: eventID("d"), sortAt: 300, tieBreakID: "a"),
+            newestFixture.feedItem(itemKey: "note:older", sourceEventID: eventID("e"), sortAt: 100, tieBreakID: "b")
+        ])
+
+        let newestBefore = try newestFixture.auditCounts()
+        let newestReadStateBefore = try newestFixture.readStateSnapshot()
+        let newestStore = try GRDBTimelineRepositoryStore(databasePath: newestFixture.path)
+        let newestWindow = try await newestStore.fetchInitialWindow(
+            TimelineRepositoryReadRequest(
+                feedID: 10,
+                databaseAccountID: 1,
+                anchorItemKey: "note:requested-missing"
+            ),
+            policy: .initialRestore(maxVisibleCount: 2)
+        )
+
+        #expect(newestWindow.anchorItemKey == "note:newest")
+        #expect(newestWindow.rows.map(\.itemKey) == ["note:newest", "note:older"])
+        assertIssue(newestWindow, kind: .missingAnchor, itemKey: "note:requested-missing")
+        assertNegativeReadOnlyWindow(newestWindow)
+        #expect(try newestFixture.auditCounts() == newestBefore)
+        #expect(try newestFixture.readStateSnapshot() == newestReadStateBefore)
+    }
+
+    @Test("read state fallback order uses scroll event marker sort last visible and newest")
+    func readStateFallbackOrderUsesScrollEventMarkerSortLastVisibleAndNewest() async throws {
+        let scrollEventFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try scrollEventFixture.seedFeedItems([
+            scrollEventFixture.feedItem(itemKey: "note:top", sourceEventID: eventID("a"), sortAt: 300, tieBreakID: "a"),
+            scrollEventFixture.feedItem(
+                itemKey: "note:scroll-event",
+                sourceEventID: eventID("b"),
+                subjectEventID: eventID("s"),
+                sortAt: 200,
+                tieBreakID: "b"
+            ),
+            scrollEventFixture.feedItem(itemKey: "note:bottom", sourceEventID: eventID("c"), sortAt: 100, tieBreakID: "c")
+        ])
+        try scrollEventFixture.seedReadState(
+            scrollAnchorItemKey: nil,
+            scrollAnchorEventID: eventID("s"),
+            markerEventID: eventID("c"),
+            markerSortAt: 100
+        )
+        let scrollEventBefore = try scrollEventFixture.auditCounts()
+        let scrollEventReadStateBefore = try scrollEventFixture.readStateSnapshot()
+        let scrollEventWindow = try await GRDBTimelineRepositoryStore(databasePath: scrollEventFixture.path)
+            .fetchInitialWindow(
+                TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )
+        #expect(scrollEventWindow.anchorItemKey == "note:scroll-event")
+        assertNegativeReadOnlyWindow(scrollEventWindow)
+        #expect(try scrollEventFixture.auditCounts() == scrollEventBefore)
+        #expect(try scrollEventFixture.readStateSnapshot() == scrollEventReadStateBefore)
+
+        let markerEventFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try markerEventFixture.seedFeedItems([
+            markerEventFixture.feedItem(itemKey: "note:top", sourceEventID: eventID("d"), sortAt: 300, tieBreakID: "a"),
+            markerEventFixture.feedItem(itemKey: "note:marker-event", sourceEventID: eventID("m"), sortAt: 200, tieBreakID: "b"),
+            markerEventFixture.feedItem(itemKey: "note:bottom", sourceEventID: eventID("e"), sortAt: 100, tieBreakID: "c")
+        ])
+        try markerEventFixture.seedReadState(
+            scrollAnchorItemKey: nil,
+            scrollAnchorEventID: eventID("x"),
+            markerEventID: eventID("m"),
+            markerSortAt: 100
+        )
+        let markerEventBefore = try markerEventFixture.auditCounts()
+        let markerEventReadStateBefore = try markerEventFixture.readStateSnapshot()
+        let markerEventWindow = try await GRDBTimelineRepositoryStore(databasePath: markerEventFixture.path)
+            .fetchInitialWindow(
+                TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )
+        #expect(markerEventWindow.anchorItemKey == "note:marker-event")
+        assertNegativeReadOnlyWindow(markerEventWindow)
+        #expect(try markerEventFixture.auditCounts() == markerEventBefore)
+        #expect(try markerEventFixture.readStateSnapshot() == markerEventReadStateBefore)
+
+        let markerSortFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try markerSortFixture.seedFeedItems([
+            markerSortFixture.feedItem(itemKey: "note:top", sourceEventID: eventID("f"), sortAt: 300, tieBreakID: "a"),
+            markerSortFixture.feedItem(itemKey: "note:nearest", sourceEventID: eventID("g"), sortAt: 220, tieBreakID: "b"),
+            markerSortFixture.feedItem(itemKey: "note:bottom", sourceEventID: eventID("h"), sortAt: 100, tieBreakID: "c")
+        ])
+        try markerSortFixture.seedReadState(
+            scrollAnchorItemKey: nil,
+            markerSortAt: 230,
+            lastVisibleTopID: "note:bottom"
+        )
+        let markerSortBefore = try markerSortFixture.auditCounts()
+        let markerSortReadStateBefore = try markerSortFixture.readStateSnapshot()
+        let markerSortWindow = try await GRDBTimelineRepositoryStore(databasePath: markerSortFixture.path)
+            .fetchInitialWindow(
+                TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )
+        #expect(markerSortWindow.anchorItemKey == "note:nearest")
+        assertNegativeReadOnlyWindow(markerSortWindow)
+        #expect(try markerSortFixture.auditCounts() == markerSortBefore)
+        #expect(try markerSortFixture.readStateSnapshot() == markerSortReadStateBefore)
+
+        let lastVisibleFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try lastVisibleFixture.seedFeedItems([
+            lastVisibleFixture.feedItem(itemKey: "note:top", sourceEventID: eventID("i"), sortAt: 300, tieBreakID: "a"),
+            lastVisibleFixture.feedItem(itemKey: "note:last-top", sourceEventID: eventID("j"), sortAt: 200, tieBreakID: "b"),
+            lastVisibleFixture.feedItem(itemKey: "note:last-bottom", sourceEventID: eventID("k"), sortAt: 100, tieBreakID: "c")
+        ])
+        try lastVisibleFixture.seedReadState(
+            scrollAnchorItemKey: nil,
+            lastVisibleTopID: "note:last-top",
+            lastVisibleBottomID: "note:last-bottom"
+        )
+        let lastVisibleBefore = try lastVisibleFixture.auditCounts()
+        let lastVisibleReadStateBefore = try lastVisibleFixture.readStateSnapshot()
+        let lastVisibleWindow = try await GRDBTimelineRepositoryStore(databasePath: lastVisibleFixture.path)
+            .fetchInitialWindow(
+                TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+                policy: .initialRestore(maxVisibleCount: 3)
+            )
+        #expect(lastVisibleWindow.anchorItemKey == "note:last-top")
+        assertNegativeReadOnlyWindow(lastVisibleWindow)
+        #expect(try lastVisibleFixture.auditCounts() == lastVisibleBefore)
+        #expect(try lastVisibleFixture.readStateSnapshot() == lastVisibleReadStateBefore)
+
+        let lastVisibleBottomFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try lastVisibleBottomFixture.seedFeedItems([
+            lastVisibleBottomFixture.feedItem(itemKey: "note:top", sourceEventID: eventID("o"), sortAt: 300, tieBreakID: "a"),
+            lastVisibleBottomFixture.feedItem(itemKey: "note:last-bottom", sourceEventID: eventID("p"), sortAt: 100, tieBreakID: "b")
+        ])
+        try lastVisibleBottomFixture.seedReadState(
+            scrollAnchorItemKey: nil,
+            lastVisibleTopID: "note:missing-top",
+            lastVisibleBottomID: "note:last-bottom"
+        )
+        let lastVisibleBottomBefore = try lastVisibleBottomFixture.auditCounts()
+        let lastVisibleBottomReadStateBefore = try lastVisibleBottomFixture.readStateSnapshot()
+        let lastVisibleBottomWindow = try await GRDBTimelineRepositoryStore(databasePath: lastVisibleBottomFixture.path)
+            .fetchInitialWindow(
+                TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+                policy: .initialRestore(maxVisibleCount: 2)
+            )
+        #expect(lastVisibleBottomWindow.anchorItemKey == "note:last-bottom")
+        assertNegativeReadOnlyWindow(lastVisibleBottomWindow)
+        #expect(try lastVisibleBottomFixture.auditCounts() == lastVisibleBottomBefore)
+        #expect(try lastVisibleBottomFixture.readStateSnapshot() == lastVisibleBottomReadStateBefore)
+
+        let newestFixture = try TimelineRepositoryStoreFixtureDatabase()
+        try newestFixture.seedFeedItems([
+            newestFixture.feedItem(itemKey: "note:newest", sourceEventID: eventID("l"), sortAt: 300, tieBreakID: "a"),
+            newestFixture.feedItem(itemKey: "note:older", sourceEventID: eventID("n"), sortAt: 200, tieBreakID: "b")
+        ])
+        let newestBefore = try newestFixture.auditCounts()
+        let newestReadStateBefore = try newestFixture.readStateSnapshot()
+        let newestWindow = try await GRDBTimelineRepositoryStore(databasePath: newestFixture.path)
+            .fetchInitialWindow(
+                TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+                policy: .initialRestore(maxVisibleCount: 2)
+            )
+        #expect(newestWindow.anchorItemKey == "note:newest")
+        assertNegativeReadOnlyWindow(newestWindow)
+        #expect(try newestFixture.auditCounts() == newestBefore)
+        #expect(try newestFixture.readStateSnapshot() == newestReadStateBefore)
+    }
+
+    @Test("empty feed returns empty read-only window without crashing")
+    func emptyFeedReturnsEmptyReadOnlyWindowWithoutCrashing() async throws {
+        let fixture = try TimelineRepositoryStoreFixtureDatabase()
+        let before = try fixture.auditCounts()
+        let beforeReadState = try fixture.readStateSnapshot()
+        let store = try GRDBTimelineRepositoryStore(databasePath: fixture.path)
+
+        let window = try await store.fetchInitialWindow(
+            TimelineRepositoryReadRequest(feedID: 10, databaseAccountID: 1),
+            policy: .initialRestore(maxVisibleCount: 10)
+        )
+
+        #expect(window.rows.isEmpty)
+        #expect(window.anchorItemKey == nil)
+        #expect(window.issues.isEmpty)
+        assertNegativeReadOnlyWindow(window)
+        #expect(try fixture.auditCounts() == before)
+        #expect(try fixture.readStateSnapshot() == beforeReadState)
+    }
+
     @Test("invalid sort key returns typed issue and no invalid DTO row")
     func invalidSortKeyReturnsTypedIssueAndNoInvalidDTORow() async throws {
         let fixture = try TimelineRepositoryStoreFixtureDatabase()
@@ -431,7 +730,7 @@ struct TimelineRepositoryStoreReadOnlyTests {
         )
 
         #expect(window.rows.map(\.itemKey) == ["note:visible"])
-        #expect(window.anchorItemKey == nil)
+        #expect(window.anchorItemKey == "note:visible")
         #expect(window.readState?.scrollAnchorItemKey == nil)
         assertIssue(window, kind: .malformedReadState)
         assertNegativeReadOnlyWindow(window)
@@ -495,7 +794,7 @@ private struct TimelineRepositoryStoreIssueCoverageEntry {
         ),
         TimelineRepositoryStoreIssueCoverageEntry(
             kind: .missingAnchor,
-            coverageName: "missingAnchorReturnsTypedIssueAndDoesNotRestoreAbsentRow"
+            coverageName: "missingAnchorReturnsTypedIssueAndFallsBackToNewestVisibleRow"
         ),
         TimelineRepositoryStoreIssueCoverageEntry(
             kind: .hiddenAnchor,
@@ -711,11 +1010,23 @@ private final class TimelineRepositoryStoreFixtureDatabase {
             try database.queryStrings(
                 """
                 SELECT printf(
-                  '%s|%s|%s|%s|%s',
+                  '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s',
                   IFNULL(marker_event_id, ''),
                   IFNULL(marker_sort_at, ''),
                   IFNULL(scroll_anchor_item_key, ''),
                   IFNULL(scroll_anchor_event_id, ''),
+                  IFNULL(scroll_anchor_sort_at, ''),
+                  IFNULL(scroll_anchor_tie_break_id, ''),
+                  IFNULL(scroll_anchor_offset_px, ''),
+                  IFNULL(viewport_height_px, ''),
+                  IFNULL(viewport_width_px, ''),
+                  IFNULL(content_inset_top_px, ''),
+                  IFNULL(content_inset_bottom_px, ''),
+                  IFNULL(last_visible_top_id, ''),
+                  IFNULL(last_visible_bottom_id, ''),
+                  IFNULL(restore_fallback_reason, ''),
+                  IFNULL(client_state_json, ''),
+                  IFNULL(last_viewed_at_ms, ''),
                   IFNULL(updated_at_ms, '')
                 )
                 FROM feed_read_state
