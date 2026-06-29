@@ -19,6 +19,11 @@ The new TimelineEngine/Core Store pipeline is ready for offline and source-model
 - `TimelineInitialRestoreCoordinatorAdapter`.
 - `TimelineHomeEngineMode`.
 - `TimelineHomeRouteAdapter`.
+- `TimelineHomeRouteIntegrationSkeleton`.
+- `TimelineHomeRouteHost`.
+- `TimelineHomeRouteDiagnostics`.
+- `TimelineHomeRootRouteGuard`.
+- `TimelineHomeRootRoutePreflight`.
 - `TimelineHomeLaunchRestoreContract`.
 - `TimelineSurfaceDependencyContainer`.
 - `TimelineCollectionViewController` offscreen smoke coverage.
@@ -108,9 +113,10 @@ Do not jump directly to full production Home wiring. Use this sequence:
 4. Add the `AstrenzaTimelineEngineMode` feature flag model and launch argument parser.
 5. Add a root/Home route adapter behind the flag without changing root shell launch behavior.
 6. Define the first limited Home collection view wiring slice in `Documents/Plans/timeline_home_limited_wiring_plan.md`.
-7. Only then wire a limited Home collection view path.
+7. Add a no-op Root call site for `TimelineHomeRootRoutePreflight` or a tiny wrapper, with default legacy rendering unchanged and no collection view route construction from Root.
+8. Only after the exit criteria in `Documents/Plans/timeline_home_limited_wiring_plan.md` pass, open a separate task for actual collection view route construction.
 
-The first limited wiring PR must follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a feature-flagged route integration skeleton only: default legacy remains explicit, collection view construction is flag-only, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
+The first Root call-site PR must follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight call-site only: Root may call `TimelineHomeRootRoutePreflight.invoke(_:)` or a tiny wrapper around it, default legacy remains explicit, the collection view flag may record a local decision but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
 
 ## 9. Explicit Forbidden Scope
 
@@ -127,6 +133,7 @@ This ADR does not open:
 - Legacy Home feature work.
 - Read marker advancement during launch, restore, sync, EOSE, foreground, or resolve.
 - Production root shell, splash, or route behavior changes.
+- Root direct calls to `TimelineHomeRouteHost.decide`, `TimelineHomeRouteAdapter.decide`, or `TimelineHomeRouteIntegrationSkeleton.select`; Root must enter through `TimelineHomeRootRoutePreflight.invoke(_:)` or a tiny wrapper that preserves `.collectionView` debug-override sanitization.
 
 Diagnostics for this pipeline remain local/debug/failure-artifact only until a separate privacy decision explicitly opens another destination.
 
@@ -134,11 +141,21 @@ Diagnostics for this pipeline remain local/debug/failure-artifact only until a s
 
 Future wiring PRs should include focused RED-first coverage before production integration:
 
+- `TimelineHomeRootRouteCallSiteTests`.
 - `TimelineHomeEngineModeTests`.
 - `TimelineSurfaceDependencyContainerTests`.
 - `TimelineCollectionViewControllerSmokeTests`.
 - `TimelineHomeRouteFlagTests`.
 - `TimelineHomeRouteIntegrationSkeletonTests`.
+- `default_root_route_preflight_keeps_legacy_home`.
+- `root_route_preflight_does_not_construct_collection_view`.
+- `root_route_preflight_does_not_construct_nostr_store`.
+- `root_route_preflight_records_local_diagnostics`.
+- `collection_view_flag_records_decision_but_does_not_enable_by_default`.
+- `unknown_flag_falls_back_to_legacy`.
+- `read_marker_not_advanced_by_root_preflight`.
+- `no_network_started_by_root_preflight`.
+- `no_db_write_by_root_preflight`.
 - `launch_does_not_wait_for_network`.
 - `launch_restore_cached_anchor_no_visible_jump`.
 - `pending_new_not_inserted_until_user_action`.
