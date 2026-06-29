@@ -252,7 +252,21 @@ struct TimelineHomeRouteDecisionSummary: Codable, Equatable, Sendable {
     }
 }
 
+enum TimelineHomeRouteDecisionArtifactSource: String, Codable, Equatable, Sendable {
+    case rootPreflight
+    case routeHost
+    case testFixture
+}
+
 struct TimelineHomeRouteDecisionArtifact: Codable, Equatable, Sendable {
+    static let artifactKind = "timeline_home_route_decision"
+    static let artifactVersion = 1
+    static let eventName = "timeline_home_route_preflight_decision"
+
+    var artifactKind: String
+    var artifactVersion: Int
+    var eventName: String
+    var source: TimelineHomeRouteDecisionArtifactSource
     var schemaVersion: Int
     var createdAtMS: Int64
     var record: TimelineHomeRouteDiagnosticRecord
@@ -260,18 +274,72 @@ struct TimelineHomeRouteDecisionArtifact: Codable, Equatable, Sendable {
 
     static func make(
         from decision: TimelineHomeRouteHostDecision,
-        createdAtMS: Int64
+        createdAtMS: Int64,
+        source: TimelineHomeRouteDecisionArtifactSource = .routeHost
     ) -> TimelineHomeRouteDecisionArtifact {
         let record = TimelineHomeRouteDiagnosticRecord.make(
             from: decision,
             createdAtMS: createdAtMS
         )
         return TimelineHomeRouteDecisionArtifact(
+            artifactKind: artifactKind,
+            artifactVersion: artifactVersion,
+            eventName: eventName,
+            source: source,
             schemaVersion: 1,
             createdAtMS: createdAtMS,
             record: record,
             summary: .make(from: record)
         )
+    }
+}
+
+extension TimelineHomeRouteDecisionArtifact {
+    private enum CodingKeys: String, CodingKey {
+        case artifactKind
+        case artifactVersion
+        case eventName
+        case source
+        case schemaVersion
+        case createdAtMS
+        case record
+        case summary
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        artifactKind = try container.decodeIfPresent(
+            String.self,
+            forKey: .artifactKind
+        ) ?? Self.artifactKind
+        artifactVersion = try container.decodeIfPresent(
+            Int.self,
+            forKey: .artifactVersion
+        ) ?? Self.artifactVersion
+        eventName = try container.decodeIfPresent(
+            String.self,
+            forKey: .eventName
+        ) ?? Self.eventName
+        source = try container.decodeIfPresent(
+            TimelineHomeRouteDecisionArtifactSource.self,
+            forKey: .source
+        ) ?? .routeHost
+        createdAtMS = try container.decode(Int64.self, forKey: .createdAtMS)
+        record = try container.decode(TimelineHomeRouteDiagnosticRecord.self, forKey: .record)
+        summary = try container.decode(TimelineHomeRouteDecisionSummary.self, forKey: .summary)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(artifactKind, forKey: .artifactKind)
+        try container.encode(artifactVersion, forKey: .artifactVersion)
+        try container.encode(eventName, forKey: .eventName)
+        try container.encode(source, forKey: .source)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(createdAtMS, forKey: .createdAtMS)
+        try container.encode(record, forKey: .record)
+        try container.encode(summary, forKey: .summary)
     }
 }
 
@@ -281,11 +349,13 @@ struct TimelineHomeRouteDiagnosticsExport: Codable, Equatable, Sendable {
 
     static func make(
         from decision: TimelineHomeRouteHostDecision,
-        createdAtMS: Int64
+        createdAtMS: Int64,
+        source: TimelineHomeRouteDecisionArtifactSource = .routeHost
     ) -> TimelineHomeRouteDiagnosticsExport {
         let artifact = TimelineHomeRouteDecisionArtifact.make(
             from: decision,
-            createdAtMS: createdAtMS
+            createdAtMS: createdAtMS,
+            source: source
         )
         return TimelineHomeRouteDiagnosticsExport(
             artifacts: [artifact],

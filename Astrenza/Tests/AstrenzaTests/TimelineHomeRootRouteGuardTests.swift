@@ -130,6 +130,7 @@ struct TimelineHomeRootRouteGuardTests {
         let consumer = TimelineHomeRouteDiagnosticsConsumer(export: result.diagnosticsExport)
 
         #expect(result.artifact.schemaVersion == 1)
+        #expect(result.artifact.source == .rootPreflight)
         #expect(result.artifact.createdAtMS == 1_735_000_000_240)
         #expect(result.diagnosticsExport.artifacts == [result.artifact])
         #expect(consumer.collectionViewAllowed)

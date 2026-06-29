@@ -59,6 +59,7 @@ struct TimelineHomeRootRouteCallSiteTests {
         #expect(exports == [result.preflight.diagnosticsExport])
         #expect(result.preflight.diagnosticsExport.artifacts == [result.preflight.artifact])
         #expect(result.preflight.diagnosticsExport.summary == result.preflight.artifact.summary)
+        #expect(result.preflight.artifact.source == .rootPreflight)
         #expect(result.preflight.artifact.createdAtMS == createdAtMS)
 
         let data = try JSONEncoder().encode(result.preflight.diagnosticsExport)

@@ -147,6 +147,7 @@ struct TimelineHomeRootRoutePreflightTests {
         let consumer = try TimelineHomeRouteDiagnosticsConsumer.decodeFixtureJSON(data)
 
         #expect(result.artifact.schemaVersion == 1)
+        #expect(result.artifact.source == .rootPreflight)
         #expect(result.artifact.createdAtMS == 1_735_000_000_360)
         #expect(result.diagnosticsExport.summary == result.artifact.summary)
         #expect(decoded == result.diagnosticsExport)

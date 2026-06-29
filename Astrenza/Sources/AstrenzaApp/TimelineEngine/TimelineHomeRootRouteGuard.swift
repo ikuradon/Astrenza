@@ -36,7 +36,8 @@ enum TimelineHomeRootRouteGuard: Sendable {
         ))
         let artifact = TimelineHomeRouteDecisionArtifact.make(
             from: decision,
-            createdAtMS: input.createdAtMS
+            createdAtMS: input.createdAtMS,
+            source: .rootPreflight
         )
 
         return TimelineHomeRootRouteGuardResult(
