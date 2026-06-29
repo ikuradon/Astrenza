@@ -59,7 +59,7 @@ struct TimelineHomeRouteSelection: Codable, Equatable, Sendable {
 
 enum TimelineHomeRouteIntegrationSkeleton {
     static func select(
-        arguments: [String] = ProcessInfo.processInfo.arguments,
+        arguments: [String],
         dependencies: TimelineHomeRouteDependencyStatus
     ) -> TimelineHomeRouteSelection {
         select(
