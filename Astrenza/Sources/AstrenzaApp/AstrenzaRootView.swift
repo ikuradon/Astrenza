@@ -14,6 +14,7 @@ struct AstrenzaRootView: View {
 
     init(launchMode: AstrenzaLaunchMode = AstrenzaLaunchMode()) {
         self.launchMode = launchMode
+        _ = TimelineHomeRootRouteCallSite.invokeDefaultProductionPreflight()
         _sessionStore = StateObject(wrappedValue: NostrSessionStore(
             restoreAccount: !launchMode.disablesNetworkStartup
         ))
