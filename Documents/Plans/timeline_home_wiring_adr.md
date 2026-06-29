@@ -17,6 +17,12 @@ The new TimelineEngine/Core Store pipeline is ready for offline and source-model
 - App `TimelineRepositoryStore` diagnostics mapping.
 - `TimelineInitialRestoreUseCase`.
 - `TimelineInitialRestoreCoordinatorAdapter`.
+- `TimelineHomeEngineMode`.
+- `TimelineHomeRouteAdapter`.
+- `TimelineHomeLaunchRestoreContract`.
+- `TimelineSurfaceDependencyContainer`.
+- `TimelineCollectionViewController` offscreen smoke coverage.
+- `TimelineInitialRestoreSnapshotCoordinatorHarness`.
 - TimelineEngine scaffold, `TimelineSnapshotCoordinator`, `TimelinePositionRecorder`, and `TimelineDiagnosticsRecorder`.
 
 Schema v0.2 remains unchanged. DB write paths, resolver execution, relay sync, media/OGP/profile resolver connection, and production root/Home wiring remain out of scope.
@@ -101,7 +107,10 @@ Do not jump directly to full production Home wiring. Use this sequence:
 3. Apply the initial snapshot through `TimelineSnapshotCoordinator` with a fake collection view or pure harness.
 4. Add the `AstrenzaTimelineEngineMode` feature flag model and launch argument parser.
 5. Add a root/Home route adapter behind the flag without changing root shell launch behavior.
-6. Only then wire a limited Home collection view path.
+6. Define the first limited Home collection view wiring slice in `Documents/Plans/timeline_home_limited_wiring_plan.md`.
+7. Only then wire a limited Home collection view path.
+
+The first limited wiring PR must follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a feature-flagged route integration skeleton only: default legacy remains explicit, collection view construction is flag-only, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
 
 ## 9. Explicit Forbidden Scope
 
@@ -127,10 +136,13 @@ Future wiring PRs should include focused RED-first coverage before production in
 
 - `TimelineHomeEngineModeTests`.
 - `TimelineSurfaceDependencyContainerTests`.
-- `TimelineCollectionViewInitialRestoreSmokeTests`.
+- `TimelineCollectionViewControllerSmokeTests`.
 - `TimelineHomeRouteFlagTests`.
+- `TimelineHomeRouteIntegrationSkeletonTests`.
 - `launch_does_not_wait_for_network`.
 - `launch_restore_cached_anchor_no_visible_jump`.
 - `pending_new_not_inserted_until_user_action`.
 - `read_marker_not_advanced_by_restore`.
 - `dataSourceApply_coordinator_only`.
+
+Use Swift type names in `-only-testing` and require every selected app suite to report a non-zero Swift Testing count. An xcodebuild run that exits 0 while selecting 0 Swift Testing tests is not valid evidence.
