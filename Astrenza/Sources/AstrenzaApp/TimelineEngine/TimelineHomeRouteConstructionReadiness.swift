@@ -1,6 +1,6 @@
 import Foundation
 
-enum TimelineHomeRouteConstructionGate: String, Codable, Equatable, Sendable {
+enum TimelineHomeRouteConstructionGate: String, CaseIterable, Codable, Equatable, Sendable {
     case explicitCollectionViewLaunchFlag
     case dependencyReadiness
     case runtimeAllowed
@@ -23,6 +23,20 @@ enum TimelineHomeRouteConstructionGate: String, Codable, Equatable, Sendable {
     case artifactPrivacyGuardPassed
     case sideEffectSentinelClean
     case productionRouteActivationClosed
+    case visibleRouteCollectionViewPlaceholder
+    case renderedRouteLegacy
+    case collectionViewRouteNotConstructed
+    case legacyHomeRendered
+    case rootShellUnchanged
+    case preventsDualMutation
+    case artifactMissingDependenciesEmpty
+    case artifactFallbackIssueKindsEmpty
+    case artifactReleaseBlockerFlagsEmpty
+    case timelineRestoreGateTimelineAreaOnly
+    case rootOrGlobalRestoreGateNotAllowed
+    case routeActivationRenderingSwitchClosed
+    case timelineSurfaceNotConstructedFromRoot
+    case timelineCollectionViewControllerNotConstructedFromRoot
 }
 
 struct TimelineHomeRouteConstructionIssue: Codable, Equatable, Sendable {
@@ -77,6 +91,9 @@ struct TimelineHomeRouteConstructionReadiness: Codable, Equatable, Sendable {
     var dataSourceApplyCoordinatorOnly: Bool
     var noExtraNostrHomeTimelineStore: Bool
     var artifactPrivacyGuardPassed: Bool
+    var routeActivationRenderingSwitchClosed: Bool = true
+    var timelineSurfaceConstructedFromRoot: Bool = false
+    var timelineCollectionViewControllerConstructedFromRoot: Bool = false
     var preferredConstructionKind: TimelineHomeCollectionViewRouteConstructionKind
 
     func evaluate() -> TimelineHomeRouteConstructionReadinessResult {
@@ -92,8 +109,49 @@ struct TimelineHomeRouteConstructionReadiness: Codable, Equatable, Sendable {
         if let snapshot = rootDecisionSnapshot {
             appendIssue(.rootDecisionSnapshotAvailable, when: snapshot.artifactSummary == .unavailable, to: &issues)
             appendIssue(
+                .rootDecisionSnapshotAvailable,
+                when: snapshot.diagnosticsRecordCount <= 0,
+                to: &issues
+            )
+            appendIssue(
                 .rootDecisionSnapshotObservedCollectionView,
-                when: !snapshot.collectionViewDecisionObserved,
+                when: !snapshot.collectionViewDecisionObserved || snapshot.requestedRouteDecision != .collectionView,
+                to: &issues
+            )
+            appendIssue(
+                .visibleRouteCollectionViewPlaceholder,
+                when: snapshot.visibleRoute != .collectionViewPlaceholder,
+                to: &issues
+            )
+            appendIssue(.renderedRouteLegacy, when: snapshot.renderedRoute != .legacy, to: &issues)
+            appendIssue(
+                .collectionViewRouteNotConstructed,
+                when: snapshot.collectionViewRouteConstructed,
+                to: &issues
+            )
+            appendIssue(.legacyHomeRendered, when: !snapshot.legacyHomeRendered, to: &issues)
+            appendIssue(.rootShellUnchanged, when: !snapshot.rootShellUnchanged, to: &issues)
+            appendIssue(
+                .rootShellUnchanged,
+                when: snapshot.rootShellPresentation != .immediate
+                    || !snapshot.rootShellMustRenderBeforeTimelineRestore,
+                to: &issues
+            )
+            appendIssue(
+                .timelineRestoreGateTimelineAreaOnly,
+                when: snapshot.timelineRestoreGateScope != .timelineArea,
+                to: &issues
+            )
+            appendIssue(
+                .rootOrGlobalRestoreGateNotAllowed,
+                when: snapshot.timelineGateCoversRootShell
+                    || snapshot.timelineGateCoversTabBar
+                    || snapshot.timelineGateContinuesGlobalSplash,
+                to: &issues
+            )
+            appendIssue(
+                .networkWaitedBeforeInteractiveScrollZero,
+                when: snapshot.firstInteractiveScrollPolicy != .allowedAfterLocalRestoreWithoutNetwork,
                 to: &issues
             )
             appendIssue(
@@ -101,8 +159,17 @@ struct TimelineHomeRouteConstructionReadiness: Codable, Equatable, Sendable {
                 when: snapshot.networkWaitedBeforeInteractiveScrollMS != 0,
                 to: &issues
             )
+            appendIssue(.preventsDualMutation, when: !snapshot.preventsDualMutation, to: &issues)
             appendIssue(.readMarkerUnchanged, when: snapshot.readMarkerChanged, to: &issues)
-            appendIssue(.requiresNetworkWorkFalse, when: snapshot.requiresNetworkWork, to: &issues)
+            appendIssue(
+                .requiresNetworkWorkFalse,
+                when: snapshot.requiresNetworkWork
+                    || snapshot.requiresRemoteSyncBeforeInteractiveScroll
+                    || snapshot.requiresOGPResolveBeforeInteractiveScroll
+                    || snapshot.requiresMediaResolveBeforeInteractiveScroll
+                    || snapshot.requiresProfileResolveBeforeInteractiveScroll,
+                to: &issues
+            )
             appendIssue(.requiresDBWriteFalse, when: snapshot.requiresDBWrite, to: &issues)
             appendIssue(
                 .dataSourceApplyCoordinatorOnly,
@@ -110,6 +177,7 @@ struct TimelineHomeRouteConstructionReadiness: Codable, Equatable, Sendable {
                 to: &issues
             )
             appendIssue(.sideEffectSentinelClean, when: !snapshot.sideEffectSentinel.isClean, to: &issues)
+            appendArtifactIssues(snapshot.artifactSummary, to: &issues)
         } else {
             appendIssue(.rootDecisionSnapshotAvailable, when: true, to: &issues)
         }
@@ -126,6 +194,17 @@ struct TimelineHomeRouteConstructionReadiness: Codable, Equatable, Sendable {
         appendIssue(.dataSourceApplyCoordinatorOnly, when: !dataSourceApplyCoordinatorOnly, to: &issues)
         appendIssue(.noExtraNostrHomeTimelineStore, when: !noExtraNostrHomeTimelineStore, to: &issues)
         appendIssue(.artifactPrivacyGuardPassed, when: !artifactPrivacyGuardPassed, to: &issues)
+        appendIssue(.routeActivationRenderingSwitchClosed, when: !routeActivationRenderingSwitchClosed, to: &issues)
+        appendIssue(
+            .timelineSurfaceNotConstructedFromRoot,
+            when: timelineSurfaceConstructedFromRoot,
+            to: &issues
+        )
+        appendIssue(
+            .timelineCollectionViewControllerNotConstructedFromRoot,
+            when: timelineCollectionViewControllerConstructedFromRoot,
+            to: &issues
+        )
         appendIssue(.productionRouteActivationClosed, when: preferredConstructionKind == .productionClosed, to: &issues)
 
         let isReady = issues.isEmpty
@@ -153,6 +232,46 @@ struct TimelineHomeRouteConstructionReadiness: Codable, Equatable, Sendable {
             dataSourceApplyCalled: false,
             requiresNetworkWork: false,
             requiresDBWrite: false
+        )
+    }
+
+    private func appendArtifactIssues(
+        _ artifact: TimelineHomeRootRouteArtifactSnapshot,
+        to issues: inout [TimelineHomeRouteConstructionIssue]
+    ) {
+        appendIssue(.rootDecisionSnapshotAvailable, when: artifact == .unavailable, to: &issues)
+        appendIssue(
+            .rootDecisionSnapshotAvailable,
+            when: artifact.artifactKind != TimelineHomeRouteDecisionArtifact.artifactKind
+                || artifact.artifactVersion != TimelineHomeRouteDecisionArtifact.artifactVersion
+                || artifact.eventName != TimelineHomeRouteDecisionArtifact.eventName
+                || artifact.source != .rootPreflight
+                || artifact.schemaVersion != 1,
+            to: &issues
+        )
+        appendIssue(
+            .rootDecisionSnapshotObservedCollectionView,
+            when: artifact.selectedRoute != .collectionView
+                || artifact.requestedMode != .collectionView
+                || artifact.effectiveMode != .collectionView
+                || !artifact.collectionViewAllowed,
+            to: &issues
+        )
+        appendIssue(.artifactMissingDependenciesEmpty, when: !artifact.missingDependencies.isEmpty, to: &issues)
+        appendIssue(.artifactFallbackIssueKindsEmpty, when: !artifact.fallbackIssueKinds.isEmpty, to: &issues)
+        appendIssue(.artifactReleaseBlockerFlagsEmpty, when: !artifact.releaseBlockerFlags.isEmpty, to: &issues)
+        appendIssue(.artifactFallbackIssueKindsEmpty, when: artifact.legacyFallback, to: &issues)
+        appendIssue(.runtimeAllowed, when: !artifact.runtimeAllowed, to: &issues)
+        appendIssue(.rolloutAllowed, when: !artifact.rolloutAllowed, to: &issues)
+        appendIssue(
+            .rootShellUnchanged,
+            when: artifact.rootShellBehavior != .unchangedImmediate || !artifact.rootShellBehaviorUnchanged,
+            to: &issues
+        )
+        appendIssue(
+            .timelineRestoreGateTimelineAreaOnly,
+            when: artifact.timelineRestoreGateScope != .timelineArea,
+            to: &issues
         )
     }
 
