@@ -46,6 +46,10 @@ The running session must not automatically fall back from the collection view pa
 
 `AstrenzaRootView` root shell behavior remains unchanged by this ADR. Future implementation must preserve immediate root shell first paint and must not wait for relay, network, resolver, search, pruning, checkpoint, or EOSE work before the first interactive Timeline scroll.
 
+Collection view route construction is a separate milestone from route activation. It means Root/Home may construct a `TimelineSurface` or `TimelineCollectionViewController` dependency path behind `--timeline-engine=collectionView` and readiness gates. It is not default rendering, not route activation, and not a rendering switch. The Root body decision snapshot must continue to report `renderedRoute == legacy` until a later activation task explicitly opens rendering.
+
+Current state remains closed: legacy rendering is the production Home path, and collection view can be observed only as a placeholder route decision in local/debug diagnostics. Debug override `.collectionView` must not bypass the explicit launch flag or readiness gates.
+
 ## 4. Dependency Injection Plan
 
 Future Home wiring should construct the new path through a narrow dependency container rather than allowing Home views to directly create DB, network, relay, or resolver objects. The initial dependency set is:
@@ -89,6 +93,9 @@ The collection view Home path can only be enabled behind the engine mode flag af
 - Selected `xcodebuild` suites execute non-zero Swift Testing tests.
 - The manual debug switch and launch argument are documented.
 - Root shell first paint is proven independent from Timeline restore readiness.
+- Root decision snapshots and consumers prove `renderedRoute == legacy`, `collectionViewRouteConstructed == false`, `readMarkerChanged == false`, `requiresNetworkWork == false`, `requiresDBWrite == false`, `networkWaitedBeforeInteractiveScrollMS == 0`, and no `dataSource.apply` outside `TimelineSnapshotCoordinator`.
+- Route diagnostics artifacts pass the privacy guard and contain no fallback, missing dependency, runtime-disabled, rollout-blocked, unknown mode, or release-blocker decision before construction opens.
+- The collection view construction path does not construct an extra `NostrHomeTimelineStore` for the same account/feed session.
 
 ## 7. Rollback Criteria
 
@@ -116,8 +123,11 @@ Do not jump directly to full production Home wiring. Use this sequence:
 7. Keep the existing no-op Root call site for `TimelineHomeRootRoutePreflight` or a tiny wrapper, with default legacy rendering unchanged and no collection view route construction from Root.
 8. Add only the local in-memory `TimelineHomeRouteDiagnosticsSink` injection defined in `Documents/Plans/timeline_home_limited_wiring_plan.md`, recording exactly one Root preflight route decision artifact without file writes, telemetry, network, DB, read marker, `pending_new`, or `dataSource.apply` side effects.
 9. Only after the exit criteria in `Documents/Plans/timeline_home_limited_wiring_plan.md` pass, open a separate task for actual collection view route construction.
+10. The first construction task should be titled `test: construct TimelineHome collectionView route behind flag` or equivalent, and must keep `renderedRoute == legacy` unless a later activation task explicitly opens rendering.
 
-The next Root diagnostics sink injection PR must follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight diagnostics slice only: Root may pass a local in-memory `TimelineHomeRouteDiagnosticsSink` or narrow protocol into `TimelineHomeRootRouteCallSite`, default legacy remains explicit, the collection view flag may record one local decision artifact but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
+The Root diagnostics sink injection baseline must continue to follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight diagnostics slice only: Root may pass a local in-memory `TimelineHomeRouteDiagnosticsSink` or narrow protocol into `TimelineHomeRootRouteCallSite`, default legacy remains explicit, the collection view flag may record one local decision artifact but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
+
+Actual collection view route construction remains closed now. A future construction slice may only construct injected read-only/offline dependencies plus one `TimelineSurface` or `TimelineCollectionViewController` behind the explicit flag and readiness gates. It must not start relay/network/resolver work, write DB/read marker/`feed_read_state`/`feed_items.pending_new`/`resolve_jobs`, call `dataSource.apply` from Root, remove or bypass legacy Home, change splash/root shell behavior, alter schema/migrations, touch GitHub Actions, or switch rendering.
 
 ## 9. Explicit Forbidden Scope
 
@@ -134,6 +144,7 @@ This ADR does not open:
 - Legacy Home feature work.
 - Read marker advancement during launch, restore, sync, EOSE, foreground, or resolve.
 - Production root shell, splash, or route behavior changes.
+- Collection view route construction, route activation, or render switching until a later explicit task opens that scope.
 - Root direct calls to `TimelineHomeRouteHost.decide`, `TimelineHomeRouteAdapter.decide`, or `TimelineHomeRouteIntegrationSkeleton.select`; Root must enter through `TimelineHomeRootRoutePreflight.invoke(_:)` or a tiny wrapper that preserves `.collectionView` debug-override sanitization.
 
 Diagnostics for this pipeline remain local/debug/failure-artifact only until a separate privacy decision explicitly opens another destination.
@@ -147,6 +158,8 @@ Future wiring PRs should include focused RED-first coverage before production in
 - `TimelineSurfaceDependencyContainerTests`.
 - `TimelineCollectionViewControllerSmokeTests`.
 - `TimelineHomeRouteFlagTests`.
+- `TimelineHomeRouteConstructionReadinessTests`.
+- `TimelineHomeCollectionViewRouteConstructionTests`.
 - `TimelineHomeRouteIntegrationSkeletonTests`.
 - `default_root_route_preflight_keeps_legacy_home`.
 - `root_route_preflight_does_not_construct_collection_view`.
@@ -162,5 +175,17 @@ Future wiring PRs should include focused RED-first coverage before production in
 - `pending_new_not_inserted_until_user_action`.
 - `read_marker_not_advanced_by_restore`.
 - `dataSourceApply_coordinator_only`.
+- `collectionView_route_construction_requires_explicit_flag`.
+- `collectionView_route_construction_requires_readiness`.
+- `default_legacy_does_not_construct_collectionView`.
+- `debug_override_collectionView_does_not_bypass_flag`.
+- `collectionView_construction_is_offscreen_or_no_window`.
+- `collectionView_construction_does_not_start_network`.
+- `collectionView_construction_does_not_write_db`.
+- `collectionView_construction_does_not_advance_read_marker`.
+- `collectionView_construction_does_not_call_dataSourceApply`.
+- `collectionView_construction_records_route_artifact`.
+- `legacy_rendering_remains_default`.
+- `selected_swift_testing_suites_non_zero`.
 
 Use Swift type names in `-only-testing` and require every selected app suite to report a non-zero Swift Testing count. An xcodebuild run that exits 0 while selecting 0 Swift Testing tests is not valid evidence.
