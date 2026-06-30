@@ -1,7 +1,7 @@
 # Astrenza v1 Execution Plan
 
-Status: Phase 0/1 complete; Phase 5 scaffold complete; Phase 6 fixture contracts mostly complete; Phase 4 read-only DB/read-state bridge boundary exists for planning; the next Home work is a no-op TimelineHome root route preflight call-site only.
-Updated: 2026-06-29
+Status: Phase 0/1 complete; Phase 5 scaffold complete; Phase 6 fixture contracts mostly complete; Phase 4 read-only DB/read-state bridge boundary exists for planning; the next Home work is a no-op TimelineHome route diagnostics sink injection at Root preflight only.
+Updated: 2026-06-30
 Scope: living planning and audit document. This plan does not authorize production DB wiring, production Home Timeline wiring, SQL schema changes, or legacy SwiftUI Timeline extension by itself.
 
 ## Current Repo State Summary
@@ -23,7 +23,7 @@ Scope: living planning and audit document. This plan does not authorize producti
 - Phase 5 TimelineEngine scaffold is complete enough for offline scaffold tests: `TimelineSurface`, `TimelineCollectionViewController`, diffable data source, snapshot coordinator, position recorder, visible range tracker, prefetch coordinator, and diagnostics recorder exist under `Astrenza/Sources/AstrenzaApp/TimelineEngine`. It is not wired into production Home.
 - Phase 6 row-state / projection / resolve apply contracts are mostly complete for fixture-backed offline work: `TimelineEntryViewState`, row projection boundary, resolve apply expectations, resolve snapshot diagnostics, and `ResolveCoordinatorBoundary` fake boundary tests exist. A real DB-backed `ResolveCoordinator` actor and resolver runtime are still intentionally absent.
 - Phase 7 diagnostics / restore gate / artifact contracts are complete enough for the offline phase: `TimelineDiagnosticsExport`, restore gate budget tests, and `Documents/Plans/timeline_diagnostics_artifact_contract.md` exist. Production root shell restore integration and E2E coverage remain pending.
-- TimelineHome route and launch-restore contracts now exist for planning: `TimelineHomeEngineMode`, `TimelineHomeRouteAdapter`, `TimelineHomeRouteIntegrationSkeleton`, `TimelineHomeRouteHost`, `TimelineHomeRouteDiagnostics`, `TimelineHomeRootRouteGuard`, `TimelineHomeRootRoutePreflight`, `TimelineHomeLaunchRestoreContract`, `TimelineSurfaceDependencyContainer`, `TimelineInitialRestoreUseCase`, and the snapshot coordinator harness. `Documents/Plans/timeline_home_limited_wiring_plan.md` defines the first no-op Root preflight call-site before implementation.
+- TimelineHome route and launch-restore contracts now exist for planning: `TimelineHomeEngineMode`, `TimelineHomeRouteAdapter`, `TimelineHomeRouteIntegrationSkeleton`, `TimelineHomeRouteHost`, `TimelineHomeRouteDiagnostics`, `TimelineHomeRouteDiagnosticsSink`, `TimelineHomeRootRouteGuard`, `TimelineHomeRootRoutePreflight`, `TimelineHomeRootRouteCallSite`, `TimelineHomeLaunchRestoreContract`, `TimelineSurfaceDependencyContainer`, `TimelineInitialRestoreUseCase`, and the snapshot coordinator harness. `AstrenzaRootView` already invokes the no-op Root preflight while keeping legacy Home visible, and `Documents/Plans/timeline_home_limited_wiring_plan.md` now defines the next local in-memory diagnostics sink injection task.
 - `Documents/Specifications/astrenza_local_db_schema_v0_2.sql` remains the source-of-truth schema and should not be changed yet. Current `Packages/AstrenzaCore/Sources/AstrenzaCore/NostrEventStore.swift` still uses `timeline_entries`, so real DB-backed Timeline and ResolveCoordinator work must stay behind the core/store-owned read-only boundary in `Documents/Plans/timeline_repository_adapter_promotion_adr.md`.
 
 ## Source-Of-Truth Hierarchy
@@ -163,7 +163,7 @@ Likely test commands:
 
 ## Phase 5: UICollectionView TimelineEngine Scaffold
 
-Status: Scaffold complete for offline tests. Production Home replacement remains blocked. The future Home wiring strategy is documented in `Documents/Plans/timeline_home_wiring_adr.md`, and the first no-op Root preflight call-site is defined in `Documents/Plans/timeline_home_limited_wiring_plan.md`; both are docs-only and do not authorize production default rollout.
+Status: Scaffold complete for offline tests. Production Home replacement remains blocked. The future Home wiring strategy is documented in `Documents/Plans/timeline_home_wiring_adr.md`, and the next no-op Root diagnostics sink injection scope is defined in `Documents/Plans/timeline_home_limited_wiring_plan.md`; both are docs-only and do not authorize production default rollout.
 
 Deliverables:
 - New TimelineEngine scaffold separate from legacy SwiftUI Timeline path.
@@ -176,7 +176,7 @@ Acceptance criteria:
 - All snapshot mutations go through `TimelineSnapshotCoordinator`.
 - UIKit owns visible range, prefetch, anchor capture, and anchor restore.
 - Legacy `TimelineFeedView` remains frozen and is not extended as fallback production UI.
-- First Root call-site integration remains no-op, defaults to legacy, avoids collection view route construction, avoids same-session dual mutation, and keeps production Home/root/splash behavior unchanged.
+- Root call-site diagnostics sink injection remains no-op, defaults to legacy, records only one local in-memory route decision artifact, avoids collection view route construction, avoids same-session dual mutation, and keeps production Home/root/splash behavior unchanged.
 
 Likely test commands:
 - `xcodegen generate`
@@ -262,4 +262,4 @@ Likely test commands:
 
 ## Immediate Next Task
 
-Implement the first no-op TimelineHome root route preflight call site only after RED-first app tests define `TimelineHomeRootRouteCallSiteTests`. The implementation must keep default legacy Home, avoid production Home/root/splash replacement, avoid `TimelineCollectionViewController` or collection view `TimelineSurface` construction from Root, call `TimelineHomeRootRoutePreflight.invoke(_:)` or a tiny wrapper rather than lower-level host/adapter/skeleton APIs, inject launch arguments/debug override/dependency readiness into `TimelineHomeRootRoutePreflight`, keep relay/network/resolver/DB write scope closed, generate only local diagnostics, and prove selected suites execute non-zero Swift Testing tests. Continue to use `Documents/Plans/timeline_repository_db_adapter_adr.md`, `Documents/Plans/timeline_quote_materialization_adr.md`, and `Documents/Plans/timeline_repository_adapter_promotion_adr.md` as boundaries for any future real DB adapter or write-path work.
+Implement `test: inject TimelineHome route diagnostics sink at root preflight` only after RED-first app tests define `TimelineHomeRootRouteDiagnosticsSinkInjectionTests`. The implementation may pass a local in-memory `TimelineHomeRouteDiagnosticsSink` or narrow protocol into `TimelineHomeRootRouteCallSite` and record exactly one local route decision artifact during Root preflight. It must keep default legacy Home, avoid production Home/root/splash replacement, avoid `TimelineCollectionViewController` or collection view `TimelineSurface` construction from Root, keep `NostrHomeTimelineStore` in the default path, keep relay/network/resolver/DB write/read marker/`pending_new`/`dataSource.apply` scope closed, avoid file writes or external telemetry from the sink, keep route diagnostics privacy guard coverage, and prove selected suites execute non-zero Swift Testing tests. Actual collection view route construction remains closed until the sink injection is reviewed and PASS, default legacy behavior is unchanged with Root preflight plus sink injection, route diagnostics prove no network/DB/read-marker side effects, offscreen controller smoke and snapshot coordinator harness remain green, and an explicit ADR/checklist opens route construction scope. Continue to use `Documents/Plans/timeline_repository_db_adapter_adr.md`, `Documents/Plans/timeline_quote_materialization_adr.md`, and `Documents/Plans/timeline_repository_adapter_promotion_adr.md` as boundaries for any future real DB adapter or write-path work.

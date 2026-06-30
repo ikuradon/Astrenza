@@ -113,10 +113,11 @@ Do not jump directly to full production Home wiring. Use this sequence:
 4. Add the `AstrenzaTimelineEngineMode` feature flag model and launch argument parser.
 5. Add a root/Home route adapter behind the flag without changing root shell launch behavior.
 6. Define the first limited Home collection view wiring slice in `Documents/Plans/timeline_home_limited_wiring_plan.md`.
-7. Add a no-op Root call site for `TimelineHomeRootRoutePreflight` or a tiny wrapper, with default legacy rendering unchanged and no collection view route construction from Root.
-8. Only after the exit criteria in `Documents/Plans/timeline_home_limited_wiring_plan.md` pass, open a separate task for actual collection view route construction.
+7. Keep the existing no-op Root call site for `TimelineHomeRootRoutePreflight` or a tiny wrapper, with default legacy rendering unchanged and no collection view route construction from Root.
+8. Add only the local in-memory `TimelineHomeRouteDiagnosticsSink` injection defined in `Documents/Plans/timeline_home_limited_wiring_plan.md`, recording exactly one Root preflight route decision artifact without file writes, telemetry, network, DB, read marker, `pending_new`, or `dataSource.apply` side effects.
+9. Only after the exit criteria in `Documents/Plans/timeline_home_limited_wiring_plan.md` pass, open a separate task for actual collection view route construction.
 
-The first Root call-site PR must follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight call-site only: Root may call `TimelineHomeRootRoutePreflight.invoke(_:)` or a tiny wrapper around it, default legacy remains explicit, the collection view flag may record a local decision but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
+The next Root diagnostics sink injection PR must follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight diagnostics slice only: Root may pass a local in-memory `TimelineHomeRouteDiagnosticsSink` or narrow protocol into `TimelineHomeRootRouteCallSite`, default legacy remains explicit, the collection view flag may record one local decision artifact but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
 
 ## 9. Explicit Forbidden Scope
 
