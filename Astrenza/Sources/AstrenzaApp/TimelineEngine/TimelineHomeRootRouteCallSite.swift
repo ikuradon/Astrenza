@@ -13,6 +13,9 @@ struct TimelineHomeRootRouteCallSiteResult: Codable, Equatable, Sendable {
     var dataSourceApplyCalledByCallSite: Bool
     var rootShellBehaviorUnchanged: Bool
     var localDiagnosticsArtifactRecorded: Bool
+    var localDiagnosticsRecordCount: Int
+    var localDiagnosticsDebugSummary: TimelineHomeRouteDiagnosticsDebugSummary?
+    var localDiagnosticsExport: TimelineHomeRouteDiagnosticsExport?
 }
 
 enum TimelineHomeRootRouteCallSite {
@@ -24,13 +27,36 @@ enum TimelineHomeRootRouteCallSite {
         createdAtMS: Int64,
         diagnosticsSink: ((TimelineHomeRouteDiagnosticsExport) -> Void)? = nil
     ) -> TimelineHomeRootRouteCallSiteResult {
+        var localDiagnosticsSink = TimelineHomeRouteDiagnosticsSink(retentionLimit: 1)
+        return invoke(
+            launchArguments: launchArguments,
+            debugOverride: debugOverride,
+            dependencies: dependencies,
+            createdAtMS: createdAtMS,
+            localDiagnosticsSink: &localDiagnosticsSink,
+            diagnosticsSink: diagnosticsSink
+        )
+    }
+
+    @discardableResult
+    static func invoke(
+        launchArguments: [String],
+        debugOverride: TimelineHomeRouteDebugOverride? = nil,
+        dependencies: TimelineHomeRouteDependencyStatus = .rootCallSiteDefaultLegacy,
+        createdAtMS: Int64,
+        localDiagnosticsSink: inout TimelineHomeRouteDiagnosticsSink,
+        diagnosticsSink: ((TimelineHomeRouteDiagnosticsExport) -> Void)? = nil
+    ) -> TimelineHomeRootRouteCallSiteResult {
         let preflight = TimelineHomeRootRoutePreflight.invoke(TimelineHomeRootRoutePreflightInput(
             launchArguments: launchArguments,
             debugOverride: debugOverride,
             dependencies: dependencies,
             createdAtMS: createdAtMS
         ))
+        localDiagnosticsSink.record(preflight.artifact)
         diagnosticsSink?(preflight.diagnosticsExport)
+        let localDiagnosticsExport = localDiagnosticsSink.export()
+        let localDiagnosticsArtifactRecorded = localDiagnosticsSink.records.last == preflight.artifact
 
         return TimelineHomeRootRouteCallSiteResult(
             didInvokePreflight: true,
@@ -44,7 +70,10 @@ enum TimelineHomeRootRouteCallSite {
             readMarkerAdvancedByCallSite: false,
             dataSourceApplyCalledByCallSite: false,
             rootShellBehaviorUnchanged: preflight.diagnostics.rootShellBehaviorUnchanged,
-            localDiagnosticsArtifactRecorded: true
+            localDiagnosticsArtifactRecorded: localDiagnosticsArtifactRecorded,
+            localDiagnosticsRecordCount: localDiagnosticsSink.records.count,
+            localDiagnosticsDebugSummary: localDiagnosticsSink.latestDebugSummary,
+            localDiagnosticsExport: localDiagnosticsExport
         )
     }
 
