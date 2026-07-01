@@ -172,7 +172,11 @@ struct TimelineHomeCollectionViewOffscreenConstructionHarnessTests {
 }
 
 private var expectedOffscreenHarnessSummary: String {
-    "allowed=true kind=offscreenOnly rendered=legacy activation=false rootFlags(route=false,surface=false,controller=false) sideEffects(network=false,dbWrite=false,readMarker=false,forbiddenDataSourceApply=false) coordinatorApplyAllowed=true offscreen(viewLoaded=true,attachedToWindow=false,itemIDs=[note:visible]) rejections=[]"
+    "allowed=true kind=offscreenOnly noWindow=true rendered=legacy activation=false rootFlags(route=false,surface=false,controller=false) sideEffects(network=false,dbWrite=false,readMarker=false,forbiddenDataSourceApply=false) coordinatorApplyAllowed=true offscreen(viewLoaded=true,attachedToWindow=false,itemIDs=[note:visible]) rejections=[] artifactSummary={\(expectedOffscreenHarnessArtifactSummary)}"
+}
+
+private var expectedOffscreenHarnessArtifactSummary: String {
+    "kind=timeline_home_route_decision version=1 event=timeline_home_route_preflight_decision source=rootPreflight route=collectionView requested=collectionView effective=collectionView fallback=false collectionViewAllowed=true missing=[] issues=[] runtimeAllowed=true rolloutAllowed=true blockers=[]"
 }
 
 private var forbiddenPrivacyFragments: [String] {
@@ -205,6 +209,7 @@ private var allowedHarnessResultKeys: Set<String> {
         "controllerLoadedOffscreen",
         "coordinatorOwnedDataSourceApplyAllowed",
         "dbWriteAttempted",
+        "diagnosticsArtifactSummary",
         "forbiddenDataSourceApplyOutsideCoordinatorCalled",
         "isAttachedToWindow",
         "networkStarted",
@@ -296,6 +301,7 @@ private func encodedJSONString<T: Encodable>(_ value: T) throws -> String {
 }
 
 private typealias TimelineHomeCollectionViewOffscreenConstructionHarness = TimelineHomeRouteConstructionPlanOffscreenHarness
+private typealias TimelineHomeCollectionViewConstructionHarnessResult = TimelineHomeOffscreenConstructionHarnessResult
 
 @MainActor
 private struct TimelineHomeRouteConstructionPlanOffscreenHarness {
@@ -351,7 +357,8 @@ private struct TimelineHomeRouteConstructionPlanOffscreenHarness {
                 coordinatorOwnedDataSourceApplyAllowed: false,
                 forbiddenDataSourceApplyOutsideCoordinatorCalled: plan.dataSourceApplyCalled
                     || plan.sideEffectSentinel.dataSourceApplyCalled,
-                controllerItemIDs: []
+                controllerItemIDs: [],
+                diagnosticsArtifactSummary: plan.diagnosticsArtifactSummary
             )
         }
 
@@ -408,7 +415,8 @@ private struct TimelineHomeRouteConstructionPlanOffscreenHarness {
             coordinatorOwnedDataSourceApplyAllowed: true,
             forbiddenDataSourceApplyOutsideCoordinatorCalled: plan.dataSourceApplyCalled
                 || plan.sideEffectSentinel.dataSourceApplyCalled,
-            controllerItemIDs: state.itemIDs.map(\.rawValue)
+            controllerItemIDs: state.itemIDs.map(\.rawValue),
+            diagnosticsArtifactSummary: plan.diagnosticsArtifactSummary
         )
     }
 
@@ -530,51 +538,6 @@ private struct TimelineHomeRouteConstructionPlanOffscreenHarness {
     private static func eventID(_ seed: Character) -> String {
         String(repeating: String(seed), count: 64)
     }
-}
-
-private struct TimelineHomeCollectionViewConstructionHarnessResult: Codable, Equatable, Sendable {
-    var offscreenConstructionAllowed: Bool
-    var rejectionReasons: [TimelineHomeOffscreenConstructionRejection]
-    var constructionKind: TimelineHomeCollectionViewRouteConstructionKind
-    var renderedRouteAfterConstruction: TimelineHomeRootVisibleRouteDecision
-    var routeActivationAllowed: Bool
-    var collectionViewRouteConstructedFromRoot: Bool
-    var timelineSurfaceConstructedFromRoot: Bool
-    var timelineCollectionViewControllerConstructedFromRoot: Bool
-    var controllerLoadedOffscreen: Bool
-    var isAttachedToWindow: Bool
-    var networkStarted: Bool
-    var dbWriteAttempted: Bool
-    var readMarkerAdvanced: Bool
-    var coordinatorOwnedDataSourceApplyAllowed: Bool
-    var forbiddenDataSourceApplyOutsideCoordinatorCalled: Bool
-    var controllerItemIDs: [String]
-
-    var deterministicDebugSummary: String {
-        [
-            "allowed=\(offscreenConstructionAllowed)",
-            "kind=\(constructionKind.rawValue)",
-            "rendered=\(renderedRouteAfterConstruction.rawValue)",
-            "activation=\(routeActivationAllowed)",
-            "rootFlags(route=\(collectionViewRouteConstructedFromRoot),surface=\(timelineSurfaceConstructedFromRoot),controller=\(timelineCollectionViewControllerConstructedFromRoot))",
-            "sideEffects(network=\(networkStarted),dbWrite=\(dbWriteAttempted),readMarker=\(readMarkerAdvanced),forbiddenDataSourceApply=\(forbiddenDataSourceApplyOutsideCoordinatorCalled))",
-            "coordinatorApplyAllowed=\(coordinatorOwnedDataSourceApplyAllowed)",
-            "offscreen(viewLoaded=\(controllerLoadedOffscreen),attachedToWindow=\(isAttachedToWindow),itemIDs=\(controllerItemIDs.debugList))",
-            "rejections=\(rejectionReasons.map(\.rawValue).debugList)"
-        ].joined(separator: " ")
-    }
-}
-
-private enum TimelineHomeOffscreenConstructionRejection: String, Codable, Equatable, Sendable {
-    case readinessBlocked
-    case unsupportedConstructionKind
-    case renderedRouteNotLegacy
-    case routeActivationOpen
-    case rootRouteConstructionOpen
-    case rootSurfaceConstructionOpen
-    case rootControllerConstructionOpen
-    case sideEffectFlagsDirty
-    case constructionPlanClosed
 }
 
 private extension TimelineHomeCollectionViewRouteConstructionKind {
