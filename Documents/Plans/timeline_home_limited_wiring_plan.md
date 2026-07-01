@@ -4,7 +4,9 @@
 
 Proposed.
 
-This document defines the limited TimelineHome Root/Home wiring ladder through the current route decision snapshot consumer checkpoint, then defines the exact readiness conditions for opening collection view route construction in a future explicit implementation task.
+This document defines the limited TimelineHome Root/Home wiring ladder through the current construction artifact chain consumer checkpoint, then defines the exact readiness conditions for the next explicit construction implementation task:
+
+- `test: construct TimelineHome collectionView route behind flag`
 
 This is a docs-only planning/checklist document. It does not implement production Home wiring, does not open collection view route construction, and does not authorize collection view Home as the default.
 
@@ -14,11 +16,15 @@ The Root diagnostics sink injection task started only after the route diagnostic
 
 - `63ddf7c test: define TimelineHome route diagnostics sink`
 
-The latest route decision snapshot consumer checkpoint now extends the read-only local/debug path:
+The route decision snapshot consumer checkpoint extended the read-only local/debug path:
 
 - `93252db test: read TimelineHome root route decision snapshots`
 
-`AstrenzaRootView` already performs a no-op `TimelineHomeRootRouteCallSite` production preflight before constructing the existing `NostrSessionStore` and `NostrHomeTimelineStore`. `TimelineHomeRouteDiagnosticsSink` now exists as a local, offline, in-memory retention sink for route decision artifacts. `TimelineHomeRootRouteDecisionSnapshot` and `TimelineHomeRootRouteDecisionSnapshotConsumer` can read Root-visible route decision snapshots in local/debug/fixture code.
+The latest construction artifact chain checkpoint links route decision snapshots, construction readiness, and offscreen harness results through a deterministic local/offline consumer:
+
+- `10f328e test: read TimelineHome construction artifact chain`
+
+`AstrenzaRootView` already performs a no-op `TimelineHomeRootRouteCallSite` production preflight before constructing the existing `NostrSessionStore` and `NostrHomeTimelineStore`. `TimelineHomeRouteDiagnosticsSink` now exists as a local, offline, in-memory retention sink for route decision artifacts. `TimelineHomeRootRouteDecisionSnapshot`, `TimelineHomeRootRouteDecisionSnapshotConsumer`, `TimelineHomeRouteConstructionReadiness`, `TimelineHomeRouteConstructionPlanConsumer`, `TimelineHomeRouteConstructionReadinessConsumer`, `TimelineHomeOffscreenConstructionHarnessResultConsumer`, and `TimelineHomeConstructionArtifactChainConsumer` can read the Root-visible route/construction artifact chain in local/debug/fixture code.
 
 The current allowed state is legacy rendering plus an observed collection view placeholder decision. Collection view route construction remains closed until a future explicit implementation prompt opens it.
 
@@ -34,7 +40,12 @@ The existing contracts available to the future construction-readiness slice are:
 - `TimelineHomeRootRoutePreflight`
 - `TimelineHomeLaunchRestoreContract`
 - `TimelineSurfaceDependencyContainer`
+- `TimelineHomeRouteConstructionReadiness`
+- `TimelineHomeRouteConstructionPlanConsumer`
+- `TimelineHomeRouteConstructionReadinessConsumer`
 - `TimelineCollectionViewController` offscreen smoke coverage
+- `TimelineHomeOffscreenConstructionHarnessResultConsumer`
+- `TimelineHomeConstructionArtifactChainConsumer`
 - `TimelineInitialRestoreSnapshotCoordinatorHarness`
 - `TimelineInitialRestoreUseCase`
 - `TimelineRepositoryStoreWindowComposer`
@@ -223,6 +234,11 @@ Required gates before opening route construction:
 - Route diagnostics sink injection PASS.
 - Root decision snapshot PASS.
 - Snapshot consumer PASS.
+- Construction readiness PASS.
+- Construction plan consumer PASS.
+- Offscreen construction harness PASS.
+- Offscreen harness result consumer PASS.
+- Construction artifact chain consumer PASS.
 - Selected Swift Testing suites report non-zero executed test counts.
 - Startup network grep has no matches for `LocalDataTask`, `ATS`, `nw_`, `WebSocketTask`, `URLSessionWebSocketTask`, `wss://`, or `setDefaultRelays`.
 - `networkWaitedBeforeInteractiveScrollMS == 0`.
@@ -233,9 +249,10 @@ Required gates before opening route construction:
 - No extra `NostrHomeTimelineStore` construction occurs for the collection view route construction path. The existing legacy default path can still construct its baseline store while legacy remains selected.
 - No DB write or read marker mutation occurs.
 - Generated route diagnostics artifacts pass the privacy guard.
+- Diagnostics guard self-test passes.
 - Offscreen `TimelineCollectionViewControllerSmokeTests` PASS.
 - Initial restore snapshot coordinator harness PASS.
-- The local `timeline_home_route_decision` artifact and `TimelineHomeRootRouteDecisionSnapshot` decode through `TimelineHomeRouteDiagnosticsConsumer` and `TimelineHomeRootRouteDecisionSnapshotConsumer`.
+- The local `timeline_home_route_decision` artifact, `TimelineHomeRootRouteDecisionSnapshot`, construction readiness plan, offscreen harness result, and artifact chain decode through `TimelineHomeRouteDiagnosticsConsumer`, `TimelineHomeRootRouteDecisionSnapshotConsumer`, `TimelineHomeRouteConstructionPlanConsumer`, `TimelineHomeRouteConstructionReadinessConsumer`, `TimelineHomeOffscreenConstructionHarnessResultConsumer`, and `TimelineHomeConstructionArtifactChainConsumer`.
 - The decoded gate shows `source == rootPreflight`, `legacyFallback == false`, `missingDependencies.isEmpty`, `fallbackIssueKinds.isEmpty`, `releaseBlockerFlags.isEmpty`, `sideEffectSentinel` all false, `dataSourceApplyCalled == false`, and no privacy-forbidden fragments in encoded artifact, export, snapshot, debug summary, logs, fixtures, screenshots, or failure artifacts.
 - Any fallback, missing dependency, runtime-disabled, rollout-blocked, unknown mode, or non-empty `releaseBlockerFlags` decision keeps route construction closed.
 - Diagnostics consumers remain readers, not privacy sanitizers. Only sanitized route diagnostics artifacts may be consumed or attached.
@@ -254,48 +271,52 @@ When a later explicit implementation prompt opens construction, the preferred ta
 
 Allowed for that future task:
 
-- Construct a dependency container with read-only/offline dependencies.
-- Construct a `TimelineSurface` or `TimelineCollectionViewController` only behind the explicit flag and readiness gates.
-- Root must select exactly one Home route before constructing any Home store or surface.
-- When `collectionView` is selected, Root must not construct `NostrHomeTimelineStore` or mount legacy `HomeTimelineView` for the same account/feed session.
-- Keep `renderedRoute == legacy` unless a later activation task explicitly opens rendering.
-- Record a route diagnostics artifact locally.
-- Verify offscreen or no-window behavior.
-- Keep runtime network, relay, resolver, DB-write, and read marker dependencies closed.
+- Construct a collection view route description or dependency path only behind the explicit `--timeline-engine=collectionView` flag and readiness gates.
+- Construct read-only/offline dependencies for the flagged path.
+- Construct `TimelineSurface` or `TimelineCollectionViewController` only in the explicit flagged path.
+- Keep construction no-window/offscreen or non-rendered unless a later task explicitly opens rendered construction.
+- Keep the default rendered route legacy.
+- Keep `routeActivationAllowed == false`.
+- Keep `renderedRouteAfterConstruction == legacy`.
+- Record the route/construction artifact chain locally.
+- Keep existing readiness, plan, harness, harness-result consumer, artifact-chain consumer, smoke, and restore-harness tests green.
+- Keep runtime network, relay, resolver, DB-write, read marker, `feed_read_state`, and `feed_items.pending_new` dependencies closed.
 - Initial snapshot mutation must flow through `TimelineSnapshotCoordinator.applyPreservingPosition`; direct `dataSource.apply` remains coordinator-only.
 
 Forbidden for that future task:
 
 - Defaulting to collection view.
 - Replacing legacy Home rendering.
+- Route activation or render switching.
 - Removing or bypassing `NostrHomeTimelineStore`.
-- Starting relay or network.
+- Starting relay, network, resolver, media resolver, OGP resolver, profile resolver, or real `ResolveCoordinator` work.
 - Writing DB state, read marker state, `feed_read_state`, `feed_items.pending_new`, or `resolve_jobs`.
 - Calling `dataSource.apply` from Root.
 - Changing splash, Launch Screen, or root shell behavior.
-- Route activation or render switching.
 - GitHub Actions changes.
+- Dependency changes.
 - SQL schema or migration changes.
 - Legacy SwiftUI Timeline implementation changes.
-- Connecting URLSession, relay, media resolver, OGP resolver, profile resolver, or real `ResolveCoordinator`.
+- Connecting `URLSession`, relay, media resolver, OGP resolver, profile resolver, or real `ResolveCoordinator`.
 
 ## 9. Required Future Route Construction Tests
 
 Before route construction can open, future tests must exist with these suite and case names:
 
-- `TimelineHomeRouteConstructionReadinessTests`
-- `TimelineHomeCollectionViewRouteConstructionTests`
-- `collectionView_route_construction_requires_explicit_flag`
-- `collectionView_route_construction_requires_readiness`
-- `default_legacy_does_not_construct_collectionView`
-- `debug_override_collectionView_does_not_bypass_flag`
-- `collectionView_construction_is_offscreen_or_no_window`
-- `collectionView_construction_does_not_start_network`
-- `collectionView_construction_does_not_write_db`
-- `collectionView_construction_does_not_advance_read_marker`
-- `collectionView_construction_does_not_call_dataSourceApply`
-- `collectionView_construction_records_route_artifact`
-- `legacy_rendering_remains_default`
+- `TimelineHomeCollectionViewRouteBehindFlagConstructionTests`
+- `collectionView_route_requires_explicit_flag`
+- `collectionView_route_requires_all_readiness_gates`
+- `default_legacy_route_does_not_construct_collectionView`
+- `flagged_collectionView_route_constructs_only_non_rendered_or_offscreen_path`
+- `flagged_collectionView_route_keeps_renderedRoute_legacy`
+- `flagged_collectionView_route_keeps_activation_false`
+- `flagged_collectionView_route_records_artifact_chain`
+- `flagged_collectionView_route_does_not_start_network`
+- `flagged_collectionView_route_does_not_write_db`
+- `flagged_collectionView_route_does_not_advance_read_marker`
+- `flagged_collectionView_route_does_not_call_dataSourceApply_from_Root`
+- `flagged_collectionView_route_does_not_construct_extra_NostrHomeTimelineStore`
+- `startup_network_grep_no_matches`
 - `selected_swift_testing_suites_non_zero`
 
 Future validation must also include:
@@ -326,6 +347,12 @@ This docs slice is accepted only if:
 - DB write, network, relay, media resolver, OGP resolver, profile resolver, and real `ResolveCoordinator` scope remains closed.
 - Collection view route construction remains closed now.
 - Default legacy remains required.
+- The next implementation title is explicitly `test: construct TimelineHome collectionView route behind flag`.
+- Allowed and forbidden scope for that next construction slice is explicit.
+- Future route-behind-flag tests are listed by suite and case name.
+- Construction and activation/rendering are documented as separate milestones.
+- Rollback and manual fallback remain legacy.
+- If any gate fails, the next construction task must not construct the route; it must record the artifact and keep legacy rendering.
 
 ## 12. Rollback Plan
 
@@ -336,6 +363,8 @@ Rollback is a launch-time or restart-time choice.
 - Do not silently fall back in the same session after the collection view route has started mutating visible state.
 - Diagnostics record the route decision and any fallback issue locally.
 - Legacy Home remains available until the collection view route passes release gates and a separate decision enables it by default.
+- Manual fallback remains legacy.
+- If any construction gate fails, do not construct the collection view route; record the blocked artifact chain and keep legacy rendering.
 
 ## 13. Open Questions
 
