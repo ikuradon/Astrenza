@@ -53,7 +53,9 @@ The running session must not automatically fall back from the collection view pa
 
 Collection view route construction is a separate milestone from route activation. It means Root/Home may construct a collection view route description or a `TimelineSurface` / `TimelineCollectionViewController` dependency path behind `--timeline-engine=collectionView` and readiness gates. It is not default rendering, not route activation, and not a rendering switch. The first construction slice must remain no-window/offscreen or non-rendered unless a later task explicitly opens rendered construction. The Root body decision snapshot must continue to report `renderedRoute == legacy`, `renderedRouteAfterConstruction == legacy`, and `routeActivationAllowed == false` until a later activation task explicitly opens rendering.
 
-Current state remains closed: legacy rendering is the production Home path, and collection view can be observed only as a placeholder route decision in local/debug diagnostics. Debug override `.collectionView` must not bypass the explicit launch flag or readiness gates.
+Activation/render switch is the later milestone where Root/Home may render the already constructed collection view path. It requires the explicit `--timeline-engine=collectionView` flag, requires all construction gates to remain clean, keeps default launch without the flag on legacy, and keeps manual rollback on legacy.
+
+Current state remains activation-closed: legacy rendering is the production Home path, and collection view exists only as the flagged offscreen/non-rendered construction result plus local/debug diagnostics. Debug override `.collectionView` must not bypass the explicit launch flag or readiness gates.
 
 ## 4. Dependency Injection Plan
 
@@ -134,7 +136,13 @@ Do not jump directly to full production Home wiring. Use this sequence:
 
 The Root diagnostics sink injection baseline must continue to follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight diagnostics slice only: Root may pass a local in-memory `TimelineHomeRouteDiagnosticsSink` or narrow protocol into `TimelineHomeRootRouteCallSite`, default legacy remains explicit, the collection view flag may record one local decision artifact but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, same-session automatic fallback is forbidden, and production Home/root/splash behavior remains unchanged until a separate implementation task opens that scope.
 
-Actual collection view route construction remains closed now. A future construction slice may only construct a collection view route description or injected read-only/offline dependency path, plus one no-window/offscreen or non-rendered `TimelineSurface` or `TimelineCollectionViewController`, behind the explicit flag and readiness gates. It must keep default rendering legacy, record the route/construction artifact chain, keep existing readiness/plan/harness/artifact-chain tests green, and avoid activation/render switching. It must not start relay/network/resolver work, write DB/read marker/`feed_read_state`/`feed_items.pending_new`/`resolve_jobs`, call `dataSource.apply` from Root, remove or bypass `NostrHomeTimelineStore`, change splash/root shell behavior, alter schema/migrations, touch GitHub Actions/dependencies, or switch rendering.
+The first construction implementation checkpoint is `f163ed0 test: construct TimelineHome collectionView route behind flag`. It keeps default rendering legacy, records the route/construction artifact chain, keeps readiness/plan/harness/artifact-chain tests green, and keeps activation/render switching closed.
+
+The next explicit activation task is `test: activate TimelineHome collectionView route behind flag`. That future task may switch the rendered route only behind the explicit flag and readiness gates, use the already constructed flagged collection view path, keep route diagnostics and construction artifact chain recording, preserve Root shell first paint, keep the Timeline restore gate scoped to the Timeline area only, keep `networkWaitedBeforeInteractiveScrollMS == 0`, and keep `readMarkerChanged == false`.
+
+That future activation task must not default to collection view, remove or bypass `NostrHomeTimelineStore`, start relay/network before first interactive scroll, write DB/read marker/`feed_read_state`/`pending_new` state, call `dataSource.apply` from Root, change splash/root shell behavior, change schema/migrations/GitHub Actions/dependencies, or allow same-session double mutation between legacy and collection view paths.
+
+Before activation can open, the required gates are: flagged construction review PASS, offscreen/no-window smoke PASS, initial restore snapshot coordinator harness PASS, artifact chain consumer PASS, startup network grep with no matches, privacy guard PASS, coordinator-only `dataSource.apply`, no extra `NostrHomeTimelineStore`, no DB write/read marker mutation, and a Root body decision snapshot that explicitly permits activation scope.
 
 ## 9. Explicit Forbidden Scope
 
@@ -195,6 +203,19 @@ Future wiring PRs should include focused RED-first coverage before production in
 - `flagged_collectionView_route_does_not_advance_read_marker`.
 - `flagged_collectionView_route_does_not_call_dataSourceApply_from_Root`.
 - `flagged_collectionView_route_does_not_construct_extra_NostrHomeTimelineStore`.
+- `TimelineHomeCollectionViewRouteActivationTests`.
+- `activation_requires_explicit_flag`.
+- `activation_requires_all_construction_gates`.
+- `default_legacy_rendering_remains_default`.
+- `activation_does_not_start_network_before_interactive_scroll`.
+- `activation_does_not_advance_read_marker`.
+- `activation_does_not_write_db`.
+- `activation_does_not_call_dataSourceApply_from_Root`.
+- `activation_does_not_construct_extra_NostrHomeTimelineStore`.
+- `activation_records_route_and_construction_artifacts`.
+- `activation_uses_timeline_area_restore_gate_only`.
+- `activation_keeps_root_shell_first_paint`.
+- `activation_rollback_returns_to_legacy`.
 - `startup_network_grep_no_matches`.
 - `selected_swift_testing_suites_non_zero`.
 
