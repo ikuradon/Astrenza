@@ -204,7 +204,14 @@ struct TimelineHomeCollectionViewRouteActivationReadiness: Codable, Equatable, S
                 || !consumer.didRenderLegacy,
             to: &issues
         )
-        append(.flaggedConstructionResultClean, when: !constructionResult.isActivationClean, to: &issues)
+        append(
+            .flaggedConstructionResultClean,
+            when: !constructionResult.isActivationClean(
+                matching: consumer,
+                chainIssueKinds: chainIssueKinds
+            ),
+            to: &issues
+        )
         append(.artifactChainClean, when: !chainIssueKinds.isEmpty, to: &issues)
         append(
             .offscreenNoWindowSmokePassed,
@@ -348,8 +355,15 @@ struct TimelineHomeCollectionViewRouteActivationReadiness: Codable, Equatable, S
 }
 
 private extension TimelineHomeCollectionViewRouteConstructionResult {
-    var isActivationClean: Bool {
-        constructionAllowed
+    func isActivationClean(
+        matching consumer: TimelineHomeConstructionArtifactChainConsumer,
+        chainIssueKinds: [String]
+    ) -> Bool {
+        requestedRoute == .collectionView
+            && constructionAttempted
+            && constructionAllowed
+            && constructionKind.isFlaggedConstructionKind
+            && constructionKind == consumer.constructionKind
             && issueKinds.isEmpty
             && collectionViewRouteConstructed
             && !collectionViewRouteConstructedFromRoot
@@ -366,6 +380,41 @@ private extension TimelineHomeCollectionViewRouteConstructionResult {
             && !readMarkerAdvanced
             && !dataSourceApplyFromRootCalled
             && coordinatorOwnedDataSourceApplyAllowed
+            && artifactSummary.matches(
+                result: self,
+                consumer: consumer,
+                chainIssueKinds: chainIssueKinds
+            )
+    }
+}
+
+private extension TimelineHomeCollectionViewRouteConstructionArtifactSummary {
+    func matches(
+        result: TimelineHomeCollectionViewRouteConstructionResult,
+        consumer: TimelineHomeConstructionArtifactChainConsumer,
+        chainIssueKinds: [String]
+    ) -> Bool {
+        requestedRoute == result.requestedRoute
+            && constructionAllowed == result.constructionAllowed
+            && constructionKind == result.constructionKind
+            && renderedRouteAfterConstruction == result.renderedRouteAfterConstruction
+            && routeActivationAllowed == result.routeActivationAllowed
+            && routeDecisionSummary == consumer.diagnosticsSummaries.routeDecision
+            && constructionReadinessSummary == consumer.diagnosticsSummaries.constructionReadiness
+            && offscreenHarnessSummary == consumer.diagnosticsSummaries.offscreenHarness
+            && rejectionIssueKinds == result.issueKinds
+            && self.chainIssueKinds == chainIssueKinds
+    }
+}
+
+private extension TimelineHomeCollectionViewRouteConstructionKind {
+    var isFlaggedConstructionKind: Bool {
+        switch self {
+        case .describedOnly, .offscreenOnly:
+            return true
+        case .productionClosed:
+            return false
+        }
     }
 }
 

@@ -46,21 +46,12 @@ struct TimelineHomeCollectionViewRouteActivationTests {
     func activation_does_not_start_network_before_interactive_scroll() throws {
         let result = evaluate()
         let source = try sourceFile(named: "TimelineHomeCollectionViewRouteActivationReadiness.swift")
-        let forbidden = [
-            "LocalDataTask",
-            "ATS failure",
-            "nw_",
-            "WebSocket",
-            "wss://",
-            "setDefaultRelays",
-            "URLSession"
-        ]
 
         #expect(result.activationWouldBeAllowed)
         #expect(result.networkStarted == false)
         #expect(result.networkWaitedBeforeInteractiveScrollMS == 0)
         #expect(result.requiresNetworkWork == false)
-        for token in forbidden {
+        for token in forbiddenStartupNetworkTokens {
             #expect(!source.contains(token))
         }
     }
@@ -186,6 +177,60 @@ struct TimelineHomeCollectionViewRouteActivationTests {
     }
 
     @Test
+    func activation_rejects_construction_result_with_non_collectionView_requestedRoute() {
+        var constructionResult = construct()
+        constructionResult.requestedRoute = .legacy
+
+        let result = evaluate(constructionResult: constructionResult)
+
+        #expect(result.activationWouldBeAllowed == false)
+        #expect(result.issues.contains(gate: .flaggedConstructionResultClean))
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.activationPerformed == false)
+    }
+
+    @Test
+    func activation_rejects_unattempted_construction_result() {
+        var constructionResult = construct()
+        constructionResult.constructionAttempted = false
+
+        let result = evaluate(constructionResult: constructionResult)
+
+        #expect(result.activationWouldBeAllowed == false)
+        #expect(result.issues.contains(gate: .flaggedConstructionResultClean))
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.activationPerformed == false)
+    }
+
+    @Test
+    func activation_rejects_closed_or_invalid_constructionKind() {
+        var constructionResult = construct()
+        constructionResult.constructionKind = .productionClosed
+
+        let result = evaluate(constructionResult: constructionResult)
+
+        #expect(result.activationWouldBeAllowed == false)
+        #expect(result.issues.contains(gate: .flaggedConstructionResultClean))
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.activationPerformed == false)
+    }
+
+    @Test
+    func activation_rejects_stale_construction_identity_even_when_clean_flags_are_true() {
+        var constructionResult = construct()
+        constructionResult.artifactSummary.routeDecisionSummary = "stale-route-decision"
+
+        let result = evaluate(constructionResult: constructionResult)
+
+        #expect(constructionResult.constructionAllowed)
+        #expect(constructionResult.issueKinds.isEmpty)
+        #expect(result.activationWouldBeAllowed == false)
+        #expect(result.issues.contains(gate: .flaggedConstructionResultClean))
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.activationPerformed == false)
+    }
+
+    @Test
     func activation_rejects_missing_restore_harness() {
         let result = evaluate(initialRestoreSnapshotCoordinatorHarnessPassed: false)
 
@@ -213,6 +258,15 @@ struct TimelineHomeCollectionViewRouteActivationTests {
         #expect(result.activationWouldBeAllowed == false)
         #expect(result.issues.contains(gate: .rootBodyDecisionSnapshotPermitsActivationScope))
         #expect(result.activationPerformed == false)
+    }
+
+    @Test
+    func startup_forbidden_literal_scan_does_not_hit_activation_test_literals() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath), encoding: .utf8)
+
+        for token in forbiddenStartupNetworkTokens {
+            #expect(!source.contains(token))
+        }
     }
 
     @Test
@@ -483,6 +537,20 @@ private var forbiddenPrivacyFragments: [String] {
         "event id",
         "eventid",
         "event_id"
+    ]
+}
+
+private var forbiddenStartupNetworkTokens: [String] {
+    [
+        "Local" + "Data" + "Task",
+        "ATS " + "failure",
+        "n" + "w_",
+        "Web" + "Socket",
+        "URL" + "Session" + "Web" + "Socket" + "Task",
+        "ws" + "s://",
+        "set" + "Default" + "Relays",
+        "URL" + "Session",
+        "relay " + "connection " + "attempts"
     ]
 }
 
