@@ -2,6 +2,7 @@ import Foundation
 
 enum TimelineHomeRootVisibleRouteDecision: String, Codable, Equatable, Sendable {
     case legacy
+    case collectionView
     case collectionViewPlaceholder
     case unavailable
 }

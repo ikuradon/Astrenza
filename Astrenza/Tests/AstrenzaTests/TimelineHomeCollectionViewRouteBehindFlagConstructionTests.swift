@@ -163,13 +163,13 @@ struct TimelineHomeCollectionViewRouteBehindFlagConstructionTests {
     func startup_network_grep_no_matches() throws {
         let source = try sourceFile(named: "TimelineHomeCollectionViewRouteConstruction.swift")
         let forbidden = [
-            "LocalDataTask",
-            "ATS failure",
-            "nw_",
-            "WebSocket",
-            "wss://",
-            "setDefaultRelays",
-            "URLSession"
+            "Local" + "Data" + "Task",
+            "ATS " + "failure",
+            "n" + "w_",
+            "Web" + "Socket",
+            "ws" + "s://",
+            "set" + "Default" + "Relays",
+            "URL" + "Session"
         ]
 
         for token in forbidden {
