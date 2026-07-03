@@ -79,6 +79,41 @@ struct TimelineHomeRootActivationDecisionSnapshotChainTests {
         #expect(result.combinedArtifactChainIssueKinds.contains("activation.constructionGatesClean"))
     }
 
+    @Test("chain propagates dirty root timeline surface construction")
+    func chain_propagates_dirty_root_timeline_surface_construction() throws {
+        let chain = try decodedChain(dirtyTimelineSurfaceConstructionFixture())
+        let consumer = chain.activationArtifactChainConsumer
+        let activationResult = consumer.activationConsumer.result
+        let result = chain.result
+
+        #expect(consumer.constructionConsumer.timelineSurfaceConstructedFromRoot)
+        #expect(result.sideEffectFlags.timelineSurfaceConstructed)
+        #expect(result.combinedArtifactChainIssueKinds.contains("construction.offscreen.rootSurfaceConstructionOpen"))
+        #expect(result.combinedArtifactChainIssueKinds.contains("activation.artifactChainClean"))
+        #expect(result.activationBlockedIssueKinds.contains(.activationArtifactChainClean))
+        #expect(result.activationWouldBeAllowed == false)
+        #expect(result.activationPerformed == false)
+        #expect(result.productionRenderSwitchPerformed == false)
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.rollbackRoute == .legacy)
+        #expect(result.manualFallbackRoute == .legacy)
+        #expect(result.rootBodyDecisionRenderedRoute == .legacy)
+        #expect(result.sideEffectFlags.rootViewConstructed == false)
+        #expect(result.sideEffectFlags.homeTimelineViewConstructed == false)
+        #expect(result.sideEffectFlags.nostrHomeTimelineStoreConstructed == false)
+        #expect(result.sideEffectFlags.timelineCollectionViewControllerConstructed == false)
+        #expect(result.sideEffectFlags.networkStarted == false)
+        #expect(result.sideEffectFlags.dbWriteAttempted == false)
+        #expect(result.sideEffectFlags.readMarkerChanged == false)
+        #expect(result.sideEffectFlags.dataSourceApplyCalled == false)
+        #expect(activationResult.rootShellPresentation == .immediate)
+        #expect(activationResult.rootShellMustRenderBeforeTimelineRestore)
+        #expect(activationResult.timelineRestoreGateScope == .timelineArea)
+        #expect(activationResult.timelineGateCoversRootShell == false)
+        #expect(activationResult.timelineGateCoversTabBar == false)
+        #expect(activationResult.timelineGateContinuesGlobalSplash == false)
+    }
+
     @Test("chain exposes root body decision snapshot")
     func chain_exposes_root_body_decision_snapshot() throws {
         let result = try decodedChain(cleanFixture()).result
@@ -218,6 +253,17 @@ private func blockedArtifactChainFixture() -> TimelineHomeRootActivationPrefligh
     )
 }
 
+private func dirtyTimelineSurfaceConstructionFixture() -> TimelineHomeRootActivationPreflightSnapshotChain {
+    let activationChain = dirtyTimelineSurfaceConstructionActivationChain()
+    let consumer = TimelineHomeActivationArtifactChainConsumer(chain: activationChain)
+    let preflight = preflight(consumer: consumer)
+    return TimelineHomeRootActivationPreflightSnapshotChain(
+        preflightResult: preflight,
+        rootRouteDecisionSnapshot: activationChain.constructionArtifactChain.routeDecisionSnapshot,
+        activationArtifactChainConsumer: consumer
+    )
+}
+
 private func preflight(
     arguments: [String] = ["Astrenza", "--timeline-engine=collectionView"],
     consumer: TimelineHomeActivationArtifactChainConsumer
@@ -249,6 +295,17 @@ private func cleanActivationChain(
 
 private func blockedConstructionActivationChain() -> TimelineHomeActivationArtifactChain {
     let constructionChain = blockedConstructionChain()
+    return TimelineHomeActivationArtifactChain(
+        constructionArtifactChain: constructionChain,
+        activationReadinessResult: evaluateActivation(
+            chain: constructionChain,
+            constructionResult: construct(chain: constructionChain)
+        )
+    )
+}
+
+private func dirtyTimelineSurfaceConstructionActivationChain() -> TimelineHomeActivationArtifactChain {
+    let constructionChain = dirtyTimelineSurfaceConstructionChain()
     return TimelineHomeActivationArtifactChain(
         constructionArtifactChain: constructionChain,
         activationReadinessResult: evaluateActivation(
@@ -334,6 +391,20 @@ private func blockedConstructionChain() -> TimelineHomeConstructionArtifactChain
             artifactSummary: snapshot.artifactSummary
         )
     )
+}
+
+private func dirtyTimelineSurfaceConstructionChain() -> TimelineHomeConstructionArtifactChain {
+    var chain = cleanConstructionChain()
+    chain.offscreenHarnessResult.offscreenConstructionAllowed = false
+    chain.offscreenHarnessResult.rejectionReasons = [
+        .rootSurfaceConstructionOpen,
+        .constructionPlanClosed
+    ]
+    chain.offscreenHarnessResult.timelineSurfaceConstructedFromRoot = true
+    chain.offscreenHarnessResult.controllerLoadedOffscreen = false
+    chain.offscreenHarnessResult.controllerItemIDs = []
+    chain.offscreenHarnessResult.coordinatorOwnedDataSourceApplyAllowed = false
+    return chain
 }
 
 private func makeRootSnapshot(

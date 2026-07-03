@@ -203,6 +203,10 @@ struct TimelineHomeActivationArtifactChainConsumer: Codable, Equatable, Sendable
             || sideEffectFlags.extraNostrHomeTimelineStoreConstructed
     }
 
+    var timelineSurfaceConstructedFromRoot: Bool {
+        constructionConsumer.timelineSurfaceConstructedFromRoot
+    }
+
     var diagnosticsSummary: TimelineHomeActivationArtifactChainDiagnosticsSummary {
         TimelineHomeActivationArtifactChainDiagnosticsSummary(
             routeDecision: constructionConsumer.diagnosticsSummaries.routeDecision,

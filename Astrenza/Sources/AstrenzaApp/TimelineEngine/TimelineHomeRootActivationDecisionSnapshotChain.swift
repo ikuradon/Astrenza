@@ -141,7 +141,8 @@ struct TimelineHomeRootActivationDecisionSnapshotSideEffectFlags: Codable, Equat
             timelineCollectionViewControllerConstructed: rootSideEffects
                 .timelineCollectionViewControllerConstructed
                 || activationSideEffects.timelineCollectionViewControllerConstructed,
-            timelineSurfaceConstructed: false,
+            timelineSurfaceConstructed: activationArtifactChainConsumer
+                .timelineSurfaceConstructedFromRoot,
             networkStarted: rootSideEffects.networkStarted
                 || activationSideEffects.networkStarted,
             dbWriteAttempted: rootSideEffects.dbWriteAttempted
