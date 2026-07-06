@@ -46,6 +46,7 @@ struct TimelineHomeStartupSmokeDiagnosticsAttachment: Codable, Equatable, Sendab
     var source: TimelineHomeStartupSmokeDiagnosticsSource
     var fixedResultBundlePath: String?
     var redactedResultBundlePathSummary: String
+    var artifactSummary: TimelineHomeCollectionViewStartupSmokeArtifact
     var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount]
     var zeroSelectedSuiteCount: Bool
     var startupNetworkScanStatus: TimelineHomeStartupSmokeDiagnosticsScanStatus
@@ -90,6 +91,7 @@ struct TimelineHomeStartupSmokeDiagnosticsAttachment: Codable, Equatable, Sendab
             source: .flaggedStartupSmoke,
             fixedResultBundlePath: fixedResultBundlePath,
             redactedResultBundlePathSummary: redactedResultBundlePathSummary(for: fixedResultBundlePath),
+            artifactSummary: result.artifactSummary,
             selectedSuiteCounts: selectedSuiteCounts,
             zeroSelectedSuiteCount: zeroSelectedSuiteCount,
             startupNetworkScanStatus: startupNetworkScanStatus,
@@ -201,6 +203,10 @@ struct TimelineHomeStartupSmokeDiagnosticsConsumer: Codable, Equatable, Sendable
         attachment.selectedSuiteCounts
     }
 
+    var artifactSummary: TimelineHomeCollectionViewStartupSmokeArtifact {
+        attachment.artifactSummary
+    }
+
     var hasSideEffects: Bool {
         attachment.requiresNetworkWork
             || attachment.requiresDBWrite
@@ -245,6 +251,7 @@ struct TimelineHomeStartupSmokeDiagnosticsSummary: Codable, Equatable, Sendable 
     var dbWriteAttempted: Bool
     var readMarkerAdvanced: Bool
     var extraNostrHomeTimelineStoreConstructed: Bool
+    var artifactSummary: TimelineHomeCollectionViewStartupSmokeArtifact
     var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount]
     var issueKinds: [TimelineHomeStartupSmokeDiagnosticsIssueKind]
 
@@ -271,6 +278,7 @@ struct TimelineHomeStartupSmokeDiagnosticsSummary: Codable, Equatable, Sendable 
             dbWriteAttempted: attachment.dbWriteAttempted,
             readMarkerAdvanced: attachment.readMarkerAdvanced,
             extraNostrHomeTimelineStoreConstructed: attachment.extraNostrHomeTimelineStoreConstructed,
+            artifactSummary: attachment.artifactSummary,
             selectedSuiteCounts: attachment.selectedSuiteCounts,
             issueKinds: attachment.issueKinds
         )
@@ -290,6 +298,7 @@ struct TimelineHomeStartupSmokeDiagnosticsSummary: Codable, Equatable, Sendable 
             "cleanWiringGateRequired=\(cleanWiringGateRequired)",
             "networkWaitMS=\(networkWaitedBeforeInteractiveScrollMS)",
             "sideEffects(\(sideEffectSummary))",
+            "artifactSummary={\(artifactSummary.deterministicSummary)}",
             "suiteCounts=\(selectedSuiteCounts.debugSummary)",
             "issueKinds=\(issueKinds.map(\.rawValue).debugList)"
         ].joined(separator: " ")

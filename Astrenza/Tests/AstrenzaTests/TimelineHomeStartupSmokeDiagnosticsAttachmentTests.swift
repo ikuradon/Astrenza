@@ -84,6 +84,85 @@ struct TimelineHomeStartupSmokeDiagnosticsAttachmentTests {
     }
 
     @Test
+    func attachment_requires_artifactSummary_key() throws {
+        let attachment = makeAttachment(for: startupSmokeResult())
+        let payload = try payload(for: attachment)
+
+        #expect(requiredAttachmentKeys.contains("artifactSummary"))
+        #expect(Set(payload.keys) == requiredAttachmentKeys)
+        try #require(payload["artifactSummary"] as? [String: Any])
+    }
+
+    @Test
+    func attachment_exposes_startup_smoke_artifactSummary() throws {
+        let result = startupSmokeResult()
+        let consumer = try consumer(for: makeAttachment(for: result))
+
+        #expect(consumer.artifactSummary == result.artifactSummary)
+        #expect(consumer.debugSummary.artifactSummary == result.artifactSummary)
+        #expect(consumer.deterministicDebugSummary.contains(
+            "artifactSummary={\(result.artifactSummary.deterministicSummary)}"
+        ))
+    }
+
+    @Test
+    func attachment_artifactSummary_is_encoded() throws {
+        let result = startupSmokeResult()
+        let attachment = makeAttachment(for: result)
+        let artifactSummary = try artifactSummaryPayload(for: attachment)
+
+        #expect(artifactSummary["routeDecisionSummary"] as? String == result.artifactSummary.routeDecisionSummary)
+        #expect(artifactSummary["initialRestoreSummary"] as? String == result.artifactSummary.initialRestoreSummary)
+        #expect(artifactSummary["sideEffectSummary"] as? String == result.artifactSummary.sideEffectSummary)
+        #expect(artifactSummary["resultBundleSummary"] as? String == result.artifactSummary.resultBundleSummary)
+        #expect(artifactSummary["deterministicSummary"] as? String == result.artifactSummary.deterministicSummary)
+    }
+
+    @Test
+    func attachment_artifactSummary_does_not_encode_raw_bundle_lines() throws {
+        let rawBundleLine = [
+            "boot",
+            ["URL", "Session", "Web", "Socket", "Task"].joined(),
+            ["ws", "s://"].joined() + ["relay", ".", "example"].joined()
+        ].joined(separator: " ")
+        let attachment = makeAttachment(for: dirtyStartupNetworkResult())
+        let json = try artifactSummaryJSONString(for: attachment)
+
+        #expect(!json.contains(rawBundleLine))
+        #expect(!json.contains(["URL", "Session", "Web", "Socket", "Task"].joined()))
+        #expect(!json.contains(["ws", "s://"].joined()))
+        #expect(!json.contains("relay.example"))
+    }
+
+    @Test
+    func attachment_artifactSummary_does_not_encode_raw_launchArguments() throws {
+        let attachment = makeAttachment(for: startupSmokeResult())
+        let json = try artifactSummaryJSONString(for: attachment)
+
+        #expect(!json.contains("launch" + "Arguments"))
+        #expect(!json.contains("--timeline-engine=collectionView"))
+        #expect(!json.contains("[\"Astrenza\""))
+    }
+
+    @Test
+    func attachment_artifactSummary_does_not_encode_relay_pubkey_event_or_secret_fragments() throws {
+        let dirtyLine = [
+            ["ws", "s://"].joined() + ["relay", ".", "example"].joined(),
+            "pub" + "key=" + String(repeating: "a", count: 64),
+            "event" + " id=" + String(repeating: "b", count: 64),
+            ["n", "sec"].joined() + "1redactedfixture",
+            ["private", "message", "content", "phrase"].joined(separator: " ")
+        ].joined(separator: " ")
+        let attachment = makeAttachment(for: dirtyStartupNetworkResult())
+        let json = try artifactSummaryJSONString(for: attachment).lowercased()
+
+        #expect(!json.contains(dirtyLine.lowercased()))
+        for fragment in forbiddenPrivacyFragments {
+            #expect(!json.contains(fragment))
+        }
+    }
+
+    @Test
     func attachment_does_not_encode_raw_bundle_lines() throws {
         let rawBundleLine = [
             "boot",
@@ -212,7 +291,7 @@ struct TimelineHomeStartupSmokeDiagnosticsAttachmentTests {
     func selected_swift_testing_suites_non_zero() {
         #expect(!selectedSuiteCounts.isEmpty)
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)))
-        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 14)))
+        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20)))
         #expect(selectedSuiteCounts.allSatisfy { $0.executedTestCount > 0 })
     }
 }
@@ -328,7 +407,7 @@ private func startupSmokeResult(
 private var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount] {
     [
         suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25),
-        suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 14),
+        suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),
         suiteCount("TimelineHomeCollectionViewRouteRestoreIntegrationTests", 16),
         suiteCount("TimelineHomeRootBodyRenderSwitchTests", 16)
     ]
@@ -351,6 +430,7 @@ private var requiredAttachmentKeys: Set<String> {
         "source",
         "fixedResultBundlePath",
         "redactedResultBundlePathSummary",
+        "artifactSummary",
         "selectedSuiteCounts",
         "zeroSelectedSuiteCount",
         "startupNetworkScanStatus",
@@ -401,6 +481,28 @@ private func encodedData<T: Encodable>(_ value: T) throws -> Data {
 
 private func encodedJSONString<T: Encodable>(_ value: T) throws -> String {
     try #require(String(data: encodedData(value), encoding: .utf8))
+}
+
+private func payload(
+    for attachment: TimelineHomeStartupSmokeDiagnosticsAttachment
+) throws -> [String: Any] {
+    try #require(try JSONSerialization.jsonObject(with: encodedData(attachment)) as? [String: Any])
+}
+
+private func artifactSummaryPayload(
+    for attachment: TimelineHomeStartupSmokeDiagnosticsAttachment
+) throws -> [String: Any] {
+    try #require(payload(for: attachment)["artifactSummary"] as? [String: Any])
+}
+
+private func artifactSummaryJSONString(
+    for attachment: TimelineHomeStartupSmokeDiagnosticsAttachment
+) throws -> String {
+    let data = try JSONSerialization.data(
+        withJSONObject: artifactSummaryPayload(for: attachment),
+        options: [.sortedKeys]
+    )
+    return try #require(String(data: data, encoding: .utf8))
 }
 
 private func sourceFile(named fileName: String) throws -> String {
