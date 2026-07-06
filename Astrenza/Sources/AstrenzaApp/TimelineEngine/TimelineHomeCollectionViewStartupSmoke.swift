@@ -1,9 +1,14 @@
 import Foundation
 
+enum TimelineHomeStartupNetworkPatternKind: String, Codable, Equatable, Sendable {
+    case startupNetwork
+}
+
 struct TimelineHomeStartupNetworkPatternHit: Codable, Equatable, Sendable {
-    var pattern: String
-    var line: Int
-    var excerpt: String
+    var patternKind: TimelineHomeStartupNetworkPatternKind
+    var tokenID: String
+    var lineNumber: Int
+    var redactedSummary: String
 }
 
 struct TimelineHomeStartupResultBundleScan: Codable, Equatable, Sendable {
@@ -21,12 +26,13 @@ enum TimelineHomeFlaggedStartupResultBundleScanner: Sendable {
         var hits: [TimelineHomeStartupNetworkPatternHit] = []
         for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineText = String(line)
-            for pattern in patterns where lineText.contains(pattern) {
+            for definition in patternDefinitions where lineText.contains(definition.matcher) {
                 hits.append(
                     TimelineHomeStartupNetworkPatternHit(
-                        pattern: pattern,
-                        line: index + 1,
-                        excerpt: sanitizedExcerpt(lineText)
+                        patternKind: .startupNetwork,
+                        tokenID: definition.tokenID,
+                        lineNumber: index + 1,
+                        redactedSummary: "redacted startup network pattern match"
                     )
                 )
             }
@@ -34,22 +40,83 @@ enum TimelineHomeFlaggedStartupResultBundleScanner: Sendable {
         return TimelineHomeStartupResultBundleScan(patternHits: hits)
     }
 
-    private static var patterns: [String] {
-        [
-            ["Local", "Data", "Task"].joined(),
-            ["ATS", "failure"].joined(separator: " "),
-            ["n", "w_"].joined(),
-            ["Web", "Socket"].joined(),
-            ["URL", "Session", "Web", "Socket", "Task"].joined(),
-            ["ws", "s://"].joined(),
-            ["set", "Default", "Relays"].joined(),
-            ["URL", "Session"].joined(),
-            ["relay", "connection", "attempts"].joined(separator: " ")
-        ]
+    private struct PatternDefinition: Sendable {
+        var tokenID: String
+        var matcher: String
     }
 
-    private static func sanitizedExcerpt(_ line: String) -> String {
-        String(line.prefix(160))
+    private static var patternDefinitions: [PatternDefinition] {
+        [
+            PatternDefinition(tokenID: "startup-network-token-001", matcher: ["Local", "Data", "Task"].joined()),
+            PatternDefinition(tokenID: "startup-network-token-002", matcher: ["ATS", "failure"].joined(separator: " ")),
+            PatternDefinition(tokenID: "startup-network-token-003", matcher: ["n", "w_"].joined()),
+            PatternDefinition(tokenID: "startup-network-token-004", matcher: ["Web", "Socket"].joined()),
+            PatternDefinition(
+                tokenID: "startup-network-token-005",
+                matcher: ["URL", "Session", "Web", "Socket", "Task"].joined()
+            ),
+            PatternDefinition(tokenID: "startup-network-token-006", matcher: ["ws", "s://"].joined()),
+            PatternDefinition(tokenID: "startup-network-token-007", matcher: ["set", "Default", "Relays"].joined()),
+            PatternDefinition(tokenID: "startup-network-token-008", matcher: ["URL", "Session"].joined()),
+            PatternDefinition(
+                tokenID: "startup-network-token-009",
+                matcher: ["relay", "connection", "attempts"].joined(separator: " ")
+            )
+        ]
+    }
+}
+
+struct TimelineHomeStartupLaunchArgumentSummary: Codable, Equatable, Sendable {
+    var hasCollectionViewFlag: Bool
+    var requestedEngineMode: String
+    var knownFlags: [String]
+    var unknownArgumentCount: Int
+    var redactedUnknownArguments: Bool
+
+    static func make(arguments: [String]) -> TimelineHomeStartupLaunchArgumentSummary {
+        let resolution = TimelineHomeEngineModeResolver.resolve(arguments: arguments)
+        let hasCollectionViewFlag = TimelineHomeRouteLaunchArgumentSource(arguments: arguments).rawValue ==
+            AstrenzaTimelineEngineMode.collectionView.rawValue
+        var knownFlags: [String] = []
+        var unknownArgumentCount = 0
+        var requestedEngineMode = resolution.issues.isEmpty ? resolution.mode.rawValue : "unknown"
+
+        for (index, argument) in arguments.enumerated() {
+            guard !isExecutableName(argument, at: index) else { continue }
+
+            switch argument {
+            case "--timeline-engine=collectionView":
+                appendKnownFlag("timeline-engine=collectionView", to: &knownFlags)
+                requestedEngineMode = AstrenzaTimelineEngineMode.collectionView.rawValue
+            case "--timeline-engine=legacy":
+                appendKnownFlag("timeline-engine=legacy", to: &knownFlags)
+                if !hasCollectionViewFlag {
+                    requestedEngineMode = AstrenzaTimelineEngineMode.legacy.rawValue
+                }
+            default:
+                if argument.hasPrefix("--timeline-engine=") {
+                    appendKnownFlag("timeline-engine=unknown", to: &knownFlags)
+                }
+                unknownArgumentCount += 1
+            }
+        }
+
+        return TimelineHomeStartupLaunchArgumentSummary(
+            hasCollectionViewFlag: hasCollectionViewFlag,
+            requestedEngineMode: requestedEngineMode,
+            knownFlags: knownFlags,
+            unknownArgumentCount: unknownArgumentCount,
+            redactedUnknownArguments: unknownArgumentCount > 0
+        )
+    }
+
+    private static func isExecutableName(_ argument: String, at index: Int) -> Bool {
+        index == 0 && !argument.hasPrefix("-")
+    }
+
+    private static func appendKnownFlag(_ flag: String, to flags: inout [String]) {
+        guard !flags.contains(flag) else { return }
+        flags.append(flag)
     }
 }
 
@@ -69,7 +136,7 @@ enum TimelineHomeFlaggedStartupSmokeIssueKind: String, Codable, Equatable, Senda
 }
 
 struct TimelineHomeCollectionViewStartupSmokeArtifact: Codable, Equatable, Sendable {
-    var launchArguments: [String]
+    var launchArgumentSummary: TimelineHomeStartupLaunchArgumentSummary
     var routeDecisionSummary: String
     var initialRestoreSummary: String
     var sideEffectSummary: String
@@ -77,7 +144,7 @@ struct TimelineHomeCollectionViewStartupSmokeArtifact: Codable, Equatable, Senda
     var deterministicSummary: String
 
     static func make(
-        launchArguments: [String],
+        launchArgumentSummary: TimelineHomeStartupLaunchArgumentSummary,
         result: TimelineHomeFlaggedStartupSmokeResult,
         restorePlanSummary: TimelineHomeFlaggedStartupRestorePlanSummary
     ) -> TimelineHomeCollectionViewStartupSmokeArtifact {
@@ -117,7 +184,7 @@ struct TimelineHomeCollectionViewStartupSmokeArtifact: Codable, Equatable, Senda
             "resultBundle={\(resultBundleSummary)}"
         ].joined(separator: " ")
         return TimelineHomeCollectionViewStartupSmokeArtifact(
-            launchArguments: launchArguments,
+            launchArgumentSummary: launchArgumentSummary,
             routeDecisionSummary: routeDecisionSummary,
             initialRestoreSummary: initialRestoreSummary,
             sideEffectSummary: sideEffectSummary,
@@ -127,7 +194,7 @@ struct TimelineHomeCollectionViewStartupSmokeArtifact: Codable, Equatable, Senda
     }
 }
 
-struct TimelineHomeFlaggedStartupSmokeInput: Codable, Equatable, Sendable {
+struct TimelineHomeFlaggedStartupSmokeInput: Equatable, Sendable {
     var launchArguments: [String]
     var rootBodyRenderDecision: TimelineHomeRootBodyRenderDecision
     var restoreDecision: TimelineHomeCollectionViewRouteRestoreDecision
@@ -143,7 +210,7 @@ struct TimelineHomeFlaggedStartupRestorePlanSummary: Codable, Equatable, Sendabl
 }
 
 struct TimelineHomeFlaggedStartupSmokeResult: Codable, Equatable, Sendable {
-    var launchArguments: [String]
+    var launchArgumentSummary: TimelineHomeStartupLaunchArgumentSummary
     var selectedRoute: TimelineHomeRootBodyRouteSelection
     var renderedRoute: TimelineHomeRootVisibleRouteDecision
     var usedCollectionViewFlag: Bool
@@ -185,6 +252,7 @@ enum TimelineHomeFlaggedCollectionViewStartupSmoke: Sendable {
         let restore = input.restoreDecision
         let restorePlan = restore.restorePlan
         let explicitFlag = hasExplicitCollectionViewLaunchFlag(input.launchArguments)
+        let launchArgumentSummary = TimelineHomeStartupLaunchArgumentSummary.make(arguments: input.launchArguments)
         let issues = issueKinds(
             explicitFlag: explicitFlag,
             root: root,
@@ -208,7 +276,7 @@ enum TimelineHomeFlaggedCollectionViewStartupSmoke: Sendable {
         )
 
         var result = TimelineHomeFlaggedStartupSmokeResult(
-            launchArguments: input.launchArguments,
+            launchArgumentSummary: launchArgumentSummary,
             selectedRoute: selectedRoute,
             renderedRoute: renderedRoute,
             usedCollectionViewFlag: explicitFlag,
@@ -220,7 +288,7 @@ enum TimelineHomeFlaggedCollectionViewStartupSmoke: Sendable {
             networkWaitedBeforeInteractiveScrollMS: restore.networkWaitedBeforeInteractiveScrollMS,
             readMarkerChanged: restore.readMarkerChanged,
             artifactSummary: TimelineHomeCollectionViewStartupSmokeArtifact(
-                launchArguments: input.launchArguments,
+                launchArgumentSummary: launchArgumentSummary,
                 routeDecisionSummary: "pending",
                 initialRestoreSummary: "pending",
                 sideEffectSummary: "pending",
@@ -249,7 +317,7 @@ enum TimelineHomeFlaggedCollectionViewStartupSmoke: Sendable {
             createdAtMS: input.createdAtMS
         )
         result.artifactSummary = TimelineHomeCollectionViewStartupSmokeArtifact.make(
-            launchArguments: input.launchArguments,
+            launchArgumentSummary: launchArgumentSummary,
             result: result,
             restorePlanSummary: planSummary
         )

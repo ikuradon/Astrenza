@@ -158,7 +158,7 @@ struct TimelineHomeFlaggedCollectionViewStartupSmokeTests {
         #expect(cleanScan.passed)
         #expect(cleanScan.patternHits.isEmpty)
         #expect(dirtyScan.passed == false)
-        #expect(dirtyScan.patternHits.map(\.pattern).contains("URL" + "Session" + "Web" + "Socket" + "Task"))
+        #expect(dirtyScan.patternHits.map(\.tokenID).contains("startup-network-token-005"))
         #expect(result.resultBundleScanPassed)
         #expect(result.startupNetworkPatternHits.isEmpty)
     }
@@ -176,6 +176,120 @@ struct TimelineHomeFlaggedCollectionViewStartupSmokeTests {
         #expect(result.selectedRoute == .legacy)
         #expect(result.renderedRoute == .legacy)
         #expect(result.startupNetworkPatternHits.isEmpty == false)
+    }
+
+    @Test
+    func dirty_result_bundle_relay_like_line_is_not_encoded() async throws {
+        let relayLikeValue = ["ws", "s://"].joined() + ["relay", ".", "example", "/", "private"].joined()
+        let dirtyLine = ["boot ", relayLikeValue, " ", "URL" + "Session"].joined()
+        let dirtyScan = TimelineHomeFlaggedStartupResultBundleScanner.scan(text: dirtyLine)
+        let result = try await startupSmoke(resultBundleScan: dirtyScan)
+        let data = try encodedData(result)
+        let json = try #require(String(data: data, encoding: .utf8))
+
+        #expect(dirtyScan.passed == false)
+        #expect(result.collectionViewStartupSmokeEvaluated == false)
+        #expect(!json.contains(dirtyLine))
+        #expect(!json.contains(relayLikeValue))
+        #expect(!json.contains("relay.example"))
+        #expect(!json.contains("private"))
+    }
+
+    @Test
+    func dirty_result_bundle_pubkey_or_event_like_line_is_not_encoded() async throws {
+        let pubkeyLikeValue = String(repeating: "a", count: 64)
+        let eventLikeValue = String(repeating: "b", count: 64)
+        let dirtyLine = [
+            "boot",
+            "URL" + "Session" + "Web" + "Socket" + "Task",
+            "pub" + "key=\(pubkeyLikeValue)",
+            "event" + " id=\(eventLikeValue)"
+        ].joined(separator: " ")
+        let dirtyScan = TimelineHomeFlaggedStartupResultBundleScanner.scan(text: dirtyLine)
+        let result = try await startupSmoke(resultBundleScan: dirtyScan)
+        let data = try encodedData(result)
+        let json = try #require(String(data: data, encoding: .utf8))
+
+        #expect(dirtyScan.passed == false)
+        #expect(!json.contains(dirtyLine))
+        #expect(!json.contains(pubkeyLikeValue))
+        #expect(!json.contains(eventLikeValue))
+        #expect(!json.lowercased().contains("pub" + "key"))
+        #expect(!json.lowercased().contains("event" + " id"))
+    }
+
+    @Test
+    func unknown_launch_argument_secret_like_value_is_not_encoded() async throws {
+        let secretLikeValue = ["n", "sec"].joined() + "1redactedfixture"
+        let unknownArgument = "--debug-token=\(secretLikeValue)"
+        let result = try await startupSmoke(arguments: [
+            "Astrenza",
+            "--timeline-engine=collectionView",
+            unknownArgument
+        ])
+        let data = try encodedData(result)
+        let json = try #require(String(data: data, encoding: .utf8))
+        let payload = try resultPayload(from: data)
+        let summary = try launchArgumentSummaryPayload(from: payload)
+
+        #expect(!json.contains(secretLikeValue))
+        #expect(!json.contains(unknownArgument))
+        #expect(summary["hasCollectionViewFlag"] as? Bool == true)
+        #expect(summary["requestedEngineMode"] as? String == "collectionView")
+        #expect(summary["unknownArgumentCount"] as? Int == 1)
+        #expect(summary["redactedUnknownArguments"] as? Bool == true)
+    }
+
+    @Test
+    func startup_smoke_result_does_not_encode_raw_launch_argument_list() async throws {
+        let result = try await startupSmoke()
+        let data = try encodedData(result)
+        let json = try #require(String(data: data, encoding: .utf8))
+        let payload = try resultPayload(from: data)
+        let artifact = try artifactPayload(from: payload)
+
+        #expect(payload["launchArguments"] == nil)
+        #expect(artifact["launchArguments"] == nil)
+        #expect(payload["launchArgumentSummary"] != nil)
+        #expect(artifact["launchArgumentSummary"] != nil)
+        #expect(!json.contains("\"launchArguments\""))
+        #expect(!json.contains("[\"Astrenza\""))
+    }
+
+    @Test
+    func startup_pattern_hit_payload_exposes_only_redacted_summary_fields() async throws {
+        let dirtyLine = [
+            "boot",
+            ["ws", "s://"].joined() + ["relay", ".", "example"].joined(),
+            "URL" + "Session"
+        ].joined(separator: " ")
+        let dirtyScan = TimelineHomeFlaggedStartupResultBundleScanner.scan(text: dirtyLine)
+        let result = try await startupSmoke(resultBundleScan: dirtyScan)
+        let data = try encodedData(result)
+        let hit = try firstStartupNetworkPatternHitPayload(from: data)
+        let encodedHitData = try JSONSerialization.data(withJSONObject: hit, options: [.sortedKeys])
+        let encodedHit = try #require(String(data: encodedHitData, encoding: .utf8))
+
+        #expect(Set(hit.keys) == ["patternKind", "tokenID", "lineNumber", "redactedSummary"])
+        #expect(hit["patternKind"] as? String == "startupNetwork")
+        #expect(hit["tokenID"] != nil)
+        #expect(hit["lineNumber"] as? Int == 1)
+        #expect(hit["redactedSummary"] as? String == "redacted startup network pattern match")
+        #expect(!encodedHit.contains(dirtyLine))
+        #expect(!encodedHit.contains("relay.example"))
+        #expect(!encodedHit.contains("URL" + "Session"))
+    }
+
+    @Test
+    func clean_startup_smoke_still_passes_with_redacted_privacy_schema() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.resultBundleScanPassed)
+        #expect(result.startupNetworkPatternHits.isEmpty)
+        #expect(result.usedCollectionViewFlag)
+        #expect(result.collectionViewStartupSmokeEvaluated)
+        #expect(result.selectedRoute == .collectionView)
+        #expect(result.renderedRoute == .collectionView)
     }
 
     @Test
@@ -207,6 +321,9 @@ struct TimelineHomeFlaggedCollectionViewStartupSmokeTests {
         let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         assertSendable(TimelineHomeCollectionViewStartupSmokeArtifact.self)
+        assertSendable(TimelineHomeStartupLaunchArgumentSummary.self)
+        assertSendable(TimelineHomeStartupNetworkPatternHit.self)
+        assertSendable(TimelineHomeStartupNetworkPatternKind.self)
         assertSendable(TimelineHomeFlaggedStartupResultBundleScanner.self)
         assertSendable(TimelineHomeFlaggedStartupSmokeResult.self)
         assertSendable(TimelineHomeFlaggedStartupSmokeIssueKind.self)
@@ -506,7 +623,7 @@ private var requiredResultKeys: Set<String> {
         "defaultStartupRemainsLegacy",
         "extraNostrHomeTimelineStoreConstructed",
         "issueKinds",
-        "launchArguments",
+        "launchArgumentSummary",
         "manualFallbackRoute",
         "networkStarted",
         "networkWaitedBeforeInteractiveScrollMS",
@@ -573,6 +690,24 @@ private func encodedData<T: Encodable>(_ value: T) throws -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return try encoder.encode(value)
+}
+
+private func resultPayload(from data: Data) throws -> [String: Any] {
+    try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private func artifactPayload(from payload: [String: Any]) throws -> [String: Any] {
+    try #require(payload["artifactSummary"] as? [String: Any])
+}
+
+private func launchArgumentSummaryPayload(from payload: [String: Any]) throws -> [String: Any] {
+    try #require(payload["launchArgumentSummary"] as? [String: Any])
+}
+
+private func firstStartupNetworkPatternHitPayload(from data: Data) throws -> [String: Any] {
+    let payload = try resultPayload(from: data)
+    let hits = try #require(payload["startupNetworkPatternHits"] as? [[String: Any]])
+    return try #require(hits.first)
 }
 
 private func sourceFile(
