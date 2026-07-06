@@ -4,11 +4,12 @@
 
 Proposed.
 
-This document defines the limited TimelineHome Root/Home wiring ladder through the current Root body activation wiring gate consumer checkpoint, then defines the final acceptance scope before touching `AstrenzaRootView.body` for collection view render switching.
+This document defines the limited TimelineHome Root/Home wiring ladder through the current explicit-flag Root body render switch and startup smoke checkpoints, then defines the acceptance baseline for future TimelineHome startup gates.
 
 - `test: wire TimelineHome collectionView route into Root body behind flag`
+- `test: repair TimelineHome startup smoke privacy`
 
-This is a docs-only planning/checklist document. It does not change `AstrenzaRootView.body`, does not implement the production render switch, does not render collection view Home by default, and does not authorize collection view Home as the default.
+This is a docs-only planning/checklist document. It does not change production source, tests, CI, project configuration, SQL, or dependencies. It does not render collection view Home by default and does not authorize collection view Home as the default.
 
 ## 2. Basis
 
@@ -37,9 +38,17 @@ The Root body activation wiring gate and reader checkpoints proved that a clean 
 - `5611495 test: define TimelineHome root body activation wiring gate`
 - `6de53d0 test: read TimelineHome root body activation wiring gate results`
 
+The explicit Root body render switch checkpoint opened only the flagged branch, not the default route:
+
+- `491b7e9 test: wire TimelineHome collectionView route into Root body behind flag`
+
+The startup smoke privacy checkpoint repaired the flagged startup artifact schema so raw result bundle lines and raw launch arguments are not encoded:
+
+- `4b913a3 test: repair TimelineHome startup smoke privacy`
+
 `AstrenzaRootView` already performs a no-op `TimelineHomeRootRouteCallSite` production preflight before constructing the existing `NostrSessionStore` and `NostrHomeTimelineStore`. `TimelineHomeRouteDiagnosticsSink` now exists as a local, offline, in-memory retention sink for route decision artifacts. `TimelineHomeRootRouteDecisionSnapshot`, `TimelineHomeRootRouteDecisionSnapshotConsumer`, `TimelineHomeRouteConstructionReadiness`, `TimelineHomeRouteConstructionPlanConsumer`, `TimelineHomeRouteConstructionReadinessConsumer`, `TimelineHomeOffscreenConstructionHarnessResultConsumer`, and `TimelineHomeConstructionArtifactChainConsumer` can read the Root-visible route/construction artifact chain in local/debug/fixture code.
 
-The current allowed state is legacy rendering plus a flagged collection view construction result, activation switch helper result, Root activation decision chain, and Root body activation wiring gate result. The production Root body render switch remains closed until a future explicit implementation prompt opens it.
+The current allowed state is default legacy rendering plus a flagged collection view construction result, activation switch helper result, Root activation decision chain, Root body activation wiring gate result, explicit Root body render switch result, collection view route restore decision, and startup smoke artifact. The collection view route remains gated by `--timeline-engine=collectionView`, a clean Root body wiring gate, clean restore input, a clean fixed result bundle scan, and non-zero selected Swift Testing suites.
 
 The existing contracts available to the future construction-readiness slice are:
 
@@ -187,7 +196,7 @@ The required assertions are:
 - Route diagnostics artifact is generated locally and is not uploaded or sent to telemetry, analytics, remote logging, or external services.
 - Unknown launch argument values remain redacted in diagnostics; raw private content, raw event JSON, pubkeys, event IDs, relay URLs, relay/account private material, `nsec`, Keychain data, signing payloads, and bearer tokens do not appear in artifacts.
 - Side-effect sentinel remains all false.
-- Production Root body render switching remains closed.
+- Production Root body render switching remains explicit-flag-only and clean-gate-only.
 - `HEAD == origin/main` is verified after push.
 
 Every selected app suite must report a non-zero Swift Testing count. Treat xcodebuild exit 0 with only `Executed 0 tests` and no later Swift Testing count as FAIL.
@@ -213,7 +222,7 @@ Required acceptance gates:
 - A safe encoded route artifact passes `scripts/guard_timeline_diagnostics_artifact.sh`.
 - Root and splash visible behavior are unchanged.
 - Default legacy Home rendering is unchanged.
-- Production Root body render switching remains closed.
+- Production Root body render switching remains explicit-flag-only and clean-gate-only.
 - The route artifact contains no forbidden privacy fragments.
 
 ## 6. Construction Gates That Must Remain Clean
@@ -240,12 +249,12 @@ The `f163ed0` construction checkpoint opened only the flagged offscreen/non-rend
 
 For this plan, "collection view route construction" means Root/Home is allowed to construct the `TimelineSurface` or `TimelineCollectionViewController` dependency path behind the explicit `--timeline-engine=collectionView` flag and readiness gates.
 
-Construction is not default rendering. Construction is not route activation. Construction does not mean the rendered route switches away from legacy unless a later, explicitly scoped Root body render switch task opens that behavior. Construction must remain behind the explicit launch flag and all readiness gates below.
+Construction is not default rendering. Construction is not route activation. Construction does not mean the rendered route switches away from legacy unless the explicit Root body render switch gate is clean. Construction must remain behind the explicit launch flag and all readiness gates below.
 
 Current post-construction state:
 
 - The current allowed state is legacy rendering plus the `f163ed0` flagged collection view construction result, limited to offscreen/non-rendered or descriptor-only behavior from Root/Home's perspective.
-- Production Root body render switching remains closed until a future explicit implementation prompt opens it.
+- Root body render switching remains explicit-flag-only and clean-gate-only.
 - Debug override `.collectionView` cannot bypass the launch flag.
 - Default legacy rendering remains required.
 - Root must keep entering through `TimelineHomeRootRoutePreflight.invoke(_:)` or a tiny wrapper, not by directly calling `TimelineHomeRouteHost.decide`, `TimelineHomeRouteAdapter.decide`, or `TimelineHomeRouteIntegrationSkeleton.select`.
@@ -348,15 +357,15 @@ Future validation must also include:
 - `xcodegen generate` before targeted `xcodebuild test` whenever new app test files are involved.
 - A later Swift Testing line such as `Test run with N tests in 1 suite passed`, with `N > 0`, for every selected app suite.
 
-## 10. Root Body Render Switch Final Gate
+## 10. Root Body Render Switch Gate Baseline
 
-The next future implementation title is:
+The implementation title for this milestone was:
 
 - `test: wire TimelineHome collectionView route into Root body behind flag`
 
 Root body render switch means `AstrenzaRootView.body` may choose the collection view Home route only behind the explicit `--timeline-engine=collectionView` flag and a clean Root body activation wiring gate. Default launch without the flag remains legacy. Rollback and manual fallback remain legacy. Root shell first paint must remain unchanged, and the Timeline restore gate must remain scoped to the Timeline area only. Activation/render switch must not introduce startup network, DB writes, read-marker mutation, or Root-owned `dataSource.apply`.
 
-Required preconditions before that future task opens:
+Required preconditions that must remain clean:
 
 - Flagged construction PASS.
 - Activation switch helper PASS.
@@ -377,7 +386,7 @@ Required preconditions before that future task opens:
 - Privacy guard and diagnostics guard self-test PASS.
 - Selected Swift Testing suites execute non-zero tests.
 
-Allowed future Root body switch scope:
+Allowed Root body switch scope:
 
 - Touch `AstrenzaRootView.body` only for an explicit flagged route branch.
 - Use the injected mode, preflight, and wiring gate output.
@@ -387,7 +396,7 @@ Allowed future Root body switch scope:
 - Preserve root shell first paint.
 - Keep same-session double mutation prevented.
 
-Forbidden future Root body switch scope:
+Forbidden Root body switch scope:
 
 - Defaulting to collection view.
 - Removing or bypassing `NostrHomeTimelineStore`.
@@ -400,7 +409,7 @@ Forbidden future Root body switch scope:
 - Opening the `ResolveCoordinator` actor or media/OGP resolver wiring.
 - Same-session double mutation between legacy and collection view paths.
 
-Required future Root body render switch tests:
+Required Root body render switch tests:
 
 - `TimelineHomeRootBodyRenderSwitchTests`
 - `root_body_render_switch_requires_explicit_flag`
@@ -419,7 +428,64 @@ Required future Root body render switch tests:
 - `rollback_returns_to_legacy`
 - `selected_swift_testing_suites_non_zero`
 
-## 11. Final Acceptance For This Docs Slice
+## 11. TimelineHome Startup Smoke Acceptance Baseline
+
+Future TimelineHome startup gates use `TimelineHomeFlaggedCollectionViewStartupSmokeTests` as the fixed startup smoke acceptance baseline. A valid run must generate a fixed result bundle with `-resultBundlePath`, report the exact result bundle path, and scan that current bundle only. Broad scans of stale `/tmp` or DerivedData logs are not evidence.
+
+Selected Swift Testing suites must execute non-zero tests. The XCTest wrapper line `Executed 0 tests` is expected noise when followed by Swift Testing discovery; by itself it is not evidence. The accepted evidence is a later Swift Testing summary such as `Test run with N tests in M suites passed`, with `N > 0` and every selected suite represented in the `.xcresult` test tree.
+
+The privacy-safe startup smoke schema is:
+
+- Result bundle scan hits must not encode raw result-bundle lines.
+- Result bundle scan hits must not encode raw excerpts.
+- Result bundle scan hits must not encode raw launch arguments.
+- Each pattern hit may include only `patternKind`, `tokenID`, `lineNumber` or occurrence index, and a fixed `redactedSummary`.
+- Launch arguments must be normalized to known flags, `requestedEngineMode`, `unknownArgumentCount`, and a `redactedUnknownArguments` marker.
+- Unknown launch arguments are counted, not copied.
+- Diagnostics consumers remain readers, not privacy sanitizers; only sanitized startup smoke artifacts may be consumed or attached.
+
+Required forbidden-fragment checks for encoded startup smoke JSON, debug summaries, fixtures, screenshots, logs, and failure artifacts:
+
+- `nsec`
+- `secret`
+- `privateKey`
+- `private_key`
+- `raw_json`
+- `rawEvent`
+- `raw_event`
+- `mnemonic`
+- `keychain`
+- `nostr secret`
+- relay URL
+- pubkey
+- event id
+- private message content phrase
+
+Required startup-network scan tokens for the fixed result bundle:
+
+- `LocalDataTask`
+- `ATS failure`
+- `nw_`
+- `WebSocket`
+- `URLSessionWebSocketTask`
+- `wss://`
+- `setDefaultRelays`
+- relay connection attempts
+- Plain `URLSession` duplicate-class warnings must be distinguished from actual startup attempts. A duplicate-class warning is environment noise only when the fixed bundle has no `LocalDataTask`, `WebSocket`, `URLSessionWebSocketTask`, `wss://`, `setDefaultRelays`, or relay connection attempt evidence.
+
+Future gate behavior:
+
+- Default startup with no flag remains legacy.
+- Flagged startup requires explicit `--timeline-engine=collectionView`.
+- Flagged startup requires a clean Root body wiring gate.
+- A dirty fixed result bundle scan rejects the flagged route and keeps legacy.
+- Stale restore input rejects the flagged route and keeps legacy.
+- Rollback and manual fallback remain legacy.
+- The gate must not write DB state, mutate read marker, mutate `feed_read_state`, mutate `pending_new`, or call `dataSource.apply` from Root.
+- The gate must not start network, relay, resolver, media resolver, OGP resolver, profile resolver, or real `ResolveCoordinator` work before first interactive scroll.
+- The gate must not add telemetry, upload, export, analytics, remote logging, or external artifact destinations.
+
+## 12. Final Acceptance For This Docs Slice
 
 This docs slice is accepted only if:
 
@@ -427,16 +493,15 @@ This docs slice is accepted only if:
 - Schema remains unchanged.
 - Migration is avoided.
 - DB write, network, relay, media resolver, OGP resolver, profile resolver, and real `ResolveCoordinator` scope remains closed.
-- Production Root body render switch remains closed now.
-- Default legacy remains required.
-- The next implementation title is explicitly `test: wire TimelineHome collectionView route into Root body behind flag`.
-- Allowed and forbidden scope for that next Root body render switch slice is explicit.
-- Future Root body render switch tests are listed by suite and case name.
-- Construction, activation switch helper, Root body wiring gate, and production Root body render switching are documented as separate milestones.
+- Production Root body render switching remains explicit-flag-only and clean-gate-only.
+- Default/no-flag startup remains legacy.
+- The startup smoke acceptance baseline requires a fixed result bundle path, startup-network scan output, privacy encoded JSON checks, and selected suite counts.
+- A selected Swift Testing suite with 0 tests is a release blocker.
+- Construction, activation switch helper, Root body wiring gate, production Root body render switching, collectionView route restore, and startup smoke are documented as separate milestones.
 - Rollback and manual fallback remain legacy.
-- If any Root body wiring gate fails, the next render switch task must not render the collection view route; it must record the artifact and keep legacy rendering.
+- If any Root body wiring gate, restore input, or result bundle scan fails, the flagged startup smoke must not render the collection view route; it must record the artifact and keep legacy rendering.
 
-## 12. Rollback Plan
+## 13. Rollback Plan
 
 Rollback for the future Root body render switch is a launch-time or restart-time choice.
 
@@ -448,7 +513,7 @@ Rollback for the future Root body render switch is a launch-time or restart-time
 - Manual fallback remains legacy.
 - If any Root body wiring gate fails, do not render the collection view route; record the blocked artifact chain and keep legacy rendering.
 
-## 13. Open Questions
+## 14. Open Questions
 
 - Exact SwiftUI insertion point for a future route host.
 - Whether the route host is test-only first or production-source behind the flag.
