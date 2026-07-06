@@ -38,8 +38,9 @@ struct TimelineHomeCollectionViewRouteActivationTests {
         #expect(rootSource.contains("HomeTimelineView"))
         #expect(rootSource.contains("NostrHomeTimelineStore"))
         #expect(!rootSource.contains("renderedRoute == .collectionView"))
-        #expect(!rootSource.contains("Timeline" + "Surface("))
         #expect(!rootSource.contains("Timeline" + "CollectionViewController("))
+        #expect(rootSource.contains("TimelineHomeRootBodyRenderSwitch.decide"))
+        #expect(rootSource.contains("Timeline" + "Surface("))
     }
 
     @Test

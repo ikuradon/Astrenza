@@ -40,8 +40,9 @@ struct TimelineHomeCollectionViewRouteConstructionTests {
         #expect(result.plan.routeActivationAllowed == false)
         #expect(rootSource.contains("NostrHomeTimelineStore"))
         #expect(rootSource.contains("HomeTimelineView"))
-        #expect(rootSource.contains("Timeline" + "Surface(") == false)
         #expect(rootSource.contains("Timeline" + "CollectionViewController(") == false)
+        #expect(rootSource.contains("TimelineHomeRootBodyRenderSwitch.decide"))
+        #expect(rootSource.contains("Timeline" + "Surface("))
     }
 
     @Test
@@ -78,6 +79,7 @@ struct TimelineHomeCollectionViewRouteConstructionTests {
         #expect(rootSource.contains("renderedRoute == .collectionView") == false)
         #expect(rootSource.contains("TimelineSurfaceDependencyContainer.") == false)
         #expect(rootSource.contains("make" + "Controller(") == false)
+        #expect(rootSource.contains("rootBodyRenderDecision.selectedRoute == .collectionView"))
     }
 
     @Test

@@ -65,8 +65,10 @@ struct TimelineHomeRootBodyActivationWiringGateTests {
         #expect(rootSource.contains("NostrHomeTimelineStore"))
         #expect(!rootSource.contains("TimelineHomeRootBodyActivationWiringGate.evaluate"))
         #expect(!rootSource.contains("renderedRouteDecision == .collectionView"))
-        #expect(!rootSource.contains("Timeline" + "Surface("))
         #expect(!rootSource.contains("Timeline" + "CollectionViewController("))
+        #expect(rootSource.contains("TimelineHomeRootBodyRenderSwitch.decide"))
+        #expect(rootSource.contains("rootBodyRenderDecision.selectedRoute == .collectionView"))
+        #expect(rootSource.contains("Timeline" + "Surface("))
     }
 
     @Test

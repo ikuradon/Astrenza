@@ -31,7 +31,9 @@ struct TimelineHomeRootRouteCallSiteTests {
         #expect(!callSiteSource.contains("Timeline" + "CollectionViewController("))
         #expect(!callSiteSource.contains("TimelineSurface("))
         #expect(!rootSource.contains("Timeline" + "CollectionViewController("))
-        #expect(!rootSource.contains("TimelineSurface("))
+        #expect(rootSource.contains("TimelineHomeRootBodyRenderSwitch.decide"))
+        #expect(rootSource.contains("rootBodyRenderDecision.selectedRoute == .collectionView"))
+        #expect(rootSource.contains("TimelineSurface("))
     }
 
     @Test("root_route_preflight_does_not_construct_nostr_store")

@@ -73,8 +73,9 @@ struct TimelineHomeRootActivationPreflightTests {
         #expect(!rootSource.contains("TimelineHomeRootActivationPreflight.evaluate"))
         #expect(!rootSource.contains("TimelineHomeRootCollectionViewActivationPreflight.evaluate"))
         #expect(!rootSource.contains("renderedRoute == .collectionView"))
-        #expect(!rootSource.contains("Timeline" + "Surface("))
         #expect(!rootSource.contains("Timeline" + "CollectionViewController("))
+        #expect(rootSource.contains("TimelineHomeRootBodyRenderSwitch.decide"))
+        #expect(rootSource.contains("Timeline" + "Surface("))
     }
 
     @Test
