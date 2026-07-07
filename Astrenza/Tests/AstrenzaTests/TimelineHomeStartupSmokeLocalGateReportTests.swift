@@ -81,7 +81,7 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
         let report = try makeReport(selectedSuiteCounts: selectedSuiteCounts)
 
         #expect(report.selectedSuiteCounts == selectedSuiteCounts)
-        #expect(report.totalSelectedTestCount == 81)
+        #expect(report.totalSelectedTestCount == 82)
         #expect(report.zeroSelectedSuiteCount == false)
         #expect(report.selectedSwiftTestingSuitesNonZero)
     }
@@ -248,6 +248,33 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
     }
 
     @Test
+    func report_marks_fail_for_each_startup_side_effect_sentinel_independently() throws {
+        for sentinel in LocalGateSideEffectSentinel.allCases {
+            let report = try makeReport(sideEffectSentinel: sentinel)
+
+            #expect(report.gateStatus == .fail)
+            #expect(report.noNetworkDBReadMarkerRootApplySideEffects == false)
+            #expect(report.selectedSwiftTestingSuitesNonZero)
+            #expect(report.zeroSelectedSuiteCount == false)
+            #expect(report.usedCollectionViewFlag)
+            #expect(report.selectedRoute == .collectionView)
+            #expect(report.renderedRoute == .collectionView)
+            #expect(Set(report.issueKinds) == [
+                sentinel.expectedIssueKind,
+                "unexpectedStartupSideEffects"
+            ])
+            #expect(report.blockingIssueKinds == report.issueKinds)
+            #expect(report.releaseGateFailures == report.issueKinds)
+            #expect(!report.issueKinds.contains("explicitCollectionViewLaunchFlag"))
+            #expect(!report.issueKinds.contains("selectedRouteNotCollectionView"))
+            #expect(!report.issueKinds.contains("renderedRouteNotCollectionView"))
+            #expect(!report.issueKinds.contains("selectedSwiftTestingSuitesZero"))
+            #expect(!report.issueKinds.contains("zeroSelectedSuiteCount"))
+            try assertReportJSONPrivacySafe(report)
+        }
+    }
+
+    @Test
     func report_is_codable_privacy_safe() throws {
         let report = try makeReport()
         let data = try encodedData(report)
@@ -287,7 +314,7 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
     @Test
     func selected_swift_testing_suites_non_zero() {
         #expect(!selectedSuiteCounts.isEmpty)
-        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 21)))
+        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 22)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)))
@@ -306,6 +333,7 @@ private func makeReport(
     usedCollectionViewFlag: Bool = true,
     cleanWiringGateRequired: Bool = true,
     pendingNewMutated: Bool = false,
+    sideEffectSentinel: LocalGateSideEffectSentinel? = nil,
     issueKinds: [TimelineHomeStartupSmokeDiagnosticsIssueKind] = []
 ) throws -> TimelineHomeStartupSmokeLocalGateReport {
     TimelineHomeStartupSmokeLocalGateReport.make(
@@ -320,6 +348,7 @@ private func makeReport(
             usedCollectionViewFlag: usedCollectionViewFlag,
             cleanWiringGateRequired: cleanWiringGateRequired,
             pendingNewMutated: pendingNewMutated,
+            sideEffectSentinel: sideEffectSentinel,
             issueKinds: issueKinds
         )
     )
@@ -336,9 +365,10 @@ private func makeBundle(
     usedCollectionViewFlag: Bool = true,
     cleanWiringGateRequired: Bool = true,
     pendingNewMutated: Bool = false,
+    sideEffectSentinel: LocalGateSideEffectSentinel? = nil,
     issueKinds: [TimelineHomeStartupSmokeDiagnosticsIssueKind] = []
 ) throws -> TimelineHomeStartupSmokeEvidenceBundle {
-    let attachment = makeAttachment(
+    var attachment = makeAttachment(
         fixedResultBundlePath: fixedResultBundlePath,
         redactedResultBundlePathSummary: redactedResultBundlePathSummary,
         selectedRoute: selectedRoute,
@@ -351,6 +381,7 @@ private func makeBundle(
         pendingNewMutated: pendingNewMutated,
         issueKinds: issueKinds
     )
+    sideEffectSentinel?.apply(to: &attachment)
     return try TimelineHomeStartupSmokeEvidenceBundle.make(
         attachment: attachment,
         fixedResultBundlePath: attachment.fixedResultBundlePath,
@@ -420,11 +451,69 @@ private func makeAttachment(
 
 private var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount] {
     [
-        suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 21),
+        suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 22),
         suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15),
         suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),
         suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)
     ]
+}
+
+private enum LocalGateSideEffectSentinel: CaseIterable {
+    case networkWaitedBeforeInteractiveScrollMS
+    case readMarkerChanged
+    case requiresNetworkWork
+    case requiresDBWrite
+    case dataSourceApplyFromRootCalled
+    case pendingNewMutated
+    case dbWriteAttempted
+    case readMarkerAdvanced
+    case extraNostrHomeTimelineStoreConstructed
+
+    var expectedIssueKind: String {
+        switch self {
+        case .networkWaitedBeforeInteractiveScrollMS:
+            "networkWaitedBeforeInteractiveScrollNonZero"
+        case .readMarkerChanged:
+            "readMarkerChanged"
+        case .requiresNetworkWork:
+            "requiresNetworkWork"
+        case .requiresDBWrite:
+            "requiresDBWrite"
+        case .dataSourceApplyFromRootCalled:
+            "dataSourceApplyFromRootCalled"
+        case .pendingNewMutated:
+            "pendingNewMutated"
+        case .dbWriteAttempted:
+            "dbWriteAttempted"
+        case .readMarkerAdvanced:
+            "readMarkerAdvanced"
+        case .extraNostrHomeTimelineStoreConstructed:
+            "extraNostrHomeTimelineStoreConstructed"
+        }
+    }
+
+    func apply(to attachment: inout TimelineHomeStartupSmokeDiagnosticsAttachment) {
+        switch self {
+        case .networkWaitedBeforeInteractiveScrollMS:
+            attachment.networkWaitedBeforeInteractiveScrollMS = 1
+        case .readMarkerChanged:
+            attachment.readMarkerChanged = true
+        case .requiresNetworkWork:
+            attachment.requiresNetworkWork = true
+        case .requiresDBWrite:
+            attachment.requiresDBWrite = true
+        case .dataSourceApplyFromRootCalled:
+            attachment.dataSourceApplyFromRootCalled = true
+        case .pendingNewMutated:
+            attachment.pendingNewMutated = true
+        case .dbWriteAttempted:
+            attachment.dbWriteAttempted = true
+        case .readMarkerAdvanced:
+            attachment.readMarkerAdvanced = true
+        case .extraNostrHomeTimelineStoreConstructed:
+            attachment.extraNostrHomeTimelineStoreConstructed = true
+        }
+    }
 }
 
 private func suiteCount(
@@ -491,6 +580,32 @@ private func encodedData<T: Encodable>(_ value: T) throws -> Data {
 
 private func encodedJSONString<T: Encodable>(_ value: T) throws -> String {
     try #require(String(data: encodedData(value), encoding: .utf8))
+}
+
+private func assertReportJSONPrivacySafe(
+    _ report: TimelineHomeStartupSmokeLocalGateReport
+) throws {
+    let data = try encodedData(report)
+    let decoded = try JSONDecoder().decode(TimelineHomeStartupSmokeLocalGateReport.self, from: data)
+    let json = try #require(String(data: data, encoding: .utf8))
+    let lowercasedJSON = json.lowercased()
+    let rawBundleLine = [
+        "boot",
+        ["URL", "Session", "Web", "Socket", "Task"].joined(),
+        ["ws", "s://"].joined() + ["relay", ".", "example"].joined()
+    ].joined(separator: " ")
+
+    #expect(decoded == report)
+    #expect(!json.contains(rawBundleLine))
+    #expect(!json.contains(["URL", "Session", "Web", "Socket", "Task"].joined()))
+    #expect(!json.contains(["ws", "s://"].joined()))
+    #expect(!json.contains(["relay", ".", "example"].joined()))
+    #expect(!json.contains("launch" + "Arguments"))
+    #expect(!json.contains(["--timeline", "-engine=", "collection", "View"].joined()))
+    #expect(!json.contains("[\"Astrenza\""))
+    for fragment in forbiddenPrivacyFragments {
+        #expect(!lowercasedJSON.contains(fragment))
+    }
 }
 
 private func sourceFile(named fileName: String) throws -> String {
