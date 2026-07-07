@@ -38,8 +38,12 @@ struct TimelineHomeStartupSmokeLocalGateReport: Codable, Equatable, Sendable {
         from bundle: TimelineHomeStartupSmokeEvidenceBundle
     ) -> TimelineHomeStartupSmokeLocalGateReport {
         let noSideEffects = noNetworkDBReadMarkerRootApplySideEffects(in: bundle)
+        let explicitCollectionViewStartupEvidence = explicitCollectionViewStartupEvidence(in: bundle)
+        let cleanRootBodyWiringGateEvidence = cleanRootBodyWiringGateEvidence(in: bundle)
         let issueKinds = localIssueKinds(from: bundle, noSideEffects: noSideEffects)
         let gateStatus: TimelineHomeStartupSmokeLocalGateStatus = issueKinds.isEmpty
+            && explicitCollectionViewStartupEvidence
+            && cleanRootBodyWiringGateEvidence
             && noSideEffects
             && bundle.startupNetworkScanStatus == .clean
             && bundle.privacyScanStatus == .passed
@@ -90,11 +94,45 @@ struct TimelineHomeStartupSmokeLocalGateReport: Codable, Equatable, Sendable {
             && !bundle.extraNostrHomeTimelineStoreConstructed
     }
 
+    private static func explicitCollectionViewStartupEvidence(
+        in bundle: TimelineHomeStartupSmokeEvidenceBundle
+    ) -> Bool {
+        bundle.usedCollectionViewFlag
+            && bundle.selectedRoute == .collectionView
+            && bundle.renderedRoute == .collectionView
+    }
+
+    private static func cleanRootBodyWiringGateEvidence(
+        in bundle: TimelineHomeStartupSmokeEvidenceBundle
+    ) -> Bool {
+        bundle.startupSmokeAttachment.cleanWiringGateRequired
+    }
+
     private static func localIssueKinds(
         from bundle: TimelineHomeStartupSmokeEvidenceBundle,
         noSideEffects: Bool
     ) -> [String] {
         var issueKinds = bundle.issueKinds.map(\.rawValue)
+        append(
+            TimelineHomeStartupSmokeDiagnosticsIssueKind.explicitCollectionViewLaunchFlag.rawValue,
+            when: !bundle.usedCollectionViewFlag,
+            to: &issueKinds
+        )
+        append(
+            "selectedRouteNotCollectionView",
+            when: bundle.selectedRoute != .collectionView,
+            to: &issueKinds
+        )
+        append(
+            "renderedRouteNotCollectionView",
+            when: bundle.renderedRoute != .collectionView,
+            to: &issueKinds
+        )
+        append(
+            TimelineHomeStartupSmokeDiagnosticsIssueKind.cleanRootBodyWiringGate.rawValue,
+            when: !cleanRootBodyWiringGateEvidence(in: bundle),
+            to: &issueKinds
+        )
         append("dirtyStartupNetworkScan", when: bundle.startupNetworkScanStatus == .dirty, to: &issueKinds)
         append("privacyScanFailure", when: bundle.privacyScanStatus == .failed, to: &issueKinds)
         append("zeroSelectedSuiteCount", when: bundle.zeroSelectedSuiteCount, to: &issueKinds)

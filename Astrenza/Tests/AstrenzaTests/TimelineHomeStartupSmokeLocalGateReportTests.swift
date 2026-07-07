@@ -81,7 +81,7 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
         let report = try makeReport(selectedSuiteCounts: selectedSuiteCounts)
 
         #expect(report.selectedSuiteCounts == selectedSuiteCounts)
-        #expect(report.totalSelectedTestCount == 76)
+        #expect(report.totalSelectedTestCount == 81)
         #expect(report.zeroSelectedSuiteCount == false)
         #expect(report.selectedSwiftTestingSuitesNonZero)
     }
@@ -122,6 +122,66 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
         #expect(report.renderedRoute == .collectionView)
         #expect(report.usedCollectionViewFlag)
         #expect(report.gateStatus == .pass)
+    }
+
+    @Test
+    func report_marks_fail_when_usedCollectionViewFlag_false_even_if_other_fields_clean() throws {
+        let report = try makeReport(usedCollectionViewFlag: false)
+
+        #expect(report.gateStatus == .fail)
+        #expect(report.usedCollectionViewFlag == false)
+        #expect(report.issueKinds.contains("explicitCollectionViewLaunchFlag"))
+        #expect(report.blockingIssueKinds.contains("explicitCollectionViewLaunchFlag"))
+        #expect(report.releaseGateFailures.contains("explicitCollectionViewLaunchFlag"))
+    }
+
+    @Test
+    func report_marks_fail_when_selectedRoute_is_legacy_even_if_other_fields_clean() throws {
+        let report = try makeReport(selectedRoute: .legacy)
+
+        #expect(report.gateStatus == .fail)
+        #expect(report.selectedRoute == .legacy)
+        #expect(report.issueKinds.contains("selectedRouteNotCollectionView"))
+        #expect(report.blockingIssueKinds.contains("selectedRouteNotCollectionView"))
+        #expect(report.releaseGateFailures.contains("selectedRouteNotCollectionView"))
+    }
+
+    @Test
+    func report_marks_fail_when_renderedRoute_is_legacy_even_if_other_fields_clean() throws {
+        let report = try makeReport(renderedRoute: .legacy)
+
+        #expect(report.gateStatus == .fail)
+        #expect(report.renderedRoute == .legacy)
+        #expect(report.issueKinds.contains("renderedRouteNotCollectionView"))
+        #expect(report.blockingIssueKinds.contains("renderedRouteNotCollectionView"))
+        #expect(report.releaseGateFailures.contains("renderedRouteNotCollectionView"))
+    }
+
+    @Test
+    func report_marks_fail_when_clean_looking_bundle_has_no_explicit_collectionView_startup() throws {
+        let report = try makeReport(
+            selectedRoute: .legacy,
+            renderedRoute: .legacy,
+            usedCollectionViewFlag: false
+        )
+
+        #expect(report.gateStatus == .fail)
+        #expect(report.startupNetworkScanStatus == .clean)
+        #expect(report.privacyScanStatus == .passed)
+        #expect(report.selectedSwiftTestingSuitesNonZero)
+        #expect(report.issueKinds.contains("explicitCollectionViewLaunchFlag"))
+        #expect(report.issueKinds.contains("selectedRouteNotCollectionView"))
+        #expect(report.issueKinds.contains("renderedRouteNotCollectionView"))
+    }
+
+    @Test
+    func report_marks_fail_when_wiring_gate_evidence_dirty() throws {
+        let report = try makeReport(cleanWiringGateRequired: false)
+
+        #expect(report.gateStatus == .fail)
+        #expect(report.issueKinds.contains("cleanRootBodyWiringGate"))
+        #expect(report.blockingIssueKinds.contains("cleanRootBodyWiringGate"))
+        #expect(report.releaseGateFailures.contains("cleanRootBodyWiringGate"))
     }
 
     @Test
@@ -227,7 +287,7 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
     @Test
     func selected_swift_testing_suites_non_zero() {
         #expect(!selectedSuiteCounts.isEmpty)
-        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 16)))
+        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 21)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)))
@@ -244,6 +304,7 @@ private func makeReport(
     selectedRoute: TimelineHomeRootBodyRouteSelection = .collectionView,
     renderedRoute: TimelineHomeRootVisibleRouteDecision = .collectionView,
     usedCollectionViewFlag: Bool = true,
+    cleanWiringGateRequired: Bool = true,
     pendingNewMutated: Bool = false,
     issueKinds: [TimelineHomeStartupSmokeDiagnosticsIssueKind] = []
 ) throws -> TimelineHomeStartupSmokeLocalGateReport {
@@ -257,6 +318,7 @@ private func makeReport(
             selectedRoute: selectedRoute,
             renderedRoute: renderedRoute,
             usedCollectionViewFlag: usedCollectionViewFlag,
+            cleanWiringGateRequired: cleanWiringGateRequired,
             pendingNewMutated: pendingNewMutated,
             issueKinds: issueKinds
         )
@@ -272,6 +334,7 @@ private func makeBundle(
     selectedRoute: TimelineHomeRootBodyRouteSelection = .collectionView,
     renderedRoute: TimelineHomeRootVisibleRouteDecision = .collectionView,
     usedCollectionViewFlag: Bool = true,
+    cleanWiringGateRequired: Bool = true,
     pendingNewMutated: Bool = false,
     issueKinds: [TimelineHomeStartupSmokeDiagnosticsIssueKind] = []
 ) throws -> TimelineHomeStartupSmokeEvidenceBundle {
@@ -281,6 +344,7 @@ private func makeBundle(
         selectedRoute: selectedRoute,
         renderedRoute: renderedRoute,
         usedCollectionViewFlag: usedCollectionViewFlag,
+        cleanWiringGateRequired: cleanWiringGateRequired,
         startupNetworkScanStatus: startupNetworkScanStatus,
         privacyScanStatus: privacyScanStatus,
         selectedSuiteCounts: selectedSuiteCounts,
@@ -303,6 +367,7 @@ private func makeAttachment(
     selectedRoute: TimelineHomeRootBodyRouteSelection,
     renderedRoute: TimelineHomeRootVisibleRouteDecision,
     usedCollectionViewFlag: Bool,
+    cleanWiringGateRequired: Bool,
     startupNetworkScanStatus: TimelineHomeStartupSmokeDiagnosticsScanStatus,
     privacyScanStatus: TimelineHomeStartupSmokeDiagnosticsPrivacyScanStatus,
     selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount],
@@ -339,7 +404,7 @@ private func makeAttachment(
         selectedRoute: selectedRoute,
         renderedRoute: renderedRoute,
         usedCollectionViewFlag: usedCollectionViewFlag,
-        cleanWiringGateRequired: true,
+        cleanWiringGateRequired: cleanWiringGateRequired,
         networkWaitedBeforeInteractiveScrollMS: 0,
         readMarkerChanged: false,
         requiresNetworkWork: false,
@@ -355,7 +420,7 @@ private func makeAttachment(
 
 private var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount] {
     [
-        suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 16),
+        suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 21),
         suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15),
         suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),
         suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)
