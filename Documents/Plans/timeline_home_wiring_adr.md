@@ -139,6 +139,23 @@ Encoded startup smoke JSON, debug summaries, fixtures, screenshots, logs, and fa
 
 The fixed result bundle startup-network scan must check `LocalDataTask`, `ATS failure`, `nw_`, `WebSocket`, `URLSessionWebSocketTask`, `wss://`, `setDefaultRelays`, and relay connection attempts. A plain `URLSession` duplicate-class warning must be separated from an actual startup attempt; it is not by itself a relay/network attempt when the fixed bundle has none of the stronger startup-network tokens.
 
+Startup smoke release review evidence is a local-only packet layered as:
+
+```text
+TimelineHomeStartupSmokeDiagnosticsAttachment
+  -> TimelineHomeStartupSmokeEvidenceBundle
+  -> TimelineHomeStartupSmokeLocalGateReport
+  -> TimelineHome startup local review packet
+```
+
+The diagnostics attachment, evidence bundle, local gate report, and review packet remain local/offline/debug/failure-artifact evidence only. They do not open file writers, upload/export telemetry, analytics, remote logging, CI artifact upload, DB work, network work, resolver work, Root/Home rendering, splash behavior changes, schema changes, migrations, dependency changes, or `.github` changes.
+
+The local review packet must include the fixed startup smoke result bundle path, selected app suite result bundle path, startup-network scan output, privacy scan output, encoded diagnostics attachment summary, encoded evidence bundle summary, encoded local gate report summary, selected suite counts, zero selected suite count, `AstrenzaCore` total test count when run, `TimelineRepositoryStore` suite count when run, git SHA, `HEAD == origin/main`, and clean worktree confirmation.
+
+The local gate report pass semantics must stay strict. A clean-looking bundle still fails without explicit collection view startup evidence. Pass requires `usedCollectionViewFlag == true`, `selectedRoute == collectionView`, `renderedRoute == collectionView`, clean Root body wiring gate evidence, clean startup-network scan, clean privacy scan, `selectedSwiftTestingSuitesNonZero == true`, zero selected suite count, every side-effect sentinel clean, no raw bundle lines, no raw `launchArguments`, and no dirty relay/pubkey/event/secret-like fragments.
+
+Failure evidence must be preserved for any startup-network token hit, any privacy forbidden fragment hit, any selected Swift Testing suite with 0 tests, missing fixed result bundle path, missing selected suite counts, missing local gate report summary, missing explicit collection view flag, non-`collectionView` selected or rendered route, or any dirty side-effect sentinel.
+
 The flagged route is rejected and legacy remains selected when the fixed result bundle scan is dirty, when restore input is stale, when the explicit `--timeline-engine=collectionView` flag is missing, or when the Root body wiring gate is dirty. Rollback and manual fallback remain legacy. No startup smoke gate may write DB state, mutate read marker, mutate `feed_read_state`, mutate `pending_new`, call `dataSource.apply` from Root, start network/resolver work, or add telemetry/export/upload paths.
 
 ## 8. Rollback Criteria

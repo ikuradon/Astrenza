@@ -473,6 +473,86 @@ Required startup-network scan tokens for the fixed result bundle:
 - relay connection attempts
 - Plain `URLSession` duplicate-class warnings must be distinguished from actual startup attempts. A duplicate-class warning is environment noise only when the fixed bundle has no `LocalDataTask`, `WebSocket`, `URLSessionWebSocketTask`, `wss://`, `setDefaultRelays`, or relay connection attempt evidence.
 
+Local review / release checklist evidence for this baseline must attach a TimelineHome startup local review packet. The packet is local evidence only; it must not introduce upload, export, telemetry, analytics, remote logging, file-writer, DB, network, resolver, Root/Home, splash, schema, migration, dependency, CI, or `.github` behavior. The packet contents are:
+
+- Fixed startup smoke result bundle path for the current `TimelineHomeFlaggedCollectionViewStartupSmokeTests` run.
+- Selected app suite result bundle path for the current targeted app-suite run.
+- Startup-network scan output from the fixed startup smoke bundle.
+- Privacy scan output for the encoded startup smoke diagnostics attachment, evidence bundle, local gate report, and summaries.
+- Encoded startup smoke diagnostics attachment summary.
+- Encoded startup smoke evidence bundle summary.
+- Encoded startup smoke local gate report summary.
+- Selected suite counts for every selected Swift Testing suite.
+- Zero selected suite count, explicitly reported as `0` for pass evidence.
+- `AstrenzaCore` total test count when `swift test --package-path Packages/AstrenzaCore` is part of the local gate.
+- `TimelineRepositoryStore` suite count when that focused suite is run.
+- Git SHA plus explicit `HEAD == origin/main` confirmation.
+- Clean worktree confirmation.
+- Failure and unrun-test notes, including environment noise that is separated from code regressions.
+
+The required `TimelineHomeStartupSmokeLocalGateReport` fields are:
+
+- `reportKind`, `reportVersion`, and `source`.
+- `gateStatus`.
+- `fixedResultBundlePathSummary`.
+- `startupNetworkScanStatus`.
+- `privacyScanStatus`.
+- `selectedSuiteCounts`.
+- `totalSelectedTestCount`.
+- `zeroSelectedSuiteCount`.
+- `selectedSwiftTestingSuitesNonZero`.
+- `selectedRoute`, `renderedRoute`, and `usedCollectionViewFlag`.
+- `artifactSummary`.
+- `issueKinds`.
+- `blockingIssueKinds`.
+- `nonBlockingIssueKinds`.
+- `releaseGateFailures`.
+- `noNetworkDBReadMarkerRootApplySideEffects`.
+
+The local gate report may pass only when all of these are true:
+
+- `usedCollectionViewFlag == true`.
+- `selectedRoute == collectionView`.
+- `renderedRoute == collectionView`.
+- Clean Root body wiring gate evidence is present.
+- `startupNetworkScanStatus == pass` or its current DTO equivalent `.clean`.
+- `privacyScanStatus == pass` or its current DTO equivalent `.passed`.
+- `selectedSwiftTestingSuitesNonZero == true`.
+- `zeroSelectedSuiteCount == 0`.
+- All side-effect sentinels are clean, including no network wait, read-marker change, network requirement, DB requirement, Root-owned `dataSource.apply`, `pending_new` mutation, DB write, read-marker advancement, or extra `NostrHomeTimelineStore` construction.
+- Encoded artifacts and summaries include no raw bundle lines.
+- Encoded artifacts and summaries include no raw `launchArguments`.
+- Encoded artifacts and summaries include no dirty relay, pubkey, event, or secret-like fragments.
+
+The local gate report must fail and preserve blocking evidence for:
+
+- Any startup-network token hit.
+- Any privacy forbidden fragment hit.
+- Any selected Swift Testing suite with 0 tests.
+- Missing fixed result bundle path or path summary.
+- Missing selected suite counts.
+- Missing local gate report summary.
+- `usedCollectionViewFlag == false`.
+- `selectedRoute != collectionView` or `renderedRoute != collectionView`.
+- Any dirty side-effect sentinel.
+
+Required privacy forbidden fragments for the attachment, evidence bundle, local gate report, summaries, fixtures, screenshots, logs, and failure artifacts are:
+
+- `nsec`
+- `secret`
+- `privateKey`
+- `private_key`
+- `raw_json`
+- `rawEvent`
+- `raw_event`
+- `mnemonic`
+- `keychain`
+- `nostr secret`
+- relay URL
+- pubkey
+- event id
+- private message content phrase
+
 Future gate behavior:
 
 - Default startup with no flag remains legacy.
