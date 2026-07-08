@@ -75,6 +75,7 @@ enum TimelineHomeRootBodyRenderSwitch: Sendable {
         let explicitFlagPresent = hasExplicitCollectionViewLaunchFlag(input)
         let wiringGateEvaluated = wiring?.wiringGateEvaluated ?? false
         let wiringAllowed = wiring?.wiringAllowed == true && (wiring?.issueKinds.isEmpty ?? false)
+        let wiringGateClean = wiringGateEvaluated && wiringAllowed
         let rootShellFirstPaintPreserved = input.rootShellPresentation == .immediate
             && input.rootShellMustRenderBeforeTimelineRestore
         let timelineAreaRestoreGateOnly = input.timelineRestoreGateScope == .timelineArea
@@ -95,7 +96,7 @@ enum TimelineHomeRootBodyRenderSwitch: Sendable {
         var issues: [TimelineHomeRootBodyRenderSwitchIssueKind] = []
 
         append(.explicitCollectionViewLaunchFlag, when: !explicitFlagPresent, to: &issues)
-        append(.cleanWiringGate, when: !wiringAllowed, to: &issues)
+        append(.cleanWiringGate, when: !wiringGateClean, to: &issues)
         append(.rootShellFirstPaintPreserved, when: !rootShellFirstPaintPreserved, to: &issues)
         append(.timelineAreaRestoreGateOnly, when: !timelineAreaRestoreGateOnly, to: &issues)
         append(
