@@ -20,6 +20,7 @@ These are local evidence paths only. They are not uploaded artifacts and do not 
 
 - fixed simulator startup smoke result bundle path: `/private/tmp/astrenza_311d310_simulator_startup_20260708T1147Z.xcresult`
 - selected app suite result bundle path: `/private/tmp/astrenza_311d310_selected_app_suites_20260708T1147Z.xcresult`
+- destination used: `platform=iOS Simulator,name=iPhone 17,OS=26.5`
 - fixed bundle `.xcresult` tree: `TimelineHomeCollectionViewSimulatorStartupSmokeTests=16`, total suites `1`, total tests `16`, zero suites `0`.
 - selected bundle `.xcresult` tree: total selected app suites `40`, total selected tests `611`, zero selected suite count `0`.
 
