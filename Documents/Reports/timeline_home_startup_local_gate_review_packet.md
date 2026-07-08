@@ -2,17 +2,19 @@
 
 Generated: 2026-07-08 08:39:14 +0900
 
-## 1. Review Target
+## 1. Evidence Target And Packet Attachment Semantics
 
 - repo: `https://github.com/ikuradon/Astrenza.git`
 - branch: `main`
-- reviewed HEAD SHA: `cfe3e22807d15e0c9e0420b23fbc3b6f5bb08cd5`
-- reviewed `origin/main` SHA: `cfe3e22807d15e0c9e0420b23fbc3b6f5bb08cd5`
-- reviewed origin/main SHA: `cfe3e22807d15e0c9e0420b23fbc3b6f5bb08cd5`
-- reviewed target confirmation: `HEAD == origin/main`
-- reviewed worktree confirmation: clean before creating this packet
-- clean worktree confirmation: clean before creating this packet
-- Phase A result: PASS for latest commit `cfe3e22 docs: define TimelineHome startup local gate review packet`
+- startup smoke evidence target commit SHA: `cfe3e22807d15e0c9e0420b23fbc3b6f5bb08cd5`
+- startup smoke evidence target short SHA: `cfe3e22`
+- evidence target confirmation at evidence generation time: `HEAD == origin/main`
+- evidence target worktree confirmation at evidence generation time: clean before creating this packet
+- clean worktree confirmation at evidence generation time: clean before creating this packet
+- Phase A startup smoke evidence result: PASS for evidence target commit `cfe3e22 docs: define TimelineHome startup local gate review packet`
+- Packet attachment commit: see final push report / `git rev-parse HEAD` after push.
+- Packet attachment commit SHA note: this file cannot reliably self-embed the final commit SHA that adds or updates this same packet. The packet attachment commit must be verified out-of-band after commit and push.
+- Current review HEAD/origin gate: For latest-commit review, verify `HEAD == origin/main` externally after this packet commit is pushed.
 
 ## 2. Fixed Result Bundle Evidence
 
@@ -217,6 +219,7 @@ releaseGateFailures=[]
 
 ## 9. Validation Commands And Results
 
+- Scope note: the validation evidence below belongs to the startup smoke evidence target commit above. It is not a self-embedded proof of the packet attachment commit. Verify the packet attachment commit SHA, `HEAD == origin/main`, and clean worktree externally after push.
 - `git checkout main && git fetch origin main && git pull --ff-only origin main && git -c core.fsmonitor=false status --short --branch`: pass; already up to date, `## main...origin/main`.
 - `xcodegen generate`: pass; project regenerated from `project.yml`.
 - `xcodebuild -scheme Astrenza -showdestinations`: pass; selected destination `iPhone 17`, `OS=26.5`.
