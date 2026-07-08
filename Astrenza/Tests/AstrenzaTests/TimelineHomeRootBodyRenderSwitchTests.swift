@@ -246,6 +246,7 @@ struct TimelineHomeRootBodyRenderSwitchTests {
         })
         #expect(selectedSwiftTestingSuites.contains("TimelineHomeRootBodyRenderSwitchTests"))
         #expect(selectedSwiftTestingSuites.contains("TimelineHomeStartupSmokeLocalGateReportTests"))
+        #expect(selectedSwiftTestingSuites.contains("TimelineHomeCollectionViewSimulatorStartupSmokeTests"))
         #expect(selectedSwiftTestingSuites.contains("TimelineHomeFlaggedCollectionViewStartupSmokeTests"))
         #expect(selectedSwiftTestingSuites.contains("TimelineHomeRootBodyActivationWiringGateTests"))
         #expect(selectedSwiftTestingSuites.contains("TimelineHomeCollectionViewRouteActivationSwitchTests"))
@@ -432,6 +433,7 @@ private var selectedSwiftTestingSuiteCounts: [(suiteName: String, executedTestCo
     [
         ("TimelineHomeRootBodyRenderSwitchTests", 23),
         ("TimelineHomeStartupSmokeLocalGateReportTests", 22),
+        ("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16),
         ("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25),
         ("TimelineHomeStartupSmokeEvidenceBundleTests", 15),
         ("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),

@@ -427,6 +427,189 @@ struct TimelineHomeFlaggedCollectionViewStartupSmokeTests {
     }
 }
 
+@Suite("TimelineHome collectionView simulator startup smoke")
+struct TimelineHomeCollectionViewSimulatorStartupSmokeTests {
+    @Test
+    func simulator_startup_default_without_flag_uses_legacy_route() async throws {
+        let result = try await startupSmoke(arguments: ["Astrenza"])
+
+        #expect(result.defaultStartupRemainsLegacy)
+        #expect(result.usedCollectionViewFlag == false)
+        #expect(result.selectedRoute == .legacy)
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.collectionViewStartupSmokeEvaluated == false)
+    }
+
+    @Test
+    func simulator_startup_collectionView_flag_requires_clean_evaluated_wiring_gate() async throws {
+        let result = try await startupSmoke(
+            rootBodyRenderDecision: rootBodyDecision(wiringGateResult: dirtyWiringGateResult())
+        )
+
+        #expect(result.usedCollectionViewFlag)
+        #expect(result.selectedRoute == .legacy)
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.collectionViewStartupSmokeEvaluated == false)
+        #expect(result.issueKinds.contains(.cleanRootBodyWiringGate))
+    }
+
+    @Test
+    func simulator_startup_collectionView_flag_rejects_unevaluated_wiring_gate() async throws {
+        let result = try await startupSmoke(
+            rootBodyRenderDecision: rootBodyDecision(wiringGateResult: unevaluatedCleanLookingWiringGateResult())
+        )
+
+        #expect(result.usedCollectionViewFlag)
+        #expect(result.selectedRoute == .legacy)
+        #expect(result.renderedRoute == .legacy)
+        #expect(result.collectionViewStartupSmokeEvaluated == false)
+        #expect(result.issueKinds.contains(.cleanRootBodyWiringGate))
+    }
+
+    @Test
+    func simulator_startup_collectionView_flag_with_clean_evaluated_gate_selects_collectionView_route() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.issueKinds.isEmpty)
+        #expect(result.usedCollectionViewFlag)
+        #expect(result.selectedRoute == .collectionView)
+        #expect(result.renderedRoute == .collectionView)
+        #expect(result.collectionViewStartupSmokeEvaluated)
+    }
+
+    @Test
+    func simulator_startup_preserves_root_shell_first_paint_marker() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.rootShellPresentation == .immediate)
+        #expect(result.rootShellMustRenderBeforeTimelineRestore)
+        #expect(result.rootShellFirstPaintPreserved)
+    }
+
+    @Test
+    func simulator_startup_uses_timeline_area_restore_gate_only() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.timelineRestoreGateScope == .timelineArea)
+        #expect(result.timelineGateCoversRootShell == false)
+        #expect(result.timelineGateCoversTabBar == false)
+        #expect(result.timelineGateContinuesGlobalSplash == false)
+        #expect(result.artifactSummary.initialRestoreSummary.contains("scope=timelineArea"))
+    }
+
+    @Test
+    func simulator_startup_networkWaitedBeforeInteractiveScrollMS_zero() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.networkWaitedBeforeInteractiveScrollMS == 0)
+        #expect(result.artifactSummary.sideEffectSummary.contains("networkWaitMS=0"))
+        #expect(!result.issueKinds.contains(.networkWaitedBeforeInteractiveScrollZero))
+    }
+
+    @Test
+    func simulator_startup_readMarkerChanged_false() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.readMarkerChanged == false)
+        #expect(!result.issueKinds.contains(.readMarkerUnchanged))
+    }
+
+    @Test
+    func simulator_startup_does_not_write_db() async throws {
+        let result = try await startupSmoke()
+        let source = try sourceFile(named: "TimelineHomeCollectionViewStartupSmoke.swift")
+
+        #expect(result.dbWriteAttempted == false)
+        #expect(result.requiresDBWrite == false)
+        #expect(!source.contains("feed" + "_read" + "_state"))
+        #expect(!source.contains("pending" + "_new"))
+        #expect(!source.contains("resolve" + "_jobs"))
+    }
+
+    @Test
+    func simulator_startup_does_not_advance_read_marker() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.readMarkerAdvanced == false)
+        #expect(result.readMarkerChanged == false)
+        #expect(!result.issueKinds.contains(.readMarkerUnchanged))
+    }
+
+    @Test
+    func simulator_startup_does_not_mutate_pending_new() async throws {
+        let result = try await startupSmoke()
+
+        #expect(result.pendingNewMutationAttempted == false)
+        #expect(result.pendingNewVisibleMutationAttempted == false)
+        #expect(result.artifactSummary.initialRestoreSummary.contains("pendingExcluded=1"))
+    }
+
+    @Test
+    func simulator_startup_does_not_call_dataSourceApply_from_Root() async throws {
+        let result = try await startupSmoke()
+        let rootSource = try sourceFile(named: "AstrenzaRootView.swift", inTimelineEngine: false)
+        let smokeSource = try sourceFile(named: "TimelineHomeCollectionViewStartupSmoke.swift")
+
+        #expect(result.dataSourceApplyFromRootCalled == false)
+        #expect(result.coordinatorOwnedDataSourceApplyAllowed)
+        #expect(!rootSource.contains("dataSource." + "apply"))
+        #expect(!smokeSource.contains("dataSource." + "apply"))
+    }
+
+    @Test
+    func simulator_startup_does_not_construct_extra_NostrHomeTimelineStore() async throws {
+        let result = try await startupSmoke()
+        let smokeSource = try sourceFile(named: "TimelineHomeCollectionViewStartupSmoke.swift")
+
+        #expect(result.extraNostrHomeTimelineStoreConstructed == false)
+        #expect(!result.issueKinds.contains(.noExtraNostrHomeTimelineStore))
+        #expect(!smokeSource.contains("Nostr" + "HomeTimelineStore("))
+    }
+
+    @Test
+    func simulator_startup_result_bundle_scan_has_no_network_attempts() async throws {
+        let cleanScan = TimelineHomeFlaggedStartupResultBundleScanner.scan(text: "Test run with 1 test passed")
+        let dirtyScan = TimelineHomeFlaggedStartupResultBundleScanner.scan(
+            text: ["boot", "Local" + "Data" + "Task", "relay connection attempts"].joined(separator: "\n")
+        )
+        let result = try await startupSmoke(resultBundleScan: cleanScan)
+
+        #expect(cleanScan.passed)
+        #expect(cleanScan.patternHits.isEmpty)
+        #expect(dirtyScan.passed == false)
+        #expect(dirtyScan.patternHits.map(\.tokenID).contains("startup-network-token-001"))
+        #expect(dirtyScan.patternHits.map(\.tokenID).contains("startup-network-token-009"))
+        #expect(result.resultBundleScanPassed)
+        #expect(result.startupNetworkPatternHits.isEmpty)
+    }
+
+    @Test
+    func simulator_startup_result_is_codable_privacy_safe() async throws {
+        let result = try await startupSmoke()
+        let data = try encodedData(result)
+        let decoded = try JSONDecoder().decode(TimelineHomeFlaggedStartupSmokeResult.self, from: data)
+        let json = try #require(String(data: data, encoding: .utf8)).lowercased()
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(decoded == result)
+        #expect(Set(payload.keys) == requiredResultKeys)
+        #expect(payload["launchArguments"] == nil)
+        for fragment in forbiddenPrivacyFragments {
+            #expect(!json.contains(fragment))
+        }
+    }
+
+    @Test
+    func selected_swift_testing_suites_non_zero() {
+        let uniqueSuites = Set(selectedSwiftTestingSuites)
+
+        #expect(!selectedSwiftTestingSuites.isEmpty)
+        #expect(selectedSwiftTestingSuites.contains("TimelineHomeCollectionViewSimulatorStartupSmokeTests"))
+        #expect(uniqueSuites.count == selectedSwiftTestingSuites.count)
+        #expect(selectedSwiftTestingSuites.allSatisfy { !$0.isEmpty })
+    }
+}
+
 private func startupSmoke(
     arguments: [String] = ["Astrenza", "--timeline-engine=collectionView"],
     rootBodyRenderDecision: TimelineHomeRootBodyRenderDecision? = nil,
@@ -523,6 +706,23 @@ private func dirtyWiringGateResult() -> TimelineHomeRootBodyActivationWiringResu
     cleanWiringGateResult(context: .defaultClean(mutatingLegacyAndCollectionViewInSameSession: true))
 }
 
+private func unevaluatedCleanLookingWiringGateResult() -> TimelineHomeRootBodyActivationWiringResult {
+    var result = cleanWiringGateResult()
+    result.wiringGateEvaluated = false
+    result.wiringAllowed = true
+    result.issueKinds = []
+    result.artifactSummary = TimelineHomeRootBodyActivationWiringArtifactSummary(
+        activationSwitchSummary: result.artifactSummary.activationSwitchSummary,
+        rootBodySummary: result.artifactSummary.rootBodySummary,
+        issueKinds: [],
+        deterministicSummary: result.artifactSummary.deterministicSummary.replacingOccurrences(
+            of: "wiringGateEvaluated=true",
+            with: "wiringGateEvaluated=false"
+        )
+    )
+    return result
+}
+
 private func cleanActivationSwitchResult() -> TimelineHomeActivatedRouteDecision {
     TimelineHomeActivatedRouteDecision(
         activationWouldBeAllowed: true,
@@ -603,6 +803,7 @@ private actor FakeStartupSmokeRepositoryStore: TimelineRepositoryStore {
 
 private var selectedSwiftTestingSuites: [String] {
     [
+        "TimelineHomeCollectionViewSimulatorStartupSmokeTests",
         "TimelineHomeFlaggedCollectionViewStartupSmokeTests",
         "TimelineHomeCollectionViewRouteRestoreIntegrationTests",
         "TimelineHomeRootBodyRenderSwitchTests",

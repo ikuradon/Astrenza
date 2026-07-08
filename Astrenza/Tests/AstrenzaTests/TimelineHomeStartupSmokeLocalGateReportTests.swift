@@ -81,7 +81,7 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
         let report = try makeReport(selectedSuiteCounts: selectedSuiteCounts)
 
         #expect(report.selectedSuiteCounts == selectedSuiteCounts)
-        #expect(report.totalSelectedTestCount == 82)
+        #expect(report.totalSelectedTestCount == 98)
         #expect(report.zeroSelectedSuiteCount == false)
         #expect(report.selectedSwiftTestingSuitesNonZero)
     }
@@ -317,6 +317,7 @@ struct TimelineHomeStartupSmokeLocalGateReportTests {
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 22)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20)))
+        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)))
         #expect(selectedSuiteCounts.allSatisfy { $0.executedTestCount > 0 })
     }
@@ -454,6 +455,7 @@ private var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount] {
         suiteCount("TimelineHomeStartupSmokeLocalGateReportTests", 22),
         suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15),
         suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),
+        suiteCount("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16),
         suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)
     ]
 }

@@ -54,7 +54,7 @@ struct TimelineHomeStartupSmokeEvidenceBundleTests {
         let bundle = try makeBundle(selectedSuiteCounts: counts)
 
         #expect(bundle.selectedSuiteCounts == counts)
-        #expect(bundle.totalSelectedTestCount == 60)
+        #expect(bundle.totalSelectedTestCount == 76)
         #expect(bundle.zeroSelectedSuiteCount == false)
         #expect(bundle.selectedSwiftTestingSuitesNonZero)
     }
@@ -233,6 +233,7 @@ struct TimelineHomeStartupSmokeEvidenceBundleTests {
         #expect(!selectedSuiteCounts.isEmpty)
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20)))
+        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)))
         #expect(selectedSuiteCounts.allSatisfy { $0.executedTestCount > 0 })
     }
@@ -322,6 +323,7 @@ private var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount] {
     [
         suiteCount("TimelineHomeStartupSmokeEvidenceBundleTests", 15),
         suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),
+        suiteCount("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16),
         suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)
     ]
 }

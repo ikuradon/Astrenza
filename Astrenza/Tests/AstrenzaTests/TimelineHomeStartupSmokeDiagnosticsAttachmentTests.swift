@@ -290,6 +290,7 @@ struct TimelineHomeStartupSmokeDiagnosticsAttachmentTests {
     @Test
     func selected_swift_testing_suites_non_zero() {
         #expect(!selectedSuiteCounts.isEmpty)
+        #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25)))
         #expect(selectedSuiteCounts.contains(suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20)))
         #expect(selectedSuiteCounts.allSatisfy { $0.executedTestCount > 0 })
@@ -406,6 +407,7 @@ private func startupSmokeResult(
 
 private var selectedSuiteCounts: [TimelineHomeStartupSmokeSelectedSuiteCount] {
     [
+        suiteCount("TimelineHomeCollectionViewSimulatorStartupSmokeTests", 16),
         suiteCount("TimelineHomeFlaggedCollectionViewStartupSmokeTests", 25),
         suiteCount("TimelineHomeStartupSmokeDiagnosticsAttachmentTests", 20),
         suiteCount("TimelineHomeCollectionViewRouteRestoreIntegrationTests", 16),
