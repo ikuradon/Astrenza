@@ -2,12 +2,15 @@
 
 ## 1. Status
 
-Proposed.
+Complete for the TimelineHome collectionView flagged startup/restore/scroll local gate. Proposed for any later release/default rollout decision.
 
-This document defines the limited TimelineHome Root/Home wiring ladder through the current explicit-flag Root body render switch and startup smoke checkpoints, then defines the acceptance baseline for future TimelineHome startup gates.
+This document defines the limited TimelineHome Root/Home wiring ladder through the current explicit-flag Root body render switch, startup smoke, visible restore rows, and restore scroll position checkpoints.
 
 - `test: wire TimelineHome collectionView route into Root body behind flag`
 - `test: repair TimelineHome startup smoke privacy`
+- `test: verify TimelineHome collectionView route in simulator startup smoke`
+- `test: verify TimelineHome collectionView displays restored timeline rows`
+- `test: preserve TimelineHome collectionView restore scroll position`
 
 This is a docs-only planning/checklist document. It does not change production source, tests, CI, project configuration, SQL, or dependencies. It does not render collection view Home by default and does not authorize collection view Home as the default.
 
@@ -46,9 +49,15 @@ The startup smoke privacy checkpoint repaired the flagged startup artifact schem
 
 - `4b913a3 test: repair TimelineHome startup smoke privacy`
 
+The simulator startup smoke, visible restored rows, and restore scroll position checkpoints closed the current flagged local gate:
+
+- `311d310 test: verify TimelineHome collectionView route in simulator startup smoke`
+- `b7b2a83 test: verify TimelineHome collectionView displays restored timeline rows`
+- `97f84b3 test: preserve TimelineHome collectionView restore scroll position`
+
 `AstrenzaRootView` already performs a no-op `TimelineHomeRootRouteCallSite` production preflight before constructing the existing `NostrSessionStore` and `NostrHomeTimelineStore`. `TimelineHomeRouteDiagnosticsSink` now exists as a local, offline, in-memory retention sink for route decision artifacts. `TimelineHomeRootRouteDecisionSnapshot`, `TimelineHomeRootRouteDecisionSnapshotConsumer`, `TimelineHomeRouteConstructionReadiness`, `TimelineHomeRouteConstructionPlanConsumer`, `TimelineHomeRouteConstructionReadinessConsumer`, `TimelineHomeOffscreenConstructionHarnessResultConsumer`, and `TimelineHomeConstructionArtifactChainConsumer` can read the Root-visible route/construction artifact chain in local/debug/fixture code.
 
-The current allowed state is default legacy rendering plus a flagged collection view construction result, activation switch helper result, Root activation decision chain, Root body activation wiring gate result, explicit Root body render switch result, collection view route restore decision, and startup smoke artifact. The collection view route remains gated by `--timeline-engine=collectionView`, a clean Root body wiring gate, clean restore input, a clean fixed result bundle scan, and non-zero selected Swift Testing suites.
+The current allowed state is default legacy rendering plus a flagged collection view construction result, activation switch helper result, Root activation decision chain, Root body activation wiring gate result, explicit Root body render switch result, collection view route restore decision, startup smoke artifact, visible restored row result, and restore scroll position result. TimelineHome collectionView flagged startup/restore/scroll local gate complete. The collection view route remains gated by `--timeline-engine=collectionView`, a clean Root body wiring gate, clean restore input, a clean fixed result bundle scan, and non-zero selected Swift Testing suites.
 
 The existing contracts available to the future construction-readiness slice are:
 
@@ -565,9 +574,11 @@ Future gate behavior:
 - The gate must not start network, relay, resolver, media resolver, OGP resolver, profile resolver, or real `ResolveCoordinator` work before first interactive scroll.
 - The gate must not add telemetry, upload, export, analytics, remote logging, or external artifact destinations.
 
-## 12. Final Acceptance For This Docs Slice
+## 12. Final Acceptance For This Local Gate
 
-This docs slice is accepted only if:
+TimelineHome collectionView flagged startup/restore/scroll local gate complete.
+
+This gate is accepted only if:
 
 - Production Home/root/splash behavior remains unchanged.
 - Schema remains unchanged.
@@ -575,7 +586,11 @@ This docs slice is accepted only if:
 - DB write, network, relay, media resolver, OGP resolver, profile resolver, and real `ResolveCoordinator` scope remains closed.
 - Production Root body render switching remains explicit-flag-only and clean-gate-only.
 - Default/no-flag startup remains legacy.
+- Explicit `--timeline-engine=collectionView` remains required for the collection view route.
+- A clean evaluated Root body wiring gate remains required.
 - The startup smoke acceptance baseline requires a fixed result bundle path, startup-network scan output, privacy encoded JSON checks, and selected suite counts.
+- Startup smoke PASS, visible restored rows PASS, and restore scroll position PASS remain the completed local gate evidence.
+- No startup network, DB write, read marker mutation, `pending_new` mutation, Root-owned `dataSource.apply`, or extra `NostrHomeTimelineStore` construction is allowed.
 - A selected Swift Testing suite with 0 tests is a release blocker.
 - Construction, activation switch helper, Root body wiring gate, production Root body render switching, collectionView route restore, and startup smoke are documented as separate milestones.
 - Rollback and manual fallback remain legacy.
@@ -593,10 +608,10 @@ Rollback for the future Root body render switch is a launch-time or restart-time
 - Manual fallback remains legacy.
 - If any Root body wiring gate fails, do not render the collection view route; record the blocked artifact chain and keep legacy rendering.
 
-## 14. Open Questions
+## 14. Next Phase Candidates
 
-- Exact SwiftUI insertion point for a future route host.
-- Whether the route host is test-only first or production-source behind the flag.
-- Whether the first collection view path uses read-only Core Store or fake store in app tests.
-- How to expose diagnostics in debug UI.
-- Whether existing Root shell startup splash coupling needs separate cleanup before route wiring.
+1. actual data display quality
+2. scroll interaction behavior
+3. local pagination/windowing
+4. manual visual smoke
+5. release/default decision

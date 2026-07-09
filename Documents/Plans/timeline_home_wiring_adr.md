@@ -2,13 +2,13 @@
 
 ## 1. Status
 
-Proposed.
+Proposed for later rollout/default decisions. The TimelineHome collectionView flagged startup/restore/scroll local gate is complete.
 
 This ADR is docs-only. It records the staged production Home wiring strategy for the new TimelineEngine restore pipeline. It does not authorize collection view Home as the default route.
 
 ## 2. Context
 
-The legacy SwiftUI Home path remains the default production Home surface. `AstrenzaRootView` still owns the root shell/session flow, and `HomeTimelineView` still renders the default timeline through the legacy SwiftUI `TimelineFeedView` path unless the explicit collection view startup gates are clean.
+The legacy SwiftUI Home path remains the default production Home surface. `AstrenzaRootView` still owns the root shell/session flow, and `HomeTimelineView` still renders the default timeline through the legacy SwiftUI `TimelineFeedView` path unless the explicit collection view startup/restore/scroll gates are clean.
 
 The new TimelineEngine/Core Store pipeline is ready for offline and source-model acceptance, but it is not yet wired into production Home. The existing offline path covers:
 
@@ -43,6 +43,8 @@ The new TimelineEngine/Core Store pipeline is ready for offline and source-model
 - `TimelineHomeRootBodyRenderSwitch`.
 - `TimelineHomeCollectionViewRouteRestore`.
 - `TimelineHomeCollectionViewStartupSmoke`.
+- `TimelineHomeCollectionViewVisibleRestoreRows`.
+- `TimelineHomeCollectionViewRestoreScrollPosition`.
 - `TimelineCollectionViewController` offscreen smoke coverage.
 - `TimelineInitialRestoreSnapshotCoordinatorHarness`.
 - TimelineEngine scaffold, `TimelineSnapshotCoordinator`, `TimelinePositionRecorder`, and `TimelineDiagnosticsRecorder`.
@@ -69,7 +71,7 @@ The activation switch helper is a pure milestone where Root/Home route artifacts
 
 Root body render switch is the milestone where `AstrenzaRootView.body` may choose the collection view Home route. It requires the explicit `--timeline-engine=collectionView` flag, a clean Root body activation wiring gate, all construction and activation artifacts still clean, default launch without the flag remaining legacy, and manual rollback remaining legacy. It must preserve Root shell first paint, keep the Timeline restore gate scoped to the Timeline area only, and must not introduce startup network, DB writes, read-marker mutation, or Root-owned `dataSource.apply`.
 
-Current state remains default-legacy: collection view rendering is allowed only when the explicit flag, clean wiring gate, clean route restore input, clean fixed result bundle scan, and non-zero selected Swift Testing suites all pass. Debug override `.collectionView` must not bypass the explicit launch flag or readiness gates.
+Current state remains default-legacy: collection view rendering is allowed only when the explicit flag, clean wiring gate, clean route restore input, clean fixed result bundle scan, and non-zero selected Swift Testing suites all pass. TimelineHome collectionView flagged startup/restore/scroll local gate complete. Debug override `.collectionView` must not bypass the explicit launch flag or readiness gates.
 
 ## 4. Dependency Injection Plan
 
@@ -171,34 +173,19 @@ Keep the flag off, or roll back to legacy mode on the next launch, if any of the
 - Core Store query results diverge from source-model tests.
 - Row projection changes item identity.
 
-## 9. Next Implementation Sequence
+## 9. Current Sequence Position
 
-Do not jump directly to full production Home wiring. Use this sequence:
+TimelineHome collectionView flagged startup/restore/scroll local gate complete.
 
-1. Add a test-only `TimelineSurface` dependency container.
-2. Add an offscreen or no-window `TimelineCollectionViewController` smoke test if feasible.
-3. Apply the initial snapshot through `TimelineSnapshotCoordinator` with a fake collection view or pure harness.
-4. Add the `AstrenzaTimelineEngineMode` feature flag model and launch argument parser.
-5. Add a root/Home route adapter behind the flag without changing root shell launch behavior.
-6. Define the first limited Home collection view wiring slice in `Documents/Plans/timeline_home_limited_wiring_plan.md`.
-7. Keep the existing no-op Root call site for `TimelineHomeRootRoutePreflight` or a tiny wrapper, with default legacy rendering unchanged and no collection view route construction from Root.
-8. Add only the local in-memory `TimelineHomeRouteDiagnosticsSink` injection defined in `Documents/Plans/timeline_home_limited_wiring_plan.md`, recording exactly one Root preflight route decision artifact without file writes, telemetry, network, DB, read marker, `pending_new`, or `dataSource.apply` side effects.
-9. Only after the exit criteria in `Documents/Plans/timeline_home_limited_wiring_plan.md` pass, open a separate task for actual collection view route construction.
-10. The first construction task is `test: construct TimelineHome collectionView route behind flag`, and must keep `renderedRoute == legacy`, `renderedRouteAfterConstruction == legacy`, and `routeActivationAllowed == false` unless a later activation task explicitly opens rendering.
+Completed checkpoints include route construction, activation switch helper, Root body activation wiring gate, explicit Root body render switch, startup smoke privacy, simulator startup smoke, visible restored rows, and restore scroll position. The completed boundary still requires default/no flag remaining legacy, explicit `--timeline-engine=collectionView`, clean evaluated Root body wiring gate evidence, startup smoke PASS, visible restored rows PASS, restore scroll position PASS, no startup network, no DB write, no read marker mutation, no `pending_new` mutation, no Root-owned `dataSource.apply`, no extra `NostrHomeTimelineStore`, and non-zero selected Swift Testing suites.
 
-The Root diagnostics sink injection baseline must continue to follow `Documents/Plans/timeline_home_limited_wiring_plan.md`. It is a no-op preflight diagnostics slice only: Root may pass a local in-memory `TimelineHomeRouteDiagnosticsSink` or narrow protocol into `TimelineHomeRootRouteCallSite`, default legacy remains explicit, the collection view flag may record one local decision artifact but must not instantiate `TimelineCollectionViewController` or construct a collection view `TimelineSurface`, and same-session automatic fallback is forbidden.
+Next phase candidates only:
 
-The first construction implementation checkpoint is `f163ed0 test: construct TimelineHome collectionView route behind flag`. It keeps default rendering legacy, records the route/construction artifact chain, and keeps readiness/plan/harness/artifact-chain tests green.
-
-The activation switch helper checkpoint is `18be791 test: activate TimelineHome collectionView route behind flag`. It proves the already constructed collection view route can be evaluated behind the explicit flag and clean readiness artifacts.
-
-The Root body activation wiring checkpoints are `5611495 test: define TimelineHome root body activation wiring gate` and `6de53d0 test: read TimelineHome root body activation wiring gate results`. They prove a clean wiring gate can be consumed while rollback/manual fallback remain `legacy`.
-
-The explicit Root body render switch task is `test: wire TimelineHome collectionView route into Root body behind flag`. That task may touch `AstrenzaRootView.body` only for an explicit flagged route branch, use injected mode/preflight/wiring gate output, render the collection view route only when `wiringAllowed == true`, record the local diagnostics/artifact decision, keep legacy route as fallback and rollback, preserve Root shell first paint, keep the Timeline restore gate scoped to the Timeline area only, and keep same-session double mutation prevented.
-
-That Root body render switch task must not default to collection view, remove or bypass `NostrHomeTimelineStore`, start relay/network/resolver work before first interactive scroll, write DB/read marker/`feed_read_state`/`pending_new` state, call `dataSource.apply` from Root, change splash/root shell behavior, change schema/migrations/GitHub Actions/dependencies, add external telemetry/upload/export paths, open the `ResolveCoordinator` actor, or wire media/OGP resolver runtime.
-
-Before Root body render switching can select collection view, the required gates are: flagged construction PASS, activation switch helper PASS, activation readiness PASS, activation readiness consumer PASS, activation artifact chain consumer PASS, Root activation preflight PASS, Root activation decision snapshot chain PASS, Root activation decision snapshot chain consumer PASS, Root body activation wiring gate PASS, Root body activation wiring gate consumer PASS, `TimelineCollectionViewControllerSmokeTests` PASS, `TimelineInitialRestoreSnapshotCoordinatorHarnessTests` PASS, startup-network grep with no matches, privacy guard/self-test PASS, coordinator-only `dataSource.apply`, no extra `NostrHomeTimelineStore`, no DB write/read marker/`feed_read_state`/`pending_new` mutation, and selected Swift Testing suites non-zero.
+1. actual data display quality
+2. scroll interaction behavior
+3. local pagination/windowing
+4. manual visual smoke
+5. release/default decision
 
 ## 10. Explicit Forbidden Scope
 
