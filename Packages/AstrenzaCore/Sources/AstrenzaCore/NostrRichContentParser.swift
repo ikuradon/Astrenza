@@ -168,8 +168,7 @@ public enum NostrRichContentParser {
                 continue
             }
 
-            if let emojiToken = customEmojiToken(from: token.value, customEmojis: customEmojis, trailing: token.trailing) {
-                tokens.append(emojiToken)
+            if appendCustomEmojiTokens(from: token.value, customEmojis: customEmojis, to: &tokens) {
                 appendTrailing(token.trailing, to: &tokens)
                 continue
             }
@@ -264,18 +263,60 @@ public enum NostrRichContentParser {
         return result
     }
 
-    private static func customEmojiToken(
+    private static func appendCustomEmojiTokens(
         from token: String,
         customEmojis: [String: URL],
-        trailing: String
-    ) -> NostrRichContentToken? {
-        guard token.hasPrefix(":"),
-              token.hasSuffix(":"),
-              token.count > 2
-        else { return nil }
-        let shortcode = String(token.dropFirst().dropLast())
-        guard let url = customEmojis[shortcode] else { return nil }
-        return .customEmoji(shortcode: shortcode, url: url)
+        to tokens: inout [NostrRichContentToken]
+    ) -> Bool {
+        guard token.contains(":") else { return false }
+
+        var didAppendEmoji = false
+        var scanIndex = token.startIndex
+        var textStart = token.startIndex
+
+        while scanIndex < token.endIndex {
+            guard token[scanIndex] == ":" else {
+                scanIndex = token.index(after: scanIndex)
+                continue
+            }
+
+            let shortcodeStart = token.index(after: scanIndex)
+            guard shortcodeStart < token.endIndex,
+                  let shortcodeEnd = token[shortcodeStart...].firstIndex(of: ":")
+            else {
+                scanIndex = token.index(after: scanIndex)
+                continue
+            }
+
+            let shortcode = String(token[shortcodeStart..<shortcodeEnd])
+            guard isCustomEmojiShortcode(shortcode),
+                  let url = customEmojis[shortcode]
+            else {
+                scanIndex = shortcodeEnd
+                continue
+            }
+
+            appendText(String(token[textStart..<scanIndex]), to: &tokens)
+            tokens.append(.customEmoji(shortcode: shortcode, url: url))
+            didAppendEmoji = true
+            scanIndex = token.index(after: shortcodeEnd)
+            textStart = scanIndex
+        }
+
+        guard didAppendEmoji else { return false }
+        appendText(String(token[textStart..<token.endIndex]), to: &tokens)
+        return true
+    }
+
+    private static func isCustomEmojiShortcode(_ shortcode: String) -> Bool {
+        guard !shortcode.isEmpty else { return false }
+        return shortcode.unicodeScalars.allSatisfy { scalar in
+            (65...90).contains(Int(scalar.value)) ||
+                (97...122).contains(Int(scalar.value)) ||
+                (48...57).contains(Int(scalar.value)) ||
+                scalar == "_" ||
+                scalar == "-"
+        }
     }
 
     private static func hashtag(from token: String) -> String? {

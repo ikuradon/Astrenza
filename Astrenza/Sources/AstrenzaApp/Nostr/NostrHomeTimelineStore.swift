@@ -85,7 +85,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
     private var linkPreviewTask: Task<Void, Never>?
-    private var materializeTask: Task<Void, Never>?
     private var resolvingLinkPreviewURLs = Set<String>()
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
@@ -108,6 +107,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var restoreProjectionAnchorEventID: String?
     private var lastEntriesRenderFingerprint: [String] = []
     private let materializeCoalescingDelayNanoseconds: UInt64 = 250_000_000
+    private lazy var projectionRefreshCoordinator = NostrProjectionRefreshCoordinator(
+        delayNanoseconds: materializeCoalescingDelayNanoseconds
+    )
     private let projectionWindowLimit = 240
     private let projectionAnchorLeadingLimit = 80
     private let projectionAnchorTrailingLimit = 160
@@ -271,6 +273,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func applyPendingNewEvents() async {
         guard let account else { return }
+        promotePendingNewEventsToTimelineIndex(account: account)
         reloadNewestProjectionWindow(account: account)
         unmaterializedNewEventIDs.removeAll()
         unmaterializedNewCount = 0
@@ -381,7 +384,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard !listEvents.isEmpty else { return [] }
         let pubkeys = Set(listEvents.map(\.pubkey))
         let metadata = (try? eventStore.latestReplaceableEvents(pubkeys: pubkeys, kind: 0)) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
-        return NostrTimelineMaterializer.entries(
+        return NostrTimelineProjection.entries(
             noteEvents: listEvents,
             metadataEvents: metadata,
             nip05Resolutions: nip05Resolutions,
@@ -410,13 +413,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         paginationTask?.cancel()
         runtimeTask?.cancel()
         linkPreviewTask?.cancel()
-        materializeTask?.cancel()
+        projectionRefreshCoordinator.cancel()
         backwardFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
         linkPreviewTask = nil
-        materializeTask = nil
         backwardFlushTask = nil
         dependencyFetchQueue.removeAll()
         pendingBackwardRequests.removeAll()
@@ -750,10 +752,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         publishUnreadState()
     }
 
-    private func persistDatabase(account: NostrAccount) {
+    private func persistDatabase(account: NostrAccount, updatesTimelineIndex: Bool = true) {
         guard let eventStore else { return }
         do {
-            try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
+            if updatesTimelineIndex {
+                try eventStore.saveHomeTimelineState(loaderState(), accountID: account.pubkey)
+            } else {
+                try eventStore.saveHomeTimelineFacts(loaderState(), accountID: account.pubkey)
+            }
         } catch {
             // Live networking can still populate the timeline if the database write fails.
         }
@@ -781,6 +787,12 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: "timeline index save failed: \(error.localizedDescription)"
             )
         }
+    }
+
+    private func promotePendingNewEventsToTimelineIndex(account: NostrAccount) {
+        guard let eventStore, !unmaterializedNewEventIDs.isEmpty else { return }
+        let events = (try? eventStore.events(ids: Array(unmaterializedNewEventIDs))) ?? []
+        saveHomeTimelineIndex(events: events, account: account, source: "forward")
     }
 
     private func reloadNewestProjectionWindow(account: NostrAccount) {
@@ -1106,10 +1118,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             noteEvents.removeAll { deletedIDs.contains($0.id) }
             materializeEntries()
         } else {
-            saveHomeTimelineIndex(events: [event], account: account, source: "forward")
             enqueueBackwardDependencies(for: event)
             embeddedTarget.map(enqueueBackwardDependencies)
             if isTimelineAtNewestWindow && unmaterializedNewEventIDs.isEmpty {
+                saveHomeTimelineIndex(events: [event], account: account, source: "forward")
                 reloadNewestProjectionWindow(account: account)
                 materializeEntries()
             } else if unmaterializedNewEventIDs.insert(event.id).inserted {
@@ -1262,13 +1274,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard !identifier.isEmpty else {
             nip05Resolutions.removeValue(forKey: metadataEvent.pubkey)
             if let account {
-                persistDatabase(account: account)
+                persistDatabase(account: account, updatesTimelineIndex: false)
             }
             return
         }
         guard nip05Resolutions[metadataEvent.pubkey]?.identifier != identifier else {
             if let account {
-                persistDatabase(account: account)
+                persistDatabase(account: account, updatesTimelineIndex: false)
             }
             return
         }
@@ -1286,7 +1298,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self.nip05Resolutions[metadataEvent.pubkey] = resolution
                 self.scheduleMaterializeEntries()
                 if let account = self.account {
-                    self.persistDatabase(account: account)
+                    self.persistDatabase(account: account, updatesTimelineIndex: false)
                 }
             }
         }
@@ -1630,7 +1642,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self.linkPreviewTask = nil
                 self.scheduleMaterializeEntries()
                 if let account = self.account {
-                    self.persistDatabase(account: account)
+                    self.persistDatabase(account: account, updatesTimelineIndex: false)
                 }
                 self.scheduleLinkPreviewResolution()
             }
@@ -1706,8 +1718,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries() {
-        materializeTask?.cancel()
-        materializeTask = nil
+        projectionRefreshCoordinator.cancel()
         let filterRules = homeFilterRules()
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
         let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
@@ -1743,16 +1754,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleMaterializeEntries(delayNanoseconds: UInt64? = nil) {
-        guard materializeTask == nil else { return }
         let delay = delayNanoseconds ?? materializeCoalescingDelayNanoseconds
-        materializeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: delay)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self, !Task.isCancelled else { return }
-                self.materializeTask = nil
-                self.materializeEntries()
-            }
+        projectionRefreshCoordinator.schedule(delayNanoseconds: delay) { [weak self] in
+            self?.materializeEntries()
         }
     }
 
@@ -1764,7 +1768,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let liveMetadata = metadataEvents.filter { profilePubkeys.contains($0.pubkey) }
         let metadata = storedMetadata + liveMetadata
 
-        return NostrTimelineMaterializer.posts(
+        return NostrTimelineProjection.posts(
             noteEvents: events,
             metadataEvents: metadata,
             nip05Resolutions: nip05Resolutions,

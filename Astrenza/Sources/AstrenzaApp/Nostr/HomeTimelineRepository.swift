@@ -39,7 +39,7 @@ struct HomeTimelineRepository {
                 limit: 500
             )
         } ?? []
-        let entries = NostrTimelineMaterializer.entries(
+        let entries = NostrTimelineProjection.entries(
             noteEvents: noteEvents,
             contextEvents: contextEvents,
             metadataEvents: metadataEvents,

@@ -82,6 +82,12 @@ public struct NostrDeletedTimelineEntryRecord: Codable, Equatable, Sendable {
     }
 }
 
+private struct NostrAddressableDeletionTarget: Hashable {
+    let kind: Int
+    let pubkey: String
+    let dTag: String
+}
+
 public struct NostrSyncCursorRecord: Codable, Equatable, Sendable {
     public let accountID: String
     public let timelineKey: String
@@ -370,9 +376,10 @@ public final class NostrEventStore {
 
     public func save(events: [NostrEvent], receivedAt: Int = Int(Date().timeIntervalSince1970)) throws {
         guard !events.isEmpty else { return }
+        let eventsToSave = Self.eventsIncludingEmbeddedRepostTargets(events)
 
         try database.write { db in
-            for event in events {
+            for event in eventsToSave {
                 try upsert(event: event, receivedAt: receivedAt, db: db)
                 try replaceTags(for: event, db: db)
                 try replaceMediaAssets(for: event, receivedAt: receivedAt, db: db)
@@ -381,10 +388,29 @@ public final class NostrEventStore {
                 try upsertAddressableHeadIfNeeded(for: event, db: db)
                 try upsertListIfNeeded(for: event, accountID: event.pubkey, db: db)
             }
-            for event in events where event.kind == 5 {
+            for event in eventsToSave where event.kind == 5 {
                 try applyDeletionRequest(event, db: db)
             }
         }
+    }
+
+    private static func eventsIncludingEmbeddedRepostTargets(_ events: [NostrEvent]) -> [NostrEvent] {
+        var output: [NostrEvent] = []
+        var seenEventIDs = Set<String>()
+
+        func append(_ event: NostrEvent) {
+            guard seenEventIDs.insert(event.id).inserted else { return }
+            output.append(event)
+        }
+
+        for event in events {
+            append(event)
+            if let embeddedTarget = event.embeddedRepostTarget {
+                append(embeddedTarget)
+            }
+        }
+
+        return output
     }
 
     public func saveHomeTimelineState(
@@ -408,6 +434,18 @@ public final class NostrEventStore {
 
         try saveRelaySyncEvents(state.relaySyncEvents)
 
+        try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
+    }
+
+    public func saveHomeTimelineFacts(
+        _ state: NostrHomeTimelineState,
+        accountID: String,
+        timelineKey: String = "home",
+        savedAt: Int = Int(Date().timeIntervalSince1970)
+    ) throws {
+        let events = state.noteEvents + state.metadataEvents + [state.relayListEvent, state.contactListEvent].compactMap { $0 }
+        try save(events: events, receivedAt: savedAt)
+        try saveRelaySyncEvents(state.relaySyncEvents)
         try saveTimelineStateMetadata(state, accountID: accountID, timelineKey: timelineKey, savedAt: savedAt)
     }
 
@@ -1199,6 +1237,61 @@ public final class NostrEventStore {
             )
 
             return newerRows.reversed().map(decodeTimelineEntry) + [anchor] + olderRows.map(decodeTimelineEntry)
+        }
+    }
+
+    public func pruneTimelineEntries(
+        accountID: String,
+        timelineKey: String,
+        policy: NostrTimelineIndexPolicy,
+        anchorEventID: String?,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> Int {
+        try database.write { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT account_id, timeline_key, event_id, sort_ts, source, inserted_at, gap_before, gap_after
+                FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ?
+                ORDER BY sort_ts DESC, event_id ASC
+                """,
+                arguments: [accountID, timelineKey]
+            )
+            let entries = rows.map(decodeTimelineEntry)
+            guard !entries.isEmpty else { return 0 }
+
+            let candidates = entries.map { entry in
+                NostrTimelineIndexCandidate(
+                    eventID: entry.eventID,
+                    sortTimestamp: entry.sortTimestamp,
+                    insertedAt: entry.insertedAt,
+                    gapBefore: entry.gapBefore,
+                    gapAfter: entry.gapAfter
+                )
+            }
+            let retainedIDs = policy.retainedEventIDs(
+                from: candidates,
+                anchorEventID: anchorEventID,
+                now: now
+            )
+            let deletingIDs = entries.map(\.eventID).filter { !retainedIDs.contains($0) }
+            guard !deletingIDs.isEmpty else { return 0 }
+
+            let placeholders = deletingIDs.map { _ in "?" }.joined(separator: ", ")
+            var arguments: StatementArguments = [accountID, timelineKey]
+            for eventID in deletingIDs {
+                arguments += [eventID]
+            }
+            try db.execute(
+                sql: """
+                DELETE FROM timeline_entries
+                WHERE account_id = ? AND timeline_key = ? AND event_id IN (\(placeholders))
+                """,
+                arguments: arguments
+            )
+
+            return deletingIDs.count
         }
     }
 
@@ -2296,6 +2389,24 @@ public final class NostrEventStore {
             )
         }
 
+        migrator.registerMigration("addAddressableDeletionTombstones") { db in
+            try db.create(table: "addressable_deletion_tombstones", ifNotExists: true) { table in
+                table.column("target_kind", .integer).notNull()
+                table.column("target_pubkey", .text).notNull()
+                table.column("target_d_tag", .text).notNull()
+                table.column("deletion_event_id", .text).notNull().references("events", column: "event_id", onDelete: .cascade)
+                table.column("deleted_at", .integer).notNull()
+                table.column("author_pubkey", .text).notNull()
+                table.primaryKey(["target_kind", "target_pubkey", "target_d_tag"])
+            }
+            try db.create(
+                index: "addressable_deletion_tombstones_author",
+                on: "addressable_deletion_tombstones",
+                columns: ["author_pubkey", "deleted_at"],
+                ifNotExists: true
+            )
+        }
+
         try migrator.migrate(database)
     }
 
@@ -2334,6 +2445,7 @@ public final class NostrEventStore {
                 rawData
             ]
         )
+        try applyPendingDeletionIfNeeded(for: event, db: db)
     }
 
     private func replaceTags(for event: NostrEvent, db: Database) throws {
@@ -2588,40 +2700,169 @@ public final class NostrEventStore {
             guard tag.first == "e", tag.count > 1 else { return nil }
             return tag[1]
         }
-        guard !targetIDs.isEmpty else { return }
+        let addressableTargets = addressableDeletionTargets(from: deletionEvent)
+        guard !targetIDs.isEmpty || !addressableTargets.isEmpty else { return }
 
         for targetID in Set(targetIDs) {
-            guard let target = try fetchEvent(id: targetID, db: db), target.pubkey == deletionEvent.pubkey else {
+            let target = try fetchEvent(id: targetID, db: db)
+            if let target, target.pubkey != deletionEvent.pubkey {
                 continue
             }
 
-            try db.execute(
-                sql: """
-                INSERT INTO deletion_tombstones (
-                    target_event_id, deletion_event_id, deleted_at, author_pubkey
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(target_event_id) DO UPDATE SET
-                    deletion_event_id = excluded.deletion_event_id,
-                    deleted_at = excluded.deleted_at,
-                    author_pubkey = excluded.author_pubkey
-                """,
-                arguments: [
-                    targetID,
-                    deletionEvent.id,
-                    deletionEvent.createdAt,
-                    deletionEvent.pubkey
-                ]
-            )
+            try upsertDeletionTombstone(targetID: targetID, deletionEvent: deletionEvent, db: db)
+            if target != nil {
+                try markEventDeleted(eventID: targetID, deletedAt: deletionEvent.createdAt, db: db)
+            }
+        }
 
-            try db.execute(
-                sql: """
-                UPDATE events
-                SET deleted_at = ?
-                WHERE event_id = ?
-                """,
-                arguments: [deletionEvent.createdAt, targetID]
+        for target in Set(addressableTargets) {
+            try upsertAddressableDeletionTombstone(target: target, deletionEvent: deletionEvent, db: db)
+            try markAddressableEventsDeleted(target: target, deletedAt: deletionEvent.createdAt, db: db)
+        }
+    }
+
+    private func applyPendingDeletionIfNeeded(for event: NostrEvent, db: Database) throws {
+        if let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT deleted_at
+            FROM deletion_tombstones
+            WHERE target_event_id = ? AND author_pubkey = ?
+            """,
+            arguments: [event.id, event.pubkey]
+        ) {
+            let deletedAt: Int = row["deleted_at"]
+            try markEventDeleted(eventID: event.id, deletedAt: deletedAt, db: db)
+        }
+
+        try applyPendingAddressableDeletionIfNeeded(for: event, db: db)
+    }
+
+    private func upsertDeletionTombstone(targetID: String, deletionEvent: NostrEvent, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO deletion_tombstones (
+                target_event_id, deletion_event_id, deleted_at, author_pubkey
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(target_event_id) DO UPDATE SET
+                deletion_event_id = excluded.deletion_event_id,
+                deleted_at = excluded.deleted_at,
+                author_pubkey = excluded.author_pubkey
+            """,
+            arguments: [
+                targetID,
+                deletionEvent.id,
+                deletionEvent.createdAt,
+                deletionEvent.pubkey
+            ]
+        )
+    }
+
+    private func markEventDeleted(eventID: String, deletedAt: Int, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE events
+            SET deleted_at = ?
+            WHERE event_id = ?
+            """,
+            arguments: [deletedAt, eventID]
+        )
+    }
+
+    private func addressableDeletionTargets(from deletionEvent: NostrEvent) -> [NostrAddressableDeletionTarget] {
+        deletionEvent.tags.compactMap { tag -> NostrAddressableDeletionTarget? in
+            guard tag.first == "a", tag.count > 1 else { return nil }
+            let parts = tag[1].split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count == 3,
+                  let kind = Int(parts[0])
+            else { return nil }
+            let pubkey = String(parts[1])
+            guard pubkey == deletionEvent.pubkey else { return nil }
+
+            return NostrAddressableDeletionTarget(
+                kind: kind,
+                pubkey: pubkey,
+                dTag: String(parts[2])
             )
         }
+    }
+
+    private func applyPendingAddressableDeletionIfNeeded(for event: NostrEvent, db: Database) throws {
+        guard isAddressable(kind: event.kind) else { return }
+        let dTag = NostrListParser.dTag(from: event)
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT deleted_at
+            FROM addressable_deletion_tombstones
+            WHERE target_kind = ? AND target_pubkey = ? AND target_d_tag = ?
+                AND deleted_at >= ?
+            ORDER BY deleted_at DESC
+            LIMIT 1
+            """,
+            arguments: [event.kind, event.pubkey, dTag, event.createdAt]
+        ) else { return }
+
+        let deletedAt: Int = row["deleted_at"]
+        try markEventDeleted(eventID: event.id, deletedAt: deletedAt, db: db)
+    }
+
+    private func upsertAddressableDeletionTombstone(
+        target: NostrAddressableDeletionTarget,
+        deletionEvent: NostrEvent,
+        db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO addressable_deletion_tombstones (
+                target_kind, target_pubkey, target_d_tag,
+                deletion_event_id, deleted_at, author_pubkey
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(target_kind, target_pubkey, target_d_tag) DO UPDATE SET
+                deletion_event_id = excluded.deletion_event_id,
+                deleted_at = excluded.deleted_at,
+                author_pubkey = excluded.author_pubkey
+            WHERE excluded.deleted_at > addressable_deletion_tombstones.deleted_at
+                OR (
+                    excluded.deleted_at = addressable_deletion_tombstones.deleted_at
+                    AND excluded.deletion_event_id < addressable_deletion_tombstones.deletion_event_id
+                )
+            """,
+            arguments: [
+                target.kind,
+                target.pubkey,
+                target.dTag,
+                deletionEvent.id,
+                deletionEvent.createdAt,
+                deletionEvent.pubkey
+            ]
+        )
+    }
+
+    private func markAddressableEventsDeleted(
+        target: NostrAddressableDeletionTarget,
+        deletedAt: Int,
+        db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+            UPDATE events
+            SET deleted_at = ?
+            WHERE kind = ? AND pubkey = ? AND created_at <= ?
+                AND event_id IN (
+                    SELECT event_id
+                    FROM event_tags
+                    WHERE tag_name = 'd' AND tag_value = ?
+                )
+            """,
+            arguments: [
+                deletedAt,
+                target.kind,
+                target.pubkey,
+                deletedAt,
+                target.dTag
+            ]
+        )
     }
 
     private func saveTimelineStateMetadata(

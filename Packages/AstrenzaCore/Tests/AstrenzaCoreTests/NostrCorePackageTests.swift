@@ -799,6 +799,38 @@ struct NostrCorePackageTests {
         )))
     }
 
+    @Test("Rich content parses adjacent custom emoji shortcodes")
+    func richContentParsesAdjacentCustomEmoji() throws {
+        let event = nostrEvent(
+            kind: 1,
+            content: ":tiger_lower_right::tiger_upper_left:\n:tiger_middle_right::tiger_middle_left:\n:tiger_lower_left::tiger_upper_right:",
+            tags: [
+                ["emoji", "tiger_upper_left", "https://emoji.example.test/tiger_upper_left.webp"],
+                ["emoji", "tiger_upper_right", "https://emoji.example.test/tiger_upper_right.webp"],
+                ["emoji", "tiger_middle_left", "https://emoji.example.test/tiger_middle_left.webp"],
+                ["emoji", "tiger_middle_right", "https://emoji.example.test/tiger_middle_right.webp"],
+                ["emoji", "tiger_lower_left", "https://emoji.example.test/tiger_lower_left.webp"],
+                ["emoji", "tiger_lower_right", "https://emoji.example.test/tiger_lower_right.webp"]
+            ]
+        )
+
+        let rich = NostrRichContentParser.parse(event: event, attachments: [], promotedLinkURLs: [])
+        let emojiShortcodes = rich.tokens.compactMap { token -> String? in
+            guard case .customEmoji(let shortcode, _) = token else { return nil }
+            return shortcode
+        }
+
+        #expect(emojiShortcodes == [
+            "tiger_lower_right",
+            "tiger_upper_left",
+            "tiger_middle_right",
+            "tiger_middle_left",
+            "tiger_lower_left",
+            "tiger_upper_right"
+        ])
+        #expect(rich.displayText == event.content)
+    }
+
     @Test("Rich content preserves line breaks and parses hashtags")
     func richContentPreservesLineBreaksAndParsesHashtags() throws {
         let event = nostrEvent(
@@ -1563,6 +1595,107 @@ struct NostrCorePackageTests {
                 event100.id
             ]
         )
+    }
+
+    @Test("Timeline persistence fixture restores prunes and keeps deleted records")
+    func timelinePersistenceFixtureRestoresPrunesAndKeepsDeletedRecords() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = "account"
+        let timelineKey = "home"
+        let author = String(repeating: "a", count: 64)
+        let baseTimestamp = 2_000_000
+        let eventCount = 10_000
+        var events: [NostrEvent] = []
+        events.reserveCapacity(eventCount)
+
+        for index in 0..<eventCount {
+            var tags = [["t", "fixture"]]
+            if index > 0 && index.isMultiple(of: 250) {
+                tags.append(["e", events[index - 1].id, "wss://relay.example", "reply"])
+            }
+            events.append(
+                nostrEvent(
+                    kind: 1,
+                    pubkey: author,
+                    createdAt: baseTimestamp - index,
+                    content: "fixture \(index)",
+                    tags: tags
+                )
+            )
+        }
+
+        let retainedDeletedEvent = events[5_010]
+        let prunableDeletedEvent = events[7_500]
+        let deletions = [retainedDeletedEvent, prunableDeletedEvent].enumerated().map { offset, event in
+            nostrEvent(
+                kind: 5,
+                pubkey: author,
+                createdAt: baseTimestamp + 10 + offset,
+                content: "delete",
+                tags: [["e", event.id]]
+            )
+        }
+        try store.save(events: events + deletions, receivedAt: baseTimestamp)
+        try store.saveTimelineEntries(events.enumerated().map { index, event in
+            NostrTimelineEntryRecord(
+                accountID: accountID,
+                timelineKey: timelineKey,
+                eventID: event.id,
+                sortTimestamp: event.createdAt,
+                insertedAt: baseTimestamp - 1_000,
+                gapBefore: index == 4_500,
+                gapAfter: index == 4_499
+            )
+        })
+
+        let anchor = events[5_000]
+        let window = try store.timelineEntries(
+            accountID: accountID,
+            timelineKey: timelineKey,
+            aroundEventID: anchor.id,
+            leadingLimit: 25,
+            trailingLimit: 25
+        )
+        #expect(window.count == 51)
+        #expect(window.first?.eventID == events[4_975].id)
+        #expect(window.last?.eventID == events[5_025].id)
+        #expect(window.contains { $0.eventID == anchor.id })
+        #expect(try store.tags(eventID: events[250].id).contains { $0.name == "e" && $0.marker == "reply" })
+        #expect(try store.tags(eventID: events[42].id).contains { $0.name == "t" && $0.value == "fixture" })
+
+        let deletedCount = try store.pruneTimelineEntries(
+            accountID: accountID,
+            timelineKey: timelineKey,
+            policy: NostrTimelineIndexPolicy(
+                recentLimit: 120,
+                anchorRadius: 20,
+                retainedAgeSeconds: 0
+            ),
+            anchorEventID: anchor.id,
+            now: baseTimestamp
+        )
+        let retainedIDs = try store.timelineEntries(accountID: accountID, timelineKey: timelineKey, limit: 200).map(\.eventID)
+        #expect(deletedCount > 9_800)
+        #expect(retainedIDs.contains(events[0].id))
+        #expect(retainedIDs.contains(events[4_499].id))
+        #expect(retainedIDs.contains(events[4_500].id))
+        #expect(retainedIDs.contains(anchor.id))
+        #expect(retainedIDs.contains(retainedDeletedEvent.id))
+        #expect(!retainedIDs.contains(events[9_000].id))
+        #expect(try store.event(id: events[9_000].id) != nil)
+
+        let deletedRows = try store.deletedTimelineEntries(
+            accountID: accountID,
+            timelineKey: timelineKey,
+            limit: 10,
+            now: baseTimestamp + 100
+        )
+        #expect(deletedRows.contains {
+            $0.targetEventID == retainedDeletedEvent.id &&
+                $0.deletionEventID == deletions[0].id &&
+                $0.sortTimestamp == retainedDeletedEvent.createdAt
+        })
+        #expect(!deletedRows.contains { $0.targetEventID == prunableDeletedEvent.id })
     }
 
     @Test("Nostr event store can clear resolved gap flags between timeline entries")
