@@ -4261,12 +4261,13 @@ struct TimelineModelTests {
         #expect(store.unmaterializedNewCount == 1)
         #expect(store.entries.compactMap(\.post).map(\.id) == [initialEvent.id])
         #expect(try eventStore.event(id: liveEvent.id)?.content == "buffered live")
-        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [liveEvent.id, initialEvent.id])
+        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [initialEvent.id])
 
         await store.applyPendingNewEvents()
 
         #expect(store.unmaterializedNewCount == 0)
         #expect(store.entries.compactMap(\.post).map(\.id) == [liveEvent.id, initialEvent.id])
+        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [liveEvent.id, initialEvent.id])
     }
 
     @Test("Home timeline store applies runtime forward events immediately at newest window")
@@ -6028,6 +6029,11 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         let url = try #require(URL(string: "https://example.test/story"))
+        let entriesBeforePreviewResolution = try await waitForTimelineEntryIDs(
+            in: eventStore,
+            accountID: account.pubkey,
+            containing: linkEvent.id
+        )
         let preview = try await waitForLinkPreview(
             in: eventStore,
             url: url,
@@ -6052,6 +6058,7 @@ struct TimelineModelTests {
             Issue.record("Expected resolved OGP card")
         }
         #expect(preview.status == "resolved")
+        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == entriesBeforePreviewResolution)
     }
 
     @Test("Home timeline store materializes runtime deletion events")
@@ -6358,6 +6365,51 @@ struct TimelineModelTests {
         #expect(repostedPost.author.pubkey == author)
         #expect(repostedPost.repostedBy?.author.pubkey == reposter)
         #expect(repostedPost.bodyPresentation.timelineLineLimit == 1)
+    }
+
+    @Test("Home timeline persistence saves embedded repost targets")
+    func homeTimelinePersistenceSavesEmbeddedRepostTargets() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let reposterSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "4a", count: 32))
+        let targetSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "4b", count: 32))
+        let target = try await targetSigner.sign(
+            NostrPublishInput.post(content: "persisted embedded repost body")
+                .unsignedEvent(pubkey: targetSigner.pubkey, createdAt: 100)
+        )
+        let targetJSON = try #require(String(data: JSONEncoder().encode(target), encoding: .utf8))
+        let repost = try await reposterSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: reposterSigner.pubkey,
+                createdAt: 300,
+                kind: 6,
+                tags: [
+                    ["e", target.id],
+                    ["p", targetSigner.pubkey]
+                ],
+                content: targetJSON
+            )
+        )
+
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [reposterSigner.pubkey],
+                noteEvents: [repost],
+                metadataEvents: [],
+                hasMoreOlder: false
+            ),
+            accountID: reposterSigner.pubkey
+        )
+
+        let storedTarget = try #require(try eventStore.event(id: target.id))
+        let posts = NostrTimelineMaterializer.posts(
+            noteEvents: [repost],
+            contextEvents: [storedTarget],
+            metadataEvents: [],
+            followedPubkeys: [reposterSigner.pubkey]
+        )
+
+        #expect(posts.first?.body == "persisted embedded repost body")
     }
 
     @Test("_@domain NIP-05 is displayed as domain only")
@@ -6904,6 +6956,35 @@ private func waitForTimelinePostIDs(
     }
 
     #expect(store.entries.compactMap(\.post).map(\.id) == ids)
+}
+
+@MainActor
+private func waitForTimelineEntryIDs(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    timelineKey: String = "home",
+    containing eventID: String,
+    attempts: Int = 100
+) async throws -> [String] {
+    for _ in 0..<attempts {
+        let ids = try eventStore.timelineEntries(
+            accountID: accountID,
+            timelineKey: timelineKey,
+            limit: 100
+        ).map(\.eventID)
+        if ids.contains(eventID) {
+            return ids
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    let ids = try eventStore.timelineEntries(
+        accountID: accountID,
+        timelineKey: timelineKey,
+        limit: 100
+    ).map(\.eventID)
+    #expect(ids.contains(eventID))
+    return ids
 }
 
 @MainActor
