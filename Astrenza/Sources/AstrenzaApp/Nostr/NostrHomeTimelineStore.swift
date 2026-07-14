@@ -85,6 +85,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
+    private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -114,8 +115,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var hasCompletedRuntimeBootstrap = false
     private var runtimeLifecycleGeneration: UInt64 = 0
     private var relayRuntimeConfigurationSequence: UInt64 = 0
-    private var relayRuntimeTerminationSequence: UInt64 = 0
-    private var relayRuntimeTerminationTask: Task<Void, Never>?
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -249,6 +248,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
         self.runtimeEventPump = HomeTimelineRuntimeEventPump()
+        self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
             eventStore: eventStore,
             persistenceWorker: persistenceWorker
@@ -656,27 +656,24 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func scheduleRelayRuntimeTermination(cancellationGeneration: UInt64) {
         guard let relayRuntime else { return }
-        relayRuntimeTerminationSequence &+= 1
-        let terminationSequence = relayRuntimeTerminationSequence
-        let previousTerminationTask = relayRuntimeTerminationTask
-        relayRuntimeTerminationTask = Task { [weak self] in
-            await previousTerminationTask?.value
-            await self?.dependencyCoordinator.stopProfileUpdates()
-            await relayRuntime.terminate()
-            guard let self,
-                  self.relayRuntimeTerminationSequence == terminationSequence
-            else { return }
-            self.relayRuntimeTerminationTask = nil
-            guard self.runtimeLifecycleGeneration != cancellationGeneration,
-                  let account = self.account
-            else { return }
+        relayRuntimeTerminator.schedule(
+            termination: { [weak self] in
+                await self?.dependencyCoordinator.stopProfileUpdates()
+                await relayRuntime.terminate()
+            },
+            onLatestCompletion: { [weak self] in
+                guard let self,
+                      runtimeLifecycleGeneration != cancellationGeneration,
+                      let account
+                else { return }
 
-            self.runtimeEventPump.cancel()
-            self.installedHomeForwardPackets = []
-            self.resetHomeTimelineRealtime()
-            self.startRuntimeEventPump()
-            await self.configureRelayRuntime(account: account, forceInstall: true)
-        }
+                runtimeEventPump.cancel()
+                installedHomeForwardPackets = []
+                resetHomeTimelineRealtime()
+                startRuntimeEventPump()
+                await configureRelayRuntime(account: account, forceInstall: true)
+            }
+        )
     }
 
     func post(eventID: String) -> TimelinePost? {
@@ -1379,7 +1376,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func startRuntimeEventPump() {
         startProfileDirectoryEventPump()
         guard let relayRuntime,
-              relayRuntimeTerminationTask == nil,
+              !relayRuntimeTerminator.isTerminating,
               let accountID = account?.pubkey
         else { return }
         let lifecycleGeneration = runtimeLifecycleGeneration
@@ -1396,7 +1393,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func startProfileDirectoryEventPump() {
-        guard relayRuntimeTerminationTask == nil,
+        guard !relayRuntimeTerminator.isTerminating,
               let account
         else { return }
         let relayURLs = runtimeRelayURLs(account: account)
@@ -1449,7 +1446,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
         guard let relayRuntime,
-              relayRuntimeTerminationTask == nil,
+              !relayRuntimeTerminator.isTerminating,
               self.account?.pubkey == account.pubkey,
               hasCompletedRuntimeBootstrap,
               !resolvedRelays.isEmpty
