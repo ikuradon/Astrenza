@@ -80,6 +80,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let eventIngestor: HomeTimelineEventIngestor
+    private let runtimeEventApplicationPlanner: HomeTimelineRuntimeEventApplicationPlanner
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let materializationScheduler: HomeTimelineMaterializationScheduler
@@ -221,6 +222,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller = nil
         }
         self.eventIngestor = eventIngestor
+        self.runtimeEventApplicationPlanner = HomeTimelineRuntimeEventApplicationPlanner()
         self.syncPlanner = syncPlanner
         self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.timelineCoordinator = HomeTimelineCoordinator()
@@ -1803,29 +1805,21 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID
         else { return }
-        let ingestResult = projectedIngestResult.eventResult
-        let projectsIntoCurrentFeed = projectedIngestResult.projectsIntoCurrentFeed
-        let embeddedTarget = ingestResult.embeddedEvent
-        invalidateListEntries()
-
-        if event.kind == 5, projectsIntoCurrentFeed {
-            let deletedAnchor = removeEventsDeletedFromCurrentProjection(by: event)
-            _ = reloadProjectionWindow(account: account, around: deletedAnchor)
-            scheduleMaterializeEntries(allowsRealtimeFollow: receivedWhileRealtime)
-        } else if projectsIntoCurrentFeed {
-            await enqueueBackwardDependencies(for: event)
-            if let embeddedTarget {
-                await enqueueBackwardDependencies(for: embeddedTarget)
-            }
-            if restoreProjectionAnchorEventID == nil,
-               isTimelineAtNewestWindow,
-               pendingEventBuffer.isEmpty {
-                materializationScheduler.requestNewestProjectionReload()
-                scheduleMaterializeEntries(allowsRealtimeFollow: receivedWhileRealtime)
-            } else {
-                bufferPendingNewEvent(event.id)
-            }
-        }
+        let applicationPlan = runtimeEventApplicationPlanner.planForward(.init(
+            event: event,
+            embeddedEvent: projectedIngestResult.eventResult.embeddedEvent,
+            projectsIntoCurrentFeed: projectedIngestResult.projectsIntoCurrentFeed,
+            receivedWhileRealtime: receivedWhileRealtime,
+            hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
+            isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+            hasPendingEvents: !pendingEventBuffer.isEmpty
+        ))
+        guard await applyRuntimeEventApplicationPlan(
+            applicationPlan,
+            account: account,
+            backwardRequestKey: nil,
+            lifecycle: lifecycle
+        ) else { return }
         scheduleLinkPreviewResolution()
         feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
     }
@@ -1885,48 +1879,87 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID
         else { return }
-        let ingestResult = projectedIngestResult.eventResult
-        let projectsIntoCurrentFeed = projectedIngestResult.projectsIntoCurrentFeed
-        let embeddedTarget = ingestResult.embeddedEvent
-        if event.kind == 1 || event.kind == 5 || event.kind == 6 {
+        let applicationPlan = runtimeEventApplicationPlanner.planBackward(.init(
+            event: event,
+            embeddedEvent: projectedIngestResult.eventResult.embeddedEvent,
+            projectsIntoCurrentFeed: projectedIngestResult.projectsIntoCurrentFeed,
+            isTimelineBackfill: isTimelineBackfill
+        ))
+        guard await applyRuntimeEventApplicationPlan(
+            applicationPlan,
+            account: account,
+            backwardRequestKey: requestKey,
+            lifecycle: lifecycle
+        ) else { return }
+        scheduleLinkPreviewResolution()
+        feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
+    }
+
+    private func applyRuntimeEventApplicationPlan(
+        _ plan: HomeTimelineRuntimeEventApplicationPlan,
+        account: NostrAccount,
+        backwardRequestKey: String?,
+        lifecycle: HomeTimelineLifecycleToken
+    ) async -> Bool {
+        guard isCurrentRuntimeEventApplication(lifecycle) else { return false }
+        if plan.invalidatesListEntries {
             invalidateListEntries()
         }
-
-        switch event.kind {
-        case 0:
-            let effectiveMetadataEvent = rememberLatestMetadataEvent(event)
+        if let metadataEvent = plan.metadataEvent {
+            let effectiveMetadataEvent = rememberLatestMetadataEvent(metadataEvent)
             resolveNIP05IfNeeded(for: effectiveMetadataEvent)
-            scheduleMaterializeEntries()
-        case 1, 6:
-            if projectsIntoCurrentFeed {
-                if let requestKey {
-                    backwardRequestRegistry.recordTimelineEvent(event.id, for: requestKey)
-                }
+        }
+        if let eventID = plan.backwardTimelineEventID,
+           let backwardRequestKey {
+            backwardRequestRegistry.recordTimelineEvent(eventID, for: backwardRequestKey)
+        }
+        if let eventID = plan.sourceEventIDToFinish {
+            dependencyCoordinator.finishSourceEvent(eventID: eventID)
+        }
+        if let dependencyEvent = plan.dependencyEvent {
+            await enqueueBackwardDependencies(for: dependencyEvent)
+            guard isCurrentRuntimeEventApplication(lifecycle) else { return false }
+        }
+        if let embeddedDependencyEvent = plan.embeddedDependencyEvent {
+            await enqueueBackwardDependencies(for: embeddedDependencyEvent)
+            guard isCurrentRuntimeEventApplication(lifecycle) else { return false }
+        }
+        if let deletion = plan.deletion {
+            let deletedAnchor = removeEventsDeletedFromCurrentProjection(by: deletion.event)
+            _ = reloadProjectionWindow(account: account, around: deletedAnchor)
+            switch deletion.materialization {
+            case .scheduled(let allowsRealtimeFollow):
+                scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+            case .immediate:
+                materializeEntries()
             }
-            dependencyCoordinator.finishSourceEvent(eventID: event.id)
-            if !isTimelineBackfill || projectsIntoCurrentFeed {
-                await enqueueBackwardDependencies(for: event)
-                if let embeddedTarget {
-                    await enqueueBackwardDependencies(for: embeddedTarget)
-                }
+        }
+        if let projectionUpdate = plan.projectionUpdate {
+            switch projectionUpdate {
+            case .reloadNewestAndSchedule(let allowsRealtimeFollow):
+                materializationScheduler.requestNewestProjectionReload()
+                scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+            case .bufferPendingEvent(let eventID):
+                bufferPendingNewEvent(eventID)
             }
-            if !isTimelineBackfill {
+        }
+        if let schedule = plan.materializationSchedule {
+            switch schedule {
+            case .standard:
+                scheduleMaterializeEntries()
+            case .deferredDependencies:
                 scheduleMaterializeEntries(
                     delayNanoseconds: materializationScheduler.defaultDelayNanoseconds * 2
                 )
             }
-        case 5:
-            if !isTimelineBackfill || projectsIntoCurrentFeed {
-                let deletedAnchor = removeEventsDeletedFromCurrentProjection(by: event)
-                _ = reloadProjectionWindow(account: account, around: deletedAnchor)
-                materializeEntries()
-            }
-        default:
-            break
         }
+        return isCurrentRuntimeEventApplication(lifecycle)
+    }
 
-        scheduleLinkPreviewResolution()
-        feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
+    private func isCurrentRuntimeEventApplication(
+        _ lifecycle: HomeTimelineLifecycleToken
+    ) -> Bool {
+        lifecycleCoordinator.isCurrent(lifecycle) && account?.pubkey == lifecycle.accountID
     }
 
     private func removeEventsDeletedFromCurrentProjection(by deletionEvent: NostrEvent) -> String? {
