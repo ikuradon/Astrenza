@@ -32,7 +32,6 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
-    private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let eventIngestor: HomeTimelineEventIngestor
     private let runtimeEventApplicationPlanner: HomeTimelineRuntimeEventApplicationPlanner
@@ -58,6 +57,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineCoordinator: HomeTimelineCoordinator
     private let gapReconciler: HomeTimelineGapReconciler
     private let homeFeedProjection: HomeFeedProjectionController
+    private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
@@ -230,7 +230,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         let persistenceWorker = eventStore.map(HomeTimelinePersistenceWorker.init)
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
-        self.persistenceWorker = persistenceWorker
         self.contentCoordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
         let eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
         let syncPlanner = HomeTimelineSyncPlanner()
@@ -256,7 +255,13 @@ final class NostrHomeTimelineStore: ObservableObject {
             eventStore: eventStore,
             relayClient: timelineLoader.relayClient
         )
-        self.homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
+        let homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
+        self.homeFeedProjection = homeFeedProjection
+        self.snapshotCoordinator = HomeTimelineSnapshotCoordinator(
+            eventStore: eventStore,
+            persistenceWorker: persistenceWorker,
+            projectionController: homeFeedProjection
+        )
         let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.backwardRequestRegistry = backwardRequestRegistry
         self.feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
@@ -1072,12 +1077,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     @discardableResult
     private func restoreCachedSnapshot(account: NostrAccount) -> Bool {
-        if let databaseState = try? eventStore?.homeFeedState(accountID: account.pubkey) {
+        if let databaseState = snapshotCoordinator.restoredState(accountID: account.pubkey) {
             apply(databaseState)
-            return true
-        }
-
-        if restoreLegacySnapshotForMigration(account: account) {
             return true
         }
 
@@ -1091,114 +1092,50 @@ final class NostrHomeTimelineStore: ObservableObject {
         return false
     }
 
-    /// V4以前の開発用DBをGeneric Feedへ移すための一度限りのcompatibility pathです。
-    private func restoreLegacySnapshotForMigration(account: NostrAccount) -> Bool {
-        guard let state = try? eventStore?.legacyHomeTimelineStateForMigration(
-            accountID: account.pubkey
-        ) else { return false }
-        apply(state)
-        return true
-    }
-
     private func persistDatabase(account: NostrAccount) async {
-        guard let persistenceWorker,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        guard let lifecycle = lifecycleCoordinator.token(for: account.pubkey) else { return }
+        guard let receipt = await snapshotCoordinator.persistSnapshot(
+            HomeTimelineSnapshotInput(
+                accountID: account.pubkey,
+                relays: resolvedRelays,
+                followedPubkeys: followedPubkeys,
+                noteEvents: noteEvents,
+                metadataEvents: metadataEvents,
+                relayListEvent: relayListEvent,
+                contactListEvent: contactListEvent,
+                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+                hasMoreOlder: hasMoreOlder
+            )
+        ) else { return }
+        guard !Task.isCancelled,
+              lifecycleCoordinator.isCurrent(lifecycle),
+              self.account?.pubkey == account.pubkey,
+              snapshotCoordinator.activatePersistedSnapshot(
+                receipt,
+                accountID: account.pubkey,
+                followedPubkeys: followedPubkeys
+              )
         else { return }
-        let now = Int(Date().timeIntervalSince1970)
-        guard let plan = homeFeedDefinitionPlan(account: account, now: now) else { return }
-        let definition = plan.definition
-        let allowedAuthors = Set(plan.authors)
-        let projectionEvents = HomeTimelinePersistenceProjection.boundedEvents(
-            from: noteEvents,
-            allowedAuthors: allowedAuthors
-        )
-        let metadataPubkeys = Set(projectionEvents.map(\.pubkey)).union([account.pubkey])
-        let state = NostrHomeTimelineState(
-            relays: resolvedRelays,
-            followedPubkeys: followedPubkeys,
-            noteEvents: projectionEvents,
-            metadataEvents: metadataEvents.filter { metadataPubkeys.contains($0.pubkey) },
-            relayListEvent: relayListEvent,
-            contactListEvent: contactListEvent,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            hasMoreOlder: hasMoreOlder,
-            relaySyncEvents: []
-        )
-        let memberships = HomeFeedProjectionBuilder.memberships(
-            events: projectionEvents,
-            feedID: definition.feedID,
-            feedRevision: definition.revision,
-            reason: "state",
-            insertedAt: now
-        )
-        let membershipSources = HomeFeedProjectionBuilder.membershipSources(
-            events: projectionEvents,
-            feedID: definition.feedID,
-            feedRevision: definition.revision,
-            reason: "state",
-            insertedAt: now
-        )
-        let savedProjectionWindowGeneration = homeFeedProjection.generation
-        do {
-            let window = try await persistenceWorker.saveFeedSnapshot(
-                HomeTimelineFeedPersistenceSnapshot(
-                    state: state,
-                    accountID: account.pubkey,
-                    definition: definition,
-                    memberships: memberships,
-                    membershipSources: membershipSources,
-                    savedAt: now,
-                    windowLimit: homeFeedProjection.windowLimit
-                )
-            )
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle),
-                  self.account?.pubkey == account.pubkey,
-                  homeFeedProjection.generation == savedProjectionWindowGeneration,
-                  (followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys) == plan.sourceAuthors,
-                  let currentPlan = homeFeedDefinitionPlan(account: account, now: now),
-                  currentPlan.definition.revision == definition.revision,
-                  currentPlan.definition.specificationHash == definition.specificationHash
-            else { return }
-            homeFeedProjection.activate(
-                definition: definition,
-                window: window,
-                sourceAuthors: plan.sourceAuthors
-            )
-            if pendingEventBuffer.isEmpty {
-                materializeEntries()
-            }
-        } catch {
-            // Live networking can still populate the timeline if the database write fails.
+        if pendingEventBuffer.isEmpty {
+            materializeEntries()
         }
     }
 
     private func persistTimelineMetadata(account: NostrAccount) async {
-        guard let persistenceWorker,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
-        let now = Int(Date().timeIntervalSince1970)
-        let state = NostrHomeTimelineState(
-            relays: resolvedRelays,
-            followedPubkeys: followedPubkeys,
-            noteEvents: [],
-            metadataEvents: [],
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            hasMoreOlder: hasMoreOlder,
-            relaySyncEvents: []
-        )
-        do {
-            try await persistenceWorker.saveTimelineMetadata(
-                state,
+        guard let lifecycle = lifecycleCoordinator.token(for: account.pubkey) else { return }
+        let didPersist = await snapshotCoordinator.persistMetadata(
+            HomeTimelineMetadataSnapshot(
                 accountID: account.pubkey,
-                savedAt: now
+                relays: resolvedRelays,
+                followedPubkeys: followedPubkeys,
+                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+                hasMoreOlder: hasMoreOlder
             )
-            guard lifecycleCoordinator.isCurrent(lifecycle),
-                  self.account?.pubkey == account.pubkey
-            else { return }
-        } catch {
-            // 次回のeventまたはstate保存で再試行します。
-        }
+        )
+        guard didPersist,
+              lifecycleCoordinator.isCurrent(lifecycle),
+              self.account?.pubkey == account.pubkey
+        else { return }
     }
 
     private func ensureHomeFeedDefinition(account: NostrAccount) {
@@ -1206,17 +1143,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             accountID: account.pubkey,
             followedPubkeys: followedPubkeys,
             liveEvents: noteEvents
-        )
-    }
-
-    private func homeFeedDefinitionPlan(
-        account: NostrAccount,
-        now: Int
-    ) -> HomeFeedDefinitionPlan? {
-        homeFeedProjection.definitionPlan(
-            accountID: account.pubkey,
-            followedPubkeys: followedPubkeys,
-            now: now
         )
     }
 
