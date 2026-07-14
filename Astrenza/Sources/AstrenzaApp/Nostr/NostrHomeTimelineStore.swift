@@ -83,6 +83,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
+    private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let syncPlanner: HomeTimelineSyncPlanner
     private let timelineRepository: HomeTimelineRepository
     private let timelineCoordinator: HomeTimelineCoordinator
@@ -90,7 +91,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let homeFeedProjection: HomeFeedProjectionController
     private let relayRuntime: NostrRelayRuntime?
     private let profileDirectory: NostrProfileDirectory?
-    private let linkPreviewResolver: NostrLinkPreviewResolver?
     private let outboxDrainer: HomeTimelineOutboxDrainer
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
@@ -98,14 +98,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
     private var profileDirectoryUpdateTask: Task<Void, Never>?
-    private var linkPreviewTask: Task<Void, Never>?
     private var unmaterializedCountTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
     private var outboxTaskGeneration: UInt64 = 0
     private var feedReadStateTask: Task<Void, Never>?
     private var viewportStateTask: Task<Void, Never>?
     private var pendingViewportState: PendingFeedViewportState?
-    private var resolvingLinkPreviewURLs = Set<String>()
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
@@ -257,7 +255,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             eventStore: eventStore,
             persistenceWorker: persistenceWorker
         )
-        self.linkPreviewResolver = linkPreviewResolver
+        self.linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
+            eventStore: eventStore,
+            resolver: linkPreviewResolver
+        )
         self.outboxDrainer = HomeTimelineOutboxDrainer(
             eventStore: eventStore,
             publisher: outboxPublisher
@@ -686,7 +687,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         runtimeTask?.cancel()
         profileDirectoryUpdateTask?.cancel()
         resolveRuntimeEventPumpReadiness(false)
-        linkPreviewTask?.cancel()
+        linkPreviewCoordinator.reset()
         materializationScheduler.reset()
         realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         unmaterializedCountTask?.cancel()
@@ -699,7 +700,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         paginationTask = nil
         runtimeTask = nil
         profileDirectoryUpdateTask = nil
-        linkPreviewTask = nil
         unmaterializedCountTask = nil
         outboxTask = nil
         feedReadStateTask = nil
@@ -720,7 +720,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         finishActiveFeedSyncRequests(reason: .cancelled)
         feedSyncLifecycle.reset()
         pendingRelayTrafficDeltas.removeAll()
-        resolvingLinkPreviewURLs.removeAll()
         relayRuntimeStates = [:]
         entries = []
         resolvedRelays = []
@@ -2535,44 +2534,23 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleLinkPreviewResolution() {
-        guard let eventStore, let linkPreviewResolver, linkPreviewTask == nil else { return }
-        guard NostrContentAttachmentClassifier.linkPreviewFetchMode(for: syncPolicy) != .tapRequired else { return }
-        let previews = ((try? eventStore.unresolvedLinkPreviews(limit: 6)) ?? [])
-            .filter { resolvingLinkPreviewURLs.insert($0.normalizedURL).inserted }
-        guard !previews.isEmpty else { return }
         guard let accountID = account?.pubkey else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
-
-        linkPreviewTask = Task { [weak self] in
-            for preview in previews {
-                let resolved = await linkPreviewResolver.resolve(preview)
-                guard !Task.isCancelled,
-                      let self,
-                      self.runtimeLifecycleGeneration == lifecycleGeneration,
-                      self.account?.pubkey == accountID
-                else { return }
-                do {
-                    try eventStore.saveLinkPreview(resolved)
-                } catch {
-                    self.recordRuntimeSyncEvent(
-                        relayURL: "link-preview",
-                        kind: .partialFailure,
-                        subscriptionID: nil,
-                        message: "link preview save failed: \(error.localizedDescription)"
-                    )
-                }
+        linkPreviewCoordinator.schedule(
+            scopeID: accountID,
+            policy: syncPolicy,
+            didUpdate: { [weak self] in
+                self?.invalidateListEntries()
+                self?.scheduleMaterializeEntries()
+            },
+            didFail: { [weak self] message in
+                self?.recordRuntimeSyncEvent(
+                    relayURL: "link-preview",
+                    kind: .partialFailure,
+                    subscriptionID: nil,
+                    message: "link preview save failed: \(message)"
+                )
             }
-
-            guard let self,
-                  self.runtimeLifecycleGeneration == lifecycleGeneration,
-                  self.account?.pubkey == accountID
-            else { return }
-            previews.forEach { self.resolvingLinkPreviewURLs.remove($0.normalizedURL) }
-            self.linkPreviewTask = nil
-            self.invalidateListEntries()
-            self.scheduleMaterializeEntries()
-            self.scheduleLinkPreviewResolution()
-        }
+        )
     }
 
     private func recordRuntimeSyncEvent(
