@@ -2,10 +2,6 @@ import Foundation
 import AstrenzaCore
 import SwiftUI
 
-enum NostrHomeTimelineStoreError: Error, Equatable {
-    case noPublishRelayDestinations
-}
-
 @MainActor
 final class NostrHomeTimelineStore: ObservableObject {
     typealias Phase = NostrHomeTimelinePhase
@@ -58,6 +54,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let gapReconciler: HomeTimelineGapReconciler
     private let homeFeedProjection: HomeFeedProjectionController
     private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
+    private let publishCoordinator: HomeTimelinePublishCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
@@ -262,6 +259,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             persistenceWorker: persistenceWorker,
             projectionController: homeFeedProjection
         )
+        self.publishCoordinator = eventStore.map(HomeTimelinePublishCoordinator.init)
         let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.backwardRequestRegistry = backwardRequestRegistry
         self.feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
@@ -501,56 +499,25 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
-        guard let account, let eventStore else { return }
+        guard let account, let publishCoordinator else { return }
         let writeRelays = NostrRelayList.parse(from: relayListEvent).writeRelays
-        let relayURLs = writeRelays.isEmpty ? resolvedRelays : writeRelays
-        let createdAt = Int(Date().timeIntervalSince1970)
-        let unsignedEvent = input.unsignedEvent(pubkey: account.pubkey, createdAt: createdAt)
-        let signedEvent = try await signer.sign(unsignedEvent)
-        let destinationRelays = NostrPublishDestinationResolver.relayDestinations(
-            accountWriteRelays: relayURLs,
-            taggedUserReadRelays: [],
-            fallbackRelays: resolvedRelays
-        )
-        guard !destinationRelays.isEmpty else {
-            throw NostrHomeTimelineStoreError.noPublishRelayDestinations
-        }
-        let record = try eventStore.enqueueOutboxEvent(
-            signedEvent,
+        let publish = try await publishCoordinator.prepare(
+            input,
             accountID: account.pubkey,
-            relayURLs: destinationRelays,
-            createdAt: createdAt
+            accountWriteRelays: writeRelays,
+            fallbackRelays: resolvedRelays,
+            signer: signer
         )
+        guard self.account?.pubkey == publish.accountID else { return }
 
         ensureHomeFeedDefinition(account: account)
-        let feedMembership = homeFeedProjection.definition.flatMap { definition in
-            HomeFeedProjectionBuilder.memberships(
-                events: [record.event],
-                feedID: definition.feedID,
-                feedRevision: definition.revision,
-                reason: "outbox",
-                insertedAt: createdAt
-            ).first
-        }
-        let feedMembershipSources = homeFeedProjection.definition.map { definition in
-            HomeFeedProjectionBuilder.membershipSources(
-                events: [record.event],
-                feedID: definition.feedID,
-                feedRevision: definition.revision,
-                reason: "outbox",
-                insertedAt: createdAt
-            )
-        } ?? []
-        try eventStore.ingest(
-            events: [record.event],
-            eventSources: [],
-            feedMemberships: feedMembership.map { [$0] } ?? [],
-            feedMembershipSources: feedMembershipSources,
-            receivedAt: createdAt
+        let event = try publishCoordinator.persist(
+            publish,
+            feedDefinition: homeFeedProjection.definition
         )
         applyContentSnapshot(
             contentCoordinator.insertOutboxEvent(
-                record.event,
+                event,
                 accountID: account.pubkey
             )
         )
