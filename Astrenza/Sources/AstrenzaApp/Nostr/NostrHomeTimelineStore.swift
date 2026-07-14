@@ -30,6 +30,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
+    private let runtimeEventApplicationCoordinator: HomeTimelineRuntimeEventApplicationCoordinator
     private let backwardCompletionPlanner: HomeTimelineBackwardCompletionPlanner
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -291,7 +292,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.dependencyCoordinator = dependencyCoordinator
         let filterCoordinator = HomeTimelineFilterCoordinator(eventStore: eventStore)
         self.filterCoordinator = filterCoordinator
-        self.listProjectionCache = HomeTimelineListProjectionCache()
+        let listProjectionCache = HomeTimelineListProjectionCache()
+        self.listProjectionCache = listProjectionCache
         self.activityCoordinator = HomeTimelineActivityCoordinator()
         let presentationCoordinator = HomeTimelinePresentationCoordinator()
         self.presentationCoordinator = presentationCoordinator
@@ -302,8 +304,18 @@ final class NostrHomeTimelineStore: ObservableObject {
             projectionController: homeFeedProjection,
             repository: timelineRepository
         )
-        self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
-        self.lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
+        let pendingEventBuffer = HomeTimelinePendingEventBuffer()
+        self.pendingEventBuffer = pendingEventBuffer
+        let lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
+        self.lifecycleCoordinator = lifecycleCoordinator
+        self.runtimeEventApplicationCoordinator = HomeTimelineRuntimeEventApplicationCoordinator(
+            contentCoordinator: contentCoordinator,
+            dependencyCoordinator: dependencyCoordinator,
+            listProjectionCache: listProjectionCache,
+            pendingEventBuffer: pendingEventBuffer,
+            backwardRequestRegistry: backwardRequestRegistry,
+            lifecycleCoordinator: lifecycleCoordinator
+        )
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
         self.runtimeEventPump = runtimeEventPump
         self.relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
@@ -1584,49 +1596,71 @@ final class NostrHomeTimelineStore: ObservableObject {
         backwardRequestKey: String?,
         lifecycle: HomeTimelineLifecycleToken
     ) async -> Bool {
-        guard isCurrentRuntimeEventApplication(lifecycle) else { return false }
-        if plan.invalidatesListEntries {
-            invalidateListEntries()
-        }
-        if let metadataEvent = plan.metadataEvent {
-            let effectiveMetadataEvent = rememberLatestMetadataEvent(metadataEvent)
-            resolveNIP05IfNeeded(for: effectiveMetadataEvent)
-        }
-        if let eventID = plan.backwardTimelineEventID,
-           let backwardRequestKey {
-            backwardRequestRegistry.recordTimelineEvent(eventID, for: backwardRequestKey)
-        }
-        if let eventID = plan.sourceEventIDToFinish {
-            dependencyCoordinator.finishSourceEvent(eventID: eventID)
-        }
-        if let dependencyEvent = plan.dependencyEvent {
-            await enqueueBackwardDependencies(for: dependencyEvent)
-            guard isCurrentRuntimeEventApplication(lifecycle) else { return false }
-        }
-        if let embeddedDependencyEvent = plan.embeddedDependencyEvent {
-            await enqueueBackwardDependencies(for: embeddedDependencyEvent)
-            guard isCurrentRuntimeEventApplication(lifecycle) else { return false }
-        }
-        if let deletion = plan.deletion {
-            let deletedAnchor = removeEventsDeletedFromCurrentProjection(by: deletion.event)
-            _ = reloadProjectionWindow(account: account, around: deletedAnchor)
-            switch deletion.materialization {
+        await runtimeEventApplicationCoordinator.apply(
+            plan,
+            backwardRequestKey: backwardRequestKey,
+            context: runtimeEventApplicationContext(
+                account: account,
+                lifecycle: lifecycle
+            ),
+            handlers: runtimeEventApplicationHandlers()
+        )
+    }
+
+    private func runtimeEventApplicationContext(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken
+    ) -> HomeTimelineRuntimeEventApplicationContext {
+        HomeTimelineRuntimeEventApplicationContext(
+            account: account,
+            lifecycle: lifecycle,
+            hasRelayRuntime: relayRuntime != nil
+        )
+    }
+
+    private func runtimeEventApplicationHandlers() -> HomeTimelineRuntimeEventApplicationHandlers {
+        HomeTimelineRuntimeEventApplicationHandlers(
+            listRevisionChanged: { [weak self] revision in
+                self?.listContentRevision = revision
+            },
+            pendingCountChanged: { [weak self] count in
+                self?.setUnmaterializedNewCount(count)
+            },
+            perform: { [weak self] command in
+                self?.applyRuntimeEventApplicationCommand(command)
+            },
+            persistTimelineMetadata: { [weak self] account in
+                await self?.persistTimelineMetadata(account: account)
+            },
+            sourceInstallFailed: { [weak self] message in
+                guard let self else { return }
+                recordRuntimeSyncEvent(
+                    relayURL: resolvedRelays.first ?? "runtime",
+                    kind: .partialFailure,
+                    subscriptionID: nil,
+                    message: "backward enqueue failed: \(message)"
+                )
+            }
+        )
+    }
+
+    private func applyRuntimeEventApplicationCommand(
+        _ command: HomeTimelineRuntimeEventApplicationCommand
+    ) {
+        switch command {
+        case .reloadProjection(let anchorEventID, let materialization):
+            guard let account else { return }
+            _ = reloadProjectionWindow(account: account, around: anchorEventID)
+            switch materialization {
             case .scheduled(let allowsRealtimeFollow):
                 scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
             case .immediate:
                 materializeEntries()
             }
-        }
-        if let projectionUpdate = plan.projectionUpdate {
-            switch projectionUpdate {
-            case .reloadNewestAndSchedule(let allowsRealtimeFollow):
-                presentationCoordinator.requestNewestProjectionReload()
-                scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-            case .bufferPendingEvent(let eventID):
-                bufferPendingNewEvent(eventID)
-            }
-        }
-        if let schedule = plan.materializationSchedule {
+        case .requestNewestProjectionReloadAndSchedule(let allowsRealtimeFollow):
+            presentationCoordinator.requestNewestProjectionReload()
+            scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+        case .scheduleMaterialization(let schedule):
             switch schedule {
             case .standard:
                 scheduleMaterializeEntries()
@@ -1636,43 +1670,20 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
             }
         }
-        return isCurrentRuntimeEventApplication(lifecycle)
-    }
-
-    private func isCurrentRuntimeEventApplication(
-        _ lifecycle: HomeTimelineLifecycleToken
-    ) -> Bool {
-        lifecycleCoordinator.isCurrent(lifecycle) && account?.pubkey == lifecycle.accountID
-    }
-
-    private func removeEventsDeletedFromCurrentProjection(by deletionEvent: NostrEvent) -> String? {
-        contentCoordinator.removeEventsDeletedFromCurrentProjection(by: deletionEvent)
     }
 
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
-        guard relayRuntime != nil,
-              !resolvedRelays.isEmpty,
-              let accountID = account?.pubkey,
-              let lifecycle = lifecycleCoordinator.token(for: accountID)
+        guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        let result = await dependencyCoordinator.enqueueDependencies(
+        _ = await runtimeEventApplicationCoordinator.enqueueDependencies(
             for: event,
-            liveMetadataEvents: metadataEvents,
-            liveNoteEventIDs: Set(noteEvents.map(\.id)),
-            availableRelayURLs: resolvedRelays
+            context: runtimeEventApplicationContext(
+                account: account,
+                lifecycle: lifecycle
+            ),
+            handlers: runtimeEventApplicationHandlers()
         )
-        guard lifecycleCoordinator.isCurrent(lifecycle),
-              account?.pubkey == accountID
-        else { return }
-        result.cachedProfiles.forEach { profile in
-            rememberLatestMetadataEvent(profile, consultEventStore: false)
-        }
-        if !result.cachedProfiles.isEmpty || result.didResolveCachedDependencies {
-            scheduleMaterializeEntries()
-        }
-        if result.didEnqueueSourceDependencies {
-            scheduleBackwardDependencyFlush()
-        }
     }
 
     private func ensureProfileDirectoryDependencies(for events: [NostrEvent]) async {
@@ -1680,26 +1691,17 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
-        dependencyCoordinator.resolveNIP05IfNeeded(for: metadataEvent) { [weak self] in
-            guard let self else { return }
-            self.invalidateListEntries()
-            self.scheduleMaterializeEntries()
-            if let account = self.account {
-                await self.persistTimelineMetadata(account: account)
-            }
-        }
-    }
-
-    private func scheduleBackwardDependencyFlush() {
-        dependencyCoordinator.scheduleSourcePacketInstall { [weak self] message in
-            guard let self else { return }
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: nil,
-                message: "backward enqueue failed: \(message)"
-            )
-        }
+        guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return }
+        runtimeEventApplicationCoordinator.resolveNIP05IfNeeded(
+            for: metadataEvent,
+            context: runtimeEventApplicationContext(
+                account: account,
+                lifecycle: lifecycle
+            ),
+            handlers: runtimeEventApplicationHandlers()
+        )
     }
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
@@ -1951,12 +1953,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func bufferPendingNewEvent(_ eventID: String) {
-        pendingEventBuffer.insert(eventID: eventID) { [weak self] count in
-            self?.setUnmaterializedNewCount(count)
-        }
-    }
-
     @discardableResult
     private func clearPendingNewEvents() -> Bool {
         pendingEventBuffer.removeAll { [weak self] count in
@@ -1999,14 +1995,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         _ event: NostrEvent,
         consultEventStore: Bool = true
     ) -> NostrEvent {
-        let update = contentCoordinator.rememberLatestMetadataEvent(
+        runtimeEventApplicationCoordinator.rememberLatestMetadataEvent(
             event,
-            consultEventStore: consultEventStore
+            consultEventStore: consultEventStore,
+            handlers: runtimeEventApplicationHandlers()
         )
-        if update.didChange {
-            invalidateListEntries()
-        }
-        return update.event
     }
 
     private func invalidateListEntries() {
