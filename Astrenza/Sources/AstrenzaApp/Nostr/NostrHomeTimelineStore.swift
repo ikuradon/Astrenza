@@ -55,6 +55,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let homeFeedProjection: HomeFeedProjectionController
     private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
     private let publishCoordinator: HomeTimelinePublishCoordinator?
+    private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
@@ -221,6 +222,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayRuntime: NostrRelayRuntime? = nil,
         linkPreviewResolver: NostrLinkPreviewResolver? = nil,
         outboxPublisher: NostrOutboxRelayPublisher = NostrOutboxRelayPublisher(),
+        localMutationPersistence: (any HomeTimelineLocalMutationPersisting)? = nil,
         syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
         syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
     ) {
@@ -260,6 +262,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             projectionController: homeFeedProjection
         )
         self.publishCoordinator = eventStore.map(HomeTimelinePublishCoordinator.init)
+        self.localMutationCoordinator = (localMutationPersistence ?? eventStore).map {
+            HomeTimelineLocalMutationCoordinator(persistence: $0)
+        }
         let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.backwardRequestRegistry = backwardRequestRegistry
         self.feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
@@ -535,19 +540,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func muteAuthor(of post: TimelinePost) {
-        guard let account, let eventStore else { return }
-        let now = Int(Date().timeIntervalSince1970)
-        let rule = NostrFilterRuleRecord(
-            ruleID: "local:mute-pubkey:\(account.pubkey):\(post.author.pubkey)",
-            accountID: account.pubkey,
-            kind: .mutedPubkey,
-            value: post.author.pubkey,
-            createdAt: now,
-            updatedAt: now
-        )
+        guard let account, let localMutationCoordinator else { return }
 
         do {
-            try eventStore.saveFilterRule(rule)
+            try localMutationCoordinator.muteAuthor(
+                accountID: account.pubkey,
+                authorPubkey: post.author.pubkey
+            )
             invalidateListEntries()
             materializeEntries()
         } catch {
@@ -558,16 +557,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func bookmark(_ post: TimelinePost) {
-        guard let account, let eventStore else { return }
-        let now = Int(Date().timeIntervalSince1970)
-        let bookmark = NostrLocalBookmarkRecord(
-            accountID: account.pubkey,
-            eventID: post.id,
-            createdAt: now
-        )
+        guard let account, let localMutationCoordinator else { return }
 
         do {
-            try eventStore.saveLocalBookmark(bookmark)
+            try localMutationCoordinator.bookmarkPost(
+                accountID: account.pubkey,
+                eventID: post.id
+            )
         } catch {
             applyActivityTransition(
                 activityCoordinator.setPhase(.failed("Bookmark failed: \(error.localizedDescription)"))
