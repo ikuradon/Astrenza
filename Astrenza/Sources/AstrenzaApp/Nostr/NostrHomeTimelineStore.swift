@@ -103,7 +103,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
-    private var dependencyFlushTask: Task<Void, Never>?
     private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
@@ -226,6 +225,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         let profileDirectory = relayRuntime.map {
             NostrProfileDirectory(eventStore: eventStore, relayRuntime: $0)
         }
+        let sourcePacketInstaller: HomeTimelineDependencyResolutionCoordinator.SourcePacketInstaller?
+        if let relayRuntime {
+            sourcePacketInstaller = { packets in
+                try await relayRuntime.installBackward(packets, mergeField: .ids)
+            }
+        } else {
+            sourcePacketInstaller = nil
+        }
         self.eventIngestor = eventIngestor
         self.syncPlanner = syncPlanner
         self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
@@ -242,7 +249,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             eventIngestor: eventIngestor,
             profileDirectory: profileDirectory,
             nip05Resolver: timelineLoader.nip05Resolver,
-            syncPlanner: syncPlanner
+            syncPlanner: syncPlanner,
+            sourcePacketInstaller: sourcePacketInstaller
         )
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
@@ -628,13 +636,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         unmaterializedCountTask?.cancel()
         outboxCoordinator.cancel()
-        dependencyFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
         profileDirectoryUpdateTask = nil
         unmaterializedCountTask = nil
-        dependencyFlushTask = nil
         dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()
         pendingGapReconciliationIDs.removeAll()
@@ -2119,42 +2125,14 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleBackwardDependencyFlush() {
-        guard dependencyFlushTask == nil else { return }
-        dependencyFlushTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 12_000_000)
-            await MainActor.run {
-                self?.flushBackwardDependencies()
-            }
-        }
-    }
-
-    private func flushBackwardDependencies() {
-        guard let relayRuntime else { return }
-        dependencyFlushTask = nil
-        let plan = dependencyCoordinator.drainSourcePacketPlan()
-        guard !plan.isEmpty else { return }
-        guard let accountID = account?.pubkey else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
-
-        Task {
-            do {
-                if !plan.sourcePackets.isEmpty {
-                    try await relayRuntime.installBackward(plan.sourcePackets, mergeField: .ids)
-                }
-            } catch {
-                await MainActor.run {
-                    guard runtimeLifecycleGeneration == lifecycleGeneration,
-                          account?.pubkey == accountID
-                    else { return }
-                    dependencyCoordinator.failSourceRequests(in: plan)
-                    recordRuntimeSyncEvent(
-                        relayURL: resolvedRelays.first ?? "runtime",
-                        kind: .partialFailure,
-                        subscriptionID: nil,
-                        message: "backward enqueue failed: \(error.localizedDescription)"
-                    )
-                }
-            }
+        dependencyCoordinator.scheduleSourcePacketInstall { [weak self] message in
+            guard let self else { return }
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: nil,
+                message: "backward enqueue failed: \(message)"
+            )
         }
     }
 
@@ -3146,7 +3124,7 @@ extension NostrHomeTimelineStore {
     }
 
     func testingFlushBackwardDependencies() {
-        flushBackwardDependencies()
+        dependencyCoordinator.flushSourcePacketInstall(onFailure: { _ in })
     }
 
     var testingPendingBackwardRequestCount: Int {

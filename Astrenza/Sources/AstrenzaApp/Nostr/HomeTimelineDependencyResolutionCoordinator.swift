@@ -10,14 +10,20 @@ struct HomeTimelineDependencyEnqueueResult: Sendable {
 @MainActor
 final class HomeTimelineDependencyResolutionCoordinator {
     typealias NIP05ResolutionChangeHandler = @MainActor @Sendable () async -> Void
+    typealias SourcePacketInstaller = @MainActor @Sendable (_ packets: [NostrREQPacket]) async throws -> Void
+    typealias SourceInstallFailureHandler = @MainActor @Sendable (_ message: String) -> Void
 
     private let eventIngestor: HomeTimelineEventIngestor
     private let profileDirectory: NostrProfileDirectory?
     private let nip05Resolver: any NostrNIP05Resolving
     private let syncPlanner: HomeTimelineSyncPlanner
+    private let sourcePacketInstaller: SourcePacketInstaller?
+    private let sourceFlushDelayNanoseconds: UInt64
 
     private var sourceQueue = NostrDependencyFetchQueue()
     private var sourceEventIDsByGroupID: [String: [String]] = [:]
+    private var sourceFlushTask: Task<Void, Never>?
+    private var sourceInstallTasks: [UUID: Task<Void, Never>] = [:]
     private var resolvingNIP05IdentifiersByPubkey: [String: String] = [:]
     private var latestNIP05IdentifiersByPubkey: [String: String] = [:]
     private var nip05TasksByPubkey: [String: Task<Void, Never>] = [:]
@@ -29,12 +35,16 @@ final class HomeTimelineDependencyResolutionCoordinator {
         eventIngestor: HomeTimelineEventIngestor,
         profileDirectory: NostrProfileDirectory?,
         nip05Resolver: any NostrNIP05Resolving,
-        syncPlanner: HomeTimelineSyncPlanner
+        syncPlanner: HomeTimelineSyncPlanner,
+        sourcePacketInstaller: SourcePacketInstaller? = nil,
+        sourceFlushDelayNanoseconds: UInt64 = 12_000_000
     ) {
         self.eventIngestor = eventIngestor
         self.profileDirectory = profileDirectory
         self.nip05Resolver = nip05Resolver
         self.syncPlanner = syncPlanner
+        self.sourcePacketInstaller = sourcePacketInstaller
+        self.sourceFlushDelayNanoseconds = sourceFlushDelayNanoseconds
     }
 
     var hasPendingWork: Bool {
@@ -45,8 +55,20 @@ final class HomeTimelineDependencyResolutionCoordinator {
         sourceEventIDsByGroupID.count
     }
 
+    var hasScheduledSourceFlush: Bool {
+        sourceFlushTask != nil
+    }
+
+    var activeSourceInstallCount: Int {
+        sourceInstallTasks.count
+    }
+
     func reset() {
         lifecycleGeneration &+= 1
+        sourceFlushTask?.cancel()
+        sourceFlushTask = nil
+        sourceInstallTasks.values.forEach { $0.cancel() }
+        sourceInstallTasks.removeAll()
         nip05TasksByPubkey.values.forEach { $0.cancel() }
         nip05TasksByPubkey.removeAll()
         resolvingNIP05IdentifiersByPubkey.removeAll()
@@ -142,6 +164,35 @@ final class HomeTimelineDependencyResolutionCoordinator {
         )
     }
 
+    @discardableResult
+    func scheduleSourcePacketInstall(
+        onFailure: @escaping SourceInstallFailureHandler
+    ) -> Bool {
+        guard sourceFlushTask == nil, sourcePacketInstaller != nil else { return false }
+        let generation = lifecycleGeneration
+        let delayNanoseconds = sourceFlushDelayNanoseconds
+        sourceFlushTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+            guard let self, lifecycleGeneration == generation else { return }
+            sourceFlushTask = nil
+            _ = startSourcePacketInstall(onFailure: onFailure)
+        }
+        return true
+    }
+
+    @discardableResult
+    func flushSourcePacketInstall(
+        onFailure: @escaping SourceInstallFailureHandler
+    ) -> Bool {
+        sourceFlushTask?.cancel()
+        sourceFlushTask = nil
+        return startSourcePacketInstall(onFailure: onFailure)
+    }
+
     func drainSourcePacketPlan(requestID: String = UUID().uuidString) -> HomeTimelineDependencyPacketPlan {
         let batch = sourceQueue.drain()
         let sourceBatch = NostrDependencyFetchBatch(sourceGroups: batch.sourceGroups)
@@ -172,6 +223,37 @@ final class HomeTimelineDependencyResolutionCoordinator {
             sourceEventIDs: eventIDs,
             succeeded: completion.status == .completed || completion.status == .partial
         )
+        return true
+    }
+
+    private func startSourcePacketInstall(
+        onFailure: @escaping SourceInstallFailureHandler
+    ) -> Bool {
+        guard let sourcePacketInstaller else { return false }
+        let plan = drainSourcePacketPlan()
+        guard !plan.sourcePackets.isEmpty else { return false }
+
+        let taskID = UUID()
+        let generation = lifecycleGeneration
+        let packets = plan.sourcePackets
+        sourceInstallTasks[taskID] = Task { @MainActor [weak self] in
+            let failureMessage: String?
+            do {
+                try await sourcePacketInstaller(packets)
+                failureMessage = nil
+            } catch {
+                failureMessage = error.localizedDescription
+            }
+
+            guard !Task.isCancelled,
+                  let self,
+                  lifecycleGeneration == generation
+            else { return }
+            sourceInstallTasks.removeValue(forKey: taskID)
+            guard let failureMessage else { return }
+            failSourceRequests(in: plan)
+            onFailure(failureMessage)
+        }
         return true
     }
 
