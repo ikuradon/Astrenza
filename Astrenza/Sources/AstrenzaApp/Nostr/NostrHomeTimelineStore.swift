@@ -1779,37 +1779,17 @@ final class NostrHomeTimelineStore: ObservableObject {
             subscriptionID: subscriptionID
         )
 
-        let ingestResult: HomeTimelineEventIngestResult
-        let projectsIntoCurrentFeed: Bool
+        let projectedIngestResult: HomeTimelineProjectedEventIngestResult
         do {
             ensureHomeFeedDefinition(account: account)
-            projectsIntoCurrentFeed = isCurrentHomeFeedContext(requestContext) &&
-                requestContext?.includes(event) == true
-            let insertedAt = Int(Date().timeIntervalSince1970)
-            let feedMembership = projectsIntoCurrentFeed ? homeFeedProjection.definition.flatMap { definition in
-                HomeFeedProjectionBuilder.memberships(
-                    events: [event],
-                    feedID: definition.feedID,
-                    feedRevision: definition.revision,
-                    reason: "forward",
-                    insertedAt: insertedAt
-                ).first
-            } : nil
-            let feedMembershipSources = projectsIntoCurrentFeed ? homeFeedProjection.definition.map { definition in
-                HomeFeedProjectionBuilder.membershipSources(
-                    events: [event],
-                    feedID: definition.feedID,
-                    feedRevision: definition.revision,
-                    reason: "forward",
-                    insertedAt: insertedAt,
+            projectedIngestResult = try await eventIngestor.ingestForward(
+                HomeTimelineForwardEventIngestRequest(
+                    event: event,
+                    relayURL: relayURL,
+                    activeFeedContext: activeHomeFeedRuntimeContext(),
+                    requestContext: requestContext,
                     sourceRequestID: requestID
                 )
-            } ?? [] : []
-            ingestResult = try await eventIngestor.ingest(
-                event: event,
-                relayURL: relayURL,
-                feedMembership: feedMembership,
-                feedMembershipSources: feedMembershipSources
             )
         } catch {
             recordRuntimeSyncEvent(
@@ -1823,6 +1803,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID
         else { return }
+        let ingestResult = projectedIngestResult.eventResult
+        let projectsIntoCurrentFeed = projectedIngestResult.projectsIntoCurrentFeed
         let embeddedTarget = ingestResult.embeddedEvent
         invalidateListEntries()
 
@@ -1855,7 +1837,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         let accountID = account.pubkey
         let requestKey = backwardRequestRegistry.key(for: subscriptionID)
         let request = requestKey.flatMap { backwardRequestRegistry.request(for: $0) }
-        let isTimelineBackfill = request?.isOlderPage == true || request?.gap != nil
+        let projectionReason: HomeTimelineFeedProjectionReason? = if request?.isOlderPage == true {
+            .older
+        } else if request?.gap != nil {
+            .gap
+        } else {
+            nil
+        }
+        let isTimelineBackfill = projectionReason != nil
         let sourceRequestID = feedSyncCoordinator.requestID(
             relayURL: relayURL,
             subscriptionID: subscriptionID
@@ -1866,45 +1855,23 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         let requestContext = request?.feedContext
 
-        let ingestResult: HomeTimelineEventIngestResult
-        let projectsIntoCurrentFeed: Bool
+        let projectedIngestResult: HomeTimelineProjectedEventIngestResult
         do {
             if isTimelineBackfill {
                 ensureHomeFeedDefinition(account: account)
             }
             // 配信可否はbackward request registryで判定する。provenance用requestStartedは
             // 最初のEVENT到着時点でまだqueue内に残っている場合がある。
-            projectsIntoCurrentFeed = isTimelineBackfill &&
-                requestContext != nil &&
-                (activeRequestContext == nil || requestContext == activeRequestContext) &&
-                isCurrentHomeFeedContext(requestContext) &&
-                requestContext?.includes(event) == true
-            let insertedAt = Int(Date().timeIntervalSince1970)
-            let timelineSource = request?.isOlderPage == true ? "older" : "gap"
-            let feedMembership = projectsIntoCurrentFeed ? homeFeedProjection.definition.flatMap { definition in
-                HomeFeedProjectionBuilder.memberships(
-                    events: [event],
-                    feedID: definition.feedID,
-                    feedRevision: definition.revision,
-                    reason: timelineSource,
-                    insertedAt: insertedAt
-                ).first
-            } : nil
-            let feedMembershipSources = projectsIntoCurrentFeed ? homeFeedProjection.definition.map { definition in
-                HomeFeedProjectionBuilder.membershipSources(
-                    events: [event],
-                    feedID: definition.feedID,
-                    feedRevision: definition.revision,
-                    reason: timelineSource,
-                    insertedAt: insertedAt,
+            projectedIngestResult = try await eventIngestor.ingestBackward(
+                HomeTimelineBackwardEventIngestRequest(
+                    event: event,
+                    relayURL: relayURL,
+                    activeFeedContext: activeHomeFeedRuntimeContext(),
+                    requestContext: requestContext,
+                    activeRequestContext: activeRequestContext,
+                    projectionReason: projectionReason,
                     sourceRequestID: sourceRequestID
                 )
-            } ?? [] : []
-            ingestResult = try await eventIngestor.ingest(
-                event: event,
-                relayURL: relayURL,
-                feedMembership: feedMembership,
-                feedMembershipSources: feedMembershipSources
             )
         } catch {
             recordRuntimeSyncEvent(
@@ -1918,6 +1885,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID
         else { return }
+        let ingestResult = projectedIngestResult.eventResult
+        let projectsIntoCurrentFeed = projectedIngestResult.projectsIntoCurrentFeed
         let embeddedTarget = ingestResult.embeddedEvent
         if event.kind == 1 || event.kind == 5 || event.kind == 6 {
             invalidateListEntries()
