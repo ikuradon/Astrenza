@@ -9,6 +9,33 @@ struct HomeTimelineFeedSyncRegistration {
     let gap: PendingGapBackfill?
 }
 
+struct HomeTimelineFeedSyncRequestStartResult: Equatable, Sendable {
+    let wasHandled: Bool
+    let isRealtime: Bool
+    let failureMessage: String?
+}
+
+enum HomeTimelineFeedSyncStreamCompletion: Equatable, Sendable {
+    case eose
+    case closed(message: String)
+    case timeout(message: String)
+}
+
+struct HomeTimelineFeedSyncDiagnostic: Equatable, Sendable {
+    let relayURL: String
+    let kind: NostrRelaySyncEventKind
+    let subscriptionID: String
+    let eventCount: Int
+    let newestCreatedAt: Int?
+    let oldestCreatedAt: Int?
+    let message: String
+}
+
+struct HomeTimelineFeedSyncTransition: Equatable, Sendable {
+    let isRealtime: Bool
+    let diagnostic: HomeTimelineFeedSyncDiagnostic
+}
+
 @MainActor
 final class HomeTimelineFeedSyncCoordinator {
     typealias Now = @MainActor () -> Int
@@ -112,7 +139,131 @@ final class HomeTimelineFeedSyncCoordinator {
         state.context(for: key(relayURL: relayURL, subscriptionID: subscriptionID))
     }
 
-    func beginRequest(
+    func startRequest(
+        _ attempt: NostrRelayRequestAttempt,
+        isCurrentFeedContext: (HomeFeedRuntimeContext) -> Bool
+    ) -> HomeTimelineFeedSyncRequestStartResult {
+        guard let registration = registration(for: attempt.packet) else {
+            return HomeTimelineFeedSyncRequestStartResult(
+                wasHandled: false,
+                isRealtime: state.isRealtime,
+                failureMessage: nil
+            )
+        }
+        if attempt.packet.strategy == .forward {
+            state.invalidateForwardSubscription(
+                key(relayURL: attempt.relayURL, subscriptionID: attempt.packet.subscriptionID)
+            )
+        }
+        guard eventStore != nil else {
+            return HomeTimelineFeedSyncRequestStartResult(
+                wasHandled: true,
+                isRealtime: state.isRealtime,
+                failureMessage: nil
+            )
+        }
+
+        do {
+            try beginRequest(attempt, registration: registration)
+            if let gap = registration.gap,
+               isCurrentFeedContext(registration.context) {
+                try? eventStore?.markFeedGap(
+                    feedID: registration.context.feedID,
+                    revision: registration.context.revision,
+                    newerEventID: gap.newerPostID,
+                    olderEventID: gap.olderPostID,
+                    state: .requested,
+                    sourceRequestID: attempt.requestID,
+                    at: attempt.startedAt
+                )
+            }
+            return HomeTimelineFeedSyncRequestStartResult(
+                wasHandled: true,
+                isRealtime: state.isRealtime,
+                failureMessage: nil
+            )
+        } catch {
+            return HomeTimelineFeedSyncRequestStartResult(
+                wasHandled: true,
+                isRealtime: state.isRealtime,
+                failureMessage: error.localizedDescription
+            )
+        }
+    }
+
+    func recordRequestInstalled(requestID: String, installedAt: Int) {
+        try? eventStore?.markFeedSyncRequestInstalled(
+            requestID: requestID,
+            at: installedAt
+        )
+    }
+
+    func handleStreamCompletion(
+        relayURL: String,
+        subscriptionID: String,
+        completion: HomeTimelineFeedSyncStreamCompletion
+    ) -> HomeTimelineFeedSyncTransition {
+        let window = finishWindow(relayURL: relayURL, subscriptionID: subscriptionID)
+        let diagnostic: HomeTimelineFeedSyncDiagnostic
+        switch completion {
+        case .eose:
+            let isHomeForward = HomeTimelineSyncPlanner.isHomeForwardSubscription(subscriptionID)
+            recordEOSE(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                window: window
+            )
+            diagnostic = HomeTimelineFeedSyncDiagnostic(
+                relayURL: relayURL,
+                kind: .eose,
+                subscriptionID: subscriptionID,
+                eventCount: window.eventCount,
+                newestCreatedAt: isHomeForward ? window.newestCreatedAt : nil,
+                oldestCreatedAt: isHomeForward ? window.oldestCreatedAt : nil,
+                message: "EOSE received"
+            )
+        case .closed(let message):
+            endRequest(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                reason: .closed,
+                message: message,
+                window: window
+            )
+            diagnostic = HomeTimelineFeedSyncDiagnostic(
+                relayURL: relayURL,
+                kind: Self.syncEventKind(forClosedMessage: message),
+                subscriptionID: subscriptionID,
+                eventCount: window.eventCount,
+                newestCreatedAt: window.newestCreatedAt,
+                oldestCreatedAt: window.oldestCreatedAt,
+                message: message
+            )
+        case .timeout(let message):
+            endRequest(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                reason: .timeout,
+                message: message,
+                window: window
+            )
+            diagnostic = HomeTimelineFeedSyncDiagnostic(
+                relayURL: relayURL,
+                kind: .timeout,
+                subscriptionID: subscriptionID,
+                eventCount: window.eventCount,
+                newestCreatedAt: window.newestCreatedAt,
+                oldestCreatedAt: window.oldestCreatedAt,
+                message: message
+            )
+        }
+        return HomeTimelineFeedSyncTransition(
+            isRealtime: state.isRealtime,
+            diagnostic: diagnostic
+        )
+    }
+
+    private func beginRequest(
         _ attempt: NostrRelayRequestAttempt,
         registration: HomeTimelineFeedSyncRegistration
     ) throws {
@@ -166,7 +317,7 @@ final class HomeTimelineFeedSyncCoordinator {
         }
     }
 
-    func recordEOSE(
+    private func recordEOSE(
         relayURL: String,
         subscriptionID: String,
         window: RuntimeSyncWindow
@@ -191,7 +342,7 @@ final class HomeTimelineFeedSyncCoordinator {
         )
     }
 
-    func endRequest(
+    private func endRequest(
         relayURL: String,
         subscriptionID: String,
         reason: NostrFeedSyncEndReason,
@@ -258,8 +409,19 @@ final class HomeTimelineFeedSyncCoordinator {
         )
     }
 
-    func finishWindow(relayURL: String, subscriptionID: String) -> RuntimeSyncWindow {
+    private func finishWindow(relayURL: String, subscriptionID: String) -> RuntimeSyncWindow {
         state.finishWindow(for: key(relayURL: relayURL, subscriptionID: subscriptionID))
+    }
+
+    private static func syncEventKind(forClosedMessage message: String) -> NostrRelaySyncEventKind {
+        let normalized = message.lowercased()
+        if normalized.contains("auth-required") || normalized.contains("auth required") {
+            return .authRequired
+        }
+        if normalized.contains("payment-required") || normalized.contains("payment required") {
+            return .paymentRequired
+        }
+        return .closed
     }
 
     private func key(relayURL: String, subscriptionID: String) -> RuntimeSubscriptionKey {
