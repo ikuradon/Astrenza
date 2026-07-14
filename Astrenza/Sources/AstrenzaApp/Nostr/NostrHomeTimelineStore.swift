@@ -31,7 +31,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
     private let runtimeEventApplicationCoordinator: HomeTimelineRuntimeEventApplicationCoordinator
-    private let backwardCompletionPlanner: HomeTimelineBackwardCompletionPlanner
+    private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
@@ -244,7 +244,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         } else {
             sourcePacketInstaller = nil
         }
-        self.backwardCompletionPlanner = HomeTimelineBackwardCompletionPlanner()
         let backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
         self.backfillPersistence = backfillPersistence
         self.syncPlanner = syncPlanner
@@ -290,6 +289,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller: sourcePacketInstaller
         )
         self.dependencyCoordinator = dependencyCoordinator
+        self.backwardCompletionApplicationCoordinator =
+            HomeTimelineBackwardCompletionApplicationCoordinator(
+                backwardRequestRegistry: backwardRequestRegistry,
+                dependencyCoordinator: dependencyCoordinator,
+                contentCoordinator: contentCoordinator,
+                projectionController: homeFeedProjection,
+                persistence: backfillPersistence
+            )
         let filterCoordinator = HomeTimelineFilterCoordinator(eventStore: eventStore)
         self.filterCoordinator = filterCoordinator
         let listProjectionCache = HomeTimelineListProjectionCache()
@@ -1705,67 +1712,42 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        guard let request = backwardRequestRegistry.remove(groupID: completion.groupID) else {
-            if dependencyCoordinator.completeSourceRequest(completion) {
-                relayStatusRevision &+= 1
-            }
-            return
+        let commands = backwardCompletionApplicationCoordinator.handle(
+            completion,
+            accountID: account?.pubkey
+        )
+        for command in commands {
+            applyBackwardCompletionCommand(command)
         }
-        let plan = backwardCompletionPlanner.plan(.init(
-            request: request,
-            completion: completion,
-            fallbackBottomEventID: noteEvents.last?.id,
-            isCurrentFeedContext: isCurrentHomeFeedContext(request.feedContext)
-        ))
-        guard plan.acceptsTimelineRequest else {
-            relayStatusRevision &+= 1
-            return
-        }
-        if plan.marksOlderEnd {
-            applyContentSnapshot(contentCoordinator.markOlderEnd())
-        }
-        if let update = plan.olderPageUpdate, let account {
-            if update.marksBoundaryGap,
-               let definition = homeFeedProjection.definition {
-                do {
-                    try backfillPersistence.markOlderPageBoundaryGap(
-                        request: update.request,
-                        definition: definition
-                    )
-                } catch {
-                    recordRuntimeSyncEvent(
-                        relayURL: resolvedRelays.first ?? "runtime",
-                        kind: .partialFailure,
-                        subscriptionID: nil,
-                        message: "older gap mark failed: \(error.localizedDescription)"
-                    )
-                }
-            }
+    }
+
+    private func applyBackwardCompletionCommand(
+        _ command: HomeTimelineBackwardCompletionCommand
+    ) {
+        switch command {
+        case .applyContentSnapshot(let snapshot):
+            applyContentSnapshot(snapshot)
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: nil,
+                message: diagnostic.message
+            )
+        case .reloadProjection(let anchorEventID, let mergingWithCurrentWindow):
+            guard let account else { return }
             reloadProjectionWindow(
                 account: account,
-                around: update.anchorEventID,
-                mergingWithCurrentWindow: true
+                around: anchorEventID,
+                mergingWithCurrentWindow: mergingWithCurrentWindow
             )
             materializeEntries()
             scheduleLinkPreviewResolution()
+        case .reconcileGap(let gap, let context):
+            reconcileCompletedGap(gap, context: context)
+        case .incrementRelayStatusRevision:
+            relayStatusRevision &+= 1
         }
-
-        if let gapUpdate = plan.gapUpdate, let account {
-            switch gapUpdate {
-            case .reconcile(let gap, let context):
-                reconcileCompletedGap(gap, context: context)
-            case .restore(let gap, let context, let marksUnresolved):
-                if marksUnresolved {
-                    backfillPersistence.markGapUnresolved(gap, context: context)
-                }
-                // eventなしのtimeout/CLOSEDでも永続化済みgapを再投影する。
-                // bootstrap保存と競合するとeventだけのwindowが残る場合があるため。
-                reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
-                materializeEntries()
-                scheduleLinkPreviewResolution()
-            }
-        }
-        relayStatusRevision &+= 1
     }
 
     private func reconcileCompletedGap(
