@@ -72,7 +72,112 @@ struct HomeTimelineMaterializationSchedulerTests {
     }
 }
 
+@Suite("Home timeline pending event buffer")
+struct HomeTimelinePendingEventBufferTests {
+    @Test("Duplicate events share one debounced count publication")
+    @MainActor
+    func duplicateEventsCoalesceCountPublication() async throws {
+        let delay = MaterializationDelayStub()
+        let probe = PendingEventCountProbe()
+        let buffer = HomeTimelinePendingEventBuffer(delay: { _ in
+            await delay.suspend()
+        })
+        let publish: HomeTimelinePendingEventBuffer.CountPublisher = { count in
+            probe.counts.append(count)
+        }
+
+        let insertedFirst = buffer.insert(eventID: "event-a", onCountChange: publish)
+        let insertedDuplicate = buffer.insert(eventID: "event-a", onCountChange: publish)
+        let insertedSecond = buffer.insert(eventID: "event-b", onCountChange: publish)
+
+        #expect(insertedFirst)
+        #expect(!insertedDuplicate)
+        #expect(insertedSecond)
+        #expect(buffer.hasEvents)
+        #expect(buffer.hasScheduledCountPublication)
+
+        try #require(await waitUntil { await delay.requestCount() == 1 })
+        await delay.resumeAll()
+        try #require(await waitUntil { probe.counts == [2] })
+
+        #expect(buffer.publishedCount == 2)
+        #expect(!buffer.hasScheduledCountPublication)
+    }
+
+    @Test("Clear invalidates a stale publication before the buffer is reused")
+    @MainActor
+    func clearInvalidatesStalePublication() async throws {
+        let delay = MaterializationDelayStub()
+        let probe = PendingEventCountProbe()
+        let buffer = HomeTimelinePendingEventBuffer(delay: { _ in
+            await delay.suspend()
+        })
+        let publish: HomeTimelinePendingEventBuffer.CountPublisher = { count in
+            probe.counts.append(count)
+        }
+
+        #expect(buffer.insert(eventID: "event-a", onCountChange: publish))
+        try #require(await waitUntil { await delay.requestCount() == 1 })
+        await delay.resumeAll()
+        try #require(await waitUntil { probe.counts == [1] })
+
+        #expect(buffer.insert(eventID: "event-b", onCountChange: publish))
+        try #require(await waitUntil { await delay.requestCount() == 2 })
+        #expect(buffer.removeAll(onCountChange: publish))
+        #expect(probe.counts == [1, 0])
+        #expect(buffer.isEmpty)
+        #expect(!buffer.hasScheduledCountPublication)
+
+        #expect(buffer.insert(eventID: "event-c", onCountChange: publish))
+        try #require(await waitUntil { await delay.requestCount() == 3 })
+        await delay.resumeAll()
+        try #require(await waitUntil { probe.counts == [1, 0, 1] })
+
+        #expect(buffer.publishedCount == 1)
+        #expect(buffer.hasEvents)
+        #expect(!buffer.hasScheduledCountPublication)
+    }
+
+    @MainActor
+    private func waitUntil(
+        _ predicate: @escaping @MainActor @Sendable () async -> Bool
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if await predicate() { return true }
+            await Task.yield()
+        }
+        return false
+    }
+}
+
 @MainActor
 private final class MaterializationProbe {
     var permissions: [Bool] = []
+}
+
+@MainActor
+private final class PendingEventCountProbe {
+    var counts: [Int] = []
+}
+
+private actor MaterializationDelayStub {
+    private var requests = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func suspend() async {
+        requests += 1
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func requestCount() -> Int {
+        requests
+    }
+
+    func resumeAll() {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
 }

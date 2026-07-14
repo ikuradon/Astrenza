@@ -82,6 +82,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventIngestor: HomeTimelineEventIngestor
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let materializationScheduler: HomeTimelineMaterializationScheduler
+    private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -97,7 +98,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
-    private var unmaterializedCountTask: Task<Void, Never>?
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
@@ -107,7 +107,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var relayListEvent: NostrEvent?
     private var contactListEvent: NostrEvent?
     private var areTimelineFiltersSuspended = false
-    private var unmaterializedNewEventIDs = Set<String>()
     private var unreadState = HomeTimelineUnreadState()
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
@@ -249,6 +248,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller: sourcePacketInstaller
         )
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
+        self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
             eventStore: eventStore,
             persistenceWorker: persistenceWorker
@@ -400,15 +400,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
         guard let account else { return false }
-        let hadPendingNewEvents = !unmaterializedNewEventIDs.isEmpty ||
+        let hadPendingNewEvents = pendingEventBuffer.hasEvents ||
             materializationScheduler.hasPendingNewestProjectionReload
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
         reloadNewestProjectionWindow(account: account)
-        unmaterializedNewEventIDs.removeAll()
-        unmaterializedCountTask?.cancel()
-        unmaterializedCountTask = nil
-        unmaterializedNewCount = 0
+        clearPendingNewEvents()
         materializationScheduler.clearNewestProjectionReload()
         materializeEntries()
         scheduleLinkPreviewResolution()
@@ -629,17 +626,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         linkPreviewCoordinator.reset()
         materializationScheduler.reset()
         realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
-        unmaterializedCountTask?.cancel()
         outboxCoordinator.cancel()
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
-        unmaterializedCountTask = nil
         dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()
         pendingGapReconciliationIDs.removeAll()
-        unmaterializedNewEventIDs.removeAll()
-        unmaterializedNewCount = 0
+        clearPendingNewEvents()
         isRefreshing = false
         isLoadingOlder = false
         listEntriesCache = nil
@@ -1154,8 +1148,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayDiagnostics.reset()
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
-        unmaterializedNewEventIDs.removeAll()
-        unmaterializedNewCount = 0
+        clearPendingNewEvents()
         unreadState.reset()
         publishUnreadState()
         return false
@@ -1234,7 +1227,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 window: window,
                 sourceAuthors: plan.sourceAuthors
             )
-            if unmaterializedNewEventIDs.isEmpty {
+            if pendingEventBuffer.isEmpty {
                 materializeEntries()
             }
         } catch {
@@ -1935,11 +1928,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
             if restoreProjectionAnchorEventID == nil,
                isTimelineAtNewestWindow,
-                unmaterializedNewEventIDs.isEmpty {
+               pendingEventBuffer.isEmpty {
                 materializationScheduler.requestNewestProjectionReload()
                 scheduleMaterializeEntries(allowsRealtimeFollow: receivedWhileRealtime)
-            } else if unmaterializedNewEventIDs.insert(event.id).inserted {
-                scheduleUnmaterializedCountPublish()
+            } else {
+                bufferPendingNewEvent(event.id)
             }
         }
         scheduleLinkPreviewResolution()
@@ -2640,17 +2633,22 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func scheduleUnmaterializedCountPublish() {
-        guard unmaterializedCountTask == nil else { return }
-        unmaterializedCountTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            guard let self, !Task.isCancelled else { return }
-            self.unmaterializedCountTask = nil
-            let count = self.unmaterializedNewEventIDs.count
-            if self.unmaterializedNewCount != count {
-                self.unmaterializedNewCount = count
-            }
+    private func bufferPendingNewEvent(_ eventID: String) {
+        pendingEventBuffer.insert(eventID: eventID) { [weak self] count in
+            self?.setUnmaterializedNewCount(count)
         }
+    }
+
+    @discardableResult
+    private func clearPendingNewEvents() -> Bool {
+        pendingEventBuffer.removeAll { [weak self] count in
+            self?.setUnmaterializedNewCount(count)
+        }
+    }
+
+    private func setUnmaterializedNewCount(_ count: Int) {
+        guard unmaterializedNewCount != count else { return }
+        unmaterializedNewCount = count
     }
 
     private func materializedPosts(from events: [NostrEvent]) -> [TimelinePost] {
@@ -2988,8 +2986,9 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
-        unmaterializedNewEventIDs = ids
-        unmaterializedNewCount = ids.count
+        pendingEventBuffer.replaceEventIDs(ids) { [weak self] count in
+            self?.setUnmaterializedNewCount(count)
+        }
     }
 
     func testingMergedProjectionWindow(
