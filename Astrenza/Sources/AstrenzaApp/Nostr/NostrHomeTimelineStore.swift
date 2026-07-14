@@ -46,7 +46,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     private let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
-    private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
+    private let runtimeShutdownCoordinator: HomeTimelineRuntimeShutdownCoordinator
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -362,12 +362,25 @@ final class NostrHomeTimelineStore: ObservableObject {
         } else {
             runtimeStream = nil
         }
-        self.runtimeSessionCoordinator = HomeTimelineRuntimeSessionCoordinator(
+        let runtimeSessionCoordinator = HomeTimelineRuntimeSessionCoordinator(
             runtimeEventPump: runtimeEventPump,
             runtimeStream: runtimeStream,
             profileUpdateObserver: dependencyCoordinator,
             profileUpdateApplication: runtimeEventCoordinator,
             lifecycleCoordinator: lifecycleCoordinator
+        )
+        self.runtimeSessionCoordinator = runtimeSessionCoordinator
+        let terminateRuntime: HomeTimelineRuntimeShutdownCoordinator.RuntimeTermination?
+        if let relayRuntime {
+            terminateRuntime = { await relayRuntime.terminate() }
+        } else {
+            terminateRuntime = nil
+        }
+        self.runtimeShutdownCoordinator = HomeTimelineRuntimeShutdownCoordinator(
+            scheduler: HomeTimelineRelayRuntimeTerminator(),
+            runtimeSession: runtimeSessionCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator,
+            terminateRuntime: terminateRuntime
         )
         let relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
             relayRuntime: relayRuntime,
@@ -384,7 +397,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             lifecycleCoordinator: lifecycleCoordinator,
             timelineRepository: timelineRepository
         )
-        self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
         let relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
             diagnostics: HomeTimelineRelayDiagnosticsLedger(
                 eventStore: eventStore,
@@ -735,28 +747,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         filterCoordinator.reset()
         relayStatusRevision &+= 1
         account = nil
-        scheduleRelayRuntimeTermination(cancellationGeneration: cancellationGeneration)
-    }
-
-    private func scheduleRelayRuntimeTermination(cancellationGeneration: UInt64) {
-        guard let relayRuntime else { return }
-        relayRuntimeTerminator.schedule(
-            termination: { [weak self] in
-                await self?.runtimeSessionCoordinator.stopProfileUpdates()
-                await relayRuntime.terminate()
-            },
-            onLatestCompletion: { [weak self] in
-                guard let self,
-                      lifecycleCoordinator.currentToken?.generation != cancellationGeneration,
-                      let account
-                else { return }
-
-                runtimeSessionCoordinator.cancelRuntimeEvents()
-                runtimeSetupCoordinator.reset()
-                resetHomeTimelineRealtime()
-                startRuntimeSession()
-                await configureRelayRuntime(account: account, forceInstall: true)
-            }
+        runtimeShutdownCoordinator.schedule(
+            cancellationGeneration: cancellationGeneration,
+            handlers: runtimeShutdownHandlers()
         )
     }
 
@@ -1205,7 +1198,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 account: account,
                 profileRelayURLs: profileRelayURLs,
                 hasRelayRuntime: relayRuntime != nil,
-                isTerminating: relayRuntimeTerminator.isTerminating
+                isTerminating: runtimeShutdownCoordinator.isTerminating
             ),
             handlers: HomeTimelineRuntimeSessionHandlers(
                 isAccountCurrent: { [weak self] accountID in
@@ -1229,6 +1222,29 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .profileDirectoryChanged:
             invalidateListEntries()
             scheduleMaterializeEntries()
+        }
+    }
+
+    private func runtimeShutdownHandlers() -> HomeTimelineRuntimeShutdownHandlers {
+        HomeTimelineRuntimeShutdownHandlers(
+            currentAccount: { [weak self] in self?.account },
+            perform: { [weak self] command in
+                await self?.applyRuntimeShutdownCommand(command)
+            }
+        )
+    }
+
+    private func applyRuntimeShutdownCommand(
+        _ command: HomeTimelineRuntimeShutdownCommand
+    ) async {
+        switch command {
+        case .resetRuntimeState:
+            runtimeSetupCoordinator.reset()
+            resetHomeTimelineRealtime()
+        case .startRuntimeSession:
+            startRuntimeSession()
+        case .configureRuntime(let account, let forceInstall):
+            await configureRelayRuntime(account: account, forceInstall: forceInstall)
         }
     }
 
@@ -1271,7 +1287,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 defaultRelayURLs: runtimeRelayURLs(account: account),
                 policy: syncPolicy,
                 hasRelayRuntime: relayRuntime != nil,
-                isTerminating: relayRuntimeTerminator.isTerminating,
+                isTerminating: runtimeShutdownCoordinator.isTerminating,
                 forceInstall: forceInstall
             ),
             handlers: HomeTimelineRuntimeSetupHandlers(
