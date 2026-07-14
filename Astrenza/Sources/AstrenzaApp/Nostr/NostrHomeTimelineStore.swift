@@ -80,13 +80,17 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let eventIngestor: HomeTimelineEventIngestor
+    private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
+    private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let syncPlanner: HomeTimelineSyncPlanner
     private let timelineRepository: HomeTimelineRepository
     private let timelineCoordinator: HomeTimelineCoordinator
+    private let gapReconciler: HomeTimelineGapReconciler
+    private let homeFeedProjection: HomeFeedProjectionController
     private let relayRuntime: NostrRelayRuntime?
     private let profileDirectory: NostrProfileDirectory?
     private let linkPreviewResolver: NostrLinkPreviewResolver?
-    private let outboxPublisher: NostrOutboxRelayPublisher
+    private let outboxDrainer: HomeTimelineOutboxDrainer
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
@@ -94,7 +98,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var runtimeTask: Task<Void, Never>?
     private var profileDirectoryUpdateTask: Task<Void, Never>?
     private var linkPreviewTask: Task<Void, Never>?
-    private var materializeTask: Task<Void, Never>?
     private var unmaterializedCountTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
     private var outboxTaskGeneration: UInt64 = 0
@@ -104,24 +107,16 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var resolvingLinkPreviewURLs = Set<String>()
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
-    private var runtimeSyncWindows: [RuntimeSubscriptionKey: RuntimeSyncWindow] = [:]
-    private var activeFeedSyncRequestIDs: [RuntimeSubscriptionKey: String] = [:]
-    private var activeFeedSyncContexts: [RuntimeSubscriptionKey: HomeFeedRuntimeContext] = [:]
-    private var expectedHomeForwardRuntimeKeys = Set<RuntimeSubscriptionKey>()
-    private var homeForwardEOSEKeys = Set<RuntimeSubscriptionKey>()
-    private var forwardFeedContextsByGroupID: [String: HomeFeedRuntimeContext] = [:]
+    private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
     private var pendingRelayTrafficDeltas: [NostrRelayTrafficDelta] = []
     private var lastRelayTrafficFlushAt = 0
-    private var dependencyFetchQueue = NostrDependencyFetchQueue()
-    private var backwardFlushTask: Task<Void, Never>?
+    private var dependencyFlushTask: Task<Void, Never>?
     private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
     private var profileResolutionStates: [String: NostrProfileResolutionState] = [:]
     private var relayListEvent: NostrEvent?
     private var contactListEvent: NostrEvent?
-    private var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
-    private var resolvingNIP05IdentifiersByPubkey: [String: String] = [:]
     private var relaySyncEvents: [NostrRelaySyncEventRecord] = []
     private var areTimelineFiltersSuspended = false
     private var unmaterializedNewEventIDs = Set<String>()
@@ -129,27 +124,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
     private var hasCompletedRuntimeBootstrap = false
-    private var isTimelineScrollActive = false
-    private var needsMaterializationAfterScroll = false
-    private var pendingMaterializationAllowsRealtimeFollow: Bool?
-    private var lastEntriesRenderFingerprint: [Int] = []
-    private var needsNewestProjectionReload = false
     private var listEntriesCache: ListEntriesCache?
-    private var activeHomeFeedDefinition: NostrFeedDefinitionRecord?
-    private var activeHomeFeedWindow: NostrFeedWindow?
-    private var projectionWindowGeneration: UInt64 = 0
-    private var activeHomeFeedSourceAuthors: [String]?
     private var runtimeLifecycleGeneration: UInt64 = 0
     private var relayRuntimeConfigurationSequence: UInt64 = 0
     private var isRuntimeEventPumpReady = false
     private var runtimeEventPumpReadyWaiters: [CheckedContinuation<Bool, Never>] = []
     private var relayRuntimeTerminationSequence: UInt64 = 0
     private var relayRuntimeTerminationTask: Task<Void, Never>?
-    private let materializeCoalescingDelayNanoseconds: UInt64 = 16_000_000
-    private let projectionWindowLimit = 240
-    private let projectionRetainedWindowLimit = HomeTimelinePersistenceProjection.retainedEventLimit
-    private let projectionAnchorLeadingLimit = 80
-    private let projectionAnchorTrailingLimit = 160
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -255,7 +236,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 compactLabel: "Gap"
             )
         }
-        if !pendingBackwardRequests.isEmpty {
+        if !pendingBackwardRequests.isEmpty || dependencyCoordinator.hasPendingWork {
             return NostrTimelineActivityStatus(
                 title: "Resolving referenced posts",
                 detail: "Fetching events referenced by visible posts",
@@ -281,16 +262,35 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
         self.persistenceWorker = eventStore.map(HomeTimelinePersistenceWorker.init)
-        self.eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
-        self.syncPlanner = HomeTimelineSyncPlanner()
-        self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
-        self.timelineCoordinator = HomeTimelineCoordinator()
-        self.relayRuntime = relayRuntime
-        self.profileDirectory = relayRuntime.map {
+        let eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
+        let syncPlanner = HomeTimelineSyncPlanner()
+        let profileDirectory = relayRuntime.map {
             NostrProfileDirectory(eventStore: eventStore, relayRuntime: $0)
         }
+        self.eventIngestor = eventIngestor
+        self.syncPlanner = syncPlanner
+        self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
+        self.timelineCoordinator = HomeTimelineCoordinator()
+        self.gapReconciler = HomeTimelineGapReconciler(
+            eventStore: eventStore,
+            relayClient: timelineLoader.relayClient
+        )
+        self.homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
+        self.feedSyncLifecycle = HomeTimelineFeedSyncLifecycle(eventStore: eventStore)
+        self.relayRuntime = relayRuntime
+        self.profileDirectory = profileDirectory
+        self.dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
+            eventIngestor: eventIngestor,
+            profileDirectory: profileDirectory,
+            nip05Resolver: timelineLoader.nip05Resolver,
+            syncPlanner: syncPlanner
+        )
+        self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.linkPreviewResolver = linkPreviewResolver
-        self.outboxPublisher = outboxPublisher
+        self.outboxDrainer = HomeTimelineOutboxDrainer(
+            eventStore: eventStore,
+            publisher: outboxPublisher
+        )
         self.syncPolicySettingsStore = syncPolicySettingsStore
         self.syncPolicy = syncPolicy
     }
@@ -353,7 +353,9 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
         guard timelineKey == "home",
-              let state = try? eventStore?.feedReadState(feedID: Self.homeFeedID(accountID: accountID)),
+              let state = try? eventStore?.feedReadState(
+                feedID: HomeFeedProjectionBuilder.feedID(accountID: accountID)
+              ),
               let anchorEventID = state.viewportAnchorEventID
         else { return nil }
         return TimelineViewportState(
@@ -371,7 +373,7 @@ final class NostrHomeTimelineStore: ObservableObject {
               let account,
               account.pubkey == state.accountID,
               persistenceWorker != nil,
-              let definition = activeHomeFeedDefinition
+              let definition = homeFeedProjection.definition
         else { return }
 
         pendingViewportState = PendingFeedViewportState(
@@ -429,16 +431,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
-        guard isTimelineScrollActive != isActive else { return }
-        isTimelineScrollActive = isActive
-        if isActive {
-            if materializeTask != nil {
-                needsMaterializationAfterScroll = true
-                materializeTask?.cancel()
-                materializeTask = nil
-            }
-        } else if needsMaterializationAfterScroll {
-            scheduleMaterializeEntries()
+        materializationScheduler.setScrollActive(isActive) { [weak self] allowsRealtimeFollow in
+            self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
         }
     }
 
@@ -465,7 +459,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
         guard let account else { return false }
-        let hadPendingNewEvents = !unmaterializedNewEventIDs.isEmpty || needsNewestProjectionReload
+        let hadPendingNewEvents = !unmaterializedNewEventIDs.isEmpty ||
+            materializationScheduler.hasPendingNewestProjectionReload
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
         reloadNewestProjectionWindow(account: account)
@@ -473,7 +468,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         unmaterializedCountTask?.cancel()
         unmaterializedCountTask = nil
         unmaterializedNewCount = 0
-        needsNewestProjectionReload = false
+        materializationScheduler.clearNewestProjectionReload()
         materializeEntries()
         scheduleLinkPreviewResolution()
         return hadPendingNewEvents
@@ -501,7 +496,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         else { return false }
 
         let installed = await requestGapNotesThroughRuntime(account: account, gap: gap, direction: direction)
-        if installed, let definition = activeHomeFeedDefinition {
+        if installed, let definition = homeFeedProjection.definition {
             try? eventStore?.markFeedGap(
                 feedID: definition.feedID,
                 revision: definition.revision,
@@ -538,8 +533,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
 
         ensureHomeFeedDefinition(account: account)
-        let feedMembership = activeHomeFeedDefinition.flatMap { definition in
-            homeFeedMemberships(
+        let feedMembership = homeFeedProjection.definition.flatMap { definition in
+            HomeFeedProjectionBuilder.memberships(
                 events: [record.event],
                 feedID: definition.feedID,
                 feedRevision: definition.revision,
@@ -547,8 +542,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                 insertedAt: createdAt
             ).first
         }
-        let feedMembershipSources = activeHomeFeedDefinition.map { definition in
-            homeFeedMembershipSources(
+        let feedMembershipSources = homeFeedProjection.definition.map { definition in
+            HomeFeedProjectionBuilder.membershipSources(
                 events: [record.event],
                 feedID: definition.feedID,
                 feedRevision: definition.revision,
@@ -593,88 +588,20 @@ final class NostrHomeTimelineStore: ObservableObject {
                     return
                 }
             }
-            let nextRetryAt = await self.drainOutbox(accountID: accountID)
+            let result = await self.outboxDrainer.drain(accountID: accountID)
             guard self.outboxTaskGeneration == taskGeneration else { return }
             self.outboxTask = nil
+            if result.didRecordRelayResults {
+                self.relayStatusRevision &+= 1
+            }
             guard !Task.isCancelled,
                   self.account?.pubkey == accountID,
-                  let nextRetryAt
+                  let nextRetryAt = result.nextRetryAt
             else { return }
             let now = Int(Date().timeIntervalSince1970)
             let delaySeconds = max(1, nextRetryAt - now)
             self.scheduleOutboxDrain(delayNanoseconds: UInt64(delaySeconds) * 1_000_000_000)
         }
-    }
-
-    private func drainOutbox(accountID: String) async -> Int? {
-        guard let eventStore else { return nil }
-        let now = Int(Date().timeIntervalSince1970)
-        let candidates = ((try? eventStore.outboxEvents(accountID: accountID, limit: 500)) ?? [])
-            .filter { record in
-                let isRetryReady = record.nextRetryAt.map { $0 <= now } ?? true
-                let isTerminal = record.status == NostrOutboxStatus.published ||
-                    record.status == NostrOutboxStatus.rejected
-                return !isTerminal && isRetryReady
-            }
-
-        for record in candidates {
-            guard !Task.isCancelled, account?.pubkey == accountID else { return nil }
-            let relayRecords = (try? eventStore.outboxRelays(localID: record.localID)) ?? []
-            let relayURLs = relayRecords
-                .filter {
-                    $0.status != NostrOutboxStatus.published &&
-                        $0.status != NostrOutboxStatus.rejected
-                }
-                .map(\.relayURL)
-            guard !relayURLs.isEmpty else { continue }
-
-            let results = await outboxPublisher.publish(event: record.event, relayURLs: relayURLs)
-            guard !Task.isCancelled, account?.pubkey == accountID else { return nil }
-            for result in results {
-                let accepted = result.accepted || Self.isDuplicateRelayAcknowledgment(result.message)
-                try? eventStore.recordOutboxRelayResult(
-                    localID: record.localID,
-                    relayURL: result.relayURL,
-                    accepted: accepted,
-                    message: result.message,
-                    retryable: accepted || !Self.isTerminalRelayRejection(result.message)
-                )
-            }
-            relayStatusRevision &+= 1
-        }
-
-        return ((try? eventStore.outboxEvents(accountID: accountID, limit: 500)) ?? [])
-            .filter {
-                $0.status != NostrOutboxStatus.published &&
-                    $0.status != NostrOutboxStatus.rejected
-            }
-            .compactMap(\.nextRetryAt)
-            .min()
-    }
-
-    private static func isDuplicateRelayAcknowledgment(_ message: String?) -> Bool {
-        message?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .hasPrefix("duplicate:") == true
-    }
-
-    private static func isTerminalRelayRejection(_ message: String?) -> Bool {
-        guard let prefix = message?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .split(separator: ":", maxSplits: 1)
-            .first
-            .map(String.init)
-        else { return false }
-        return [
-            "auth-required",
-            "blocked",
-            "invalid",
-            "payment-required",
-            "pow",
-            "restricted"
-        ].contains(prefix)
     }
 
     func muteAuthor(of post: TimelinePost) {
@@ -745,7 +672,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let materializedEntries = NostrTimelineMaterializer.entries(
             noteEvents: listEvents,
             metadataEvents: metadata,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             profileResolutionStates: profileResolutionStates,
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: listEvents),
@@ -789,52 +716,42 @@ final class NostrHomeTimelineStore: ObservableObject {
         profileDirectoryUpdateTask?.cancel()
         resolveRuntimeEventPumpReadiness(false)
         linkPreviewTask?.cancel()
-        materializeTask?.cancel()
+        materializationScheduler.reset()
+        realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         unmaterializedCountTask?.cancel()
         outboxTask?.cancel()
         outboxTaskGeneration &+= 1
         feedReadStateTask?.cancel()
         viewportStateTask?.cancel()
-        backwardFlushTask?.cancel()
+        dependencyFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
         profileDirectoryUpdateTask = nil
         linkPreviewTask = nil
-        materializeTask = nil
-        pendingMaterializationAllowsRealtimeFollow = nil
-        realtimeFollowSourceRevision = nil
         unmaterializedCountTask = nil
         outboxTask = nil
         feedReadStateTask = nil
         viewportStateTask = nil
-        backwardFlushTask = nil
-        dependencyFetchQueue.removeAll()
+        dependencyFlushTask = nil
+        dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()
         pendingGapReconciliationIDs.removeAll()
         unmaterializedNewEventIDs.removeAll()
         unmaterializedNewCount = 0
         isRefreshing = false
         isLoadingOlder = false
-        needsNewestProjectionReload = false
         listEntriesCache = nil
         listContentRevision &+= 1
-        activeHomeFeedDefinition = nil
-        activeHomeFeedWindow = nil
-        projectionWindowGeneration &+= 1
-        activeHomeFeedSourceAuthors = nil
+        homeFeedProjection.reset()
         installedHomeForwardPackets = []
         resetHomeTimelineRealtime()
         finishActiveFeedSyncRequests(reason: .cancelled)
-        runtimeSyncWindows.removeAll()
-        activeFeedSyncRequestIDs.removeAll()
-        activeFeedSyncContexts.removeAll()
-        forwardFeedContextsByGroupID.removeAll()
+        feedSyncLifecycle.reset()
         pendingRelayTrafficDeltas.removeAll()
         resolvingLinkPreviewURLs.removeAll()
         relayRuntimeStates = [:]
         entries = []
-        lastEntriesRenderFingerprint = []
         resolvedRelays = []
         followedPubkeys = []
         noteEvents = []
@@ -842,8 +759,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         profileResolutionStates = [:]
         relayListEvent = nil
         contactListEvent = nil
-        nip05Resolutions = [:]
-        resolvingNIP05IdentifiersByPubkey = [:]
         relaySyncEvents = []
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
@@ -852,8 +767,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
         hasCompletedRuntimeBootstrap = false
-        isTimelineScrollActive = false
-        needsMaterializationAfterScroll = false
         areTimelineFiltersSuspended = false
         updateRelayStatusCounts()
         relayStatusRevision &+= 1
@@ -1089,7 +1002,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents: metadataEvents,
             relayListEvent: bootstrapState.relayListEvent,
             contactListEvent: bootstrapState.contactListEvent,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
             relaySyncEvents: bootstrapState.relaySyncEvents.map { event in
                 NostrRelaySyncEventRecord(
@@ -1249,7 +1162,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         ) else { return }
 
         pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            sourceEventIDs: [],
             feedContext: feedContext,
             isOlderPage: true,
             olderAnchorPostID: olderAnchorPostID
@@ -1290,7 +1202,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         ) else { return false }
 
         pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            sourceEventIDs: [],
             feedContext: feedContext,
             gap: PendingGapBackfill(
                 newerPostID: gap.newerPostID,
@@ -1333,7 +1244,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
 
         entries = []
-        lastEntriesRenderFingerprint = []
+        materializationScheduler.replaceRenderFingerprint([])
         resolvedRelays = []
         updateRelayStatusCounts()
         followedPubkeys = []
@@ -1341,7 +1252,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         metadataEvents = []
         relayListEvent = nil
         contactListEvent = nil
-        nip05Resolutions = [:]
+        dependencyCoordinator.replaceNIP05Resolutions([:])
         relaySyncEvents = []
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
@@ -1379,18 +1290,18 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents: metadataEvents.filter { metadataPubkeys.contains($0.pubkey) },
             relayListEvent: relayListEvent,
             contactListEvent: contactListEvent,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
             relaySyncEvents: []
         )
-        let memberships = homeFeedMemberships(
+        let memberships = HomeFeedProjectionBuilder.memberships(
             events: projectionEvents,
             feedID: definition.feedID,
             feedRevision: definition.revision,
             reason: "state",
             insertedAt: now
         )
-        let membershipSources = homeFeedMembershipSources(
+        let membershipSources = HomeFeedProjectionBuilder.membershipSources(
             events: projectionEvents,
             feedID: definition.feedID,
             feedRevision: definition.revision,
@@ -1398,7 +1309,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             insertedAt: now
         )
         let lifecycleGeneration = runtimeLifecycleGeneration
-        let savedProjectionWindowGeneration = projectionWindowGeneration
+        let savedProjectionWindowGeneration = homeFeedProjection.generation
         do {
             let window = try await persistenceWorker.saveFeedSnapshot(
                 HomeTimelineFeedPersistenceSnapshot(
@@ -1408,22 +1319,23 @@ final class NostrHomeTimelineStore: ObservableObject {
                     memberships: memberships,
                     membershipSources: membershipSources,
                     savedAt: now,
-                    windowLimit: projectionWindowLimit
+                    windowLimit: homeFeedProjection.windowLimit
                 )
             )
             guard !Task.isCancelled,
                   runtimeLifecycleGeneration == lifecycleGeneration,
                   self.account?.pubkey == account.pubkey,
-                  projectionWindowGeneration == savedProjectionWindowGeneration,
+                  homeFeedProjection.generation == savedProjectionWindowGeneration,
                   (followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys) == plan.sourceAuthors,
                   let currentPlan = homeFeedDefinitionPlan(account: account, now: now),
                   currentPlan.definition.revision == definition.revision,
                   currentPlan.definition.specificationHash == definition.specificationHash
             else { return }
-            activeHomeFeedDefinition = definition
-            activeHomeFeedWindow = window
-            projectionWindowGeneration &+= 1
-            activeHomeFeedSourceAuthors = plan.sourceAuthors
+            homeFeedProjection.activate(
+                definition: definition,
+                window: window,
+                sourceAuthors: plan.sourceAuthors
+            )
             if unmaterializedNewEventIDs.isEmpty {
                 materializeEntries()
             }
@@ -1469,7 +1381,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: followedPubkeys,
             noteEvents: [],
             metadataEvents: [],
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
             relaySyncEvents: []
         )
@@ -1488,175 +1400,30 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func ensureHomeFeedDefinition(account: NostrAccount) {
-        guard let eventStore else { return }
-        let sourceAuthors = followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
-        if activeHomeFeedDefinition?.accountID == account.pubkey,
-           activeHomeFeedSourceAuthors == sourceAuthors {
-            return
-        }
-        let now = Int(Date().timeIntervalSince1970)
-        guard let plan = homeFeedDefinitionPlan(account: account, now: now) else { return }
-        if !plan.requiresProjectionReplacement {
-            activeHomeFeedDefinition = plan.definition
-            activeHomeFeedSourceAuthors = sourceAuthors
-            repairHomeFeedProjectionIfNeeded(
-                definition: plan.definition,
-                allowedAuthors: Set(plan.authors)
-            )
-            return
-        }
-
-        let definition = plan.definition
-        do {
-            let projectionEvents = cachedHomeProjectionEvents(allowedAuthors: Set(plan.authors))
-            let memberships = homeFeedMemberships(
-                events: projectionEvents,
-                feedID: definition.feedID,
-                feedRevision: definition.revision,
-                reason: "projection-rebuild",
-                insertedAt: now
-            )
-            try eventStore.replaceFeedProjection(
-                definition,
-                memberships: memberships,
-                sources: homeFeedMembershipSources(
-                    events: projectionEvents,
-                    feedID: definition.feedID,
-                    feedRevision: definition.revision,
-                    reason: "projection-rebuild",
-                    insertedAt: now
-                )
-            )
-            activeHomeFeedDefinition = definition
-            activeHomeFeedWindow = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: projectionWindowLimit
-            )
-            projectionWindowGeneration &+= 1
-            activeHomeFeedSourceAuthors = plan.sourceAuthors
-        } catch {
-            activeHomeFeedDefinition = nil
-            activeHomeFeedWindow = nil
-            projectionWindowGeneration &+= 1
-            activeHomeFeedSourceAuthors = nil
-        }
+        homeFeedProjection.ensureDefinition(
+            accountID: account.pubkey,
+            followedPubkeys: followedPubkeys,
+            liveEvents: noteEvents
+        )
     }
 
     private func homeFeedDefinitionPlan(
         account: NostrAccount,
         now: Int
     ) -> HomeFeedDefinitionPlan? {
-        guard let eventStore else { return nil }
-        let sourceAuthors = followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
-        let authors = sourceAuthors.sorted()
-        let specification = HomeFeedSpecification(authors: authors, kinds: [1, 6])
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let specificationJSON = try? encoder.encode(specification) else { return nil }
-        let specificationHash = Self.stableFeedSpecificationHash(specificationJSON)
-        let feedID = Self.homeFeedID(accountID: account.pubkey)
-        let existingDefinition = try? eventStore.feedDefinition(feedID: feedID)
-        if let existingDefinition,
-           existingDefinition.specificationHash == specificationHash {
-            return HomeFeedDefinitionPlan(
-                definition: existingDefinition,
-                sourceAuthors: sourceAuthors,
-                authors: authors,
-                requiresProjectionReplacement: false
-            )
-        }
-
-        return HomeFeedDefinitionPlan(
-            definition: NostrFeedDefinitionRecord(
-                feedID: feedID,
-                accountID: account.pubkey,
-                kind: "home",
-                specificationJSON: specificationJSON,
-                specificationHash: specificationHash,
-                sortPolicy: "created_at_desc_event_id_asc",
-                revision: (existingDefinition?.revision ?? 0) + 1,
-                createdAt: existingDefinition?.createdAt ?? now,
-                updatedAt: now
-            ),
-            sourceAuthors: sourceAuthors,
-            authors: authors,
-            requiresProjectionReplacement: true
+        homeFeedProjection.definitionPlan(
+            accountID: account.pubkey,
+            followedPubkeys: followedPubkeys,
+            now: now
         )
-    }
-
-    private func repairHomeFeedProjectionIfNeeded(
-        definition: NostrFeedDefinitionRecord,
-        allowedAuthors: Set<String>
-    ) {
-        guard let eventStore else { return }
-        let existingMemberships = (try? eventStore.feedMemberships(
-            feedID: definition.feedID,
-            revision: definition.revision,
-            limit: 1
-        )) ?? []
-        guard existingMemberships.isEmpty else { return }
-        let currentEvents = cachedHomeProjectionEvents(allowedAuthors: allowedAuthors)
-        guard !currentEvents.isEmpty else { return }
-        let now = Int(Date().timeIntervalSince1970)
-        let memberships = homeFeedMemberships(
-            events: currentEvents,
-            feedID: definition.feedID,
-            feedRevision: definition.revision,
-            reason: "projection-repair",
-            insertedAt: now
-        )
-        try? eventStore.replaceFeedProjection(
-            definition,
-            memberships: memberships,
-            sources: homeFeedMembershipSources(
-                events: currentEvents,
-                feedID: definition.feedID,
-                feedRevision: definition.revision,
-                reason: "projection-repair",
-                insertedAt: now
-            )
-        )
-    }
-
-    private func cachedHomeProjectionEvents(allowedAuthors: Set<String>) -> [NostrEvent] {
-        guard let eventStore, !allowedAuthors.isEmpty else {
-            return noteEvents.filter { event in
-                (event.kind == 1 || event.kind == 6) && allowedAuthors.contains(event.pubkey)
-            }
-        }
-        let authors = Array(allowedAuthors)
-        let storedNotes = (try? eventStore.events(kind: 1, authors: authors, limit: 10_000)) ?? []
-        let storedReposts = (try? eventStore.events(kind: 6, authors: authors, limit: 10_000)) ?? []
-        var eventsByID: [String: NostrEvent] = [:]
-        for event in noteEvents + storedNotes + storedReposts
-        where (event.kind == 1 || event.kind == 6) && allowedAuthors.contains(event.pubkey) {
-            eventsByID[event.id] = event
-        }
-        return Array(eventsByID.values)
-    }
-
-    private static func homeFeedID(accountID: String) -> String {
-        "feed:home:\(accountID)"
-    }
-
-    private static func stableFeedSpecificationHash(_ data: Data) -> String {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in data {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return String(hash, radix: 16)
     }
 
     private func activeHomeFeedRuntimeContext() -> HomeFeedRuntimeContext? {
-        guard let definition = activeHomeFeedDefinition else { return nil }
-        return HomeFeedRuntimeContext(definition: definition)
+        homeFeedProjection.runtimeContext()
     }
 
     private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
-        guard let context else { return false }
-        return context.matches(activeHomeFeedDefinition) && account?.pubkey == context.accountID
+        homeFeedProjection.isCurrent(context, accountID: account?.pubkey)
     }
 
     private func feedScopedForwardPackets(
@@ -1677,7 +1444,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func restoreHomeFeedReadState(account: NostrAccount) {
         guard let eventStore,
-              let definition = activeHomeFeedDefinition,
+              let definition = homeFeedProjection.definition,
               definition.accountID == account.pubkey,
               let state = try? eventStore.feedReadState(feedID: definition.feedID)
         else { return }
@@ -1703,7 +1470,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleHomeFeedReadStateSave() {
-        guard account != nil, activeHomeFeedDefinition != nil else { return }
+        guard account != nil, homeFeedProjection.definition != nil else { return }
         feedReadStateTask?.cancel()
         feedReadStateTask = Task { [weak self] in
             do {
@@ -1735,7 +1502,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func persistHomeFeedReadState() {
         guard let account,
               let persistenceWorker,
-              let definition = activeHomeFeedDefinition,
+              let definition = homeFeedProjection.definition,
               definition.accountID == account.pubkey
         else { return }
 
@@ -1754,85 +1521,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func homeFeedMemberships(
-        events: [NostrEvent],
-        feedID: String,
-        feedRevision: Int? = nil,
-        reason: String,
-        insertedAt: Int
-    ) -> [NostrFeedMembershipRecord] {
-        events.compactMap { event in
-            guard event.kind == 1 || event.kind == 6 else { return nil }
-            let subjectEventID = event.kind == 6
-                ? event.tags.last(where: { $0.count >= 2 && $0[0] == "e" })?[1]
-                : nil
-            return NostrFeedMembershipRecord(
-                feedID: feedID,
-                eventID: event.id,
-                subjectEventID: subjectEventID,
-                sortTimestamp: event.createdAt,
-                reason: reason,
-                insertedAt: insertedAt,
-                feedRevision: feedRevision
-            )
-        }
-    }
-
-    private func homeFeedMembershipSources(
-        events: [NostrEvent],
-        feedID: String,
-        feedRevision: Int? = nil,
-        reason: String,
-        insertedAt: Int,
-        sourceRequestID: String? = nil
-    ) -> [NostrFeedMembershipSourceRecord] {
-        events
-            .filter { $0.kind == 1 || $0.kind == 6 }
-            .flatMap { event in
-                var sources = [
-                    NostrFeedMembershipSourceRecord(
-                        feedID: feedID,
-                        eventID: event.id,
-                        sourceType: "author",
-                        sourceID: event.pubkey,
-                        insertedAt: insertedAt,
-                        feedRevision: feedRevision
-                    ),
-                    NostrFeedMembershipSourceRecord(
-                        feedID: feedID,
-                        eventID: event.id,
-                        sourceType: "ingest",
-                        sourceID: reason,
-                        insertedAt: insertedAt,
-                        feedRevision: feedRevision
-                    )
-                ]
-                if let sourceRequestID {
-                    sources.append(NostrFeedMembershipSourceRecord(
-                        feedID: feedID,
-                        eventID: event.id,
-                        sourceType: "sync-request",
-                        sourceID: sourceRequestID,
-                        insertedAt: insertedAt,
-                        feedRevision: feedRevision
-                    ))
-                }
-                return sources
-            }
-    }
-
     private func reloadNewestProjectionWindow(account: NostrAccount) {
-        ensureHomeFeedDefinition(account: account)
-        guard let eventStore,
-              let definition = activeHomeFeedDefinition,
-              let window = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: projectionWindowLimit
-              )
-        else { return }
-        activeHomeFeedWindow = window
-        projectionWindowGeneration &+= 1
+        guard let window = homeFeedProjection.reloadNewest(
+            accountID: account.pubkey,
+            followedPubkeys: followedPubkeys,
+            liveEvents: noteEvents
+        ) else { return }
         noteEvents = window.events
     }
 
@@ -1842,135 +1536,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         around anchorEventID: String?,
         mergingWithCurrentWindow: Bool = false
     ) -> Bool {
-        ensureHomeFeedDefinition(account: account)
-        guard let eventStore, let definition = activeHomeFeedDefinition else { return false }
-        let window: NostrFeedWindow?
-        if let anchorEventID {
-            window = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                aroundEventID: anchorEventID,
-                leadingLimit: projectionAnchorLeadingLimit,
-                trailingLimit: projectionAnchorTrailingLimit
-            )
-        } else {
-            window = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: projectionWindowLimit
-            )
-        }
-        guard let window else { return false }
-        if let anchorEventID,
-           !window.memberships.contains(where: { $0.eventID == anchorEventID }) {
-            return false
-        }
-        let nextWindow: NostrFeedWindow
-        if mergingWithCurrentWindow,
-           let activeHomeFeedWindow,
-           let anchorEventID {
-            nextWindow = mergedProjectionWindow(
-                activeHomeFeedWindow,
-                with: window,
-                centeredOn: anchorEventID
-            )
-        } else {
-            nextWindow = window
-        }
-        activeHomeFeedWindow = nextWindow
-        projectionWindowGeneration &+= 1
-        noteEvents = nextWindow.events
+        guard let window = homeFeedProjection.reload(
+            accountID: account.pubkey,
+            followedPubkeys: followedPubkeys,
+            liveEvents: noteEvents,
+            around: anchorEventID,
+            mergingWithCurrentWindow: mergingWithCurrentWindow
+        ) else { return false }
+        noteEvents = window.events
         return true
-    }
-
-    private func mergedProjectionWindow(
-        _ current: NostrFeedWindow,
-        with loaded: NostrFeedWindow,
-        centeredOn anchorEventID: String
-    ) -> NostrFeedWindow {
-        guard current.definition.feedID == loaded.definition.feedID,
-              current.definition.revision == loaded.definition.revision
-        else { return loaded }
-
-        var membershipsByEventID = Dictionary(
-            uniqueKeysWithValues: current.memberships.map { ($0.eventID, $0) }
-        )
-        loaded.memberships.forEach { membershipsByEventID[$0.eventID] = $0 }
-        let orderedMemberships = membershipsByEventID.values.sorted { lhs, rhs in
-            if lhs.sortTimestamp != rhs.sortTimestamp {
-                return lhs.sortTimestamp > rhs.sortTimestamp
-            }
-            return lhs.eventID < rhs.eventID
-        }
-        let retainedMemberships = retainedProjectionMemberships(
-            orderedMemberships,
-            centeredOn: anchorEventID
-        )
-        let retainedEventIDs = Set(retainedMemberships.map(\.eventID))
-
-        var eventsByID = Dictionary(uniqueKeysWithValues: current.events.map { ($0.id, $0) })
-        loaded.events.forEach { eventsByID[$0.id] = $0 }
-
-        var deletedItemsByTarget = Dictionary(
-            uniqueKeysWithValues: current.deletedItems.map { ($0.targetEventID, $0) }
-        )
-        loaded.deletedItems.forEach { item in
-            if let existing = deletedItemsByTarget[item.targetEventID],
-               existing.deletedAt > item.deletedAt {
-                return
-            }
-            deletedItemsByTarget[item.targetEventID] = item
-        }
-
-        var gapsByBoundary: [String: NostrFeedGapRecord] = [:]
-        (current.gaps + loaded.gaps).forEach { gap in
-            let key = "\(gap.newerEventID)\u{0}\(gap.olderEventID)"
-            if let existing = gapsByBoundary[key], existing.updatedAt > gap.updatedAt {
-                return
-            }
-            gapsByBoundary[key] = gap
-        }
-
-        return NostrFeedWindow(
-            definition: loaded.definition,
-            memberships: retainedMemberships,
-            events: retainedMemberships.compactMap { eventsByID[$0.eventID] },
-            deletedItems: deletedItemsByTarget.values
-                .filter { retainedEventIDs.contains($0.targetEventID) }
-                .sorted { lhs, rhs in
-                    if lhs.sortTimestamp != rhs.sortTimestamp {
-                        return lhs.sortTimestamp > rhs.sortTimestamp
-                    }
-                    return lhs.targetEventID < rhs.targetEventID
-                },
-            gaps: gapsByBoundary.values
-                .filter {
-                    retainedEventIDs.contains($0.newerEventID) &&
-                        retainedEventIDs.contains($0.olderEventID)
-                }
-                .sorted { lhs, rhs in
-                    if lhs.updatedAt != rhs.updatedAt {
-                        return lhs.updatedAt > rhs.updatedAt
-                    }
-                    if lhs.newerEventID != rhs.newerEventID {
-                        return lhs.newerEventID < rhs.newerEventID
-                    }
-                    return lhs.olderEventID < rhs.olderEventID
-                }
-        )
-    }
-
-    private func retainedProjectionMemberships(
-        _ memberships: [NostrFeedMembershipRecord],
-        centeredOn anchorEventID: String
-    ) -> [NostrFeedMembershipRecord] {
-        guard memberships.count > projectionRetainedWindowLimit,
-              let anchorIndex = memberships.firstIndex(where: { $0.eventID == anchorEventID })
-        else { return memberships }
-
-        let preferredStart = max(0, anchorIndex - projectionRetainedWindowLimit / 2)
-        let start = min(preferredStart, memberships.count - projectionRetainedWindowLimit)
-        return Array(memberships[start..<(start + projectionRetainedWindowLimit)])
     }
 
     private func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
@@ -2188,7 +1762,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
             )
             for packet in scopedPackets {
-                forwardFeedContextsByGroupID[packet.groupID] = feedContext
+                feedSyncLifecycle.registerForwardContext(feedContext, groupID: packet.groupID)
             }
             try await relayRuntime.installForward(
                 scopedPackets,
@@ -2239,31 +1813,23 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func resetHomeTimelineRealtime(
         expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
     ) {
-        expectedHomeForwardRuntimeKeys = runtimeKeys
-        homeForwardEOSEKeys.removeAll()
+        feedSyncLifecycle.prepareForwardSubscriptions(runtimeKeys)
         publishHomeTimelineRealtimeState()
     }
 
     private func invalidateHomeTimelineRealtime(for key: RuntimeSubscriptionKey) {
         guard Self.isHomeForwardSubscription(key.subscriptionID) else { return }
-        homeForwardEOSEKeys.remove(key)
+        feedSyncLifecycle.invalidateForwardSubscription(key)
         publishHomeTimelineRealtimeState()
     }
 
     private func invalidateHomeTimelineRealtime(relayURL: String) {
-        homeForwardEOSEKeys = homeForwardEOSEKeys.filter { $0.relayURL != relayURL }
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func markHomeTimelineRealtimeEOSE(for key: RuntimeSubscriptionKey) {
-        guard expectedHomeForwardRuntimeKeys.contains(key) else { return }
-        homeForwardEOSEKeys.insert(key)
+        feedSyncLifecycle.invalidateForwardSubscriptions(relayURL: relayURL)
         publishHomeTimelineRealtimeState()
     }
 
     private func publishHomeTimelineRealtimeState() {
-        let nextIsRealtime = !expectedHomeForwardRuntimeKeys.isEmpty &&
-            expectedHomeForwardRuntimeKeys.isSubset(of: homeForwardEOSEKeys)
+        let nextIsRealtime = feedSyncLifecycle.isRealtime
         guard isHomeTimelineRealtime != nextIsRealtime else { return }
         isHomeTimelineRealtime = nextIsRealtime
     }
@@ -2487,10 +2053,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         await handleBackwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
     }
 
-    private func pendingBackwardRequest(for subscriptionID: String) -> PendingBackwardRequest? {
-        pendingBackwardRequestKey(for: subscriptionID).flatMap { pendingBackwardRequests[$0] }
-    }
-
     private func pendingBackwardRequestKey(for subscriptionID: String) -> String? {
         if let exactOrPrefixed = pendingBackwardRequests.first(where: { entry in
             subscriptionID == entry.key || subscriptionID.hasPrefix(entry.key + "-")
@@ -2502,9 +2064,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         if subscriptionID.contains("astrenza-older-notes") {
             return pendingBackwardRequests.first { $0.value.isOlderPage }?.key
-        }
-        if subscriptionID.contains("astrenza-source-events") {
-            return pendingBackwardRequests.first { !$0.value.sourceEventIDs.isEmpty }?.key
         }
         return nil
     }
@@ -2518,8 +2077,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         let accountID = account.pubkey
 
         let runtimeKey = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        let requestID = activeFeedSyncRequestIDs[runtimeKey]
-        let requestContext = activeFeedSyncContexts[runtimeKey]
+        let requestID = feedSyncLifecycle.requestID(for: runtimeKey)
+        let requestContext = feedSyncLifecycle.context(for: runtimeKey)
 
         let ingestResult: HomeTimelineEventIngestResult
         let projectsIntoCurrentFeed: Bool
@@ -2528,8 +2087,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             projectsIntoCurrentFeed = isCurrentHomeFeedContext(requestContext) &&
                 requestContext?.includes(event) == true
             let insertedAt = Int(Date().timeIntervalSince1970)
-            let feedMembership = projectsIntoCurrentFeed ? activeHomeFeedDefinition.flatMap { definition in
-                homeFeedMemberships(
+            let feedMembership = projectsIntoCurrentFeed ? homeFeedProjection.definition.flatMap { definition in
+                HomeFeedProjectionBuilder.memberships(
                     events: [event],
                     feedID: definition.feedID,
                     feedRevision: definition.revision,
@@ -2537,8 +2096,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                     insertedAt: insertedAt
                 ).first
             } : nil
-            let feedMembershipSources = projectsIntoCurrentFeed ? activeHomeFeedDefinition.map { definition in
-                homeFeedMembershipSources(
+            let feedMembershipSources = projectsIntoCurrentFeed ? homeFeedProjection.definition.map { definition in
+                HomeFeedProjectionBuilder.membershipSources(
                     events: [event],
                     feedID: definition.feedID,
                     feedRevision: definition.revision,
@@ -2580,7 +2139,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             if restoreProjectionAnchorEventID == nil,
                isTimelineAtNewestWindow,
                 unmaterializedNewEventIDs.isEmpty {
-                needsNewestProjectionReload = true
+                materializationScheduler.requestNewestProjectionReload()
                 scheduleMaterializeEntries(allowsRealtimeFollow: receivedWhileRealtime)
             } else if unmaterializedNewEventIDs.insert(event.id).inserted {
                 scheduleUnmaterializedCountPublish()
@@ -2598,8 +2157,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         let request = requestKey.flatMap { pendingBackwardRequests[$0] }
         let isTimelineBackfill = request?.isOlderPage == true || request?.gap != nil
         let runtimeKey = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        let sourceRequestID = activeFeedSyncRequestIDs[runtimeKey]
-        let activeRequestContext = activeFeedSyncContexts[runtimeKey]
+        let sourceRequestID = feedSyncLifecycle.requestID(for: runtimeKey)
+        let activeRequestContext = feedSyncLifecycle.context(for: runtimeKey)
         let requestContext = request?.feedContext
 
         let ingestResult: HomeTimelineEventIngestResult
@@ -2617,8 +2176,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                 requestContext?.includes(event) == true
             let insertedAt = Int(Date().timeIntervalSince1970)
             let timelineSource = request?.isOlderPage == true ? "older" : "gap"
-            let feedMembership = projectsIntoCurrentFeed ? activeHomeFeedDefinition.flatMap { definition in
-                homeFeedMemberships(
+            let feedMembership = projectsIntoCurrentFeed ? homeFeedProjection.definition.flatMap { definition in
+                HomeFeedProjectionBuilder.memberships(
                     events: [event],
                     feedID: definition.feedID,
                     feedRevision: definition.revision,
@@ -2626,8 +2185,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                     insertedAt: insertedAt
                 ).first
             } : nil
-            let feedMembershipSources = projectsIntoCurrentFeed ? activeHomeFeedDefinition.map { definition in
-                homeFeedMembershipSources(
+            let feedMembershipSources = projectsIntoCurrentFeed ? homeFeedProjection.definition.map { definition in
+                HomeFeedProjectionBuilder.membershipSources(
                     events: [event],
                     feedID: definition.feedID,
                     feedRevision: definition.revision,
@@ -2673,7 +2232,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                     }
                 }
             }
-            dependencyFetchQueue.finish(sourceEventIDs: [event.id], succeeded: true)
+            dependencyCoordinator.finishSourceEvent(eventID: event.id)
             if !isTimelineBackfill || projectsIntoCurrentFeed {
                 await enqueueBackwardDependencies(for: event)
                 if let embeddedTarget {
@@ -2681,7 +2240,9 @@ final class NostrHomeTimelineStore: ObservableObject {
                 }
             }
             if !isTimelineBackfill {
-                scheduleMaterializeEntries(delayNanoseconds: materializeCoalescingDelayNanoseconds * 2)
+                scheduleMaterializeEntries(
+                    delayNanoseconds: materializationScheduler.defaultDelayNanoseconds * 2
+                )
             }
         case 5:
             if !isTimelineBackfill || projectsIntoCurrentFeed {
@@ -2711,118 +2272,33 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
         guard relayRuntime != nil, !resolvedRelays.isEmpty, let accountID = account?.pubkey else { return }
         let lifecycleGeneration = runtimeLifecycleGeneration
-        let dependencies = NostrEventDependencies.extract(from: event)
-        let cacheResult = await eventIngestor.dependencyCacheResult(
-            dependencies: dependencies,
+        let result = await dependencyCoordinator.enqueueDependencies(
+            for: event,
             liveMetadataEvents: metadataEvents,
             liveNoteEventIDs: Set(noteEvents.map(\.id)),
-            now: Int(Date().timeIntervalSince1970)
+            availableRelayURLs: resolvedRelays
         )
         guard runtimeLifecycleGeneration == lifecycleGeneration,
               account?.pubkey == accountID
         else { return }
-        cacheResult.cachedProfiles.forEach { profile in
+        result.cachedProfiles.forEach { profile in
             rememberLatestMetadataEvent(profile, consultEventStore: false)
         }
-        let cacheSnapshot = cacheResult.snapshot
-        if !cacheResult.cachedProfiles.isEmpty ||
-            cacheSnapshot.hasResolvedDependencies(for: dependencies) {
+        if !result.cachedProfiles.isEmpty || result.didResolveCachedDependencies {
             scheduleMaterializeEntries()
         }
-
-        await profileDirectory?.ensureProfiles(
-            pubkeys: [event.pubkey],
-            relayHintsByPubkey: dependencies.profileRelayURLsByPubkey.filter { $0.key == event.pubkey },
-            priority: .foreground
-        )
-        let backgroundProfilePubkeys = dependencies.profilePubkeys.filter { $0 != event.pubkey }
-        if !backgroundProfilePubkeys.isEmpty {
-            await profileDirectory?.ensureProfiles(
-                pubkeys: backgroundProfilePubkeys,
-                relayHintsByPubkey: dependencies.profileRelayURLsByPubkey.filter {
-                    backgroundProfilePubkeys.contains($0.key)
-                },
-                priority: .background
-            )
-        }
-
-        let sourceDependencies = NostrEventDependencies(
-            sourceEventIDs: dependencies.sourceEventIDs,
-            sourceRelayURLsByEventID: dependencies.sourceRelayURLsByEventID
-        )
-        let enqueuedSources = dependencyFetchQueue.enqueue(
-            dependencies: sourceDependencies,
-            cacheSnapshot: cacheSnapshot,
-            availableRelayURLs: resolvedRelays
-        )
-        if enqueuedSources {
+        if result.didEnqueueSourceDependencies {
             scheduleBackwardDependencyFlush()
         }
     }
 
     private func ensureProfileDirectoryDependencies(for events: [NostrEvent]) async {
-        guard let profileDirectory, !events.isEmpty else { return }
-        var authorPubkeys = Set<String>()
-        var referencedPubkeys = Set<String>()
-        var relayHintsByPubkey: [String: [String]] = [:]
-        for event in events {
-            authorPubkeys.insert(event.pubkey)
-            let dependencies = NostrEventDependencies.extract(from: event)
-            referencedPubkeys.formUnion(dependencies.profilePubkeys)
-            for (pubkey, relayHints) in dependencies.profileRelayURLsByPubkey {
-                relayHintsByPubkey[pubkey, default: []].append(contentsOf: relayHints)
-            }
-        }
-        referencedPubkeys.subtract(authorPubkeys)
-        await profileDirectory.ensureProfiles(
-            pubkeys: authorPubkeys.sorted(),
-            relayHintsByPubkey: relayHintsByPubkey,
-            priority: .foreground
-        )
-        if !referencedPubkeys.isEmpty {
-            await profileDirectory.ensureProfiles(
-                pubkeys: referencedPubkeys.sorted(),
-                relayHintsByPubkey: relayHintsByPubkey,
-                priority: .background
-            )
-        }
+        await dependencyCoordinator.ensureProfiles(for: events)
     }
 
     private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
-        guard let metadata = Self.profileMetadata(from: metadataEvent) else { return }
-        let identifier = metadata.nip05?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !identifier.isEmpty else {
-            resolvingNIP05IdentifiersByPubkey.removeValue(forKey: metadataEvent.pubkey)
-            guard nip05Resolutions.removeValue(forKey: metadataEvent.pubkey) != nil,
-                  let account
-            else { return }
-            Task { [weak self] in
-                await self?.persistTimelineMetadata(account: account)
-            }
-            return
-        }
-        guard nip05Resolutions[metadataEvent.pubkey]?.identifier != identifier else { return }
-        guard resolvingNIP05IdentifiersByPubkey[metadataEvent.pubkey] != identifier else { return }
-
-        let resolver = timelineLoader.nip05Resolver
-        guard let accountID = account?.pubkey else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
-        resolvingNIP05IdentifiersByPubkey[metadataEvent.pubkey] = identifier
-        Task(priority: .utility) { [weak self] in
-            let resolution = await resolver.resolve(identifier: identifier, expectedPubkey: metadataEvent.pubkey)
-            guard let self,
-                  self.runtimeLifecycleGeneration == lifecycleGeneration,
-                  self.account?.pubkey == accountID
-            else { return }
-            if self.resolvingNIP05IdentifiersByPubkey[metadataEvent.pubkey] == identifier {
-                self.resolvingNIP05IdentifiersByPubkey.removeValue(forKey: metadataEvent.pubkey)
-            }
-            let latestMetadata = NostrHomeTimelineMaterializer
-                .latestMetadataByPubkey(self.metadataEvents)[metadataEvent.pubkey]
-            guard latestMetadata?.nip05?.trimmingCharacters(in: .whitespacesAndNewlines) == resolution.identifier else {
-                return
-            }
-            self.nip05Resolutions[metadataEvent.pubkey] = resolution
+        dependencyCoordinator.resolveNIP05IfNeeded(for: metadataEvent) { [weak self] in
+            guard let self else { return }
             self.invalidateListEntries()
             self.scheduleMaterializeEntries()
             if let account = self.account {
@@ -2832,8 +2308,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleBackwardDependencyFlush() {
-        guard backwardFlushTask == nil else { return }
-        backwardFlushTask = Task { [weak self] in
+        guard dependencyFlushTask == nil else { return }
+        dependencyFlushTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 12_000_000)
             await MainActor.run {
                 self?.flushBackwardDependencies()
@@ -2843,16 +2319,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func flushBackwardDependencies() {
         guard let relayRuntime else { return }
-        backwardFlushTask = nil
-        let batch = dependencyFetchQueue.drain()
-
-        let plan = syncPlanner.dependencyPackets(batch: batch)
-        for (packet, group) in zip(plan.sourcePackets, batch.sourceGroups) {
-            pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-                sourceEventIDs: group.values
-            )
-        }
-
+        dependencyFlushTask = nil
+        let plan = dependencyCoordinator.drainSourcePacketPlan()
         guard !plan.isEmpty else { return }
         guard let accountID = account?.pubkey else { return }
         let lifecycleGeneration = runtimeLifecycleGeneration
@@ -2867,11 +2335,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                     guard runtimeLifecycleGeneration == lifecycleGeneration,
                           account?.pubkey == accountID
                     else { return }
-                    plan.registeredGroupIDs.forEach { pendingBackwardRequests.removeValue(forKey: $0) }
-                    finishDependencyFetch(
-                        sourceEventIDs: plan.registeredSourceEventIDs,
-                        succeeded: false
-                    )
+                    dependencyCoordinator.failSourceRequests(in: plan)
                     recordRuntimeSyncEvent(
                         relayURL: resolvedRelays.first ?? "runtime",
                         kind: .partialFailure,
@@ -2884,13 +2348,14 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        guard let request = pendingBackwardRequests.removeValue(forKey: completion.groupID) else { return }
+        guard let request = pendingBackwardRequests.removeValue(forKey: completion.groupID) else {
+            if dependencyCoordinator.completeSourceRequest(completion) {
+                relayStatusRevision &+= 1
+            }
+            return
+        }
         let priorBottomPostID = request.olderAnchorPostID ?? noteEvents.last?.id
         let isTimelineBackfill = request.isOlderPage || request.gap != nil
-        finishDependencyFetch(
-            sourceEventIDs: request.sourceEventIDs,
-            succeeded: completion.status == .completed || completion.status == .partial
-        )
         guard !isTimelineBackfill || isCurrentHomeFeedContext(request.feedContext) else {
             relayStatusRevision &+= 1
             return
@@ -2935,19 +2400,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayStatusRevision &+= 1
     }
 
-    private func finishDependencyFetch(
-        sourceEventIDs: [String],
-        succeeded: Bool
-    ) {
-        dependencyFetchQueue.finish(
-            sourceEventIDs: sourceEventIDs,
-            succeeded: succeeded
-        )
-    }
-
     private func markOlderPageBoundaryGap(_ request: PendingBackwardRequest) {
         guard account != nil,
-              let definition = activeHomeFeedDefinition,
+              let definition = homeFeedProjection.definition,
               let anchorPostID = request.olderAnchorPostID,
               let newestReceivedEventID = newestReceivedTimelineEventID(in: request)
         else { return }
@@ -3061,17 +2516,26 @@ final class NostrHomeTimelineStore: ObservableObject {
               let olderEvent = timelineEvent(id: gap.olderPostID)
         else { return }
 
-        let reconciliation = await fetchMissingGapEvents(
-            account: account,
+        let output = await gapReconciler.reconcile(
             newerEvent: newerEvent,
             olderEvent: olderEvent,
-            context: context
+            context: context,
+            relays: Array(resolvedRelays.prefix(4)),
+            inMemoryEvents: noteEvents
         )
         guard runtimeLifecycleGeneration == lifecycleGeneration,
               self.account?.pubkey == accountID,
               isCurrentHomeFeedContext(context)
         else { return }
-        switch reconciliation {
+        for diagnostic in output.diagnostics {
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: "astrenza-neg-gap",
+                message: diagnostic.message
+            )
+        }
+        switch output.result {
         case .verifiedComplete:
             markGapResolved(gap, context: context)
         case .indeterminate:
@@ -3086,14 +2550,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             do {
                 let insertedAt = Int(Date().timeIntervalSince1970)
                 let scopedEvents = recoveredEvents.filter(context.includes)
-                let feedMemberships = homeFeedMemberships(
+                let feedMemberships = HomeFeedProjectionBuilder.memberships(
                     events: scopedEvents,
                     feedID: context.feedID,
                     feedRevision: context.revision,
                     reason: "gap-negentropy",
                     insertedAt: insertedAt
                 )
-                let feedMembershipSources = homeFeedMembershipSources(
+                let feedMembershipSources = HomeFeedProjectionBuilder.membershipSources(
                     events: scopedEvents,
                     feedID: context.feedID,
                     feedRevision: context.revision,
@@ -3125,253 +2589,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
         materializeEntries()
         scheduleLinkPreviewResolution()
-    }
-
-    private func fetchMissingGapEvents(
-        account: NostrAccount,
-        newerEvent: NostrEvent,
-        olderEvent: NostrEvent,
-        context: HomeFeedRuntimeContext
-    ) async -> GapReconciliationResult {
-        let authors = context.allowedAuthors.isEmpty
-            ? [account.pubkey]
-            : context.allowedAuthors.sorted()
-        guard isCurrentHomeFeedContext(context),
-              !authors.isEmpty,
-              olderEvent.createdAt < newerEvent.createdAt
-        else { return .indeterminate }
-
-        let localEvents = localGapWindowEvents(
-            authors: authors,
-            newerEvent: newerEvent,
-            olderEvent: olderEvent
-        )
-        let filter = NostrRelayFilter(
-            kinds: [1, 6],
-            authors: authors,
-            since: olderEvent.createdAt + 1,
-            until: newerEvent.createdAt - 1
-        )
-
-        let relayClient = timelineLoader.relayClient
-        let relays = Array(resolvedRelays.prefix(4))
-        guard !relays.isEmpty else { return .indeterminate }
-        let verificationRequestIDs = beginGapVerificationRequests(
-            relays: relays,
-            filter: filter,
-            requestedAt: Int(Date().timeIntervalSince1970),
-            context: context
-        )
-        let probe = await withTaskGroup(of: GapRelayProbeResult.self) { group in
-            for relay in relays {
-                let requestID = verificationRequestIDs[relay]
-                group.addTask {
-                    do {
-                        return .success(
-                            relayURL: relay,
-                            requestID: requestID,
-                            missingEventIDs: try await relayClient.fetchMissingEventIDs(
-                                relayURL: relay,
-                                filter: filter,
-                                localEvents: localEvents,
-                                subscriptionID: "astrenza-neg-gap"
-                            )
-                        )
-                    } catch {
-                        return .failure(
-                            relayURL: relay,
-                            requestID: requestID,
-                            outcome: Self.verificationFailureOutcome(error)
-                        )
-                    }
-                }
-            }
-
-            var ids = Set<String>()
-            var successCount = 0
-            var results: [GapRelayProbeResult] = []
-            for await result in group {
-                results.append(result)
-                guard case .success(_, _, let relayIDs) = result else { continue }
-                successCount += 1
-                ids.formUnion(relayIDs)
-            }
-            return (ids: Array(ids).sorted(), successCount: successCount, results: results)
-        }
-        persistGapVerificationResults(probe.results)
-        guard isCurrentHomeFeedContext(context) else { return .indeterminate }
-        guard probe.successCount > 0 else { return .indeterminate }
-        guard !probe.ids.isEmpty else {
-            return probe.successCount == relays.count ? .verifiedComplete : .indeterminate
-        }
-        let missingIDs = probe.ids
-
-        let request = NostrRelayRequest(
-            subscriptionID: "astrenza-gap-events",
-            filters: [["ids": .strings(Array(missingIDs.prefix(250)))]]
-        )
-        let events = await withTaskGroup(of: GapRelayFetchResult.self) { group in
-            for relay in relays {
-                group.addTask {
-                    do {
-                        return .success(try await relayClient.fetch(relayURL: relay, request: request))
-                    } catch {
-                        return .failure
-                    }
-                }
-            }
-
-            var fetched: [NostrEvent] = []
-            for await result in group {
-                guard case .success(let relayEvents) = result else { continue }
-                fetched.append(contentsOf: relayEvents)
-            }
-            return fetched
-        }
-        guard isCurrentHomeFeedContext(context) else { return .indeterminate }
-
-        let missingIDSet = Set(missingIDs)
-        let recoveredEvents = Array(
-            Dictionary(uniqueKeysWithValues: events.compactMap { event -> (String, NostrEvent)? in
-                guard missingIDSet.contains(event.id),
-                      [1, 6].contains(event.kind),
-                      authors.contains(event.pubkey),
-                      event.createdAt > olderEvent.createdAt,
-                      event.createdAt < newerEvent.createdAt
-                else { return nil }
-                return (event.id, event)
-            }).values
-        ).sorted { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt {
-                return lhs.id < rhs.id
-            }
-            return lhs.createdAt > rhs.createdAt
-        }
-        return recoveredEvents.isEmpty ? .indeterminate : .recovered(recoveredEvents)
-    }
-
-    private func beginGapVerificationRequests(
-        relays: [String],
-        filter: NostrRelayFilter,
-        requestedAt: Int,
-        context: HomeFeedRuntimeContext
-    ) -> [String: String] {
-        guard let eventStore, isCurrentHomeFeedContext(context) else { return [:] }
-        var filterObject: [String: AnySendableJSON] = [:]
-        if let kinds = filter.kinds { filterObject["kinds"] = .ints(kinds) }
-        if let authors = filter.authors { filterObject["authors"] = .strings(authors) }
-        if let since = filter.since { filterObject["since"] = .int(since) }
-        if let until = filter.until { filterObject["until"] = .int(until) }
-
-        var requestIDs: [String: String] = [:]
-        for relayURL in relays {
-            let requestID = UUID().uuidString
-            do {
-                let syncFilter = try NostrFeedSyncFilterRecord(
-                    requestID: requestID,
-                    filterIndex: 0,
-                    filter: filterObject
-                )
-                try eventStore.beginFeedSyncRequest(
-                    NostrFeedSyncRequestRecord(
-                        requestID: requestID,
-                        feedID: context.feedID,
-                        feedRevision: context.revision,
-                        feedSpecificationHash: context.specificationHash,
-                        relayURL: relayURL,
-                        subscriptionID: "astrenza-neg-gap",
-                        syncProtocol: .nip77,
-                        direction: .verification,
-                        purpose: .gap,
-                        requestedAt: requestedAt
-                    ),
-                    filters: [syncFilter]
-                )
-                try eventStore.markFeedSyncRequestInstalled(requestID: requestID, at: requestedAt)
-                requestIDs[relayURL] = requestID
-            } catch {
-                recordRuntimeSyncEvent(
-                    relayURL: relayURL,
-                    kind: .partialFailure,
-                    subscriptionID: "astrenza-neg-gap",
-                    message: "gap verification save failed: \(error.localizedDescription)"
-                )
-            }
-        }
-        return requestIDs
-    }
-
-    private func persistGapVerificationResults(_ results: [GapRelayProbeResult]) {
-        let completedAt = Int(Date().timeIntervalSince1970)
-        for result in results {
-            switch result {
-            case .success(_, let requestID, let missingEventIDs):
-                guard let requestID else { continue }
-                let outcome: NostrFeedVerificationOutcome = missingEventIDs.isEmpty
-                    ? .noRemoteMissing
-                    : .differencesFound
-                try? eventStore?.completeFeedSyncVerification(
-                    requestID: requestID,
-                    outcome: outcome,
-                    differenceCount: missingEventIDs.count,
-                    at: completedAt
-                )
-            case .failure(_, let requestID, let outcome):
-                guard let requestID else { continue }
-                try? eventStore?.completeFeedSyncVerification(
-                    requestID: requestID,
-                    outcome: outcome,
-                    differenceCount: nil,
-                    at: completedAt
-                )
-            }
-        }
-    }
-
-    nonisolated private static func verificationFailureOutcome(
-        _ error: any Error
-    ) -> NostrFeedVerificationOutcome {
-        guard let relayError = error as? NostrRelayClientError,
-              case .negentropyRelayError(let reason) = relayError
-        else {
-            return .failed
-        }
-        let normalizedReason = reason.lowercased()
-        return normalizedReason.contains("unsupported") ||
-            normalizedReason.contains("not supported") ||
-            normalizedReason.contains("unknown command")
-            ? .unsupported
-            : .failed
-    }
-
-    private func localGapWindowEvents(
-        authors: [String],
-        newerEvent: NostrEvent,
-        olderEvent: NostrEvent
-    ) -> [NostrEvent] {
-        let inMemoryEvents = noteEvents.filter { event in
-            [1, 6].contains(event.kind) &&
-                authors.contains(event.pubkey) &&
-                event.createdAt > olderEvent.createdAt &&
-                event.createdAt < newerEvent.createdAt
-        }
-        guard let eventStore else { return inMemoryEvents }
-
-        let storedKind1 = ((try? eventStore.events(
-            kind: 1,
-            authors: authors,
-            until: newerEvent.createdAt - 1,
-            limit: 500
-        )) ?? []).filter { $0.createdAt > olderEvent.createdAt }
-        let storedKind6 = ((try? eventStore.events(
-            kind: 6,
-            authors: authors,
-            until: newerEvent.createdAt - 1,
-            limit: 500
-        )) ?? []).filter { $0.createdAt > olderEvent.createdAt }
-        return Array(
-            Dictionary(uniqueKeysWithValues: (inMemoryEvents + storedKind1 + storedKind6).map { ($0.id, $0) }).values
-        )
     }
 
     private func scheduleLinkPreviewResolution() {
@@ -3465,44 +2682,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             invalidateHomeTimelineRealtime(for: key)
         }
         guard let eventStore else { return }
-        if let supersededRequestID = activeFeedSyncRequestIDs[key] {
-            let supersededWindow = runtimeSyncWindows.removeValue(forKey: key) ?? RuntimeSyncWindow()
-            activeFeedSyncContexts[key] = nil
-            try? eventStore.endFeedSyncRequest(
-                requestID: supersededRequestID,
-                reason: .superseded,
-                at: attempt.startedAt,
-                eventCount: supersededWindow.eventCount,
-                observedOldestPosition: supersededWindow.oldestCursor,
-                observedNewestPosition: supersededWindow.newestCursor
-            )
-        }
 
         do {
-            let filters = try attempt.packet.filters.enumerated().map { index, filter in
-                try NostrFeedSyncFilterRecord(
-                    requestID: attempt.requestID,
-                    filterIndex: index,
-                    filter: filter
-                )
-            }
-            try eventStore.beginFeedSyncRequest(
-                NostrFeedSyncRequestRecord(
-                    requestID: attempt.requestID,
-                    feedID: registration.context.feedID,
-                    feedRevision: registration.context.revision,
-                    feedSpecificationHash: registration.context.specificationHash,
-                    relayURL: attempt.relayURL,
-                    subscriptionID: attempt.packet.subscriptionID,
-                    direction: registration.direction,
-                    purpose: registration.purpose,
-                    requestedAt: attempt.startedAt
-                ),
-                filters: filters
+            try feedSyncLifecycle.beginRequest(
+                attempt,
+                context: registration.context,
+                direction: registration.direction,
+                purpose: registration.purpose
             )
-            activeFeedSyncRequestIDs[key] = attempt.requestID
-            activeFeedSyncContexts[key] = registration.context
-            runtimeSyncWindows[key] = RuntimeSyncWindow()
             if let pendingRequestKey = registration.pendingRequestKey {
                 pendingBackwardRequests[pendingRequestKey]?.sourceRequestIDs.append(attempt.requestID)
             }
@@ -3530,7 +2717,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func feedSyncRegistration(for packet: NostrREQPacket) -> HomeFeedSyncRegistration? {
         if packet.strategy == .forward, Self.isHomeForwardSubscription(packet.subscriptionID) {
-            guard let context = forwardFeedContextsByGroupID[packet.groupID] else { return nil }
+            guard let context = feedSyncLifecycle.forwardContext(groupID: packet.groupID) else { return nil }
             let hasSince = packet.filters.contains { $0["since"] != nil }
             return HomeFeedSyncRegistration(
                 context: context,
@@ -3572,24 +2759,16 @@ final class NostrHomeTimelineStore: ObservableObject {
         window: RuntimeSyncWindow
     ) {
         let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        let requestID: String?
-        if Self.isHomeForwardSubscription(subscriptionID) {
-            // Forward REQはEOSE後もlive subscriptionとして継続するため、
-            // revision contextとrequest provenanceをCLOSED/置換まで保持します。
-            requestID = activeFeedSyncRequestIDs[key]
-            markHomeTimelineRealtimeEOSE(for: key)
-        } else {
-            requestID = activeFeedSyncRequestIDs.removeValue(forKey: key)
-            activeFeedSyncContexts[key] = nil
-        }
-        guard let requestID else { return }
-        try? eventStore?.recordFeedSyncEOSE(
-            requestID: requestID,
-            at: Int(Date().timeIntervalSince1970),
-            eventCount: window.eventCount,
-            observedOldestPosition: window.oldestCursor,
-            observedNewestPosition: window.newestCursor
+        let isForward = Self.isHomeForwardSubscription(subscriptionID)
+        // Forward REQはEOSE後もlive subscriptionとして継続するため、
+        // lifecycleがrevision contextとrequest provenanceをCLOSED/置換まで保持します。
+        feedSyncLifecycle.recordEOSE(
+            key: key,
+            isForward: isForward,
+            window: window,
+            at: Int(Date().timeIntervalSince1970)
         )
+        publishHomeTimelineRealtimeState()
     }
 
     private func endFeedSyncRequest(
@@ -3600,74 +2779,36 @@ final class NostrHomeTimelineStore: ObservableObject {
         window: RuntimeSyncWindow
     ) {
         let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        invalidateHomeTimelineRealtime(for: key)
-        guard let requestID = activeFeedSyncRequestIDs.removeValue(forKey: key) else { return }
-        activeFeedSyncContexts[key] = nil
-        try? eventStore?.endFeedSyncRequest(
-            requestID: requestID,
+        feedSyncLifecycle.endRequest(
+            key: key,
             reason: reason,
             message: message,
-            at: Int(Date().timeIntervalSince1970),
-            eventCount: window.eventCount,
-            observedOldestPosition: window.oldestCursor,
-            observedNewestPosition: window.newestCursor
+            window: window,
+            at: Int(Date().timeIntervalSince1970)
         )
+        publishHomeTimelineRealtimeState()
     }
 
     private func handleFeedSyncRequestEnded(_ end: NostrRelayRequestAttemptEnd) {
-        let key = RuntimeSubscriptionKey(relayURL: end.relayURL, subscriptionID: end.subscriptionID)
-        invalidateHomeTimelineRealtime(for: key)
-        let isCurrentRequest = activeFeedSyncRequestIDs[key] == end.requestID
-        let window = isCurrentRequest
-            ? runtimeSyncWindows.removeValue(forKey: key) ?? RuntimeSyncWindow()
-            : RuntimeSyncWindow()
-        if isCurrentRequest {
-            activeFeedSyncRequestIDs[key] = nil
-            activeFeedSyncContexts[key] = nil
-        }
-        let reason: NostrFeedSyncEndReason
-        switch end.reason {
-        case .installFailed:
-            reason = .installFailed
-        case .cancelled:
-            reason = .cancelled
-        case .superseded:
-            reason = .superseded
-        }
-        try? eventStore?.endFeedSyncRequest(
-            requestID: end.requestID,
-            reason: reason,
-            message: end.message,
-            at: end.endedAt,
-            eventCount: window.eventCount,
-            observedOldestPosition: window.oldestCursor,
-            observedNewestPosition: window.newestCursor
-        )
+        feedSyncLifecycle.endRequestAttempt(end)
+        publishHomeTimelineRealtimeState()
     }
 
     private func finishActiveFeedSyncRequests(reason: NostrFeedSyncEndReason) {
-        let endedAt = Int(Date().timeIntervalSince1970)
-        for (key, requestID) in activeFeedSyncRequestIDs {
-            let window = runtimeSyncWindows[key] ?? RuntimeSyncWindow()
-            try? eventStore?.endFeedSyncRequest(
-                requestID: requestID,
-                reason: reason,
-                at: endedAt,
-                eventCount: window.eventCount,
-                observedOldestPosition: window.oldestCursor,
-                observedNewestPosition: window.newestCursor
-            )
-        }
+        feedSyncLifecycle.finishActiveRequests(
+            reason: reason,
+            at: Int(Date().timeIntervalSince1970)
+        )
     }
 
     private func trackRuntimeSyncWindow(relayURL: String, subscriptionID: String, event: NostrEvent) {
         let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        runtimeSyncWindows[key, default: RuntimeSyncWindow()].include(event)
+        feedSyncLifecycle.record(event, for: key)
     }
 
     private func finishRuntimeSyncWindow(relayURL: String, subscriptionID: String) -> RuntimeSyncWindow {
         let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        return runtimeSyncWindows.removeValue(forKey: key) ?? RuntimeSyncWindow()
+        return feedSyncLifecycle.finishWindow(for: key)
     }
 
     private func hasRecentRuntimeSyncEvent(
@@ -3697,18 +2838,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
-        materializeTask?.cancel()
-        materializeTask = nil
-        guard !isTimelineScrollActive else {
-            needsMaterializationAfterScroll = true
-            mergePendingMaterializationRealtimeFollow(allowsRealtimeFollow)
-            return
-        }
-        pendingMaterializationAllowsRealtimeFollow = nil
-        needsMaterializationAfterScroll = false
-        if needsNewestProjectionReload, let account {
+        guard let pass = materializationScheduler.beginMaterialization(
+            allowsRealtimeFollow: allowsRealtimeFollow
+        ) else { return }
+        if pass.shouldReloadNewestProjection, let account {
             reloadNewestProjectionWindow(account: account)
-            needsNewestProjectionReload = false
+            materializationScheduler.clearNewestProjectionReload()
         }
         let filterRules = homeFilterRules()
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
@@ -3717,10 +2852,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         let snapshot = timelineRepository.materialize(
             account: account,
             noteEvents: noteEvents,
-            feedWindow: activeHomeFeedWindow,
+            feedWindow: homeFeedProjection.window,
             contextEvents: contextEvents,
             metadataEvents: metadataEvents,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys,
             resolvedRelays: resolvedRelays,
@@ -3729,9 +2864,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             policy: syncPolicy
         )
         var didChangePublishedContent = false
-        if snapshot.renderFingerprint != lastEntriesRenderFingerprint {
+        if materializationScheduler.shouldPublish(
+            renderFingerprint: snapshot.renderFingerprint
+        ) {
             entries = snapshot.entries
-            lastEntriesRenderFingerprint = snapshot.renderFingerprint
             didChangePublishedContent = true
         }
         unreadState.replaceMaterializedPostIDs(entries.compactMap(\.post?.id))
@@ -3743,9 +2879,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         if didChangePublishedContent {
             resolvedContentRevision &+= 1
-            realtimeFollowSourceRevision = allowsRealtimeFollow
-                ? resolvedContentRevision
-                : nil
+            materializationScheduler.didPublish(
+                revision: resolvedContentRevision,
+                allowsRealtimeFollow: pass.allowsRealtimeFollow
+            )
+            realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         }
     }
 
@@ -3758,25 +2896,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         delayNanoseconds: UInt64? = nil,
         allowsRealtimeFollow: Bool? = nil
     ) {
-        if let allowsRealtimeFollow {
-            mergePendingMaterializationRealtimeFollow(allowsRealtimeFollow)
+        materializationScheduler.schedule(
+            delayNanoseconds: delayNanoseconds,
+            allowsRealtimeFollow: allowsRealtimeFollow
+        ) { [weak self] allowsRealtimeFollow in
+            self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
         }
-        needsMaterializationAfterScroll = true
-        guard !isTimelineScrollActive else { return }
-        guard materializeTask == nil else { return }
-        let delay = delayNanoseconds ?? materializeCoalescingDelayNanoseconds
-        materializeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: delay)
-            guard let self, !Task.isCancelled else { return }
-            self.materializeTask = nil
-            let allowsRealtimeFollow = self.pendingMaterializationAllowsRealtimeFollow == true
-            self.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-        }
-    }
-
-    private func mergePendingMaterializationRealtimeFollow(_ allowsRealtimeFollow: Bool) {
-        pendingMaterializationAllowsRealtimeFollow =
-            (pendingMaterializationAllowsRealtimeFollow ?? true) && allowsRealtimeFollow
     }
 
     private func scheduleUnmaterializedCountPublish() {
@@ -3803,7 +2928,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         return NostrTimelineMaterializer.posts(
             noteEvents: events,
             metadataEvents: metadata,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             profileResolutionStates: profileResolutionStates,
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: events),
@@ -3948,7 +3073,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         return .metadataResolved(
             displayName: metadata?.bestName,
             nip05: metadata?.nip05,
-            nip05Status: NIP05Status(nip05Resolutions[pubkey]?.status ?? .unchecked),
+            nip05Status: NIP05Status(
+                dependencyCoordinator.nip05Resolutions[pubkey]?.status ?? .unchecked
+            ),
             pubkey: pubkey,
             isFollowed: followedPubkeys.contains(pubkey)
         )
@@ -3989,7 +3116,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             metadataEvents: metadataEvents,
             relayListEvent: relayListEvent,
             contactListEvent: contactListEvent,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
             relaySyncEvents: relaySyncEvents
         )
@@ -4030,11 +3157,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         metadataEvents = state.metadataEvents
         relayListEvent = effectiveRelayListEvent
         contactListEvent = effectiveContactListEvent
-        nip05Resolutions = state.nip05Resolutions
+        dependencyCoordinator.replaceNIP05Resolutions(state.nip05Resolutions)
         relaySyncEvents = state.relaySyncEvents
         hasMoreOlder = state.hasMoreOlder
-        activeHomeFeedWindow = nil
-        projectionWindowGeneration &+= 1
+        homeFeedProjection.clearWindow()
         invalidateListEntries()
         updateRelayStatusCounts()
     }
@@ -4115,7 +3241,7 @@ extension NostrHomeTimelineStore {
                 context: nil
             ))
         }
-        lastEntriesRenderFingerprint = entries.map { $0.id.hashValue }
+        materializationScheduler.replaceRenderFingerprint(entries.map { $0.id.hashValue })
         unreadState.replaceMaterializedPostIDs(ids, marksInitialWindowRead: false)
         publishUnreadState()
     }
@@ -4135,7 +3261,12 @@ extension NostrHomeTimelineStore {
         with loaded: NostrFeedWindow,
         centeredOn anchorEventID: String
     ) -> NostrFeedWindow {
-        mergedProjectionWindow(current, with: loaded, centeredOn: anchorEventID)
+        HomeFeedProjectionBuilder.mergedWindow(
+            current,
+            with: loaded,
+            centeredOn: anchorEventID,
+            retainedLimit: homeFeedProjection.retainedWindowLimit
+        )
     }
 
     func testingActivateHomeFeed(
@@ -4145,14 +3276,15 @@ extension NostrHomeTimelineStore {
     ) {
         self.account = account
         followedPubkeys = sourceAuthors
-        activeHomeFeedDefinition = definition
-        activeHomeFeedSourceAuthors = sourceAuthors
-        activeHomeFeedWindow = try? eventStore?.feedWindow(
-            feedID: definition.feedID,
-            revision: definition.revision,
-            limit: projectionWindowLimit
+        homeFeedProjection.activate(
+            definition: definition,
+            window: try? eventStore?.feedWindow(
+                feedID: definition.feedID,
+                revision: definition.revision,
+                limit: homeFeedProjection.windowLimit
+            ),
+            sourceAuthors: sourceAuthors
         )
-        projectionWindowGeneration &+= 1
     }
 
     func testingRegisterOlderFeedRequest(
@@ -4161,7 +3293,6 @@ extension NostrHomeTimelineStore {
         anchorEventID: String?
     ) {
         pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            sourceEventIDs: [],
             feedContext: HomeFeedRuntimeContext(definition: definition),
             isOlderPage: true,
             olderAnchorPostID: anchorEventID
@@ -4172,7 +3303,10 @@ extension NostrHomeTimelineStore {
         packet: NostrREQPacket,
         definition: NostrFeedDefinitionRecord
     ) {
-        forwardFeedContextsByGroupID[packet.groupID] = HomeFeedRuntimeContext(definition: definition)
+        feedSyncLifecycle.registerForwardContext(
+            HomeFeedRuntimeContext(definition: definition),
+            groupID: packet.groupID
+        )
     }
 
     func testingRegisterGapFeedRequest(
@@ -4183,7 +3317,6 @@ extension NostrHomeTimelineStore {
         direction: TimelineGapFillDirection
     ) {
         pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            sourceEventIDs: [],
             feedContext: HomeFeedRuntimeContext(definition: definition),
             gap: PendingGapBackfill(
                 newerPostID: newerEventID,
@@ -4226,8 +3359,8 @@ extension NostrHomeTimelineStore {
         _ dependencies: NostrEventDependencies,
         availableRelayURLs: [String]
     ) -> Bool {
-        dependencyFetchQueue.enqueue(
-            dependencies: dependencies,
+        dependencyCoordinator.enqueueSourceDependencies(
+            dependencies,
             cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
             availableRelayURLs: availableRelayURLs,
             now: 0
@@ -4239,19 +3372,19 @@ extension NostrHomeTimelineStore {
     }
 
     var testingPendingBackwardRequestCount: Int {
-        pendingBackwardRequests.count
+        pendingBackwardRequests.count + dependencyCoordinator.pendingSourceRequestCount
     }
 
     var testingHasPendingDependencyWork: Bool {
-        dependencyFetchQueue.hasPendingWork
+        dependencyCoordinator.hasPendingWork
     }
 
     var testingActiveFeedSyncRequestCount: Int {
-        activeFeedSyncRequestIDs.count
+        feedSyncLifecycle.activeRequestCount
     }
 
     var testingActiveFeedSyncContextCount: Int {
-        activeFeedSyncContexts.count
+        feedSyncLifecycle.activeContextCount
     }
 }
 #endif
@@ -4271,15 +3404,7 @@ extension NIP05Status {
     }
 }
 
-private extension NostrDependencyFetchCacheSnapshot {
-    func hasResolvedDependencies(for dependencies: NostrEventDependencies) -> Bool {
-        dependencies.profilePubkeys.contains { profileReceivedAtByPubkey[$0] != nil } ||
-            dependencies.sourceEventIDs.contains { sourceEventIDs.contains($0) }
-    }
-}
-
 private struct PendingBackwardRequest {
-    let sourceEventIDs: [String]
     var feedContext: HomeFeedRuntimeContext? = nil
     var isOlderPage = false
     var olderAnchorPostID: String?
@@ -4295,38 +3420,6 @@ private struct PendingFeedViewportState: Sendable {
     let anchorEventID: String?
     let anchorOffset: Double
     let updatedAt: Int
-}
-
-private struct HomeFeedRuntimeContext: Equatable, Sendable {
-    let feedID: String
-    let accountID: String
-    let revision: Int
-    let specificationHash: String
-    let allowedAuthors: Set<String>
-
-    init(definition: NostrFeedDefinitionRecord) {
-        feedID = definition.feedID
-        accountID = definition.accountID
-        revision = definition.revision
-        specificationHash = definition.specificationHash
-        let specification = try? JSONDecoder().decode(
-            HomeFeedSpecification.self,
-            from: definition.specificationJSON
-        )
-        allowedAuthors = Set(specification?.authors ?? [])
-    }
-
-    func matches(_ definition: NostrFeedDefinitionRecord?) -> Bool {
-        guard let definition else { return false }
-        return feedID == definition.feedID &&
-            accountID == definition.accountID &&
-            revision == definition.revision &&
-            specificationHash == definition.specificationHash
-    }
-
-    func includes(_ event: NostrEvent) -> Bool {
-        allowedAuthors.isEmpty || allowedAuthors.contains(event.pubkey)
-    }
 }
 
 private struct HomeFeedSyncRegistration {
@@ -4352,76 +3445,12 @@ private struct PendingGapBackfill {
     }
 }
 
-private enum GapReconciliationResult: Sendable {
-    case verifiedComplete
-    case recovered([NostrEvent])
-    case indeterminate
-}
-
-private enum GapRelayProbeResult: Sendable {
-    case success(relayURL: String, requestID: String?, missingEventIDs: [String])
-    case failure(relayURL: String, requestID: String?, outcome: NostrFeedVerificationOutcome)
-}
-
-private enum GapRelayFetchResult: Sendable {
-    case success([NostrEvent])
-    case failure
-}
-
-private struct RuntimeSubscriptionKey: Hashable {
-    let relayURL: String
-    let subscriptionID: String
-}
-
 private struct ListEntriesCache {
     let accountID: String
     let limit: Int
     let homeContentRevision: Int
     let listContentRevision: Int
     let entries: [TimelineFeedEntry]
-}
-
-private struct HomeFeedSpecification: Codable, Sendable {
-    let authors: [String]
-    let kinds: [Int]
-}
-
-private struct HomeFeedDefinitionPlan {
-    let definition: NostrFeedDefinitionRecord
-    let sourceAuthors: [String]
-    let authors: [String]
-    let requiresProjectionReplacement: Bool
-}
-
-private struct RuntimeSyncWindow {
-    private(set) var newestCreatedAt: Int?
-    private(set) var oldestCreatedAt: Int?
-    private(set) var eventCount = 0
-    private(set) var newestCursor: NostrTimelineEntryCursor?
-    private(set) var oldestCursor: NostrTimelineEntryCursor?
-
-    mutating func include(_ event: NostrEvent) {
-        newestCreatedAt = [newestCreatedAt, event.createdAt].compactMap { $0 }.max()
-        oldestCreatedAt = [oldestCreatedAt, event.createdAt].compactMap { $0 }.min()
-        eventCount += 1
-        let cursor = NostrTimelineEntryCursor(sortTimestamp: event.createdAt, eventID: event.id)
-        if let current = newestCursor {
-            if cursor.sortTimestamp > current.sortTimestamp ||
-                (cursor.sortTimestamp == current.sortTimestamp && cursor.eventID < current.eventID) {
-                newestCursor = cursor
-            }
-        } else {
-            newestCursor = cursor
-        }
-        if let current = oldestCursor {
-            if cursor.sortTimestamp < current.sortTimestamp ||
-                (cursor.sortTimestamp == current.sortTimestamp && cursor.eventID > current.eventID) {
-                oldestCursor = cursor
-            }
-        } else {
-            oldestCursor = cursor
-        }
-    }
 }
 
 private extension Array where Element == String {
