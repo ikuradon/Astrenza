@@ -30,8 +30,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
-    private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
-    private let runtimeEventApplicationCoordinator: HomeTimelineRuntimeEventApplicationCoordinator
+    private let runtimeEventCoordinator: HomeTimelineRuntimeEventCoordinator
     private let backwardRequestCoordinator: HomeTimelineBackwardRequestCoordinator
     private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
     private let backfillPersistence: HomeTimelineBackfillPersistence
@@ -287,7 +286,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             backwardRequestRegistry: backwardRequestRegistry
         )
         self.feedSyncCoordinator = feedSyncCoordinator
-        self.runtimeEventProcessor = HomeTimelineRuntimeEventProcessor(
+        let runtimeEventProcessor = HomeTimelineRuntimeEventProcessor(
             eventIngestor: eventIngestor,
             backwardRequestRegistry: backwardRequestRegistry,
             feedSyncCoordinator: feedSyncCoordinator
@@ -339,12 +338,20 @@ final class NostrHomeTimelineStore: ObservableObject {
                 backwardRequestRegistry: backwardRequestRegistry,
                 lifecycleCoordinator: lifecycleCoordinator
             )
-        self.runtimeEventApplicationCoordinator = HomeTimelineRuntimeEventApplicationCoordinator(
+        let runtimeEventApplicationCoordinator = HomeTimelineRuntimeEventApplicationCoordinator(
             contentCoordinator: contentCoordinator,
             dependencyCoordinator: dependencyCoordinator,
             listProjectionCache: listProjectionCache,
             pendingEventBuffer: pendingEventBuffer,
             backwardRequestRegistry: backwardRequestRegistry,
+            lifecycleCoordinator: lifecycleCoordinator
+        )
+        self.runtimeEventCoordinator = HomeTimelineRuntimeEventCoordinator(
+            processor: runtimeEventProcessor,
+            applicationCoordinator: runtimeEventApplicationCoordinator,
+            contentCoordinator: contentCoordinator,
+            projectionController: homeFeedProjection,
+            feedEventRecorder: feedSyncCoordinator,
             lifecycleCoordinator: lifecycleCoordinator
         )
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
@@ -1106,10 +1113,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func activeHomeFeedRuntimeContext() -> HomeFeedRuntimeContext? {
-        homeFeedProjection.runtimeContext()
-    }
-
     private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
         homeFeedProjection.isCurrent(context, accountID: account?.pubkey)
     }
@@ -1371,75 +1374,50 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
-        let accountID = account.pubkey
         let receivedWhileRealtime = activityCoordinator.snapshot.isRealtime
-        let outcome = await runtimeEventProcessor.process(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID,
-            event: event,
-            forwardPresentationState: { [self] in
-                HomeTimelineRuntimeEventPresentationState(
-                    receivedWhileRealtime: receivedWhileRealtime,
-                    hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
-                    isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-                    hasPendingEvents: !pendingEventBuffer.isEmpty
-                )
-            },
-            ensureFeedDefinition: { [self] in
-                ensureHomeFeedDefinition(account: account)
-            },
-            activeFeedContext: { [self] in
-                activeHomeFeedRuntimeContext()
-            }
-        )
-        switch outcome {
-        case .ignored:
-            return
-        case .persistenceFailed(let message):
-            recordRuntimeSyncEvent(
+        await runtimeEventCoordinator.handle(
+            HomeTimelineRuntimeEventRequest(
                 relayURL: relayURL,
-                kind: .partialFailure,
                 subscriptionID: subscriptionID,
-                message: message
-            )
-            return
-        case .processed(let result):
-            guard lifecycleCoordinator.isCurrent(lifecycle),
-                  self.account?.pubkey == accountID
-            else { return }
-            guard await applyRuntimeEventApplicationPlan(
-                result.applicationPlan,
+                event: event,
                 account: account,
-                backwardRequestKey: result.backwardRequestKey,
-                lifecycle: lifecycle
-            ) else { return }
-            scheduleLinkPreviewResolution()
-            feedSyncCoordinator.record(
-                event,
-                relayURL: relayURL,
-                subscriptionID: subscriptionID
+                hasRelayRuntime: relayRuntime != nil,
+                receivedWhileRealtime: receivedWhileRealtime
+            ),
+            handlers: HomeTimelineRuntimeEventHandlers(
+                presentationState: { [self] receivedWhileRealtime in
+                    HomeTimelineRuntimeEventPresentationState(
+                        receivedWhileRealtime: receivedWhileRealtime,
+                        hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
+                        isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+                        hasPendingEvents: !pendingEventBuffer.isEmpty
+                    )
+                },
+                isAccountCurrent: { [self] accountID in
+                    account?.pubkey == accountID
+                },
+                application: runtimeEventApplicationHandlers(),
+                perform: { [weak self] command in
+                    self?.applyRuntimeEventCommand(command)
+                }
             )
-        }
+        )
     }
 
-    private func applyRuntimeEventApplicationPlan(
-        _ plan: HomeTimelineRuntimeEventApplicationPlan,
-        account: NostrAccount,
-        backwardRequestKey: String?,
-        lifecycle: HomeTimelineLifecycleToken
-    ) async -> Bool {
-        await runtimeEventApplicationCoordinator.apply(
-            plan,
-            backwardRequestKey: backwardRequestKey,
-            context: runtimeEventApplicationContext(
-                account: account,
-                lifecycle: lifecycle
-            ),
-            handlers: runtimeEventApplicationHandlers()
-        )
+    private func applyRuntimeEventCommand(
+        _ command: HomeTimelineRuntimeEventCommand
+    ) {
+        switch command {
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        case .scheduleLinkPreviewResolution:
+            scheduleLinkPreviewResolution()
+        }
     }
 
     private func runtimeEventApplicationContext(
@@ -1511,7 +1489,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        _ = await runtimeEventApplicationCoordinator.enqueueDependencies(
+        _ = await runtimeEventCoordinator.enqueueDependencies(
             for: event,
             context: runtimeEventApplicationContext(
                 account: account,
@@ -1525,7 +1503,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        runtimeEventApplicationCoordinator.resolveNIP05IfNeeded(
+        runtimeEventCoordinator.resolveNIP05IfNeeded(
             for: metadataEvent,
             context: runtimeEventApplicationContext(
                 account: account,
@@ -1588,7 +1566,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             },
             resolveDependencies: { [weak self] event, context in
                 guard let self else { return false }
-                return await runtimeEventApplicationCoordinator.enqueueDependencies(
+                return await runtimeEventCoordinator.enqueueDependencies(
                     for: event,
                     context: runtimeEventApplicationContext(
                         account: context.account,
@@ -1742,7 +1720,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         _ event: NostrEvent,
         consultEventStore: Bool = true
     ) -> NostrEvent {
-        runtimeEventApplicationCoordinator.rememberLatestMetadataEvent(
+        runtimeEventCoordinator.rememberLatestMetadataEvent(
             event,
             consultEventStore: consultEventStore,
             handlers: runtimeEventApplicationHandlers()
