@@ -2,21 +2,6 @@ import Foundation
 import AstrenzaCore
 import SwiftUI
 
-struct TimelineFilterStatus: Equatable {
-    var activeRuleCount = 0
-    var warningMatchCount = 0
-    var hiddenMatchCount = 0
-    var isSuspended = false
-
-    var matchedPostCount: Int {
-        warningMatchCount + hiddenMatchCount
-    }
-
-    var isVisible: Bool {
-        activeRuleCount > 0 || isSuspended
-    }
-}
-
 struct NostrTimelineActivityStatus: Equatable {
     let title: String
     let detail: String
@@ -86,7 +71,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
-    private let materializationScheduler: HomeTimelineMaterializationScheduler
+    private let presentationCoordinator: HomeTimelinePresentationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
@@ -107,7 +92,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
     private var areTimelineFiltersSuspended = false
-    private var unreadState = HomeTimelineUnreadState()
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
 
@@ -144,6 +128,33 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         if hasMoreOlder != snapshot.hasMoreOlder {
             hasMoreOlder = snapshot.hasMoreOlder
+        }
+    }
+
+    private func applyPresentationTransition(
+        _ transition: HomeTimelinePresentationTransition
+    ) {
+        let changes = transition.changes
+        let snapshot = transition.snapshot
+        if changes.contains(.entries) {
+            entries = snapshot.entries
+        }
+        if changes.contains(.unreadCounts) {
+            if materializedUnreadCount != snapshot.materializedUnreadCount {
+                materializedUnreadCount = snapshot.materializedUnreadCount
+            }
+            if visibleUnreadBadgeCount != snapshot.visibleUnreadBadgeCount {
+                visibleUnreadBadgeCount = snapshot.visibleUnreadBadgeCount
+            }
+        }
+        if changes.contains(.filterStatus) {
+            filterStatus = snapshot.filterStatus
+        }
+        if changes.contains(.resolvedContentRevision) {
+            resolvedContentRevision = snapshot.resolvedContentRevision
+        }
+        if changes.contains(.realtimeFollowSourceRevision) {
+            realtimeFollowSourceRevision = snapshot.realtimeFollowSourceRevision
         }
     }
 
@@ -297,7 +308,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         self.dependencyCoordinator = dependencyCoordinator
         self.listProjectionCache = HomeTimelineListProjectionCache()
-        self.materializationScheduler = HomeTimelineMaterializationScheduler()
+        self.presentationCoordinator = HomeTimelinePresentationCoordinator()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
         self.lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
@@ -441,28 +452,28 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
-        materializationScheduler.setScrollActive(isActive) { [weak self] allowsRealtimeFollow in
+        presentationCoordinator.setScrollActive(isActive) { [weak self] allowsRealtimeFollow in
             self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
         }
     }
 
     func dismissUnreadBadge() {
-        unreadState.dismissBadge()
-        publishUnreadState()
+        applyPresentationTransition(
+            presentationCoordinator.dismissUnreadBadge()
+        )
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
-        let previousState = unreadState
-        unreadState.markVisiblePostsRead(visiblePostIDs)
-        guard unreadState != previousState else { return }
-        publishUnreadState()
+        guard let transition = presentationCoordinator.markVisiblePostsRead(
+            visiblePostIDs
+        ) else { return }
+        applyPresentationTransition(transition)
         scheduleHomeFeedReadStateSave()
     }
 
     func markNewestMaterializedWindowRead() {
-        guard unreadState.canMarkNewestWindowRead else { return }
-        unreadState.markNewestWindowRead()
-        publishUnreadState()
+        guard let transition = presentationCoordinator.markNewestWindowRead() else { return }
+        applyPresentationTransition(transition)
         scheduleHomeFeedReadStateSave()
     }
 
@@ -470,12 +481,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     func applyPendingNewEvents() async -> Bool {
         guard let account else { return false }
         let hadPendingNewEvents = pendingEventBuffer.hasEvents ||
-            materializationScheduler.hasPendingNewestProjectionReload
+            presentationCoordinator.hasPendingNewestProjectionReload
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
         reloadNewestProjectionWindow(account: account)
         clearPendingNewEvents()
-        materializationScheduler.clearNewestProjectionReload()
+        presentationCoordinator.clearNewestProjectionReload()
         materializeEntries()
         scheduleLinkPreviewResolution()
         return hadPendingNewEvents
@@ -680,8 +691,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let cancellationGeneration = lifecycleCoordinator.cancel()
         runtimeEventPump.cancel()
         linkPreviewCoordinator.reset()
-        materializationScheduler.reset()
-        realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
+        applyPresentationTransition(presentationCoordinator.reset())
         outboxCoordinator.cancel()
         dependencyCoordinator.reset()
         backwardRequestRegistry.reset()
@@ -693,14 +703,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayRuntimeConfigurator.reset()
         resetHomeTimelineRealtime()
         feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
-        entries = []
         applyContentSnapshot(contentCoordinator.reset())
         applyRelayStatusSnapshot(
             relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
         )
-        filterStatus = TimelineFilterStatus()
-        unreadState.reset()
-        publishUnreadState()
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
         areTimelineFiltersSuspended = false
@@ -1154,17 +1160,13 @@ final class NostrHomeTimelineStore: ObservableObject {
             return true
         }
 
-        entries = []
-        materializationScheduler.replaceRenderFingerprint([])
+        applyPresentationTransition(presentationCoordinator.reset())
         applyContentSnapshot(contentCoordinator.reset())
         dependencyCoordinator.replaceNIP05Resolutions([:])
         applyRelayStatusSnapshot(
             relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
         )
-        filterStatus = TimelineFilterStatus()
         clearPendingNewEvents()
-        unreadState.reset()
-        publishUnreadState()
         return false
     }
 
@@ -1317,8 +1319,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             positions: positions
         )
         guard let boundaryID else { return }
-        unreadState.setReadBoundary(postID: boundaryID)
-        publishUnreadState()
+        applyPresentationTransition(
+            presentationCoordinator.restoreReadBoundary(postID: boundaryID)
+        )
     }
 
     private func scheduleHomeFeedReadStateSave() {
@@ -1332,7 +1335,7 @@ final class NostrHomeTimelineStore: ObservableObject {
               definition.accountID == account.pubkey
         else { return nil }
 
-        let boundaryID = unreadState.readBoundaryPostID
+        let boundaryID = presentationCoordinator.readBoundaryPostID
         let boundaryEvent = boundaryID.flatMap(timelineEvent(id:))
         let readBoundary = boundaryEvent.map {
             NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
@@ -1913,7 +1916,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         if let projectionUpdate = plan.projectionUpdate {
             switch projectionUpdate {
             case .reloadNewestAndSchedule(let allowsRealtimeFollow):
-                materializationScheduler.requestNewestProjectionReload()
+                presentationCoordinator.requestNewestProjectionReload()
                 scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
             case .bufferPendingEvent(let eventID):
                 bufferPendingNewEvent(eventID)
@@ -1925,7 +1928,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 scheduleMaterializeEntries()
             case .deferredDependencies:
                 scheduleMaterializeEntries(
-                    delayNanoseconds: materializationScheduler.defaultDelayNanoseconds * 2
+                    delayNanoseconds: presentationCoordinator.defaultDelayNanoseconds * 2
                 )
             }
         }
@@ -2252,12 +2255,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
-        guard let pass = materializationScheduler.beginMaterialization(
+        guard let pass = presentationCoordinator.beginMaterialization(
             allowsRealtimeFollow: allowsRealtimeFollow
         ) else { return }
         if pass.shouldReloadNewestProjection, let account {
             reloadNewestProjectionWindow(account: account)
-            materializationScheduler.clearNewestProjectionReload()
+            presentationCoordinator.clearNewestProjectionReload()
         }
         let filterRules = homeFilterRules()
         let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
@@ -2277,40 +2280,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             filterStatus: timelineFilterStatus(ruleSet: activeFilterRuleSet),
             policy: syncPolicy
         )
-        var didChangePublishedContent = false
-        if materializationScheduler.shouldPublish(
-            renderFingerprint: snapshot.renderFingerprint
-        ) {
-            entries = snapshot.entries
-            didChangePublishedContent = true
-        }
-        unreadState.replaceMaterializedPostIDs(entries.compactMap(\.post?.id))
-        publishUnreadState()
-
-        if snapshot.filterStatus != filterStatus {
-            filterStatus = snapshot.filterStatus
-            didChangePublishedContent = true
-        }
-        if didChangePublishedContent {
-            resolvedContentRevision &+= 1
-            materializationScheduler.didPublish(
-                revision: resolvedContentRevision,
-                allowsRealtimeFollow: pass.allowsRealtimeFollow
-            )
-            realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
-        }
-    }
-
-    private func publishUnreadState() {
-        materializedUnreadCount = unreadState.materializedUnreadCount
-        visibleUnreadBadgeCount = unreadState.visibleUnreadBadgeCount
+        applyPresentationTransition(
+            presentationCoordinator.apply(snapshot, pass: pass)
+        )
     }
 
     private func scheduleMaterializeEntries(
         delayNanoseconds: UInt64? = nil,
         allowsRealtimeFollow: Bool? = nil
     ) {
-        materializationScheduler.schedule(
+        presentationCoordinator.schedule(
             delayNanoseconds: delayNanoseconds,
             allowsRealtimeFollow: allowsRealtimeFollow
         ) { [weak self] allowsRealtimeFollow in
@@ -2576,7 +2555,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 #if DEBUG
 extension NostrHomeTimelineStore {
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
-        entries = ids.map { id in
+        let testEntries: [TimelineFeedEntry] = ids.map { id in
             .post(TimelinePost(
                 id: id,
                 author: .unresolved(pubkey: String(repeating: "a", count: 64)),
@@ -2597,14 +2576,18 @@ extension NostrHomeTimelineStore {
                 context: nil
             ))
         }
-        materializationScheduler.replaceRenderFingerprint(entries.map { $0.id.hashValue })
-        unreadState.replaceMaterializedPostIDs(ids, marksInitialWindowRead: false)
-        publishUnreadState()
+        applyPresentationTransition(
+            presentationCoordinator.replaceEntriesForTesting(
+                testEntries,
+                renderFingerprint: testEntries.map { $0.id.hashValue }
+            )
+        )
     }
 
     func testingSetReadBoundary(postID: TimelinePost.ID) {
-        unreadState.setReadBoundary(postID: postID)
-        publishUnreadState()
+        applyPresentationTransition(
+            presentationCoordinator.setReadBoundaryForTesting(postID: postID)
+        )
     }
 
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
