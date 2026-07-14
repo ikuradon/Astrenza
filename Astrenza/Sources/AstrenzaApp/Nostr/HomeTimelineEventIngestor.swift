@@ -57,7 +57,7 @@ actor HomeTimelineEventIngestor {
 
     func ingestForward(
         _ request: HomeTimelineForwardEventIngestRequest
-    ) throws -> HomeTimelineProjectedEventIngestResult {
+    ) async throws -> HomeTimelineProjectedEventIngestResult {
         let projectsIntoCurrentFeed = feedContextsMatch(
             active: request.activeFeedContext,
             request: request.requestContext
@@ -74,7 +74,7 @@ actor HomeTimelineEventIngestor {
 
     func ingestBackward(
         _ request: HomeTimelineBackwardEventIngestRequest
-    ) throws -> HomeTimelineProjectedEventIngestResult {
+    ) async throws -> HomeTimelineProjectedEventIngestResult {
         let projectsIntoCurrentFeed = request.projectionReason != nil &&
             request.requestContext != nil &&
             (request.activeRequestContext == nil || request.requestContext == request.activeRequestContext) &&

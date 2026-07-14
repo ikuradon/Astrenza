@@ -29,8 +29,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
-    private let eventIngestor: HomeTimelineEventIngestor
-    private let runtimeEventApplicationPlanner: HomeTimelineRuntimeEventApplicationPlanner
+    private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
     private let backwardCompletionPlanner: HomeTimelineBackwardCompletionPlanner
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -243,8 +242,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         } else {
             sourcePacketInstaller = nil
         }
-        self.eventIngestor = eventIngestor
-        self.runtimeEventApplicationPlanner = HomeTimelineRuntimeEventApplicationPlanner()
         self.backwardCompletionPlanner = HomeTimelineBackwardCompletionPlanner()
         self.backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
         self.syncPlanner = syncPlanner
@@ -267,9 +264,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.backwardRequestRegistry = backwardRequestRegistry
-        self.feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
+        let feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
             eventStore: eventStore,
             backwardRequestRegistry: backwardRequestRegistry
+        )
+        self.feedSyncCoordinator = feedSyncCoordinator
+        self.runtimeEventProcessor = HomeTimelineRuntimeEventProcessor(
+            eventIngestor: eventIngestor,
+            backwardRequestRegistry: backwardRequestRegistry,
+            feedSyncCoordinator: feedSyncCoordinator
         )
         self.relayRuntime = relayRuntime
         let dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
@@ -1367,7 +1370,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func invalidateHomeTimelineRealtime(for key: RuntimeSubscriptionKey) {
-        guard Self.isHomeForwardSubscription(key.subscriptionID) else { return }
+        guard HomeTimelineSyncPlanner.isHomeForwardSubscription(key.subscriptionID) else { return }
         feedSyncCoordinator.invalidateForwardSubscription(key)
         publishHomeTimelineRealtimeState()
     }
@@ -1506,10 +1509,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private static func isHomeForwardSubscription(_ subscriptionID: String) -> Bool {
-        HomeTimelineSyncPlanner.isHomeForwardSubscription(subscriptionID)
-    }
-
     private static func isProfileDirectoryPacket(_ packet: NostrRelayRuntimePacket) -> Bool {
         switch packet {
         case .requestStarted(let attempt):
@@ -1530,143 +1529,58 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
-        if Self.isHomeForwardSubscription(subscriptionID) {
-            await handleHomeForwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
-            return
-        }
-
-        await handleBackwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
-    }
-
-    private func handleHomeForwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
-        guard event.kind == 1 || event.kind == 5 || event.kind == 6,
-              let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
-        let receivedWhileRealtime = activityCoordinator.snapshot.isRealtime
-        let accountID = account.pubkey
-
-        let requestID = feedSyncCoordinator.requestID(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-        let requestContext = feedSyncCoordinator.context(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-
-        let projectedIngestResult: HomeTimelineProjectedEventIngestResult
-        do {
-            ensureHomeFeedDefinition(account: account)
-            projectedIngestResult = try await eventIngestor.ingestForward(
-                HomeTimelineForwardEventIngestRequest(
-                    event: event,
-                    relayURL: relayURL,
-                    activeFeedContext: activeHomeFeedRuntimeContext(),
-                    requestContext: requestContext,
-                    sourceRequestID: requestID
-                )
-            )
-        } catch {
-            recordRuntimeSyncEvent(
-                relayURL: relayURL,
-                kind: .partialFailure,
-                subscriptionID: subscriptionID,
-                message: "event save failed: \(error.localizedDescription)"
-            )
-            return
-        }
-        guard lifecycleCoordinator.isCurrent(lifecycle),
-              self.account?.pubkey == accountID
-        else { return }
-        let applicationPlan = runtimeEventApplicationPlanner.planForward(.init(
-            event: event,
-            embeddedEvent: projectedIngestResult.eventResult.embeddedEvent,
-            projectsIntoCurrentFeed: projectedIngestResult.projectsIntoCurrentFeed,
-            receivedWhileRealtime: receivedWhileRealtime,
-            hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
-            isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-            hasPendingEvents: !pendingEventBuffer.isEmpty
-        ))
-        guard await applyRuntimeEventApplicationPlan(
-            applicationPlan,
-            account: account,
-            backwardRequestKey: nil,
-            lifecycle: lifecycle
-        ) else { return }
-        scheduleLinkPreviewResolution()
-        feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
-    }
-
-    private func handleBackwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
         let accountID = account.pubkey
-        let requestKey = backwardRequestRegistry.key(for: subscriptionID)
-        let request = requestKey.flatMap { backwardRequestRegistry.request(for: $0) }
-        let projectionReason: HomeTimelineFeedProjectionReason? = if request?.isOlderPage == true {
-            .older
-        } else if request?.gap != nil {
-            .gap
-        } else {
-            nil
-        }
-        let isTimelineBackfill = projectionReason != nil
-        let sourceRequestID = feedSyncCoordinator.requestID(
+        let receivedWhileRealtime = activityCoordinator.snapshot.isRealtime
+        let outcome = await runtimeEventProcessor.process(
             relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-        let activeRequestContext = feedSyncCoordinator.context(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-        let requestContext = request?.feedContext
-
-        let projectedIngestResult: HomeTimelineProjectedEventIngestResult
-        do {
-            if isTimelineBackfill {
-                ensureHomeFeedDefinition(account: account)
-            }
-            // 配信可否はbackward request registryで判定する。provenance用requestStartedは
-            // 最初のEVENT到着時点でまだqueue内に残っている場合がある。
-            projectedIngestResult = try await eventIngestor.ingestBackward(
-                HomeTimelineBackwardEventIngestRequest(
-                    event: event,
-                    relayURL: relayURL,
-                    activeFeedContext: activeHomeFeedRuntimeContext(),
-                    requestContext: requestContext,
-                    activeRequestContext: activeRequestContext,
-                    projectionReason: projectionReason,
-                    sourceRequestID: sourceRequestID
+            subscriptionID: subscriptionID,
+            event: event,
+            forwardPresentationState: { [self] in
+                HomeTimelineRuntimeEventPresentationState(
+                    receivedWhileRealtime: receivedWhileRealtime,
+                    hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
+                    isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+                    hasPendingEvents: !pendingEventBuffer.isEmpty
                 )
-            )
-        } catch {
+            },
+            ensureFeedDefinition: { [self] in
+                ensureHomeFeedDefinition(account: account)
+            },
+            activeFeedContext: { [self] in
+                activeHomeFeedRuntimeContext()
+            }
+        )
+        switch outcome {
+        case .ignored:
+            return
+        case .persistenceFailed(let message):
             recordRuntimeSyncEvent(
                 relayURL: relayURL,
                 kind: .partialFailure,
                 subscriptionID: subscriptionID,
-                message: "backward event save failed: \(error.localizedDescription)"
+                message: message
             )
             return
+        case .processed(let result):
+            guard lifecycleCoordinator.isCurrent(lifecycle),
+                  self.account?.pubkey == accountID
+            else { return }
+            guard await applyRuntimeEventApplicationPlan(
+                result.applicationPlan,
+                account: account,
+                backwardRequestKey: result.backwardRequestKey,
+                lifecycle: lifecycle
+            ) else { return }
+            scheduleLinkPreviewResolution()
+            feedSyncCoordinator.record(
+                event,
+                relayURL: relayURL,
+                subscriptionID: subscriptionID
+            )
         }
-        guard lifecycleCoordinator.isCurrent(lifecycle),
-              self.account?.pubkey == accountID
-        else { return }
-        let applicationPlan = runtimeEventApplicationPlanner.planBackward(.init(
-            event: event,
-            embeddedEvent: projectedIngestResult.eventResult.embeddedEvent,
-            projectsIntoCurrentFeed: projectedIngestResult.projectsIntoCurrentFeed,
-            isTimelineBackfill: isTimelineBackfill
-        ))
-        guard await applyRuntimeEventApplicationPlan(
-            applicationPlan,
-            account: account,
-            backwardRequestKey: requestKey,
-            lifecycle: lifecycle
-        ) else { return }
-        scheduleLinkPreviewResolution()
-        feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
     }
 
     private func applyRuntimeEventApplicationPlan(
@@ -2272,7 +2186,7 @@ extension NostrHomeTimelineStore {
         subscriptionID: String,
         event: NostrEvent
     ) async {
-        await handleBackwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        await handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
     }
 
     func testingHandleHomeForwardEvent(
@@ -2280,7 +2194,7 @@ extension NostrHomeTimelineStore {
         subscriptionID: String,
         event: NostrEvent
     ) async {
-        await handleHomeForwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        await handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
     }
 
     func testingHandleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
