@@ -79,6 +79,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineLoader: NostrHomeTimelineLoader
     private let eventStore: NostrEventStore?
     private let persistenceWorker: HomeTimelinePersistenceWorker?
+    private let contentCoordinator: HomeTimelineContentCoordinator
     private let eventIngestor: HomeTimelineEventIngestor
     private let runtimeEventApplicationPlanner: HomeTimelineRuntimeEventApplicationPlanner
     private let backwardCompletionPlanner: HomeTimelineBackwardCompletionPlanner
@@ -105,10 +106,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
-    private var noteEvents: [NostrEvent] = []
-    private var metadataEvents: [NostrEvent] = []
-    private var relayListEvent: NostrEvent?
-    private var contactListEvent: NostrEvent?
     private var areTimelineFiltersSuspended = false
     private var unreadState = HomeTimelineUnreadState()
     private var isTimelineAtNewestWindow = true
@@ -120,6 +117,34 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     var currentSyncPolicy: NostrSyncPolicy {
         syncPolicy
+    }
+
+    private var noteEvents: [NostrEvent] {
+        contentCoordinator.noteEvents
+    }
+
+    private var metadataEvents: [NostrEvent] {
+        contentCoordinator.metadataEvents
+    }
+
+    private var relayListEvent: NostrEvent? {
+        contentCoordinator.relayListEvent
+    }
+
+    private var contactListEvent: NostrEvent? {
+        contentCoordinator.contactListEvent
+    }
+
+    private func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
+        if resolvedRelays != snapshot.resolvedRelays {
+            resolvedRelays = snapshot.resolvedRelays
+        }
+        if followedPubkeys != snapshot.followedPubkeys {
+            followedPubkeys = snapshot.followedPubkeys
+        }
+        if hasMoreOlder != snapshot.hasMoreOlder {
+            hasMoreOlder = snapshot.hasMoreOlder
+        }
     }
 
     private func updateRelayStatusCounts() {
@@ -230,6 +255,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.timelineLoader = timelineLoader
         self.eventStore = eventStore
         self.persistenceWorker = persistenceWorker
+        self.contentCoordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
         let eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
         let syncPlanner = HomeTimelineSyncPlanner()
         let profileDirectory = relayRuntime.map {
@@ -539,11 +565,12 @@ final class NostrHomeTimelineStore: ObservableObject {
             feedMembershipSources: feedMembershipSources,
             receivedAt: createdAt
         )
-        noteEvents.removeAll { $0.id == record.event.id }
-        noteEvents.insert(record.event, at: 0)
-        if !followedPubkeys.contains(account.pubkey) {
-            followedPubkeys.append(account.pubkey)
-        }
+        applyContentSnapshot(
+            contentCoordinator.insertOutboxEvent(
+                record.event,
+                accountID: account.pubkey
+            )
+        )
         reloadNewestProjectionWindow(account: account)
         materializeEntries()
         await persistDatabase(account: account)
@@ -667,16 +694,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         resetHomeTimelineRealtime()
         feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
         entries = []
-        resolvedRelays = []
-        followedPubkeys = []
-        noteEvents = []
-        metadataEvents = []
-        relayListEvent = nil
-        contactListEvent = nil
+        applyContentSnapshot(contentCoordinator.reset())
         applyRelayStatusSnapshot(
             relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
         )
-        hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
         unreadState.reset()
         publishUnreadState()
@@ -891,7 +912,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             if hadCachedBootstrap {
                 phase = .loaded
             } else if !resolvedRelays.isEmpty {
-                followedPubkeys = [account.pubkey]
+                applyContentSnapshot(
+                    contentCoordinator.replaceFollowedPubkeys([account.pubkey])
+                )
                 lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
                 await configureRelayRuntime(account: account)
                 phase = .loaded
@@ -902,30 +925,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func runtimeBootstrapState(from bootstrapState: NostrHomeTimelineState) -> NostrHomeTimelineState {
-        NostrHomeTimelineState(
-            relays: bootstrapState.relays,
-            followedPubkeys: bootstrapState.followedPubkeys,
-            noteEvents: noteEvents,
-            metadataEvents: metadataEvents,
-            relayListEvent: bootstrapState.relayListEvent,
-            contactListEvent: bootstrapState.contactListEvent,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            hasMoreOlder: hasMoreOlder,
-            relaySyncEvents: bootstrapState.relaySyncEvents.map { event in
-                NostrRelaySyncEventRecord(
-                    accountID: event.accountID,
-                    timelineKey: event.timelineKey,
-                    relayURL: event.relayURL,
-                    kind: event.kind,
-                    occurredAt: event.occurredAt,
-                    subscriptionID: event.subscriptionID,
-                    eventCount: event.eventCount,
-                    newestCreatedAt: nil,
-                    oldestCreatedAt: nil,
-                    latencyMilliseconds: event.latencyMilliseconds,
-                    message: event.message
-                )
-            }
+        contentCoordinator.runtimeBootstrapState(
+            from: bootstrapState,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions
         )
     }
 
@@ -1154,17 +1156,11 @@ final class NostrHomeTimelineStore: ObservableObject {
 
         entries = []
         materializationScheduler.replaceRenderFingerprint([])
-        resolvedRelays = []
-        followedPubkeys = []
-        noteEvents = []
-        metadataEvents = []
-        relayListEvent = nil
-        contactListEvent = nil
+        applyContentSnapshot(contentCoordinator.reset())
         dependencyCoordinator.replaceNIP05Resolutions([:])
         applyRelayStatusSnapshot(
             relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
         )
-        hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
         clearPendingNewEvents()
         unreadState.reset()
@@ -1355,7 +1351,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: followedPubkeys,
             liveEvents: noteEvents
         ) else { return }
-        noteEvents = window.events
+        contentCoordinator.replaceProjectionEvents(window.events)
     }
 
     @discardableResult
@@ -1371,7 +1367,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             around: anchorEventID,
             mergingWithCurrentWindow: mergingWithCurrentWindow
         ) else { return false }
-        noteEvents = window.events
+        contentCoordinator.replaceProjectionEvents(window.events)
         return true
     }
 
@@ -1440,7 +1436,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard relayRuntime != nil, resolvedRelays.isEmpty else { return }
         let provisionalRelays = provisionalDiscoveryRelays(for: account)
         guard !provisionalRelays.isEmpty else { return }
-        resolvedRelays = provisionalRelays
+        applyContentSnapshot(
+            contentCoordinator.installProvisionalRelays(provisionalRelays)
+        )
         updateRelayStatusCounts()
     }
 
@@ -1941,14 +1939,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func removeEventsDeletedFromCurrentProjection(by deletionEvent: NostrEvent) -> String? {
-        let targetEventIDs = Set(deletionEvent.tags.compactMap { tag in
-            tag.count >= 2 && tag[0] == "e" ? tag[1] : nil
-        })
-        guard !targetEventIDs.isEmpty else { return nil }
-        noteEvents.removeAll { event in
-            targetEventIDs.contains(event.id) && event.pubkey == deletionEvent.pubkey
-        }
-        return targetEventIDs.sorted().first
+        contentCoordinator.removeEventsDeletedFromCurrentProjection(by: deletionEvent)
     }
 
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
@@ -2022,7 +2013,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             return
         }
         if plan.marksOlderEnd {
-            hasMoreOlder = false
+            applyContentSnapshot(contentCoordinator.markOlderEnd())
         }
         if let update = plan.olderPageUpdate, let account {
             if update.marksBoundaryGap,
@@ -2537,54 +2528,19 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func loaderState() -> NostrHomeTimelineState {
-        NostrHomeTimelineState(
-            relays: resolvedRelays,
-            followedPubkeys: followedPubkeys,
-            noteEvents: noteEvents,
-            metadataEvents: metadataEvents,
-            relayListEvent: relayListEvent,
-            contactListEvent: contactListEvent,
+        contentCoordinator.loaderState(
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            hasMoreOlder: hasMoreOlder,
             relaySyncEvents: relayStatusCoordinator.events
         )
     }
 
     private func apply(_ state: NostrHomeTimelineState) {
-        let storedRelayListEvent = account.flatMap { account in
-            try? eventStore?.latestReplaceableEvent(pubkey: account.pubkey, kind: 10002)
-        }
-        let storedContactListEvent = account.flatMap { account in
-            try? eventStore?.latestReplaceableEvent(pubkey: account.pubkey, kind: 3)
-        }
-        let effectiveRelayListEvent = freshestReplaceableEvent([
-            relayListEvent,
-            state.relayListEvent,
-            storedRelayListEvent
-        ])
-        let effectiveContactListEvent = freshestReplaceableEvent([
-            contactListEvent,
-            state.contactListEvent,
-            storedContactListEvent
-        ])
-        let effectiveRelays = effectiveReadRelays(
-            from: effectiveRelayListEvent,
-            stateRelays: state.relays
+        applyContentSnapshot(
+            contentCoordinator.replace(
+                with: state,
+                accountID: account?.pubkey
+            )
         )
-        let effectiveFollowedPubkeys: [String]
-        if effectiveContactListEvent?.id != nil,
-           effectiveContactListEvent?.id != state.contactListEvent?.id {
-            effectiveFollowedPubkeys = NostrContactList.pubkeys(from: effectiveContactListEvent)
-        } else {
-            effectiveFollowedPubkeys = state.followedPubkeys
-        }
-
-        resolvedRelays = effectiveRelays
-        followedPubkeys = effectiveFollowedPubkeys
-        noteEvents = state.noteEvents
-        metadataEvents = state.metadataEvents
-        relayListEvent = effectiveRelayListEvent
-        contactListEvent = effectiveContactListEvent
         dependencyCoordinator.replaceNIP05Resolutions(state.nip05Resolutions)
         applyRelayStatusSnapshot(
             relayStatusCoordinator.replaceEvents(
@@ -2592,23 +2548,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                 resolvedRelays: resolvedRelays
             )
         )
-        hasMoreOlder = state.hasMoreOlder
         homeFeedProjection.clearWindow()
         invalidateListEntries()
-    }
-
-    private func effectiveReadRelays(
-        from relayListEvent: NostrEvent?,
-        stateRelays: [String]
-    ) -> [String] {
-        let readRelays = NostrRelayList.parse(from: relayListEvent).readRelays
-        if !readRelays.isEmpty {
-            return readRelays
-        }
-        if !stateRelays.isEmpty {
-            return stateRelays
-        }
-        return resolvedRelays
     }
 
     @discardableResult
@@ -2616,36 +2557,20 @@ final class NostrHomeTimelineStore: ObservableObject {
         _ event: NostrEvent,
         consultEventStore: Bool = true
     ) -> NostrEvent {
-        let storedMetadataEvent = consultEventStore
-            ? try? eventStore?.latestReplaceableEvent(pubkey: event.pubkey, kind: 0)
-            : nil
-        let currentMetadataEvent = metadataEvents.first { $0.pubkey == event.pubkey }
-        let effectiveMetadataEvent = freshestReplaceableEvent([
-            currentMetadataEvent,
+        let update = contentCoordinator.rememberLatestMetadataEvent(
             event,
-            storedMetadataEvent
-        ]) ?? event
-        let didChange = currentMetadataEvent?.id != effectiveMetadataEvent.id
-        metadataEvents.removeAll { $0.pubkey == event.pubkey }
-        metadataEvents.append(effectiveMetadataEvent)
-        if didChange {
+            consultEventStore: consultEventStore
+        )
+        if update.didChange {
             invalidateListEntries()
         }
-        return effectiveMetadataEvent
+        return update.event
     }
 
     private func invalidateListEntries() {
         listContentRevision = listProjectionCache.invalidate()
     }
 
-    private func freshestReplaceableEvent(_ events: [NostrEvent?]) -> NostrEvent? {
-        events.compactMap(\.self).max { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt {
-                return lhs.id > rhs.id
-            }
-            return lhs.createdAt < rhs.createdAt
-        }
-    }
 }
 
 #if DEBUG
@@ -2710,7 +2635,9 @@ extension NostrHomeTimelineStore {
             lifecycleCoordinator.begin(accountID: account.pubkey)
         }
         self.account = account
-        followedPubkeys = sourceAuthors
+        applyContentSnapshot(
+            contentCoordinator.replaceFollowedPubkeys(sourceAuthors)
+        )
         homeFeedProjection.activate(
             definition: definition,
             window: try? eventStore?.feedWindow(
