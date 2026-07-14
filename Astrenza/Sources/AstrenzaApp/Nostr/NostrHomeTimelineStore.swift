@@ -85,6 +85,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
+    private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
@@ -101,7 +102,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
-    private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
     private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
@@ -233,7 +233,12 @@ final class NostrHomeTimelineStore: ObservableObject {
             relayClient: timelineLoader.relayClient
         )
         self.homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
-        self.feedSyncLifecycle = HomeTimelineFeedSyncLifecycle(eventStore: eventStore)
+        let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
+        self.backwardRequestRegistry = backwardRequestRegistry
+        self.feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
+            eventStore: eventStore,
+            backwardRequestRegistry: backwardRequestRegistry
+        )
         self.relayRuntime = relayRuntime
         self.dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
             eventIngestor: eventIngestor,
@@ -245,7 +250,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
-        self.backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.runtimeEventPump = HomeTimelineRuntimeEventPump()
         self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
@@ -626,8 +630,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         homeFeedProjection.reset()
         installedHomeForwardPackets = []
         resetHomeTimelineRealtime()
-        finishActiveFeedSyncRequests(reason: .cancelled)
-        feedSyncLifecycle.reset()
+        feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
         relayRuntimeStates = [:]
         entries = []
         resolvedRelays = []
@@ -1505,7 +1508,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
             )
             for packet in scopedPackets {
-                feedSyncLifecycle.registerForwardContext(feedContext, groupID: packet.groupID)
+                feedSyncCoordinator.registerForwardContext(feedContext, groupID: packet.groupID)
             }
             try await relayRuntime.installForward(
                 scopedPackets,
@@ -1556,23 +1559,23 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func resetHomeTimelineRealtime(
         expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
     ) {
-        feedSyncLifecycle.prepareForwardSubscriptions(runtimeKeys)
+        feedSyncCoordinator.prepareForwardSubscriptions(runtimeKeys)
         publishHomeTimelineRealtimeState()
     }
 
     private func invalidateHomeTimelineRealtime(for key: RuntimeSubscriptionKey) {
         guard Self.isHomeForwardSubscription(key.subscriptionID) else { return }
-        feedSyncLifecycle.invalidateForwardSubscription(key)
+        feedSyncCoordinator.invalidateForwardSubscription(key)
         publishHomeTimelineRealtimeState()
     }
 
     private func invalidateHomeTimelineRealtime(relayURL: String) {
-        feedSyncLifecycle.invalidateForwardSubscriptions(relayURL: relayURL)
+        feedSyncCoordinator.invalidateForwardSubscriptions(relayURL: relayURL)
         publishHomeTimelineRealtimeState()
     }
 
     private func publishHomeTimelineRealtimeState() {
-        let nextIsRealtime = feedSyncLifecycle.isRealtime
+        let nextIsRealtime = feedSyncCoordinator.isRealtime
         guard isHomeTimelineRealtime != nextIsRealtime else { return }
         isHomeTimelineRealtime = nextIsRealtime
     }
@@ -1612,7 +1615,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                     )
                 },
                 requestEnded: { end in
-                    self.handleFeedSyncRequestEnded(end)
+                    self.feedSyncCoordinator.endRequestAttempt(end)
+                    self.publishHomeTimelineRealtimeState()
                 },
                 event: { relayURL, subscriptionID, event in
                     await self.handleRuntimeEvent(
@@ -1622,13 +1626,17 @@ final class NostrHomeTimelineStore: ObservableObject {
                     )
                 },
                 eose: { relayURL, subscriptionID in
-                    let window = self.finishRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID)
+                    let window = self.feedSyncCoordinator.finishWindow(
+                        relayURL: relayURL,
+                        subscriptionID: subscriptionID
+                    )
                     let isHomeForward = Self.isHomeForwardSubscription(subscriptionID)
-                    self.recordFeedSyncEOSE(
+                    self.feedSyncCoordinator.recordEOSE(
                         relayURL: relayURL,
                         subscriptionID: subscriptionID,
                         window: window
                     )
+                    self.publishHomeTimelineRealtimeState()
                     self.recordRuntimeSyncEvent(
                         relayURL: relayURL,
                         kind: .eose,
@@ -1640,14 +1648,18 @@ final class NostrHomeTimelineStore: ObservableObject {
                     )
                 },
                 closed: { relayURL, subscriptionID, message in
-                    let window = self.finishRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID)
-                    self.endFeedSyncRequest(
+                    let window = self.feedSyncCoordinator.finishWindow(
+                        relayURL: relayURL,
+                        subscriptionID: subscriptionID
+                    )
+                    self.feedSyncCoordinator.endRequest(
                         relayURL: relayURL,
                         subscriptionID: subscriptionID,
                         reason: .closed,
                         message: message,
                         window: window
                     )
+                    self.publishHomeTimelineRealtimeState()
                     self.recordRuntimeSyncEvent(
                         relayURL: relayURL,
                         kind: Self.syncEventKind(forClosedMessage: message),
@@ -1659,14 +1671,18 @@ final class NostrHomeTimelineStore: ObservableObject {
                     )
                 },
                 timeout: { relayURL, subscriptionID, message in
-                    let window = self.finishRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID)
-                    self.endFeedSyncRequest(
+                    let window = self.feedSyncCoordinator.finishWindow(
+                        relayURL: relayURL,
+                        subscriptionID: subscriptionID
+                    )
+                    self.feedSyncCoordinator.endRequest(
                         relayURL: relayURL,
                         subscriptionID: subscriptionID,
                         reason: .timeout,
                         message: message,
                         window: window
                     )
+                    self.publishHomeTimelineRealtimeState()
                     self.recordRuntimeSyncEvent(
                         relayURL: relayURL,
                         kind: .timeout,
@@ -1783,9 +1799,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         let lifecycleGeneration = runtimeLifecycleGeneration
         let accountID = account.pubkey
 
-        let runtimeKey = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        let requestID = feedSyncLifecycle.requestID(for: runtimeKey)
-        let requestContext = feedSyncLifecycle.context(for: runtimeKey)
+        let requestID = feedSyncCoordinator.requestID(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+        let requestContext = feedSyncCoordinator.context(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
 
         let ingestResult: HomeTimelineEventIngestResult
         let projectsIntoCurrentFeed: Bool
@@ -1853,7 +1874,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
         }
         scheduleLinkPreviewResolution()
-        trackRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
     }
 
     private func handleBackwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
@@ -1863,9 +1884,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         let requestKey = backwardRequestRegistry.key(for: subscriptionID)
         let request = requestKey.flatMap { backwardRequestRegistry.request(for: $0) }
         let isTimelineBackfill = request?.isOlderPage == true || request?.gap != nil
-        let runtimeKey = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        let sourceRequestID = feedSyncLifecycle.requestID(for: runtimeKey)
-        let activeRequestContext = feedSyncLifecycle.context(for: runtimeKey)
+        let sourceRequestID = feedSyncCoordinator.requestID(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+        let activeRequestContext = feedSyncCoordinator.context(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
         let requestContext = request?.feedContext
 
         let ingestResult: HomeTimelineEventIngestResult
@@ -1959,7 +1985,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
 
         scheduleLinkPreviewResolution()
-        trackRuntimeSyncWindow(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
+        feedSyncCoordinator.record(event, relayURL: relayURL, subscriptionID: subscriptionID)
     }
 
     private func removeEventsDeletedFromCurrentProjection(by deletionEvent: NostrEvent) -> String? {
@@ -2318,7 +2344,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) {
-        guard let registration = feedSyncRegistration(for: attempt.packet)
+        guard let registration = feedSyncCoordinator.registration(for: attempt.packet)
         else { return }
 
         let key = RuntimeSubscriptionKey(
@@ -2331,18 +2357,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let eventStore else { return }
 
         do {
-            try feedSyncLifecycle.beginRequest(
-                attempt,
-                context: registration.context,
-                direction: registration.direction,
-                purpose: registration.purpose
-            )
-            if let pendingRequestKey = registration.pendingRequestKey {
-                backwardRequestRegistry.appendSourceRequestID(
-                    attempt.requestID,
-                    for: pendingRequestKey
-                )
-            }
+            try feedSyncCoordinator.beginRequest(attempt, registration: registration)
             if let gap = registration.gap,
                isCurrentHomeFeedContext(registration.context) {
                 try? eventStore.markFeedGap(
@@ -2363,102 +2378,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: "feed sync request save failed: \(error.localizedDescription)"
             )
         }
-    }
-
-    private func feedSyncRegistration(for packet: NostrREQPacket) -> HomeFeedSyncRegistration? {
-        if packet.strategy == .forward, Self.isHomeForwardSubscription(packet.subscriptionID) {
-            guard let context = feedSyncLifecycle.forwardContext(groupID: packet.groupID) else { return nil }
-            let hasSince = packet.filters.contains { $0["since"] != nil }
-            return HomeFeedSyncRegistration(
-                context: context,
-                direction: .forward,
-                purpose: hasSince ? .newer : .initial,
-                pendingRequestKey: nil,
-                gap: nil
-            )
-        }
-        guard packet.strategy == .backward,
-              let requestKey = backwardRequestRegistry.key(for: packet.subscriptionID),
-              let request = backwardRequestRegistry.request(for: requestKey),
-              let context = request.feedContext
-        else { return nil }
-        if request.gap != nil {
-            return HomeFeedSyncRegistration(
-                context: context,
-                direction: .backward,
-                purpose: .gap,
-                pendingRequestKey: requestKey,
-                gap: request.gap
-            )
-        }
-        if request.isOlderPage {
-            return HomeFeedSyncRegistration(
-                context: context,
-                direction: .backward,
-                purpose: .older,
-                pendingRequestKey: requestKey,
-                gap: nil
-            )
-        }
-        return nil
-    }
-
-    private func recordFeedSyncEOSE(
-        relayURL: String,
-        subscriptionID: String,
-        window: RuntimeSyncWindow
-    ) {
-        let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        let isForward = Self.isHomeForwardSubscription(subscriptionID)
-        // Forward REQはEOSE後もlive subscriptionとして継続するため、
-        // lifecycleがrevision contextとrequest provenanceをCLOSED/置換まで保持します。
-        feedSyncLifecycle.recordEOSE(
-            key: key,
-            isForward: isForward,
-            window: window,
-            at: Int(Date().timeIntervalSince1970)
-        )
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func endFeedSyncRequest(
-        relayURL: String,
-        subscriptionID: String,
-        reason: NostrFeedSyncEndReason,
-        message: String? = nil,
-        window: RuntimeSyncWindow
-    ) {
-        let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        feedSyncLifecycle.endRequest(
-            key: key,
-            reason: reason,
-            message: message,
-            window: window,
-            at: Int(Date().timeIntervalSince1970)
-        )
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func handleFeedSyncRequestEnded(_ end: NostrRelayRequestAttemptEnd) {
-        feedSyncLifecycle.endRequestAttempt(end)
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func finishActiveFeedSyncRequests(reason: NostrFeedSyncEndReason) {
-        feedSyncLifecycle.finishActiveRequests(
-            reason: reason,
-            at: Int(Date().timeIntervalSince1970)
-        )
-    }
-
-    private func trackRuntimeSyncWindow(relayURL: String, subscriptionID: String, event: NostrEvent) {
-        let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        feedSyncLifecycle.record(event, for: key)
-    }
-
-    private func finishRuntimeSyncWindow(relayURL: String, subscriptionID: String) -> RuntimeSyncWindow {
-        let key = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
-        return feedSyncLifecycle.finishWindow(for: key)
     }
 
     private func hasRecentRuntimeSyncEvent(
@@ -2956,7 +2875,7 @@ extension NostrHomeTimelineStore {
         packet: NostrREQPacket,
         definition: NostrFeedDefinitionRecord
     ) {
-        feedSyncLifecycle.registerForwardContext(
+        feedSyncCoordinator.registerForwardContext(
             HomeFeedRuntimeContext(definition: definition),
             groupID: packet.groupID
         )
@@ -3032,11 +2951,11 @@ extension NostrHomeTimelineStore {
     }
 
     var testingActiveFeedSyncRequestCount: Int {
-        feedSyncLifecycle.activeRequestCount
+        feedSyncCoordinator.activeRequestCount
     }
 
     var testingActiveFeedSyncContextCount: Int {
-        feedSyncLifecycle.activeContextCount
+        feedSyncCoordinator.activeContextCount
     }
 }
 #endif
@@ -3054,14 +2973,6 @@ extension NIP05Status {
             self = .invalid
         }
     }
-}
-
-private struct HomeFeedSyncRegistration {
-    let context: HomeFeedRuntimeContext
-    let direction: NostrFeedSyncDirection
-    let purpose: NostrFeedSyncPurpose
-    let pendingRequestKey: String?
-    let gap: PendingGapBackfill?
 }
 
 private extension Array where Element == String {
