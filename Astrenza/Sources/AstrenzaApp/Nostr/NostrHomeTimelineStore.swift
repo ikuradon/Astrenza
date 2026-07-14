@@ -44,7 +44,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
-    private let runtimeEventPump: HomeTimelineRuntimeEventPump
+    private let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     private let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
@@ -346,7 +346,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             backwardRequestRegistry: backwardRequestRegistry,
             lifecycleCoordinator: lifecycleCoordinator
         )
-        self.runtimeEventCoordinator = HomeTimelineRuntimeEventCoordinator(
+        let runtimeEventCoordinator = HomeTimelineRuntimeEventCoordinator(
             processor: runtimeEventProcessor,
             applicationCoordinator: runtimeEventApplicationCoordinator,
             contentCoordinator: contentCoordinator,
@@ -354,8 +354,21 @@ final class NostrHomeTimelineStore: ObservableObject {
             feedEventRecorder: feedSyncCoordinator,
             lifecycleCoordinator: lifecycleCoordinator
         )
+        self.runtimeEventCoordinator = runtimeEventCoordinator
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
-        self.runtimeEventPump = runtimeEventPump
+        let runtimeStream: HomeTimelineRuntimeSessionCoordinator.RuntimeStream?
+        if let relayRuntime {
+            runtimeStream = { await relayRuntime.events() }
+        } else {
+            runtimeStream = nil
+        }
+        self.runtimeSessionCoordinator = HomeTimelineRuntimeSessionCoordinator(
+            runtimeEventPump: runtimeEventPump,
+            runtimeStream: runtimeStream,
+            profileUpdateObserver: dependencyCoordinator,
+            profileUpdateApplication: runtimeEventCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator
+        )
         let relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
             relayRuntime: relayRuntime,
             runtimeEventPump: runtimeEventPump,
@@ -408,7 +421,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     func start(account: NostrAccount) {
         let isSameAccount = self.account?.pubkey == account.pubkey
         if isSameAccount {
-            startRuntimeEventPump()
+            startRuntimeSession()
             activateOutbox(accountID: account.pubkey)
             return
         }
@@ -419,7 +432,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let lifecycle = lifecycleCoordinator.begin(accountID: account.pubkey)
         self.account = account
         syncPolicy = syncPolicySettingsStore.policy(accountID: account.pubkey, fallback: syncPolicy)
-        startRuntimeEventPump()
+        startRuntimeSession()
         lifecycleCoordinator.setRuntimeBootstrapCompleted(
             restoreCachedSnapshot(account: account),
             for: lifecycle
@@ -700,7 +713,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayStatusCoordinator.flushTraffic()
         let cancellationGeneration = lifecycleCoordinator.cancel()
         gapReconciliationApplicationCoordinator.cancel()
-        runtimeEventPump.cancel()
+        runtimeSessionCoordinator.cancelRuntimeEvents()
         linkPreviewCoordinator.reset()
         applyPresentationTransition(presentationCoordinator.reset())
         outboxCoordinator.cancel()
@@ -729,7 +742,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let relayRuntime else { return }
         relayRuntimeTerminator.schedule(
             termination: { [weak self] in
-                await self?.dependencyCoordinator.stopProfileUpdates()
+                await self?.runtimeSessionCoordinator.stopProfileUpdates()
                 await relayRuntime.terminate()
             },
             onLatestCompletion: { [weak self] in
@@ -738,10 +751,10 @@ final class NostrHomeTimelineStore: ObservableObject {
                       let account
                 else { return }
 
-                runtimeEventPump.cancel()
+                runtimeSessionCoordinator.cancelRuntimeEvents()
                 runtimeSetupCoordinator.reset()
                 resetHomeTimelineRealtime()
-                startRuntimeEventPump()
+                startRuntimeSession()
                 await configureRelayRuntime(account: account, forceInstall: true)
             }
         )
@@ -1185,42 +1198,35 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func startRuntimeEventPump() {
-        startProfileDirectoryEventPump()
-        guard let relayRuntime,
-              !relayRuntimeTerminator.isTerminating,
-              let accountID = account?.pubkey,
-              let lifecycle = lifecycleCoordinator.token(for: accountID)
-        else { return }
-        runtimeEventPump.start(
-            stream: { await relayRuntime.events() },
-            isSourceCurrent: { [weak self] in
-                self?.lifecycleCoordinator.isCurrent(lifecycle) == true &&
+    private func startRuntimeSession() {
+        let profileRelayURLs = account.map(runtimeRelayURLs(account:)) ?? []
+        runtimeSessionCoordinator.start(
+            HomeTimelineRuntimeSessionRequest(
+                account: account,
+                profileRelayURLs: profileRelayURLs,
+                hasRelayRuntime: relayRuntime != nil,
+                isTerminating: relayRuntimeTerminator.isTerminating
+            ),
+            handlers: HomeTimelineRuntimeSessionHandlers(
+                isAccountCurrent: { [weak self] accountID in
                     self?.account?.pubkey == accountID
-            },
-            onPacket: { [weak self] packet in
-                await self?.handleRuntimePacket(packet)
-            }
+                },
+                handlePacket: { [weak self] packet in
+                    await self?.handleRuntimePacket(packet)
+                },
+                eventApplication: runtimeEventApplicationHandlers(),
+                perform: { [weak self] command in
+                    self?.applyRuntimeSessionCommand(command)
+                }
+            )
         )
     }
 
-    private func startProfileDirectoryEventPump() {
-        guard !relayRuntimeTerminator.isTerminating,
-              let account
-        else { return }
-        let relayURLs = runtimeRelayURLs(account: account)
-        dependencyCoordinator.startProfileUpdates(relayURLs: relayURLs) { [weak self] update in
-            self?.handleProfileDirectoryUpdate(update)
-        }
-    }
-
-    private func handleProfileDirectoryUpdate(_ update: NostrProfileDirectoryUpdate) {
-        guard account != nil else { return }
-        for event in update.metadataEvents {
-            let effectiveEvent = rememberLatestMetadataEvent(event, consultEventStore: false)
-            resolveNIP05IfNeeded(for: effectiveEvent)
-        }
-        if !update.states.isEmpty || !update.metadataEvents.isEmpty {
+    private func applyRuntimeSessionCommand(
+        _ command: HomeTimelineRuntimeSessionCommand
+    ) {
+        switch command {
+        case .profileDirectoryChanged:
             invalidateListEntries()
             scheduleMaterializeEntries()
         }
