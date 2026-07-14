@@ -81,6 +81,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let eventIngestor: HomeTimelineEventIngestor
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
+    private let listProjectionCache: HomeTimelineListProjectionCache
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
@@ -111,7 +112,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
     private var hasCompletedRuntimeBootstrap = false
-    private var listEntriesCache: ListEntriesCache?
     private var runtimeLifecycleGeneration: UInt64 = 0
     private var relayRuntimeConfigurationSequence: UInt64 = 0
     private var isRuntimeEventPumpReady = false
@@ -247,6 +247,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             syncPlanner: syncPlanner,
             sourcePacketInstaller: sourcePacketInstaller
         )
+        self.listProjectionCache = HomeTimelineListProjectionCache()
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
@@ -559,45 +560,35 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
         guard let account, let eventStore else { return [] }
-        if let listEntriesCache,
-           listEntriesCache.accountID == account.pubkey,
-           listEntriesCache.limit == limit,
-           listEntriesCache.homeContentRevision == resolvedContentRevision,
-           listEntriesCache.listContentRevision == listContentRevision {
-            return listEntriesCache.entries
-        }
-        let listEvents = cachedListTimelineEvents(accountID: account.pubkey, eventStore: eventStore, limit: limit)
-        guard !listEvents.isEmpty else {
-            listEntriesCache = ListEntriesCache(
-                accountID: account.pubkey,
-                limit: limit,
-                homeContentRevision: resolvedContentRevision,
-                listContentRevision: listContentRevision,
-                entries: []
-            )
-            return []
-        }
-        let pubkeys = Set(listEvents.map(\.pubkey))
-        let metadata = (try? eventStore.latestReplaceableEvents(pubkeys: pubkeys, kind: 0)) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
-        let materializedEntries = NostrTimelineMaterializer.entries(
-            noteEvents: listEvents,
-            metadataEvents: metadata,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
-            followedPubkeys: Set(followedPubkeys),
-            mediaAssetsByEventID: mediaAssetsByEventID(for: listEvents),
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: listEvents),
-            filterRules: listFilterRuleSet(),
-            timeline: .lists
-        )
-        listEntriesCache = ListEntriesCache(
+        let cacheKey = HomeTimelineListProjectionCache.Key(
             accountID: account.pubkey,
             limit: limit,
-            homeContentRevision: resolvedContentRevision,
-            listContentRevision: listContentRevision,
-            entries: materializedEntries
+            homeContentRevision: resolvedContentRevision
         )
-        return materializedEntries
+        return listProjectionCache.entries(for: cacheKey) {
+            let listEvents = cachedListTimelineEvents(
+                accountID: account.pubkey,
+                eventStore: eventStore,
+                limit: limit
+            )
+            guard !listEvents.isEmpty else { return [] }
+            let pubkeys = Set(listEvents.map(\.pubkey))
+            let metadata = (try? eventStore.latestReplaceableEvents(
+                pubkeys: pubkeys,
+                kind: 0
+            )) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
+            return NostrTimelineMaterializer.entries(
+                noteEvents: listEvents,
+                metadataEvents: metadata,
+                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+                profileResolutionStates: dependencyCoordinator.profileResolutionStates,
+                followedPubkeys: Set(followedPubkeys),
+                mediaAssetsByEventID: mediaAssetsByEventID(for: listEvents),
+                linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: listEvents),
+                filterRules: listFilterRuleSet(),
+                timeline: .lists
+            )
+        }
     }
 
     func suspendTimelineFilters() {
@@ -636,8 +627,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         clearPendingNewEvents()
         isRefreshing = false
         isLoadingOlder = false
-        listEntriesCache = nil
-        listContentRevision &+= 1
+        invalidateListEntries()
         homeFeedProjection.reset()
         installedHomeForwardPackets = []
         resetHomeTimelineRealtime()
@@ -2937,8 +2927,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func invalidateListEntries() {
-        listEntriesCache = nil
-        listContentRevision &+= 1
+        listContentRevision = listProjectionCache.invalidate()
     }
 
     private func freshestReplaceableEvent(_ events: [NostrEvent?]) -> NostrEvent? {
@@ -3170,14 +3159,6 @@ private struct PendingGapBackfill {
             newerPostID
         }
     }
-}
-
-private struct ListEntriesCache {
-    let accountID: String
-    let limit: Int
-    let homeContentRevision: Int
-    let listContentRevision: Int
-    let entries: [TimelineFeedEntry]
 }
 
 private extension Array where Element == String {
