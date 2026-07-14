@@ -84,6 +84,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
+    private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let syncPlanner: HomeTimelineSyncPlanner
     private let timelineRepository: HomeTimelineRepository
     private let timelineCoordinator: HomeTimelineCoordinator
@@ -101,9 +102,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var unmaterializedCountTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
     private var outboxTaskGeneration: UInt64 = 0
-    private var feedReadStateTask: Task<Void, Never>?
-    private var viewportStateTask: Task<Void, Never>?
-    private var pendingViewportState: PendingFeedViewportState?
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
@@ -259,6 +257,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             eventStore: eventStore,
             resolver: linkPreviewResolver
         )
+        self.readStateCoordinator = HomeTimelineReadStateCoordinator(
+            eventStore: eventStore,
+            persistenceWorker: persistenceWorker
+        )
         self.outboxDrainer = HomeTimelineOutboxDrainer(
             eventStore: eventStore,
             publisher: outboxPublisher
@@ -324,19 +326,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
-        guard timelineKey == "home",
-              let state = try? eventStore?.feedReadState(
-                feedID: HomeFeedProjectionBuilder.feedID(accountID: accountID)
-              ),
-              let anchorEventID = state.viewportAnchorEventID
-        else { return nil }
-        return TimelineViewportState(
+        readStateCoordinator.restoredViewportState(
             accountID: accountID,
-            timelineKey: timelineKey,
-            anchorPostID: anchorEventID,
-            anchorOffset: state.viewportAnchorOffset,
-            contentOffset: 0,
-            updatedAt: Date(timeIntervalSince1970: TimeInterval(state.updatedAt))
+            timelineKey: timelineKey
         )
     }
 
@@ -344,42 +336,17 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard state.timelineKey == "home",
               let account,
               account.pubkey == state.accountID,
-              persistenceWorker != nil,
               let definition = homeFeedProjection.definition
         else { return }
-
-        pendingViewportState = PendingFeedViewportState(
-            accountID: account.pubkey,
+        readStateCoordinator.scheduleViewportState(
+            state,
             feedID: definition.feedID,
-            anchorEventID: state.anchorPostID,
-            anchorOffset: Double(state.anchorOffset),
-            updatedAt: Int(state.updatedAt.timeIntervalSince1970)
+            scopeID: account.pubkey
         )
-        viewportStateTask?.cancel()
-        viewportStateTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(600))
-            } catch {
-                return
-            }
-            guard let self, !Task.isCancelled else { return }
-            await self.persistPendingViewportState()
-        }
     }
 
     func flushPendingViewportStateSave() {
-        viewportStateTask?.cancel()
-        viewportStateTask = nil
-        guard let pendingViewportState, let persistenceWorker else { return }
-        self.pendingViewportState = nil
-        Task {
-            try? await persistenceWorker.saveViewportState(
-                feedID: pendingViewportState.feedID,
-                anchorEventID: pendingViewportState.anchorEventID,
-                anchorOffset: pendingViewportState.anchorOffset,
-                updatedAt: pendingViewportState.updatedAt
-            )
-        }
+        readStateCoordinator.flushPendingViewportWrite()
     }
 
     func refresh() {
@@ -677,8 +644,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func cancel() {
-        flushPendingViewportStateSave()
-        persistHomeFeedReadState()
+        readStateCoordinator.endSession(flushing: homeFeedReadBoundaryWrite())
         flushRelayTrafficDeltas()
         runtimeLifecycleGeneration &+= 1
         let cancellationGeneration = runtimeLifecycleGeneration
@@ -693,8 +659,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         unmaterializedCountTask?.cancel()
         outboxTask?.cancel()
         outboxTaskGeneration &+= 1
-        feedReadStateTask?.cancel()
-        viewportStateTask?.cancel()
         dependencyFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
@@ -702,8 +666,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         profileDirectoryUpdateTask = nil
         unmaterializedCountTask = nil
         outboxTask = nil
-        feedReadStateTask = nil
-        viewportStateTask = nil
         dependencyFlushTask = nil
         dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()
@@ -1385,82 +1347,43 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func restoreHomeFeedReadState(account: NostrAccount) {
-        guard let eventStore,
-              let definition = homeFeedProjection.definition,
-              definition.accountID == account.pubkey,
-              let state = try? eventStore.feedReadState(feedID: definition.feedID)
+        guard let definition = homeFeedProjection.definition,
+              definition.accountID == account.pubkey
         else { return }
-
-        let postIDs = entries.compactMap(\.post?.id)
-        let exactBoundaryID = state.readBoundary?.eventID
-        let boundaryID: TimelinePost.ID?
-        if let exactBoundaryID, postIDs.contains(exactBoundaryID) {
-            boundaryID = exactBoundaryID
-        } else if let cursor = state.readBoundary {
-            boundaryID = entries.compactMap(\.post).first { post in
-                let timestamp = post.createdAt
-                return timestamp < cursor.sortTimestamp ||
-                    (timestamp == cursor.sortTimestamp && post.id >= cursor.eventID)
-            }?.id
-        } else {
-            boundaryID = nil
+        let positions = entries.compactMap(\.post).map { post in
+            HomeTimelineReadPosition(postID: post.id, createdAt: post.createdAt)
         }
-
+        let boundaryID = readStateCoordinator.restoredReadBoundaryPostID(
+            feedID: definition.feedID,
+            positions: positions
+        )
         guard let boundaryID else { return }
         unreadState.setReadBoundary(postID: boundaryID)
         publishUnreadState()
     }
 
     private func scheduleHomeFeedReadStateSave() {
-        guard account != nil, homeFeedProjection.definition != nil else { return }
-        feedReadStateTask?.cancel()
-        feedReadStateTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 500_000_000)
-            } catch {
-                return
-            }
-            guard let self, !Task.isCancelled else { return }
-            self.persistHomeFeedReadState()
-            self.feedReadStateTask = nil
-        }
+        guard let write = homeFeedReadBoundaryWrite() else { return }
+        readStateCoordinator.scheduleReadBoundarySave(write)
     }
 
-    private func persistPendingViewportState() async {
-        viewportStateTask = nil
-        guard let pendingViewportState,
-              let persistenceWorker,
-              account?.pubkey == pendingViewportState.accountID
-        else { return }
-        self.pendingViewportState = nil
-        try? await persistenceWorker.saveViewportState(
-            feedID: pendingViewportState.feedID,
-            anchorEventID: pendingViewportState.anchorEventID,
-            anchorOffset: pendingViewportState.anchorOffset,
-            updatedAt: pendingViewportState.updatedAt
-        )
-    }
-
-    private func persistHomeFeedReadState() {
+    private func homeFeedReadBoundaryWrite() -> HomeTimelineReadBoundaryWrite? {
         guard let account,
-              let persistenceWorker,
               let definition = homeFeedProjection.definition,
               definition.accountID == account.pubkey
-        else { return }
+        else { return nil }
 
         let boundaryID = unreadState.readBoundaryPostID
         let boundaryEvent = boundaryID.flatMap(timelineEvent(id:))
         let readBoundary = boundaryEvent.map {
             NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
         }
-        let updatedAt = Int(Date().timeIntervalSince1970)
-        Task {
-            try? await persistenceWorker.saveReadBoundary(
-                feedID: definition.feedID,
-                boundary: readBoundary,
-                updatedAt: updatedAt
-            )
-        }
+        return HomeTimelineReadBoundaryWrite(
+            scopeID: account.pubkey,
+            feedID: definition.feedID,
+            boundary: readBoundary,
+            updatedAt: Int(Date().timeIntervalSince1970)
+        )
     }
 
     private func reloadNewestProjectionWindow(account: NostrAccount) {
@@ -3321,14 +3244,6 @@ private struct PendingBackwardRequest {
     var receivedTimelineEventCount = 0
     var receivedTimelineEventIDs: [String] = []
     var sourceRequestIDs: [String] = []
-}
-
-private struct PendingFeedViewportState: Sendable {
-    let accountID: String
-    let feedID: String
-    let anchorEventID: String?
-    let anchorOffset: Double
-    let updatedAt: Int
 }
 
 private struct HomeFeedSyncRegistration {
