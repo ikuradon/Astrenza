@@ -27,6 +27,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var realtimeFollowSourceRevision: Int?
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
+    private let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
@@ -326,6 +327,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.pendingEventBuffer = pendingEventBuffer
         let lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
         self.lifecycleCoordinator = lifecycleCoordinator
+        self.loadApplicationCoordinator = HomeTimelineLoadApplicationCoordinator(
+            lifecycleCoordinator: lifecycleCoordinator
+        )
         self.gapReconciliationApplicationCoordinator =
             HomeTimelineGapReconciliationApplicationCoordinator(
                 reconciliationCoordinator: gapReconciliationCoordinator,
@@ -789,24 +793,12 @@ final class NostrHomeTimelineStore: ObservableObject {
                 applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
             }
         )
-        switch outcome {
-        case .loaded(let state):
-            apply(state)
-            materializeEntries()
-            await persistDatabase(account: account)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            await configureRelayRuntime(account: account)
-            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        case .cancelled:
-            return
-        case .failed(let message):
-            applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Home timeline failed: \(message)"))
-            )
-        }
+        await applyRemoteLoadOutcome(
+            outcome,
+            operation: .initial,
+            account: account,
+            lifecycle: lifecycle
+        )
     }
 
     private func loadRuntimeBootstrap(
@@ -838,48 +830,11 @@ final class NostrHomeTimelineStore: ObservableObject {
                 applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
             }
         )
-        switch outcome {
-        case .loaded(let bootstrapState):
-            apply(runtimeBootstrapState(from: bootstrapState))
-            lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
-            materializeEntries()
-            await persistDatabase(account: account)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            await configureRelayRuntime(account: account)
-            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        case .cancelled:
-            return
-        case .failed(let message):
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: "astrenza-bootstrap",
-                message: "bootstrap refresh failed: \(message)"
-            )
-            if hadCachedBootstrap {
-                applyActivityTransition(activityCoordinator.setPhase(.loaded))
-            } else if !resolvedRelays.isEmpty {
-                applyContentSnapshot(
-                    contentCoordinator.replaceFollowedPubkeys([account.pubkey])
-                )
-                lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
-                await configureRelayRuntime(account: account)
-                applyActivityTransition(activityCoordinator.setPhase(.loaded))
-            } else {
-                applyActivityTransition(
-                    activityCoordinator.setPhase(.failed("Home timeline failed: \(message)"))
-                )
-            }
-        }
-    }
-
-    private func runtimeBootstrapState(from bootstrapState: NostrHomeTimelineState) -> NostrHomeTimelineState {
-        contentCoordinator.runtimeBootstrapState(
-            from: bootstrapState,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions
+        await applyRemoteLoadOutcome(
+            outcome,
+            operation: .runtimeBootstrap(hadCachedBootstrap: hadCachedBootstrap),
+            account: account,
+            lifecycle: lifecycle
         )
     }
 
@@ -933,24 +888,12 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self?.lifecycleCoordinator.isCurrent(lifecycle) == true
             }
         )
-        switch outcome {
-        case .loaded(let state):
-            apply(state)
-            materializeEntries()
-            await persistDatabase(account: account)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            await configureRelayRuntime(account: account)
-            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        case .cancelled:
-            return
-        case .failed(let message):
-            applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Refresh failed: \(message)"))
-            )
-        }
+        await applyRemoteLoadOutcome(
+            outcome,
+            operation: .refresh,
+            account: account,
+            lifecycle: lifecycle
+        )
     }
 
     private func loadOlder(
@@ -990,27 +933,73 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self?.lifecycleCoordinator.isCurrent(lifecycle) == true
             }
         )
-        switch outcome {
-        case .loaded(let state):
-            apply(state)
-            if !state.hasMoreOlder {
-                return
-            }
+        await applyRemoteLoadOutcome(
+            outcome,
+            operation: .older,
+            account: account,
+            lifecycle: lifecycle
+        )
+    }
 
+    private func applyRemoteLoadOutcome(
+        _ outcome: HomeTimelineRemoteLoadOutcome,
+        operation: HomeTimelineLoadOperation,
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken
+    ) async {
+        await loadApplicationCoordinator.apply(
+            outcome,
+            context: HomeTimelineLoadApplicationContext(
+                account: account,
+                lifecycle: lifecycle,
+                operation: operation,
+                resolvedRelays: resolvedRelays
+            ),
+            handlers: remoteLoadApplicationHandlers()
+        )
+    }
+
+    private func remoteLoadApplicationHandlers() -> HomeTimelineLoadApplicationHandlers {
+        HomeTimelineLoadApplicationHandlers(
+            perform: { [weak self] command in
+                self?.performRemoteLoadApplicationCommand(command)
+            },
+            persistDatabase: { [weak self] account in
+                await self?.persistDatabase(account: account)
+            },
+            configureRelayRuntime: { [weak self] account in
+                await self?.configureRelayRuntime(account: account)
+            }
+        )
+    }
+
+    private func performRemoteLoadApplicationCommand(
+        _ command: HomeTimelineLoadApplicationCommand
+    ) {
+        switch command {
+        case .replaceState(let state, let replacement):
+            switch replacement {
+            case .complete:
+                apply(state)
+            case .runtimeBootstrap:
+                apply(contentCoordinator.runtimeBootstrapState(
+                    from: state,
+                    nip05Resolutions: dependencyCoordinator.nip05Resolutions
+                ))
+            }
+        case .replaceFollowedPubkeys(let pubkeys):
+            applyContentSnapshot(contentCoordinator.replaceFollowedPubkeys(pubkeys))
+        case .materializeEntries:
             materializeEntries()
-            await persistDatabase(account: account)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            await configureRelayRuntime(account: account)
-            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        case .cancelled:
-            return
-        case .failed(let message):
-            applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Older notes failed: \(message)"))
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: diagnostic.kind,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
             )
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
         }
     }
 
