@@ -37,6 +37,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
+    private let materializationCoordinator: HomeTimelineMaterializationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
@@ -227,7 +228,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) {
         let persistenceWorker = eventStore.map(HomeTimelinePersistenceWorker.init)
         self.eventStore = eventStore
-        self.contentCoordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
+        let contentCoordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
+        self.contentCoordinator = contentCoordinator
         let eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
         let syncPlanner = HomeTimelineSyncPlanner()
         let profileDirectory = relayRuntime.map {
@@ -245,7 +247,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         let backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
         self.backfillPersistence = backfillPersistence
         self.syncPlanner = syncPlanner
-        self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
+        let timelineRepository = HomeTimelineRepository(eventStore: eventStore)
+        self.timelineRepository = timelineRepository
         self.timelineCoordinator = HomeTimelineCoordinator()
         self.gapReconciliationCoordinator = HomeTimelineGapReconciliationCoordinator(
             reconciler: HomeTimelineGapReconciler(
@@ -286,10 +289,19 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller: sourcePacketInstaller
         )
         self.dependencyCoordinator = dependencyCoordinator
-        self.filterCoordinator = HomeTimelineFilterCoordinator(eventStore: eventStore)
+        let filterCoordinator = HomeTimelineFilterCoordinator(eventStore: eventStore)
+        self.filterCoordinator = filterCoordinator
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.activityCoordinator = HomeTimelineActivityCoordinator()
-        self.presentationCoordinator = HomeTimelinePresentationCoordinator()
+        let presentationCoordinator = HomeTimelinePresentationCoordinator()
+        self.presentationCoordinator = presentationCoordinator
+        self.materializationCoordinator = HomeTimelineMaterializationCoordinator(
+            contentCoordinator: contentCoordinator,
+            filterCoordinator: filterCoordinator,
+            presentationCoordinator: presentationCoordinator,
+            projectionController: homeFeedProjection,
+            repository: timelineRepository
+        )
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
         self.lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
@@ -1156,12 +1168,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func reloadNewestProjectionWindow(account: NostrAccount) {
-        guard let window = homeFeedProjection.reloadNewest(
-            accountID: account.pubkey,
-            followedPubkeys: followedPubkeys,
-            liveEvents: noteEvents
-        ) else { return }
-        contentCoordinator.replaceProjectionEvents(window.events)
+        materializationCoordinator.reloadNewestProjection(account: account)
     }
 
     @discardableResult
@@ -1170,15 +1177,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         around anchorEventID: String?,
         mergingWithCurrentWindow: Bool = false
     ) -> Bool {
-        guard let window = homeFeedProjection.reload(
-            accountID: account.pubkey,
-            followedPubkeys: followedPubkeys,
-            liveEvents: noteEvents,
+        materializationCoordinator.reloadProjection(
+            account: account,
             around: anchorEventID,
             mergingWithCurrentWindow: mergingWithCurrentWindow
-        ) else { return false }
-        contentCoordinator.replaceProjectionEvents(window.events)
-        return true
+        )
     }
 
     private func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
@@ -1189,10 +1192,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         if !entries.isEmpty {
             applyActivityTransition(activityCoordinator.setPhase(.loaded))
         }
-    }
-
-    private func contextEventsForCurrentProjection() -> [NostrEvent] {
-        timelineRepository.contextEvents(for: noteEvents)
     }
 
     private func startRuntimeEventPump() {
@@ -1928,35 +1927,16 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
-        guard let pass = presentationCoordinator.beginMaterialization(
-            allowsRealtimeFollow: allowsRealtimeFollow
+        guard let transition = materializationCoordinator.materialize(
+            HomeTimelineMaterializationRequest(
+                account: account,
+                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+                profileResolutionStates: dependencyCoordinator.profileResolutionStates,
+                policy: syncPolicy,
+                allowsRealtimeFollow: allowsRealtimeFollow
+            )
         ) else { return }
-        if pass.shouldReloadNewestProjection, let account {
-            reloadNewestProjectionWindow(account: account)
-            presentationCoordinator.clearNewestProjectionReload()
-        }
-        let filterProjection = filterCoordinator.projection(
-            accountID: account?.pubkey,
-            events: noteEvents
-        )
-        let contextEvents = contextEventsForCurrentProjection()
-        let snapshot = timelineRepository.materialize(
-            account: account,
-            noteEvents: noteEvents,
-            feedWindow: homeFeedProjection.window,
-            contextEvents: contextEvents,
-            metadataEvents: metadataEvents,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
-            followedPubkeys: followedPubkeys,
-            resolvedRelays: resolvedRelays,
-            filterRules: filterProjection.effectiveRuleSet,
-            filterStatus: filterProjection.status,
-            policy: syncPolicy
-        )
-        applyPresentationTransition(
-            presentationCoordinator.apply(snapshot, pass: pass)
-        )
+        applyPresentationTransition(transition)
     }
 
     private func scheduleMaterializeEntries(
