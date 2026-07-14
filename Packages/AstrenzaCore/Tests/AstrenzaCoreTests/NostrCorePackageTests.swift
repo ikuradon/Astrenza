@@ -439,6 +439,38 @@ struct NostrCorePackageTests {
         #expect(try store.latestReplaceableEventReceivedAtByPubkey(pubkeys: [pubkey], kind: 0) == [pubkey: 1234])
     }
 
+    @Test("Nostr event store persists profile fetch terminal outcomes")
+    func eventStoreProfileFetchOutcomes() throws {
+        let store = try NostrEventStore.inMemory()
+        let missingPubkey = String(repeating: "a", count: 64)
+        let failedPubkey = String(repeating: "b", count: 64)
+        let records = [
+            NostrProfileFetchRecord(
+                pubkey: missingPubkey,
+                outcome: .notFound,
+                lastAttemptAt: 100,
+                nextRetryAt: 1_000,
+                updatedAt: 101
+            ),
+            NostrProfileFetchRecord(
+                pubkey: failedPubkey,
+                outcome: .failed,
+                lastAttemptAt: 200,
+                nextRetryAt: 260,
+                lastError: "timeout",
+                updatedAt: 201
+            )
+        ]
+
+        try store.saveProfileFetchRecords(records)
+
+        #expect(
+            try store.profileFetchRecords(pubkeys: [missingPubkey, failedPubkey])
+                .sorted { $0.pubkey < $1.pubkey }
+            == records
+        )
+    }
+
     @Test("Dependency fetch queue batches missing dependencies by relay hint")
     func dependencyFetchQueueBatchesMissingDependenciesByRelayHint() {
         let pubkey = String(repeating: "a", count: 64)
@@ -470,6 +502,36 @@ struct NostrCorePackageTests {
         ])
         #expect(queue.pendingProfilePubkeys == [pubkey])
         #expect(queue.pendingSourceEventIDs == [eventID])
+    }
+
+    @Test("Dependency fetch queue can use a profile relay pool without widening source requests")
+    func dependencyFetchQueueUsesSeparateProfileRelayPool() {
+        let pubkey = String(repeating: "a", count: 64)
+        let eventID = String(repeating: "b", count: 64)
+        var queue = NostrDependencyFetchQueue()
+
+        let didEnqueue = queue.enqueue(
+            dependencies: NostrEventDependencies(
+                profilePubkeys: [pubkey],
+                sourceEventIDs: [eventID]
+            ),
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://home.example"],
+            availableProfileRelayURLs: ["wss://home.example", "wss://directory.example"],
+            now: 100
+        )
+        #expect(didEnqueue)
+
+        let batch = queue.drain()
+        #expect(batch.profileGroups == [
+            NostrDependencyFetchGroup(
+                relayURLs: ["wss://home.example", "wss://directory.example"],
+                values: [pubkey]
+            )
+        ])
+        #expect(batch.sourceGroups == [
+            NostrDependencyFetchGroup(relayURLs: ["wss://home.example"], values: [eventID])
+        ])
     }
 
     @Test("Dependency fetch queue refreshes stale profiles but not cached source events")
@@ -1850,7 +1912,7 @@ struct NostrCorePackageTests {
         #expect(cursor.lastEOSEAt == 1_000)
     }
 
-    @Test("Nostr event store updates relay cursors from runtime event history")
+    @Test("Nostr event store commits runtime cursor observations at EOSE")
     func eventStoreRelayRuntimeEventsUpdateCursors() throws {
         let store = try NostrEventStore.inMemory()
         let accountID = "account"
@@ -1889,6 +1951,8 @@ struct NostrCorePackageTests {
                 occurredAt: 2_020,
                 subscriptionID: "astrenza-home-forward",
                 eventCount: 0,
+                newestCreatedAt: 900,
+                oldestCreatedAt: 600,
                 message: "EOSE received"
             )
         ])
@@ -2472,7 +2536,7 @@ struct NostrCorePackageTests {
         )
 
         try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 300)
-        let restoredState = try store.homeTimelineState(accountID: accountID)
+        let restoredState = try store.legacyHomeTimelineStateForMigration(accountID: accountID)
         let restored = try #require(restoredState)
 
         #expect(restored.relays == ["wss://relay.example"])
@@ -2512,7 +2576,7 @@ struct NostrCorePackageTests {
         )
 
         try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 300)
-        let restored = try #require(try store.homeTimelineState(accountID: accountID))
+        let restored = try #require(try store.legacyHomeTimelineStateForMigration(accountID: accountID))
 
         #expect(restored.relays == ["wss://read.example"])
         #expect(restored.followedPubkeys == [followed])
@@ -2560,7 +2624,7 @@ struct NostrCorePackageTests {
         }
 
         let reopenedStore = try NostrEventStore(path: databaseURL.path)
-        let restored = try #require(try reopenedStore.homeTimelineState(accountID: accountID))
+        let restored = try #require(try reopenedStore.legacyHomeTimelineStateForMigration(accountID: accountID))
 
         #expect(restored.relays == ["wss://read.example"])
         #expect(restored.followedPubkeys == [followed])
@@ -2588,7 +2652,7 @@ struct NostrCorePackageTests {
         )
 
         try store.saveHomeTimelineState(state, accountID: accountID, savedAt: 1_800_010_001)
-        let restored = try #require(try store.homeTimelineState(accountID: accountID, limit: 25))
+        let restored = try #require(try store.legacyHomeTimelineStateForMigration(accountID: accountID, limit: 25))
 
         #expect(restored.noteEvents.count == 25)
         #expect(restored.noteEvents.map(\.createdAt) == Array((1_800_000_225...1_800_000_249).reversed()))
@@ -2698,6 +2762,23 @@ struct NostrCorePackageTests {
         #expect(item.body == "hello nostr")
         #expect(item.avatarPictureState == .resolved)
         #expect(item.avatarImageURL?.absoluteString == "https://cdn.example.test/avatar.png")
+    }
+
+    @Test("Home materializer treats an empty kind 0 event as resolved metadata")
+    func homeTimelineMaterializerEmptyMetadataIsResolved() throws {
+        let pubkey = String(repeating: "d", count: 64)
+        let note = nostrEvent(kind: 1, pubkey: pubkey, content: "empty profile")
+        let metadata = nostrEvent(kind: 0, pubkey: pubkey, content: "{}")
+
+        let item = try #require(NostrHomeTimelineMaterializer.items(
+            noteEvents: [note],
+            metadataEvents: [metadata],
+            followedPubkeys: []
+        ).first)
+
+        #expect(item.profileResolutionState == .resolved)
+        #expect(item.displayName == nil)
+        #expect(item.avatarPictureState == .missing)
     }
 
     @Test("Home materializer applies NIP-05 verification status")
@@ -2824,8 +2905,11 @@ struct NostrCorePackageTests {
             "astrenza-kind0": [metadata]
         ])
         let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+        let stageCollector = HomeTimelineLoadStageCollector()
 
-        let state = try await loader.initialState(account: account)
+        let state = try await loader.initialState(account: account) { stage in
+            await stageCollector.append(stage)
+        }
 
         #expect(state.relays == ["wss://read.example"])
         #expect(state.followedPubkeys == [followed])
@@ -2838,6 +2922,11 @@ struct NostrCorePackageTests {
         #expect(calls.contains("astrenza-kind3"))
         #expect(calls.contains("astrenza-home"))
         #expect(calls.contains("astrenza-kind0"))
+        #expect(await stageCollector.values() == [
+            .resolvingRelayList,
+            .resolvingContactList,
+            .loadingTimeline
+        ])
     }
 
     @Test("Home timeline loader bootstrap resolves relays and follows without fetching home notes")
@@ -2853,8 +2942,11 @@ struct NostrCorePackageTests {
             "astrenza-kind0": [nostrEvent(kind: 0, pubkey: followed, content: #"{"name":"Should Not Fetch"}"#)]
         ])
         let loader = NostrHomeTimelineLoader(relayClient: fake, bootstrapRelays: ["wss://bootstrap.example"], pageLimit: 10)
+        let stageCollector = HomeTimelineLoadStageCollector()
 
-        let state = try await loader.bootstrapState(account: account)
+        let state = try await loader.bootstrapState(account: account) { stage in
+            await stageCollector.append(stage)
+        }
 
         #expect(state.relays == ["wss://read.example"])
         #expect(state.followedPubkeys == [followed])
@@ -2867,6 +2959,10 @@ struct NostrCorePackageTests {
         #expect(calls.contains("astrenza-kind3"))
         #expect(!calls.contains("astrenza-home"))
         #expect(!calls.contains("astrenza-kind0"))
+        #expect(await stageCollector.values() == [
+            .resolvingRelayList,
+            .resolvingContactList
+        ])
     }
 
     @Test("Home timeline loader keeps all followed pubkeys")
@@ -2943,10 +3039,11 @@ struct NostrCorePackageTests {
         #expect(state.relayListEvent?.id == newRelayEvent.id)
     }
 
-    @Test("Home timeline bootstrap returns after the first kind 3 relay responds")
-    func homeTimelineBootstrapReturnsAfterFirstKind3RelayResponds() async throws {
+    @Test("Home timeline bootstrap settles briefly and chooses the newest kind 3")
+    func homeTimelineBootstrapSettlesAndChoosesNewestKind3() async throws {
         let account = NostrAccount(pubkey: String(repeating: "1", count: 64), displayIdentifier: "npub-test", readOnly: true)
-        let followed = String(repeating: "2", count: 64)
+        let staleFollowed = String(repeating: "2", count: 64)
+        let newestFollowed = String(repeating: "3", count: 64)
         let relayEvent = nostrEvent(
             kind: 10002,
             pubkey: account.pubkey,
@@ -2955,15 +3052,26 @@ struct NostrCorePackageTests {
                 ["r", "wss://slow-kind3.example", "read"]
             ]
         )
-        let contacts = nostrEvent(kind: 3, pubkey: account.pubkey, tags: [["p", followed]])
+        let staleContacts = nostrEvent(
+            kind: 3,
+            pubkey: account.pubkey,
+            createdAt: 100,
+            tags: [["p", staleFollowed]]
+        )
+        let newestContacts = nostrEvent(
+            kind: 3,
+            pubkey: account.pubkey,
+            createdAt: 200,
+            tags: [["p", newestFollowed]]
+        )
         let fake = FakeRelayClient(
             eventsByRelayAndSubscriptionID: [
                 "wss://bootstrap.example": ["astrenza-nip65": [relayEvent]],
-                "wss://fast-kind3.example": ["astrenza-kind3": [contacts]],
-                "wss://slow-kind3.example": ["astrenza-kind3": [contacts]]
+                "wss://fast-kind3.example": ["astrenza-kind3": [staleContacts]],
+                "wss://slow-kind3.example": ["astrenza-kind3": [newestContacts]]
             ],
             delayNanosecondsByRelayAndSubscriptionID: [
-                "wss://slow-kind3.example": ["astrenza-kind3": 2_000_000_000]
+                "wss://slow-kind3.example": ["astrenza-kind3": 100_000_000]
             ]
         )
         let loader = NostrHomeTimelineLoader(
@@ -2975,7 +3083,8 @@ struct NostrCorePackageTests {
 
         let state = try await loader.bootstrapState(account: account)
 
-        #expect(state.followedPubkeys == [followed])
+        #expect(state.followedPubkeys == [newestFollowed])
+        #expect(state.contactListEvent?.id == newestContacts.id)
         #expect(Date().timeIntervalSince(started) < 1)
     }
 
@@ -3303,6 +3412,173 @@ struct NostrCorePackageTests {
         #expect(sent.count == 1)
         #expect(sent[0].contains(#""REQ""#))
         #expect(sent[0].contains(#""authors":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]"#))
+    }
+
+    @Test("Profile directory turns zero-result EOSE into a persisted unavailable state")
+    func profileDirectoryCompletesMissingMetadata() async throws {
+        let pubkey = String(repeating: "c", count: 64)
+        let store = try NostrEventStore.inMemory()
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let directory = NostrProfileDirectory(
+            eventStore: store,
+            relayRuntime: runtime,
+            policy: NostrProfileDirectoryPolicy(
+                notFoundRetryAfterSeconds: 900,
+                foregroundBatchDelayMilliseconds: 0
+            )
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        await directory.start(relayURLs: ["wss://relay.example"])
+        await directory.ensureProfiles(pubkeys: [pubkey], priority: .foreground, now: 100)
+
+        #expect(await waitForProfileState(.fetching, pubkey: pubkey, directory: directory))
+        let requestFrame = try #require(await waitForSentFrames(1, connection: connection).first)
+        let subscriptionID = try relaySubscriptionID(fromREQFrame: requestFrame)
+        await connection.appendInboundFrames(["[\"EOSE\",\"\(subscriptionID)\"]"])
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+
+        #expect(await waitForProfileState(.unavailable, pubkey: pubkey, directory: directory))
+        let record = try #require(try store.profileFetchRecords(pubkeys: [pubkey]).first)
+        #expect(record.outcome == .notFound)
+        #expect(record.nextRetryAt.map { $0 > record.lastAttemptAt } == true)
+
+        await directory.stop()
+        await runtime.terminate()
+    }
+
+    @Test("Profile directory automatically retries a missing profile after its retry deadline")
+    func profileDirectoryAutomaticallyRetriesMissingMetadata() async throws {
+        let pubkey = String(repeating: "d", count: 64)
+        let store = try NostrEventStore.inMemory()
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let directory = NostrProfileDirectory(
+            eventStore: store,
+            relayRuntime: runtime,
+            policy: NostrProfileDirectoryPolicy(
+                notFoundRetryAfterSeconds: 1,
+                foregroundBatchDelayMilliseconds: 0
+            )
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        await directory.start(relayURLs: ["wss://relay.example"])
+        await directory.ensureProfiles(pubkeys: [pubkey], priority: .foreground)
+
+        let firstRequestFrame = try #require(await waitForREQFrames(1, connection: connection).first)
+        let firstSubscriptionID = try relaySubscriptionID(fromREQFrame: firstRequestFrame)
+        await connection.appendInboundFrames(["[\"EOSE\",\"\(firstSubscriptionID)\"]"])
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+
+        #expect(await waitForProfileState(.unavailable, pubkey: pubkey, directory: directory))
+        let requestFramesAfterRetryDeadline = await waitForREQFrames(
+            2,
+            connection: connection,
+            attempts: 300,
+            delayMilliseconds: 5
+        )
+        #expect(requestFramesAfterRetryDeadline.count >= 2)
+        if requestFramesAfterRetryDeadline.count >= 2 {
+            let secondSubscriptionID = try relaySubscriptionID(fromREQFrame: requestFramesAfterRetryDeadline[1])
+            #expect(secondSubscriptionID != firstSubscriptionID)
+        }
+        #expect(await waitForProfileState(.fetching, pubkey: pubkey, directory: directory))
+
+        await directory.stop()
+        await runtime.terminate()
+    }
+
+    @Test("Profile directory publishes a cached kind 0 event on its first resolution")
+    func profileDirectoryPublishesCachedMetadata() async throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let metadata = try signedEvent(
+            kind: 0,
+            createdAt: now - 1,
+            tags: [],
+            content: #"{"display_name":"Cached Profile"}"#
+        )
+        let store = try NostrEventStore.inMemory()
+        try store.save(events: [metadata], receivedAt: now)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: FakeRelayRuntimeConnection()) },
+            autoReceive: false
+        )
+        let directory = NostrProfileDirectory(eventStore: store, relayRuntime: runtime)
+        let collector = ProfileDirectoryUpdateCollector()
+        let updates = await directory.updates()
+        let collectionTask = Task {
+            for await update in updates {
+                await collector.append(update)
+            }
+        }
+
+        await directory.ensureProfiles(pubkeys: [metadata.pubkey], priority: .foreground, now: now)
+
+        #expect(await waitForProfileMetadataEvent(metadata.id, collector: collector))
+        #expect(await directory.snapshot(pubkeys: [metadata.pubkey])[metadata.pubkey] == .resolved)
+
+        collectionTask.cancel()
+        await directory.stop()
+        await runtime.terminate()
+    }
+
+    @Test("Profile directory resolves and stores an arriving kind 0 event")
+    func profileDirectoryResolvesMetadataEvent() async throws {
+        let metadata = try signedEvent(
+            kind: 0,
+            createdAt: Int(Date().timeIntervalSince1970) - 1,
+            tags: [],
+            content: #"{"display_name":"Profile User"}"#
+        )
+        let store = try NostrEventStore.inMemory()
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let directory = NostrProfileDirectory(
+            eventStore: store,
+            relayRuntime: runtime,
+            policy: NostrProfileDirectoryPolicy(foregroundBatchDelayMilliseconds: 0)
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        await directory.start(relayURLs: ["wss://relay.example"])
+        await directory.ensureProfiles(pubkeys: [metadata.pubkey], priority: .foreground)
+
+        let requestFrame = try #require(await waitForSentFrames(1, connection: connection).first)
+        let subscriptionID = try relaySubscriptionID(fromREQFrame: requestFrame)
+        let eventFrame = try relayRuntimeEventFrame(subscriptionID: subscriptionID, event: metadata)
+        await connection.appendInboundFrames([
+            eventFrame,
+            "[\"EOSE\",\"\(subscriptionID)\"]"
+        ])
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+
+        #expect(await waitForProfileState(.resolved, pubkey: metadata.pubkey, directory: directory))
+        #expect(try store.latestReplaceableEvent(pubkey: metadata.pubkey, kind: 0) == metadata)
+        #expect(try store.profileFetchRecords(pubkeys: [metadata.pubkey]).first?.outcome == .resolved)
+
+        await directory.stop()
+        await runtime.terminate()
     }
 
     @Test("Relay runtime older notes backward builder preserves author window")
@@ -3955,12 +4231,31 @@ struct NostrCorePackageTests {
             autoReceive: true,
             retryPolicy: NostrRelayRuntimeRetryPolicy(maxAttempts: 1, initialDelayMilliseconds: 0, delayStepMilliseconds: 0)
         )
+        let collector = RelayRuntimePacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
 
         try await runtime.setDefaultRelays(["wss://relay.example"])
-        try await Task.sleep(nanoseconds: 30_000_000)
+        for _ in 0..<100 {
+            let didRetry = await transport.connectCallCount() >= 2
+            let observedSuspension = await collector.packets().contains { packet in
+                packet == .stateChanged(relayURL: "wss://relay.example", state: .suspended)
+            }
+            if didRetry && observedSuspension {
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
 
         #expect(await transport.connectCallCount() >= 2)
-        #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .suspended)
+        #expect(await collector.packets().contains { packet in
+            packet == .stateChanged(relayURL: "wss://relay.example", state: .suspended)
+        })
     }
 
     @Test("Relay runtime resumes forward receive after retry exhaustion")
@@ -3994,11 +4289,32 @@ struct NostrCorePackageTests {
 
         try await runtime.setDefaultRelays(["wss://relay.example"])
         try await runtime.installForward(packet)
-        try await Task.sleep(nanoseconds: 30_000_000)
-        #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .suspended)
+        for _ in 0..<100 {
+            let observedSuspension = await collector.packets().contains { packet in
+                packet == .stateChanged(relayURL: "wss://relay.example", state: .suspended)
+            }
+            if observedSuspension {
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(await collector.packets().contains { packet in
+            packet == .stateChanged(relayURL: "wss://relay.example", state: .suspended)
+        })
 
         await connection.appendInboundFrames([try relayRuntimeEventFrame(subscriptionID: "home-forward", event: event)])
-        try await Task.sleep(nanoseconds: 80_000_000)
+        for _ in 0..<100 {
+            let didReceive = await collector.packets().contains { packet in
+                if case .event("wss://relay.example", "home-forward", event) = packet {
+                    return true
+                }
+                return false
+            }
+            if didReceive {
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
 
         let packets = await collector.packets()
         #expect(packets.contains { packet in
@@ -4287,6 +4603,73 @@ struct NostrCorePackageTests {
             return 0
         }
     }
+
+    private func waitForSentFrames(
+        _ minimumCount: Int,
+        connection: FakeRelayRuntimeConnection,
+        attempts: Int = 100,
+        delayMilliseconds: Int = 5
+    ) async -> [String] {
+        for _ in 0..<attempts {
+            let frames = await connection.sentFrames()
+            if frames.count >= minimumCount {
+                return frames
+            }
+            try? await Task.sleep(for: .milliseconds(delayMilliseconds))
+        }
+        return await connection.sentFrames()
+    }
+
+    private func waitForREQFrames(
+        _ minimumCount: Int,
+        connection: FakeRelayRuntimeConnection,
+        attempts: Int = 100,
+        delayMilliseconds: Int = 5
+    ) async -> [String] {
+        for _ in 0..<attempts {
+            let frames = await connection.sentFrames().filter { $0.hasPrefix("[\"REQ\",") }
+            if frames.count >= minimumCount {
+                return frames
+            }
+            try? await Task.sleep(for: .milliseconds(delayMilliseconds))
+        }
+        return await connection.sentFrames().filter { $0.hasPrefix("[\"REQ\",") }
+    }
+
+    private func waitForProfileState(
+        _ expectedState: NostrProfileResolutionState,
+        pubkey: String,
+        directory: NostrProfileDirectory
+    ) async -> Bool {
+        for _ in 0..<100 {
+            let state = await directory.snapshot(pubkeys: [pubkey])[pubkey]
+            if state == expectedState {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return false
+    }
+
+    private func waitForProfileMetadataEvent(
+        _ eventID: String,
+        collector: ProfileDirectoryUpdateCollector
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if await collector.metadataEventIDs().contains(eventID) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return false
+    }
+
+    private func relaySubscriptionID(fromREQFrame frame: String) throws -> String {
+        let data = try #require(frame.data(using: .utf8))
+        let components = try #require(try JSONSerialization.jsonObject(with: data) as? [Any])
+        #expect(components.first as? String == "REQ")
+        return try #require(components.dropFirst().first as? String)
+    }
 }
 
 private actor LockedCounter {
@@ -4339,6 +4722,30 @@ private actor RelayRuntimePacketCollector {
 
     func packets() -> [NostrRelayRuntimePacket] {
         collected
+    }
+}
+
+private actor ProfileDirectoryUpdateCollector {
+    private var eventIDs = Set<String>()
+
+    func append(_ update: NostrProfileDirectoryUpdate) {
+        eventIDs.formUnion(update.metadataEvents.map(\.id))
+    }
+
+    func metadataEventIDs() -> Set<String> {
+        eventIDs
+    }
+}
+
+private actor HomeTimelineLoadStageCollector {
+    private var stages: [NostrHomeTimelineLoadStage] = []
+
+    func append(_ stage: NostrHomeTimelineLoadStage) {
+        stages.append(stage)
+    }
+
+    func values() -> [NostrHomeTimelineLoadStage] {
+        stages
     }
 }
 

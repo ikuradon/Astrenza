@@ -43,7 +43,12 @@ private struct CachedRemoteAvatarImage: View {
     let style: AvatarStyle
     let size: CGFloat
 
+    @Environment(\.displayScale) private var displayScale
     @StateObject private var loader = RemoteAvatarImageLoader()
+
+    private var maximumPixelSize: Int {
+        Int(ceil(size * displayScale))
+    }
 
     var body: some View {
         ZStack {
@@ -66,8 +71,8 @@ private struct CachedRemoteAvatarImage: View {
                 )
             }
         }
-        .task(id: url) {
-            await loader.load(url: url)
+        .task(id: "\(url.absoluteString)|\(maximumPixelSize)") {
+            await loader.load(url: url, maximumPixelSize: maximumPixelSize)
         }
     }
 }
@@ -78,20 +83,23 @@ private final class RemoteAvatarImageLoader: ObservableObject {
     @Published private(set) var didFail = false
 
     private var loadedURL: URL?
+    private var loadedMaximumPixelSize: Int?
 
-    func load(url: URL) async {
-        guard loadedURL != url else { return }
+    func load(url: URL, maximumPixelSize: Int) async {
+        guard loadedURL != url || loadedMaximumPixelSize != maximumPixelSize else { return }
         loadedURL = url
+        loadedMaximumPixelSize = maximumPixelSize
         didFail = false
 
-        if let cachedImage = NostrImageCache.shared.memoryCachedImage(for: url) {
-            image = cachedImage
-            return
-        }
-
         do {
-            image = try await NostrImageCache.shared.image(for: url)
+            let loadedImage = try await NostrImageCache.shared.image(
+                for: url,
+                maximumPixelSize: maximumPixelSize
+            )
+            guard loadedURL == url, loadedMaximumPixelSize == maximumPixelSize else { return }
+            image = loadedImage
         } catch {
+            guard loadedURL == url, loadedMaximumPixelSize == maximumPixelSize else { return }
             didFail = true
         }
     }

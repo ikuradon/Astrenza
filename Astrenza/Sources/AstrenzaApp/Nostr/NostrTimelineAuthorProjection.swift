@@ -4,11 +4,11 @@ import AstrenzaCore
 
 struct NostrTimelineAuthorProjection {
     static func author(for item: NostrHomeTimelineItem) -> TimelineAuthor {
-        guard let displayName = item.displayName else {
-            return .unresolved(pubkey: item.pubkey)
+        guard item.profileResolutionState == .resolved else {
+            return .unresolved(pubkey: item.pubkey, state: item.profileResolutionState)
         }
-        return .resolved(
-            displayName: displayName,
+        return .metadataResolved(
+            displayName: item.displayName,
             nip05: item.nip05,
             nip05Status: NIP05Status(item.nip05Status),
             pubkey: item.pubkey,
@@ -40,7 +40,8 @@ struct NostrTimelineAuthorProjection {
                 body: event.content,
                 createdAt: event.createdAt,
                 avatarPictureState: .metadataPending,
-                avatarImageURL: nil
+                avatarImageURL: nil,
+                profileResolutionState: .unknown
             )
         )
     }

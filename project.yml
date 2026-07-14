@@ -15,9 +15,6 @@ packages:
   GRDB.swift:
     url: https://github.com/groue/GRDB.swift.git
     from: 7.11.0
-  secp256k1:
-    url: https://github.com/jb55/secp256k1.swift
-    revision: 40b4b38b3b1c83f7088c76189a742870e0ca06a9
   negentropy-swift:
     url: https://github.com/damus-io/negentropy-swift
     from: 0.1.0
@@ -46,13 +43,20 @@ targets:
       - path: Astrenza/Tests/AstrenzaTests
     dependencies:
       - target: Astrenza
-      - package: AstrenzaCore
-        product: AstrenzaCore
-      - package: secp256k1
-        product: secp256k1
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ikuradon.AstrenzaTests
+        GENERATE_INFOPLIST_FILE: YES
+  AstrenzaUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Astrenza/Tests/AstrenzaUITests
+    dependencies:
+      - target: Astrenza
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ikuradon.AstrenzaUITests
         GENERATE_INFOPLIST_FILE: YES
 schemes:
   Astrenza:
@@ -60,7 +64,19 @@ schemes:
       targets:
         Astrenza: all
         AstrenzaTests: [test]
+        AstrenzaUITests: [test]
     test:
       targets:
         - AstrenzaTests
+        - AstrenzaUITests
         - package: AstrenzaCore/AstrenzaCoreTests
+  AstrenzaPerformance:
+    build:
+      targets:
+        Astrenza: all
+        AstrenzaUITests: [test]
+    test:
+      environmentVariables:
+        ASTRENZA_RUN_PERFORMANCE_UI: "1"
+      targets:
+        - AstrenzaUITests

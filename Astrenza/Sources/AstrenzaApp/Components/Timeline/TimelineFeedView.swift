@@ -3,11 +3,14 @@ import SwiftUI
 
 struct TimelineFeedView: View {
     let entries: [TimelineFeedEntry]
+    let sourceIdentity: String
+    let sourceRevision: Int
     let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
-    let followsNewestEntries: Bool
+    let viewportRestoreProtectionActive: Bool
+    let followsRealtimeEntries: Bool
     let layoutCache: TimelineLayoutCache
     let emptyState: TimelineEmptyState
     let onEmptyStatePrimaryAction: () -> Void
@@ -18,18 +21,20 @@ struct TimelineFeedView: View {
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
-    let onRefresh: (() async -> Void)?
+    let onRefresh: (() async -> Bool)?
     let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
     let onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
+    let onScrollActivityChanged: (Bool) -> Void
+    let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onReadablePostIDsChanged: ([TimelinePost.ID]) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     @State private var menuState = TimelinePostMenuState()
     @State private var didRestoreViewport = false
-    @State private var measuredLayoutCache = TimelineLayoutCache()
     @State private var scrollPosition = ScrollPosition(idType: TimelinePost.ID.self)
     @State private var isRestoringViewport = false
+    @State private var viewportRestoreGeneration: UInt64 = 0
     @State private var displayedEntries: [TimelineFeedEntry]
     @State private var fetchingGapDirections: [TimelineGap.ID: TimelineGapFillDirection] = [:]
     @State private var insertedPostDirections: [TimelinePost.ID: TimelineGapFillDirection] = [:]
@@ -45,20 +50,26 @@ struct TimelineFeedView: View {
     private let pullRefreshTriggerOffset: CGFloat = -96
     private let viewportSaveInterval: TimeInterval = 0.25
     private let viewportSaveOffsetThreshold: CGFloat = 48
-    private var posts: [TimelinePost] {
-        displayedEntries.compactMap(\.post)
-    }
-    private var sourceEntryFingerprints: [String] {
-        entries.map(entryDisplayFingerprint)
+    private var sourceChangeToken: TimelineFeedSourceChangeToken {
+        TimelineFeedSourceChangeToken(
+            sourceIdentity: sourceIdentity,
+            revision: sourceRevision,
+            entryCount: entries.count,
+            firstEntryID: entries.first?.id,
+            lastEntryID: entries.last?.id
+        )
     }
 
     init(
         posts: [TimelinePost],
+        sourceIdentity: String = "timeline",
+        sourceRevision: Int = 0,
         actionMenuTopClearance: CGFloat,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
-        followsNewestEntries: Bool = false,
+        viewportRestoreProtectionActive: Bool = false,
+        followsRealtimeEntries: Bool = false,
         layoutCache: TimelineLayoutCache,
         emptyState: TimelineEmptyState = .home,
         onEmptyStatePrimaryAction: @escaping () -> Void = {},
@@ -69,21 +80,26 @@ struct TimelineFeedView: View {
         onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         onOpenURL: @escaping (URL) -> Void,
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
-        onRefresh: (() async -> Void)? = nil,
+        onRefresh: (() async -> Bool)? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
+        onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
+        onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
         self.init(
             entries: posts.map(TimelineFeedEntry.post),
+            sourceIdentity: sourceIdentity,
+            sourceRevision: sourceRevision,
             actionMenuTopClearance: actionMenuTopClearance,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             scrollCommand: scrollCommand,
-            followsNewestEntries: followsNewestEntries,
+            viewportRestoreProtectionActive: viewportRestoreProtectionActive,
+            followsRealtimeEntries: followsRealtimeEntries,
             layoutCache: layoutCache,
             emptyState: emptyState,
             onEmptyStatePrimaryAction: onEmptyStatePrimaryAction,
@@ -98,6 +114,8 @@ struct TimelineFeedView: View {
             onLoadOlderPost: onLoadOlderPost,
             onBackfillGap: onBackfillGap,
             onScrollOffsetChanged: onScrollOffsetChanged,
+            onScrollActivityChanged: onScrollActivityChanged,
+            onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
             onReadablePostIDsChanged: onReadablePostIDsChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
@@ -106,11 +124,14 @@ struct TimelineFeedView: View {
 
     init(
         entries: [TimelineFeedEntry],
+        sourceIdentity: String = "timeline",
+        sourceRevision: Int = 0,
         actionMenuTopClearance: CGFloat,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
-        followsNewestEntries: Bool = false,
+        viewportRestoreProtectionActive: Bool = false,
+        followsRealtimeEntries: Bool = false,
         layoutCache: TimelineLayoutCache,
         emptyState: TimelineEmptyState = .home,
         onEmptyStatePrimaryAction: @escaping () -> Void = {},
@@ -121,20 +142,25 @@ struct TimelineFeedView: View {
         onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         onOpenURL: @escaping (URL) -> Void,
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
-        onRefresh: (() async -> Void)? = nil,
+        onRefresh: (() async -> Bool)? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
+        onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
+        onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
         self.entries = entries
+        self.sourceIdentity = sourceIdentity
+        self.sourceRevision = sourceRevision
         self.actionMenuTopClearance = actionMenuTopClearance
         self.swipeSettings = swipeSettings
         self.viewportState = viewportState
         self.scrollCommand = scrollCommand
-        self.followsNewestEntries = followsNewestEntries
+        self.viewportRestoreProtectionActive = viewportRestoreProtectionActive
+        self.followsRealtimeEntries = followsRealtimeEntries
         self.layoutCache = layoutCache
         self.emptyState = emptyState
         self.onEmptyStatePrimaryAction = onEmptyStatePrimaryAction
@@ -149,10 +175,20 @@ struct TimelineFeedView: View {
         self.onLoadOlderPost = onLoadOlderPost
         self.onBackfillGap = onBackfillGap
         self.onScrollOffsetChanged = onScrollOffsetChanged
+        self.onScrollActivityChanged = onScrollActivityChanged
+        self.onViewportRestoreCompleted = onViewportRestoreCompleted
         self.onViewportStateChanged = onViewportStateChanged
         self.onReadablePostIDsChanged = onReadablePostIDsChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
         _displayedEntries = State(initialValue: entries)
+        let initialScrollRuntime = TimelineFeedScrollRuntime()
+        initialScrollRuntime.rebuildPostIndex(entries: entries)
+        initialScrollRuntime.layoutSnapshot = TimelineLayoutSnapshot(
+            entries: entries,
+            layoutCache: layoutCache,
+            topContentPadding: 72
+        )
+        _scrollRuntime = State(initialValue: initialScrollRuntime)
     }
 
     var body: some View {
@@ -199,7 +235,13 @@ struct TimelineFeedView: View {
                             .id(post.id)
                             .transition(postInsertionTransition(for: post))
                             .zIndex(menuState.openedMenu?.postID == post.id ? 20 : 0)
-                            .background(postFrameReader(postID: post.id))
+                            .background(
+                                postFrameReader(
+                                    postID: post.id,
+                                    measurementGeneration: scrollRuntime.measurementGenerationByPostID[post.id] ?? 0
+                                )
+                                .id(scrollRuntime.measurementGenerationByPostID[post.id] ?? 0)
+                            )
                             .onAppear {
                                 handlePostAppear(post)
                             }
@@ -231,7 +273,9 @@ struct TimelineFeedView: View {
         .coordinateSpace(name: "timelineFeedViewport")
         .background(viewportSizeReader)
         .onAppear {
-            measuredLayoutCache = layoutCache
+            scrollRuntime.measuredLayoutCache = layoutCache
+            scrollRuntime.latestSourceChangeToken = sourceChangeToken
+            refreshPostOrderAndPruneRuntimeState()
             updateLayoutSnapshot()
             restoreViewportIfNeeded()
         }
@@ -241,11 +285,21 @@ struct TimelineFeedView: View {
         .onPreferenceChange(TimelineViewportSizePreferenceKey.self) { size in
             scrollRuntime.viewportSize = size
         }
-        .onChange(of: sourceEntryFingerprints) { _, _ in
-            syncDisplayedEntriesFromSource()
+        .onChange(of: sourceChangeToken) { _, newToken in
+            syncDisplayedEntriesFromSource(forceContentUpdate: true, sourceToken: newToken)
         }
         .onChange(of: viewportState) { _, _ in
+            if viewportRestoreProtectionActive, viewportState != nil {
+                prepareViewportRestoreForNewRequest()
+            }
             restoreViewportIfNeeded()
+        }
+        .onChange(of: viewportRestoreProtectionActive) { _, isActive in
+            if isActive {
+                restoreViewportIfNeeded()
+            } else {
+                cancelInitialViewportRestore()
+            }
         }
         .onChange(of: scrollCommand?.id) { _, _ in
             handleScrollCommand()
@@ -307,6 +361,15 @@ struct TimelineFeedView: View {
             }
             .allowsHitTesting(menuState.isOpen)
         }
+        .onDisappear {
+            cancelPendingContentHeightAnchorCorrection()
+            cancelInitialViewportRestore()
+            if scrollRuntime.isUserScrollActive {
+                scrollRuntime.isUserScrollActive = false
+                onScrollActivityChanged(false)
+            }
+            flushPendingLayoutCacheChanges()
+        }
     }
 }
 
@@ -329,26 +392,54 @@ private extension TimelineFeedView {
         }
     }
 
-    func postFrameReader(postID: TimelinePost.ID) -> some View {
+    func postFrameReader(
+        postID: TimelinePost.ID,
+        measurementGeneration: UInt64
+    ) -> some View {
         Color.clear
-            .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .named("timelineFeedViewport"))
-            } action: { _, frame in
-                updateMeasuredPostFrame(postID: postID, frame: frame)
-                notifyReadablePostIDs()
+            .onGeometryChange(for: TimelinePostGeometryState.self) { proxy in
+                let frame = proxy.frame(in: .named("timelineFeedViewport"))
+                return TimelinePostGeometryState(
+                    height: frame.height,
+                    isReadable: frame.minY <= topContentPadding + 24 && frame.maxY > 0
+                )
+            } action: { _, geometryState in
+                updateMeasuredPostGeometry(
+                    postID: postID,
+                    measurementGeneration: measurementGeneration,
+                    geometryState: geometryState
+                )
             }
     }
 
-    func updateMeasuredPostFrame(postID: TimelinePost.ID, frame: CGRect) {
-        scrollRuntime.postFrames[postID] = frame
+    func updateMeasuredPostGeometry(
+        postID: TimelinePost.ID,
+        measurementGeneration: UInt64,
+        geometryState: TimelinePostGeometryState
+    ) {
+        guard scrollRuntime.postOrderByID[postID] != nil else { return }
+        let expectedMeasurementGeneration = scrollRuntime.measurementGenerationByPostID[postID] ?? 0
+        if measurementGeneration == expectedMeasurementGeneration,
+           scrollRuntime.measuredLayoutCache.recordMeasuredHeight(geometryState.height, for: postID) {
+            if scrollRuntime.layoutSnapshot?.recordMeasuredHeight(geometryState.height, for: postID) != true {
+                updateLayoutSnapshot()
+            }
+            scheduleLayoutCachePublish()
+            handleContentHeightRemeasurement(
+                postID: postID,
+                measurementGeneration: measurementGeneration
+            )
+        }
 
-        guard frame.height > 0 else { return }
-        let previousHeight = measuredLayoutCache.measuredHeights[postID]
-        guard previousHeight == nil || abs((previousHeight ?? 0) - frame.height) > 0.5 else { return }
-
-        measuredLayoutCache.measuredHeights[postID] = frame.height
-        updateLayoutSnapshot()
-        onLayoutCacheChanged(measuredLayoutCache)
+        let membershipChanged: Bool
+        if geometryState.isReadable {
+            membershipChanged = scrollRuntime.readablePostIDs.insert(postID).inserted
+        } else {
+            membershipChanged = scrollRuntime.readablePostIDs.remove(postID) != nil
+        }
+        if membershipChanged {
+            notifyReadablePostIDs()
+        }
     }
 
     func postInsertionTransition(for post: TimelinePost) -> AnyTransition {
@@ -363,32 +454,49 @@ private extension TimelineFeedView {
     }
 
     func restoreViewportIfNeeded() {
-        guard !didRestoreViewport,
+        guard viewportRestoreProtectionActive,
+              !didRestoreViewport,
+              !isRestoringViewport,
               let viewportState,
-              posts.contains(where: { $0.id == viewportState.anchorPostID })
+              scrollRuntime.postOrderByID[viewportState.anchorPostID] != nil
         else { return }
 
-        didRestoreViewport = true
+        cancelPendingContentHeightAnchorCorrection()
         isRestoringViewport = true
-        let targetOffsetY = TimelineViewportResolver.restoredContentOffsetY(
-            entries: displayedEntries,
-            state: viewportState,
-            layoutCache: measuredLayoutCache,
-            topContentPadding: topContentPadding,
-            anchorLineY: rowAnchorLineY
-        )
+        viewportRestoreGeneration &+= 1
+        let restoreGeneration = viewportRestoreGeneration
+        let targetOffsetY = scrollRuntime.layoutSnapshot.flatMap { snapshot in
+            TimelineViewportResolver.restoredContentOffsetY(
+                snapshot: snapshot,
+                state: viewportState,
+                anchorLineY: rowAnchorLineY
+            )
+        }
 
         DispatchQueue.main.async {
+            guard viewportRestoreGeneration == restoreGeneration else { return }
             if let targetOffsetY {
                 scrollPosition.scrollTo(y: targetOffsetY)
             } else {
                 scrollPosition.scrollTo(id: viewportState.anchorPostID, anchor: .top)
             }
+            didRestoreViewport = true
 
             DispatchQueue.main.async {
+                guard viewportRestoreGeneration == restoreGeneration else { return }
                 isRestoringViewport = false
+                onViewportRestoreCompleted(targetOffsetY ?? viewportState.contentOffset)
             }
         }
+    }
+
+    func cancelInitialViewportRestore() {
+        viewportRestoreGeneration &+= 1
+        isRestoringViewport = false
+        if viewportRestoreProtectionActive {
+            return
+        }
+        didRestoreViewport = true
     }
 
     func estimatedViewportAnchor(at contentOffset: CGFloat) -> TimelineViewportAnchor? {
@@ -398,18 +506,21 @@ private extension TimelineFeedView {
     func updateLayoutSnapshot() {
         scrollRuntime.layoutSnapshot = TimelineLayoutSnapshot(
             entries: displayedEntries,
-            layoutCache: measuredLayoutCache,
+            layoutCache: scrollRuntime.measuredLayoutCache,
             topContentPadding: topContentPadding
         )
     }
 
     func saveViewportStateIfPossible(force: Bool = false) {
-        guard !isRestoringViewport else { return }
+        guard TimelineFeedViewportRestorePolicy.canSaveViewport(
+            isRestoreProtected: viewportRestoreProtectionActive,
+            didRestoreViewport: didRestoreViewport,
+            isRestoringViewport: isRestoringViewport
+        ) else { return }
 
         let now = ProcessInfo.processInfo.systemUptime
         let offsetDelta = abs(scrollRuntime.currentContentOffset - scrollRuntime.lastSavedViewportOffset)
         if !force,
-           offsetDelta < viewportSaveOffsetThreshold,
            now - scrollRuntime.lastViewportSaveTime < viewportSaveInterval {
             return
         }
@@ -447,17 +558,14 @@ private extension TimelineFeedView {
         updatePullRefreshState(offset: offset)
         onScrollOffsetChanged(offset)
         saveViewportStateIfPossible()
-        notifyReadablePostIDs()
     }
 
     func notifyReadablePostIDs() {
-        let readLineY = topContentPadding + 24
-        let readableIDs = posts
-            .map(\.id)
-            .filter { postID in
-                guard let frame = scrollRuntime.postFrames[postID] else { return false }
-                return frame.minY <= readLineY && frame.maxY > 0
-            }
+        let readableIDs = scrollRuntime.readablePostIDs.sorted { lhs, rhs in
+            let lhsOrder = scrollRuntime.postOrderByID[lhs] ?? .max
+            let rhsOrder = scrollRuntime.postOrderByID[rhs] ?? .max
+            return lhsOrder == rhsOrder ? lhs < rhs : lhsOrder < rhsOrder
+        }
         guard readableIDs != scrollRuntime.lastReadablePostIDs else { return }
         scrollRuntime.lastReadablePostIDs = readableIDs
         DispatchQueue.main.async {
@@ -467,17 +575,21 @@ private extension TimelineFeedView {
 
     func handleScrollCommand() {
         guard let scrollCommand else { return }
+        cancelPendingContentHeightAnchorCorrection()
+        viewportRestoreGeneration &+= 1
+        isRestoringViewport = false
+        didRestoreViewport = true
         switch scrollCommand.target {
         case .top:
             scrollPosition.scrollTo(y: 0)
         case .viewport(let state):
-            let targetOffsetY = TimelineViewportResolver.restoredContentOffsetY(
-                entries: displayedEntries,
-                state: state,
-                layoutCache: measuredLayoutCache,
-                topContentPadding: topContentPadding,
-                anchorLineY: rowAnchorLineY
-            )
+            let targetOffsetY = scrollRuntime.layoutSnapshot.flatMap { snapshot in
+                TimelineViewportResolver.restoredContentOffsetY(
+                    snapshot: snapshot,
+                    state: state,
+                    anchorLineY: rowAnchorLineY
+                )
+            }
             if let targetOffsetY {
                 scrollPosition.scrollTo(y: targetOffsetY)
             } else {
@@ -486,7 +598,21 @@ private extension TimelineFeedView {
         }
     }
 
-    func syncDisplayedEntriesFromSource() {
+    func syncDisplayedEntriesFromSource(
+        forceContentUpdate: Bool = false,
+        sourceToken: TimelineFeedSourceChangeToken? = nil
+    ) {
+        let incomingSourceToken = sourceToken ?? sourceChangeToken
+        if let previousSourceIdentity = scrollRuntime.latestSourceChangeToken?.sourceIdentity,
+           previousSourceIdentity != incomingSourceToken.sourceIdentity {
+            clearPullRefreshAnchor()
+            prepareViewportRestoreForNewRequest()
+        }
+        if scrollRuntime.latestSourceChangeToken != incomingSourceToken {
+            cancelPendingContentHeightAnchorCorrection()
+            scrollRuntime.latestSourceChangeToken = incomingSourceToken
+        }
+
         if !fetchingGapDirections.isEmpty {
             let sourceGapIDs = Set(entries.compactMap { entry -> TimelineGap.ID? in
                 guard case .gap(let gap) = entry else { return nil }
@@ -496,30 +622,104 @@ private extension TimelineFeedView {
             guard fetchingGapDirections.isEmpty else { return }
         }
 
-        let oldIDs = displayedEntries.map(\.id)
-        let newIDs = entries.map(\.id)
-        let oldFingerprints = displayedEntries.map(entryDisplayFingerprint)
-        let newFingerprints = entries.map(entryDisplayFingerprint)
-        guard oldIDs != newIDs || oldFingerprints != newFingerprints else { return }
+        let hasSameEntryIDs = displayedEntries.count == entries.count &&
+            zip(displayedEntries, entries).allSatisfy { oldEntry, newEntry in
+                oldEntry.id == newEntry.id
+            }
+        guard !hasSameEntryIDs || forceContentUpdate else { return }
 
-        if oldIDs == newIDs {
+        if hasSameEntryIDs {
+            let anchor = scrollRuntime.isScrollActive || isRestoringViewport
+                ? nil
+                : estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
+            let changedPostIDs = TimelineContentHeightAnchorPlanner.changedPostIDs(
+                oldEntries: displayedEntries,
+                newEntries: entries
+            )
+            let correctionGeneration = prepareContentHeightAnchorCorrection(
+                entries: entries,
+                anchor: anchor,
+                changedPostIDs: changedPostIDs,
+                sourceToken: incomingSourceToken
+            )
             var transaction = Transaction()
             transaction.disablesAnimations = true
             transaction.animation = nil
             withTransaction(transaction) {
                 displayedEntries = entries
-                updateLayoutSnapshot()
+                if scrollRuntime.layoutSnapshot == nil {
+                    updateLayoutSnapshot()
+                }
             }
+            if let correctionGeneration {
+                scheduleContentHeightAnchorCorrection(generation: correctionGeneration)
+                scheduleContentHeightAnchorCorrectionSettle(generation: correctionGeneration)
+            }
+            restoreViewportIfNeeded()
             return
         }
 
-        let shouldPreserveAnchorForPullRefresh = isPullRefreshing || isPullRefreshArmed || isUserPullingToRefresh || pullRefreshProgress > 0
-        let shouldFollowNewestEntries = !shouldPreserveAnchorForPullRefresh && followsNewestEntries && entriesDidPrependNewest(oldIDs: oldIDs, newIDs: newIDs)
-        let anchor = estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
+        let oldIDs = displayedEntries.map(\.id)
+        let newIDs = entries.map(\.id)
+        let pullRefreshGeneration = scrollRuntime.pullRefreshGeneration
+        let isPullRefreshSourceChange = scrollRuntime.pullRefreshAnchor != nil &&
+            scrollRuntime.pullRefreshSourceToken != incomingSourceToken
+        let pullRefreshAnchor = isPullRefreshSourceChange
+            ? scrollRuntime.pullRefreshAnchor.flatMap { anchor in
+                TimelinePullRefreshAnchorPolicy.prependedAnchor(
+                    anchor,
+                    oldIDs: oldIDs,
+                    newIDs: newIDs
+                )
+            }
+            : nil
+        let shouldPreserveAnchorForPullRefresh = scrollRuntime.pullRefreshAnchor != nil ||
+            isPullRefreshing || isPullRefreshArmed || isUserPullingToRefresh || pullRefreshProgress > 0
+        let shouldFollowNewestEntries = TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: followsRealtimeEntries,
+            isPullRefreshProtected: shouldPreserveAnchorForPullRefresh,
+            isRestoreProtected: viewportRestoreProtectionActive,
+            didRestoreViewport: didRestoreViewport,
+            isRestoringViewport: isRestoringViewport
+        ) &&
+            entriesDidPrependNewest(oldIDs: oldIDs, newIDs: newIDs)
+        let anchor = pullRefreshAnchor ?? estimatedViewportAnchor(at: scrollRuntime.currentContentOffset)
+        let anchorToPreserve: TimelineViewportAnchor?
+        if !shouldFollowNewestEntries,
+           let anchor,
+           let oldAnchorIndex = oldIDs.firstIndex(of: anchor.postID),
+           let newAnchorIndex = newIDs.firstIndex(of: anchor.postID),
+           newAnchorIndex > oldAnchorIndex {
+            anchorToPreserve = anchor
+        } else {
+            anchorToPreserve = nil
+        }
+        var structurallyChangedPostIDs = anchorToPreserve.map { anchor in
+            TimelineContentHeightAnchorPlanner.changedCommonPostIDsAffectingAnchor(
+                oldEntries: displayedEntries,
+                newEntries: entries,
+                anchorPostID: anchor.postID
+            )
+        } ?? []
+        if let anchorToPreserve {
+            structurallyChangedPostIDs.formUnion(
+                TimelineContentHeightAnchorPlanner.insertedPostIDsAffectingAnchor(
+                    oldEntries: displayedEntries,
+                    newEntries: entries,
+                    anchorPostID: anchorToPreserve.postID
+                )
+            )
+        }
+        let correctionGeneration = prepareContentHeightAnchorCorrection(
+            entries: entries,
+            anchor: anchorToPreserve,
+            changedPostIDs: structurallyChangedPostIDs,
+            sourceToken: incomingSourceToken
+        )
         let preservedOffset = preservedContentOffset(
             oldIDs: oldIDs,
             newIDs: newIDs,
-            anchor: anchor
+            anchor: anchorToPreserve
         )
 
         if shouldFollowNewestEntries {
@@ -528,7 +728,7 @@ private extension TimelineFeedView {
             transaction.animation = nil
             withTransaction(transaction) {
                 displayedEntries = entries
-                updateLayoutSnapshot()
+                didUpdateDisplayedEntries()
                 scrollPosition.scrollTo(y: 0)
             }
             scrollRuntime.currentContentOffset = 0
@@ -536,9 +736,10 @@ private extension TimelineFeedView {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             transaction.animation = nil
+            transaction.scrollContentOffsetAdjustmentBehavior = .disabled
             withTransaction(transaction) {
                 displayedEntries = entries
-                updateLayoutSnapshot()
+                didUpdateDisplayedEntries()
                 scrollPosition.scrollTo(y: preservedOffset)
             }
             scrollRuntime.currentContentOffset = preservedOffset
@@ -546,10 +747,162 @@ private extension TimelineFeedView {
             withAnimation(.spring(duration: 0.26, bounce: 0.08)) {
                 displayedEntries = entries
             }
-            updateLayoutSnapshot()
+            didUpdateDisplayedEntries()
+        }
+
+        if isPullRefreshSourceChange {
+            clearPullRefreshAnchor(generation: pullRefreshGeneration)
+        }
+
+        if let correctionGeneration {
+            scheduleContentHeightAnchorCorrection(generation: correctionGeneration)
+            scheduleContentHeightAnchorCorrectionSettle(generation: correctionGeneration)
         }
 
         restoreViewportIfNeeded()
+    }
+
+    func prepareViewportRestoreForNewRequest() {
+        viewportRestoreGeneration &+= 1
+        isRestoringViewport = false
+        didRestoreViewport = !viewportRestoreProtectionActive
+    }
+
+    func prepareContentHeightAnchorCorrection(
+        entries newEntries: [TimelineFeedEntry],
+        anchor: TimelineViewportAnchor?,
+        changedPostIDs: Set<TimelinePost.ID>,
+        sourceToken: TimelineFeedSourceChangeToken
+    ) -> UInt64? {
+        guard !changedPostIDs.isEmpty else { return nil }
+
+        cancelPendingContentHeightAnchorCorrection()
+        let generation = scrollRuntime.contentHeightCorrectionGeneration
+        for postID in changedPostIDs {
+            scrollRuntime.measurementGenerationByPostID[postID] = generation
+        }
+
+        if scrollRuntime.measuredLayoutCache.invalidate(postIDs: changedPostIDs) {
+            scheduleLayoutCachePublish()
+        }
+        if scrollRuntime.layoutSnapshot != nil {
+            for entry in newEntries {
+                guard case .post(let post) = entry,
+                      changedPostIDs.contains(post.id)
+                else { continue }
+                _ = scrollRuntime.layoutSnapshot?.recordMeasuredHeight(
+                    scrollRuntime.measuredLayoutCache.height(for: post),
+                    for: post.id
+                )
+            }
+        }
+
+        guard let anchor,
+              !scrollRuntime.isScrollActive,
+              !scrollRuntime.isUserScrollActive,
+              !isRestoringViewport,
+              newEntries.contains(where: { $0.post?.id == anchor.postID })
+        else { return nil }
+
+        let affectingPostIDs = TimelineContentHeightAnchorPlanner.changedPostIDsAffectingAnchor(
+            entries: newEntries,
+            changedPostIDs: changedPostIDs,
+            anchorPostID: anchor.postID
+        )
+        guard !affectingPostIDs.isEmpty else { return nil }
+
+        scrollRuntime.pendingContentHeightAnchorCorrection = TimelinePendingContentHeightAnchorCorrection(
+            generation: generation,
+            sourceToken: sourceToken,
+            anchor: anchor,
+            awaitingPostIDs: affectingPostIDs
+        )
+        return generation
+    }
+
+    func handleContentHeightRemeasurement(
+        postID: TimelinePost.ID,
+        measurementGeneration: UInt64
+    ) {
+        guard var pendingCorrection = scrollRuntime.pendingContentHeightAnchorCorrection,
+              pendingCorrection.generation == measurementGeneration,
+              pendingCorrection.awaitingPostIDs.remove(postID) != nil
+        else { return }
+
+        scrollRuntime.pendingContentHeightAnchorCorrection = pendingCorrection
+        scheduleContentHeightAnchorCorrection(generation: pendingCorrection.generation)
+        scheduleContentHeightAnchorCorrectionSettle(generation: pendingCorrection.generation)
+    }
+
+    func scheduleContentHeightAnchorCorrection(generation: UInt64) {
+        guard !scrollRuntime.isContentHeightAnchorCorrectionScheduled,
+              scrollRuntime.pendingContentHeightAnchorCorrection?.generation == generation
+        else { return }
+
+        let runtime = scrollRuntime
+        runtime.isContentHeightAnchorCorrectionScheduled = true
+        DispatchQueue.main.async {
+            guard runtime.contentHeightCorrectionGeneration == generation,
+                  runtime.pendingContentHeightAnchorCorrection?.generation == generation
+            else { return }
+
+            runtime.isContentHeightAnchorCorrectionScheduled = false
+            applyContentHeightAnchorCorrection(generation: generation)
+        }
+    }
+
+    func scheduleContentHeightAnchorCorrectionSettle(generation: UInt64) {
+        scrollRuntime.contentHeightAnchorCorrectionSettleTask?.cancel()
+        let runtime = scrollRuntime
+        runtime.contentHeightAnchorCorrectionSettleTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled,
+                  runtime.contentHeightCorrectionGeneration == generation,
+                  runtime.pendingContentHeightAnchorCorrection?.generation == generation
+            else { return }
+
+            applyContentHeightAnchorCorrection(generation: generation, finish: true)
+        }
+    }
+
+    func applyContentHeightAnchorCorrection(
+        generation: UInt64,
+        finish: Bool = false
+    ) {
+        guard let pendingCorrection = scrollRuntime.pendingContentHeightAnchorCorrection,
+              pendingCorrection.generation == generation,
+              scrollRuntime.contentHeightCorrectionGeneration == generation,
+              scrollRuntime.latestSourceChangeToken == pendingCorrection.sourceToken,
+              !scrollRuntime.isUserScrollActive
+        else { return }
+
+        if let snapshot = scrollRuntime.layoutSnapshot,
+           let targetOffset = TimelineViewportResolver.contentOffsetPreservingAnchor(
+            snapshot: snapshot,
+            anchor: pendingCorrection.anchor,
+            anchorLineY: rowAnchorLineY
+           ), abs(targetOffset - scrollRuntime.currentContentOffset) > 0.5 {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            transaction.animation = nil
+            withTransaction(transaction) {
+                scrollPosition.scrollTo(y: targetOffset)
+            }
+            scrollRuntime.currentContentOffset = targetOffset
+        }
+
+        if finish {
+            scrollRuntime.contentHeightAnchorCorrectionSettleTask = nil
+            scrollRuntime.pendingContentHeightAnchorCorrection = nil
+        }
+    }
+
+    func cancelPendingContentHeightAnchorCorrection() {
+        scrollRuntime.contentHeightCorrectionGeneration &+= 1
+        scrollRuntime.isContentHeightAnchorCorrectionScheduled = false
+        scrollRuntime.pendingContentHeightAnchorCorrection = nil
+        scrollRuntime.contentHeightAnchorCorrectionSettleTask?.cancel()
+        scrollRuntime.contentHeightAnchorCorrectionSettleTask = nil
     }
 
     func entriesDidPrependNewest(oldIDs: [TimelineFeedEntry.ID], newIDs: [TimelineFeedEntry.ID]) -> Bool {
@@ -559,80 +912,100 @@ private extension TimelineFeedView {
         return firstOldIndexInNewEntries > 0
     }
 
-    func entryDisplayFingerprint(_ entry: TimelineFeedEntry) -> String {
-        switch entry {
-        case .post(let post):
-            return [
-                "post",
-                post.id,
-                post.author.primaryText,
-                post.author.secondaryText,
-                "\(post.author.nip05Status)",
-                "\(post.author.isMetadataResolved)",
-                "\(post.author.isFollowed)",
-                post.avatar.imageURL?.absoluteString ?? "",
-                "\(post.avatar.pictureState)",
-                post.body,
-                "\(post.createdAt)",
-                post.repostedBy?.author.primaryText ?? "",
-                post.repostedBy?.createdAt.description ?? "",
-                post.replyContext?.author.primaryText ?? "",
-                post.replyContext?.createdAt.description ?? "",
-                post.replyContext?.bodyPreview ?? "",
-                post.quotedPost?.body ?? "",
-                post.quotedPost?.createdAt?.description ?? "",
-                post.contentWarning?.displayReason ?? "",
-                mediaDisplayFingerprint(post.media),
-                post.linkSummary?.compactText ?? "",
-                "\(post.actionState.didReply)",
-                "\(post.actionState.didRepost)",
-                "\(post.actionState.didFavorite)",
-                "\(post.actionState.didZap)"
-            ].joined(separator: "\u{1f}")
-        case .gap(let gap):
-            return [
-                "gap",
-                gap.id,
-                gap.newerPostID,
-                gap.olderPostID,
-                "\(gap.missingEstimate)",
-                "\(gap.relayCount)",
-                "\(gap.state)",
-                gap.backfilledPosts.map(\.id).joined(separator: ",")
-            ].joined(separator: "\u{1f}")
-        case .deleted(let entry):
-            return "deleted\u{1f}\(entry.id)"
+    func didUpdateDisplayedEntries() {
+        refreshPostOrderAndPruneRuntimeState()
+        updateLayoutSnapshot()
+    }
+
+    func refreshPostOrderAndPruneRuntimeState() {
+        let validPostIDs = scrollRuntime.rebuildPostIndex(entries: displayedEntries)
+
+        let previousHeightCount = scrollRuntime.measuredLayoutCache.measuredHeights.count
+        scrollRuntime.measuredLayoutCache.prune(keeping: validPostIDs)
+        if scrollRuntime.measuredLayoutCache.measuredHeights.count != previousHeightCount {
+            scheduleLayoutCachePublish()
+        }
+
+        scrollRuntime.readablePostIDs.formIntersection(validPostIDs)
+        notifyReadablePostIDs()
+
+        scrollRuntime.measurementGenerationByPostID = scrollRuntime.measurementGenerationByPostID.filter {
+            validPostIDs.contains($0.key)
+        }
+
+        let retainedInsertionDirections = insertedPostDirections.filter { validPostIDs.contains($0.key) }
+        if retainedInsertionDirections.count != insertedPostDirections.count {
+            insertedPostDirections = retainedInsertionDirections
         }
     }
 
-    func mediaDisplayFingerprint(_ media: TimelineMedia?) -> String {
-        guard let media else { return "" }
-        switch media {
-        case .gallery(let tiles):
-            return tiles.map { tile in
-                [
-                    tile.id,
-                    tile.title,
-                    tile.symbolName,
-                    tile.url?.absoluteString ?? "",
-                    tile.altText ?? "",
-                    tile.width?.description ?? "",
-                    tile.height?.description ?? "",
-                    tile.blurhash ?? ""
-                ].joined(separator: "\u{1e}")
-            }.joined(separator: "\u{1d}")
-        case .linkPreview(let preview):
-            return [
-                "link",
-                preview.title,
-                preview.subtitle,
-                preview.host,
-                preview.url,
-                preview.imageURL?.absoluteString ?? "",
-                "\(preview.style)"
-            ].joined(separator: "\u{1e}")
-        case .unresolvedLink(let preview):
-            return ["unresolved", preview.host, preview.url].joined(separator: "\u{1e}")
+    func scheduleLayoutCachePublish() {
+        scrollRuntime.hasPendingLayoutCacheChanges = true
+        scrollRuntime.layoutCachePublishTask?.cancel()
+        scrollRuntime.layoutCachePublishTask = nil
+        guard !scrollRuntime.isScrollActive else { return }
+
+        let runtime = scrollRuntime
+        let callback = onLayoutCacheChanged
+        runtime.layoutCachePublishTask = Task { @MainActor [weak runtime] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled,
+                  let runtime,
+                  runtime.hasPendingLayoutCacheChanges,
+                  !runtime.isScrollActive
+            else { return }
+
+            runtime.hasPendingLayoutCacheChanges = false
+            runtime.layoutCachePublishTask = nil
+            callback(runtime.measuredLayoutCache)
+        }
+    }
+
+    func flushPendingLayoutCacheChanges() {
+        scrollRuntime.layoutCachePublishTask?.cancel()
+        scrollRuntime.layoutCachePublishTask = nil
+        guard scrollRuntime.hasPendingLayoutCacheChanges else { return }
+        scrollRuntime.hasPendingLayoutCacheChanges = false
+        onLayoutCacheChanged(scrollRuntime.measuredLayoutCache)
+    }
+
+    func updateLayoutCacheScrollActivity(_ phase: ScrollPhase) {
+        let isScrollActive: Bool
+        switch phase {
+        case .idle:
+            isScrollActive = false
+        case .tracking, .interacting, .decelerating, .animating:
+            isScrollActive = true
+        @unknown default:
+            isScrollActive = true
+        }
+
+        guard scrollRuntime.isScrollActive != isScrollActive else { return }
+        scrollRuntime.isScrollActive = isScrollActive
+        if isScrollActive {
+            scrollRuntime.layoutCachePublishTask?.cancel()
+            scrollRuntime.layoutCachePublishTask = nil
+        } else if scrollRuntime.hasPendingLayoutCacheChanges {
+            scheduleLayoutCachePublish()
+        }
+    }
+
+    func updateContentHeightAnchorCorrectionScrollActivity(_ phase: ScrollPhase) {
+        let wasUserScrollActive = scrollRuntime.isUserScrollActive
+        switch phase {
+        case .idle:
+            scrollRuntime.isUserScrollActive = false
+        case .tracking, .interacting, .decelerating:
+            scrollRuntime.isUserScrollActive = true
+            cancelPendingContentHeightAnchorCorrection()
+        case .animating:
+            break
+        @unknown default:
+            scrollRuntime.isUserScrollActive = true
+            cancelPendingContentHeightAnchorCorrection()
+        }
+        if scrollRuntime.isUserScrollActive != wasUserScrollActive {
+            onScrollActivityChanged(scrollRuntime.isUserScrollActive)
         }
     }
 
@@ -651,6 +1024,11 @@ private extension TimelineFeedView {
     }
 
     func handleScrollPhaseChange(_ phase: ScrollPhase) {
+        updateContentHeightAnchorCorrectionScrollActivity(phase)
+        updateLayoutCacheScrollActivity(phase)
+        if phase == .idle {
+            saveViewportStateIfPossible(force: true)
+        }
         guard onRefresh != nil else { return }
         switch phase {
         case .interacting, .tracking:
@@ -674,17 +1052,36 @@ private extension TimelineFeedView {
 
     func requestPullRefresh() {
         guard let onRefresh else { return }
+        let pullRefreshGeneration = beginPullRefreshAnchor()
         isPullRefreshing = true
         pullRefreshProgress = 1
-        Task {
-            await onRefresh()
-            await MainActor.run {
-                withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
-                    isPullRefreshing = false
-                    pullRefreshProgress = 0
-                }
+        Task { @MainActor in
+            let expectsSourceChange = await onRefresh()
+            if !expectsSourceChange {
+                clearPullRefreshAnchor(generation: pullRefreshGeneration)
+            }
+            withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
+                isPullRefreshing = false
+                pullRefreshProgress = 0
             }
         }
+    }
+
+    func beginPullRefreshAnchor() -> UInt64 {
+        scrollRuntime.pullRefreshGeneration &+= 1
+        scrollRuntime.pullRefreshAnchor = estimatedViewportAnchor(
+            at: max(scrollRuntime.currentContentOffset, 0)
+        )
+        scrollRuntime.pullRefreshSourceToken = scrollRuntime.latestSourceChangeToken ?? sourceChangeToken
+        return scrollRuntime.pullRefreshGeneration
+    }
+
+    func clearPullRefreshAnchor(generation: UInt64? = nil) {
+        if let generation, generation != scrollRuntime.pullRefreshGeneration {
+            return
+        }
+        scrollRuntime.pullRefreshAnchor = nil
+        scrollRuntime.pullRefreshSourceToken = nil
     }
 
     func preservedContentOffset(
@@ -703,14 +1100,14 @@ private extension TimelineFeedView {
         return TimelineViewportResolver.contentOffsetPreservingAnchor(
             entries: entries,
             anchor: anchor,
-            layoutCache: measuredLayoutCache,
+            layoutCache: scrollRuntime.measuredLayoutCache,
             topContentPadding: topContentPadding,
             anchorLineY: rowAnchorLineY
         )
     }
 
     func handlePostAppear(_ post: TimelinePost) {
-        guard post.id == posts.last?.id else { return }
+        guard post.id == scrollRuntime.lastPostID else { return }
         onLoadOlderPost?(post.id)
     }
 
@@ -843,7 +1240,7 @@ private extension TimelineFeedView {
     func handlePostActionChoice(_ choice: PostActionChoice, postID: TimelinePost.ID) {
         switch choice {
         case .viewDetails:
-            guard let post = posts.first(where: { $0.id == postID }) else {
+            guard let post = displayedPost(id: postID) else {
                 closeFloatingPostMenus()
                 return
             }
@@ -851,7 +1248,7 @@ private extension TimelineFeedView {
             closeFloatingPostMenus()
             onOpenPost(post)
         case .mute, .bookmark:
-            guard let post = posts.first(where: { $0.id == postID }) else {
+            guard let post = displayedPost(id: postID) else {
                 closeFloatingPostMenus()
                 return
             }
@@ -861,6 +1258,16 @@ private extension TimelineFeedView {
         case .report, .translate, .copyLink, .shareLink:
             closeFloatingPostMenus()
         }
+    }
+
+    func displayedPost(id postID: TimelinePost.ID) -> TimelinePost? {
+        for entry in displayedEntries {
+            guard case .post(let post) = entry else { continue }
+            if post.id == postID {
+                return post
+            }
+        }
+        return nil
     }
 
     func displayGap(_ gap: TimelineGap) -> TimelineGap {
@@ -941,7 +1348,7 @@ private extension TimelineFeedView {
 
         let targetOffset = scrollRuntime.currentContentOffset + TimelineLayoutEstimator.estimatedReplacementDelta(
             for: gap,
-            layoutCache: measuredLayoutCache
+            layoutCache: scrollRuntime.measuredLayoutCache
         )
         let insertedEntries = gap.backfilledPosts.map(TimelineFeedEntry.post)
         var transaction = Transaction()
@@ -951,6 +1358,7 @@ private extension TimelineFeedView {
         withTransaction(transaction) {
             fetchingGapDirections[gap.id] = nil
             displayedEntries.replaceSubrange(index...index, with: insertedEntries)
+            didUpdateDisplayedEntries()
             if targetOffset > scrollRuntime.currentContentOffset {
                 scrollPosition.scrollTo(y: targetOffset)
             }
@@ -969,6 +1377,7 @@ private extension TimelineFeedView {
 
         let insertedEntries = gap.backfilledPosts.map(TimelineFeedEntry.post)
         displayedEntries.replaceSubrange(index...index, with: insertedEntries)
+        didUpdateDisplayedEntries()
     }
 
     func actionMenuPlacement(gearFrame: CGRect, menuSize: CGSize, containerSize: CGSize) -> ActionMenuPlacement {
@@ -1098,17 +1507,94 @@ private struct TimelinePullRefreshIndicator: View {
     }
 }
 
+enum TimelineFeedViewportRestorePolicy {
+    static func canSaveViewport(
+        isRestoreProtected: Bool,
+        didRestoreViewport: Bool,
+        isRestoringViewport: Bool
+    ) -> Bool {
+        !isRestoringViewport && (!isRestoreProtected || didRestoreViewport)
+    }
+
+    static func canFollowRealtimeEntries(
+        isRealtimeEnabled: Bool,
+        isPullRefreshProtected: Bool,
+        isRestoreProtected: Bool,
+        didRestoreViewport: Bool,
+        isRestoringViewport: Bool
+    ) -> Bool {
+        isRealtimeEnabled &&
+            !isPullRefreshProtected &&
+            !isRestoringViewport &&
+            (!isRestoreProtected || didRestoreViewport)
+    }
+}
+
 private final class TimelineFeedScrollRuntime {
     var currentContentOffset: CGFloat = 0
     var currentViewportAnchor: TimelineViewportAnchor?
     var layoutSnapshot: TimelineLayoutSnapshot?
-    var postFrames: [TimelinePost.ID: CGRect] = [:]
+    var measuredLayoutCache = TimelineLayoutCache()
+    var postOrderByID: [TimelinePost.ID: Int] = [:]
+    var readablePostIDs = Set<TimelinePost.ID>()
     var gapFrames: [TimelineGap.ID: CGRect] = [:]
     var lastReadablePostIDs: [TimelinePost.ID] = []
     var viewportSize: CGSize = .zero
     var lastSavedViewportAnchor: TimelineViewportAnchor?
     var lastSavedViewportOffset: CGFloat = 0
     var lastViewportSaveTime: TimeInterval = 0
+    var hasPendingLayoutCacheChanges = false
+    var isScrollActive = false
+    var layoutCachePublishTask: Task<Void, Never>?
+    var latestSourceChangeToken: TimelineFeedSourceChangeToken?
+    var contentHeightCorrectionGeneration: UInt64 = 0
+    var measurementGenerationByPostID: [TimelinePost.ID: UInt64] = [:]
+    var pendingContentHeightAnchorCorrection: TimelinePendingContentHeightAnchorCorrection?
+    var isContentHeightAnchorCorrectionScheduled = false
+    var contentHeightAnchorCorrectionSettleTask: Task<Void, Never>?
+    var isUserScrollActive = false
+    var lastPostID: TimelinePost.ID?
+    var pullRefreshGeneration: UInt64 = 0
+    var pullRefreshAnchor: TimelineViewportAnchor?
+    var pullRefreshSourceToken: TimelineFeedSourceChangeToken?
+
+    @discardableResult
+    func rebuildPostIndex(entries: [TimelineFeedEntry]) -> Set<TimelinePost.ID> {
+        var nextPostOrderByID: [TimelinePost.ID: Int] = [:]
+        var validPostIDs = Set<TimelinePost.ID>()
+        var nextLastPostID: TimelinePost.ID?
+        nextPostOrderByID.reserveCapacity(entries.count)
+        validPostIDs.reserveCapacity(entries.count)
+        for entry in entries {
+            guard case .post(let post) = entry else { continue }
+            nextPostOrderByID[post.id] = nextPostOrderByID.count
+            validPostIDs.insert(post.id)
+            nextLastPostID = post.id
+        }
+        postOrderByID = nextPostOrderByID
+        lastPostID = nextLastPostID
+        return validPostIDs
+    }
+}
+
+private struct TimelinePendingContentHeightAnchorCorrection {
+    let generation: UInt64
+    let sourceToken: TimelineFeedSourceChangeToken
+    let anchor: TimelineViewportAnchor
+    var awaitingPostIDs: Set<TimelinePost.ID>
+}
+
+private struct TimelinePostGeometryState: Equatable {
+    let height: CGFloat
+    let isReadable: Bool
+}
+
+private struct TimelineFeedSourceChangeToken: Equatable {
+    let sourceIdentity: String
+    let revision: Int
+    let entryCount: Int
+    let firstEntryID: TimelineFeedEntry.ID?
+    let lastEntryID: TimelineFeedEntry.ID?
 }
 
 private struct ActionMenuPlacement {

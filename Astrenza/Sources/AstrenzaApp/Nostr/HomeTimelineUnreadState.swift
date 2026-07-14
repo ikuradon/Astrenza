@@ -14,6 +14,16 @@ struct HomeTimelineUnreadState: Equatable {
             (materializedUnreadCount > 0 || visibleUnreadBadgeCount > 0)
     }
 
+    var readBoundaryPostID: TimelinePost.ID? {
+        guard !materializedPostIDs.isEmpty else { return nil }
+        guard let oldestUnreadIndex = materializedPostIDs.lastIndex(where: { !readPostIDs.contains($0) }) else {
+            return materializedPostIDs.first
+        }
+        let boundaryIndex = materializedPostIDs.index(after: oldestUnreadIndex)
+        guard boundaryIndex < materializedPostIDs.endIndex else { return nil }
+        return materializedPostIDs[boundaryIndex]
+    }
+
     mutating func replaceMaterializedPostIDs(
         _ ids: [TimelinePost.ID],
         marksInitialWindowRead: Bool = true

@@ -13,10 +13,15 @@ struct NostrTimelineRepostProjection {
         for repostEvent: NostrEvent,
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         followedPubkeys: Set<String>,
         avatarForItem: (NostrHomeTimelineItem) -> AvatarStyle
     ) -> TimelineRepostAttribution {
         let metadata = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)[repostEvent.pubkey]
+        let hasMetadataEvent = metadataEvents.contains { $0.kind == 0 && $0.pubkey == repostEvent.pubkey }
+        let resolutionState: NostrProfileResolutionState = hasMetadataEvent
+            ? .resolved
+            : profileResolutionStates[repostEvent.pubkey] ?? .unknown
         let repostItem = NostrHomeTimelineItem(
             id: repostEvent.id,
             pubkey: repostEvent.pubkey,
@@ -26,8 +31,9 @@ struct NostrTimelineRepostProjection {
             isFollowed: followedPubkeys.contains(repostEvent.pubkey),
             body: "",
             createdAt: repostEvent.createdAt,
-            avatarPictureState: avatarPictureState(for: metadata),
-            avatarImageURL: metadata?.pictureURL
+            avatarPictureState: avatarPictureState(for: metadata, resolutionState: resolutionState),
+            avatarImageURL: metadata?.pictureURL,
+            profileResolutionState: resolutionState
         )
         return TimelineRepostAttribution(
             author: NostrTimelineAuthorProjection.author(for: repostItem),
@@ -70,9 +76,12 @@ struct NostrTimelineRepostProjection {
         )
     }
 
-    private static func avatarPictureState(for metadata: NostrProfileMetadata?) -> NostrAvatarPictureState {
-        guard let metadata else { return .metadataPending }
-        return metadata.pictureURL == nil ? .missing : .resolved
+    private static func avatarPictureState(
+        for metadata: NostrProfileMetadata?,
+        resolutionState: NostrProfileResolutionState
+    ) -> NostrAvatarPictureState {
+        guard resolutionState == .resolved else { return .metadataPending }
+        return metadata?.pictureURL == nil ? .missing : .resolved
     }
 
     private static func coreNIP05Status(

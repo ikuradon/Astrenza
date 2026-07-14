@@ -1,5 +1,78 @@
 import Foundation
 
+public enum NostrRelayRuntimeError: Error, Equatable, Sendable {
+    case connectionUnavailable(relayURL: String)
+    case noEligibleRelays(groupIDs: [String])
+}
+
+public struct NostrRelayRequestAttempt: Equatable, Sendable {
+    public let requestID: String
+    public let relayURL: String
+    public let packet: NostrREQPacket
+    public let startedAt: Int
+
+    public init(requestID: String, relayURL: String, packet: NostrREQPacket, startedAt: Int) {
+        self.requestID = requestID
+        self.relayURL = relayURL
+        self.packet = packet
+        self.startedAt = startedAt
+    }
+}
+
+public enum NostrRelayRequestAttemptEndReason: String, Equatable, Sendable {
+    case installFailed
+    case cancelled
+    case superseded
+}
+
+public struct NostrRelayRequestAttemptEnd: Equatable, Sendable {
+    public let requestID: String
+    public let relayURL: String
+    public let subscriptionID: String
+    public let reason: NostrRelayRequestAttemptEndReason
+    public let message: String?
+    public let endedAt: Int
+
+    public init(
+        requestID: String,
+        relayURL: String,
+        subscriptionID: String,
+        reason: NostrRelayRequestAttemptEndReason,
+        message: String? = nil,
+        endedAt: Int
+    ) {
+        self.requestID = requestID
+        self.relayURL = relayURL
+        self.subscriptionID = subscriptionID
+        self.reason = reason
+        self.message = message
+        self.endedAt = endedAt
+    }
+}
+
+public enum NostrRelayClosedDisposition: Equatable, Sendable {
+    case retryAfterDelay
+    case authenticationRequired
+    case terminal
+
+    public init(message: String) {
+        let prefix = message
+            .lowercased()
+            .split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map(String.init)
+
+        switch prefix {
+        case "rate-limited", "error":
+            self = .retryAfterDelay
+        case "auth-required":
+            self = .authenticationRequired
+        default:
+            self = .terminal
+        }
+    }
+}
+
 public enum NostrRelayConnectionState: String, Codable, Equatable, Sendable {
     case initialized
     case connecting
@@ -231,6 +304,13 @@ public struct NostrREQPacket: Equatable, Sendable {
 
 public enum NostrREQScheduler {
     public static func batch(_ packets: [NostrREQPacket], mergeField: NostrREQMergeField) -> [NostrREQPacket] {
+        scheduledBatches(packets, mergeField: mergeField).map(\.packet)
+    }
+
+    static func scheduledBatches(
+        _ packets: [NostrREQPacket],
+        mergeField: NostrREQMergeField
+    ) -> [NostrREQScheduledBatch] {
         let grouped = Dictionary(grouping: packets) { packet in
             NostrREQBatchKey(packet: packet, mergeField: mergeField)
         }
@@ -246,13 +326,16 @@ public enum NostrREQScheduler {
                 filter.settingStrings(mergedValues, for: mergeField.rawValue)
             }
 
-            return first.replacing(filters: mergedFilters)
+            return NostrREQScheduledBatch(
+                packet: first.replacing(filters: mergedFilters),
+                logicalPackets: bucket
+            )
         }
         .sorted { lhs, rhs in
-            if lhs.strategy.rawValue == rhs.strategy.rawValue {
-                return lhs.subscriptionID < rhs.subscriptionID
+            if lhs.packet.strategy.rawValue == rhs.packet.strategy.rawValue {
+                return lhs.packet.subscriptionID < rhs.packet.subscriptionID
             }
-            return lhs.strategy.rawValue < rhs.strategy.rawValue
+            return lhs.packet.strategy.rawValue < rhs.packet.strategy.rawValue
         }
     }
 
@@ -312,6 +395,11 @@ public enum NostrREQScheduler {
             )
         }
     }
+}
+
+struct NostrREQScheduledBatch: Equatable, Sendable {
+    let packet: NostrREQPacket
+    let logicalPackets: [NostrREQPacket]
 }
 
 public enum NostrHomeForwardREQBuilder {

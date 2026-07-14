@@ -25,12 +25,15 @@ struct HomeTimelineForwardPlan {
 struct HomeTimelineSyncPlanner {
     static let homeForwardGroupPrefix = NostrHomeForwardREQBuilder.subscriptionID
     private static let fullOutboxSubscriptionPrefix = NostrHomeForwardREQBuilder.subscriptionID + "-outbox"
+    private static let initialForwardLimit = 250
 
     func forwardPlan(
         account: NostrAccount,
         followedPubkeys: [String],
         contactItems: [NostrContactListItem] = [],
         newestCreatedAt: Int?,
+        newestCreatedAtByRelay: [String: Int]? = nil,
+        initialCreatedAt: Int? = nil,
         relayURLs: [String],
         policy: NostrSyncPolicy
     ) -> HomeTimelineForwardPlan {
@@ -41,6 +44,8 @@ struct HomeTimelineSyncPlanner {
                 authors: authors,
                 contactItems: contactItems,
                 newestCreatedAt: newestCreatedAt,
+                newestCreatedAtByRelay: newestCreatedAtByRelay,
+                initialCreatedAt: initialCreatedAt,
                 fallbackRelayURLs: relayURLs
             )
             return HomeTimelineForwardPlan(
@@ -50,11 +55,40 @@ struct HomeTimelineSyncPlanner {
             )
         }
 
-        let packet = NostrHomeForwardREQBuilder.reconnectPacket(
+        if let newestCreatedAtByRelay {
+            if relayURLs.count == 1, let relayURL = relayURLs.first {
+                let cursorCreatedAt = newestCreatedAtByRelay[relayURL] ?? initialCreatedAt
+                let packet = initialLimitedPacketIfNeeded(NostrHomeForwardREQBuilder.reconnectPacket(
+                    authors: authors,
+                    newestCreatedAt: cursorCreatedAt,
+                    relayURLs: [relayURL]
+                ), cursorCreatedAt: cursorCreatedAt)
+                return HomeTimelineForwardPlan(
+                    packets: [packet],
+                    totalAuthorCount: authors.count,
+                    mode: policy.mode
+                )
+            }
+            let packets = relayURLs.map { relayURL in
+                relayScopedForwardPacket(
+                    authors: authors,
+                    newestCreatedAt: newestCreatedAtByRelay[relayURL] ?? initialCreatedAt,
+                    relayURL: relayURL,
+                    subscriptionPrefix: "\(Self.homeForwardGroupPrefix)-relay"
+                )
+            }
+            return HomeTimelineForwardPlan(
+                packets: packets,
+                totalAuthorCount: authors.count,
+                mode: policy.mode
+            )
+        }
+
+        let packet = initialLimitedPacketIfNeeded(NostrHomeForwardREQBuilder.reconnectPacket(
             authors: authors,
             newestCreatedAt: newestCreatedAt,
             relayURLs: relayURLs
-        )
+        ), cursorCreatedAt: newestCreatedAt)
         return HomeTimelineForwardPlan(
             packets: [packet],
             totalAuthorCount: authors.count,
@@ -158,6 +192,8 @@ struct HomeTimelineSyncPlanner {
         authors: [String],
         contactItems: [NostrContactListItem],
         newestCreatedAt: Int?,
+        newestCreatedAtByRelay: [String: Int]?,
+        initialCreatedAt: Int?,
         fallbackRelayURLs: [String]
     ) -> [NostrREQPacket] {
         var relayHintsByPubkey: [String: [String]] = [:]
@@ -189,21 +225,79 @@ struct HomeTimelineSyncPlanner {
                 lhs.relayURLs.lexicographicallyPrecedes(rhs.relayURLs)
             }
 
-        return groups.enumerated().map { index, group in
-            let basePacket = NostrHomeForwardREQBuilder.reconnectPacket(
-                authors: group.authors,
-                newestCreatedAt: newestCreatedAt,
-                relayURLs: group.relayURLs
-            )
-            let subscriptionID = "\(Self.fullOutboxSubscriptionPrefix)-\(index + 1)"
-            return NostrREQPacket(
-                strategy: .forward,
-                subscriptionID: subscriptionID,
-                groupID: subscriptionID,
-                filters: basePacket.filters,
-                relayURLs: basePacket.relayURLs
-            )
+        guard let newestCreatedAtByRelay else {
+            return groups.enumerated().map { index, group in
+                let basePacket = NostrHomeForwardREQBuilder.reconnectPacket(
+                    authors: group.authors,
+                    newestCreatedAt: newestCreatedAt,
+                    relayURLs: group.relayURLs
+                )
+                let subscriptionID = "\(Self.fullOutboxSubscriptionPrefix)-\(index + 1)"
+                let packet = NostrREQPacket(
+                    strategy: .forward,
+                    subscriptionID: subscriptionID,
+                    groupID: subscriptionID,
+                    filters: basePacket.filters,
+                    relayURLs: basePacket.relayURLs
+                )
+                return initialLimitedPacketIfNeeded(packet, cursorCreatedAt: newestCreatedAt)
+            }
         }
+
+        return groups.enumerated().flatMap { index, group in
+            group.relayURLs.map { relayURL in
+                relayScopedForwardPacket(
+                    authors: group.authors,
+                    newestCreatedAt: newestCreatedAtByRelay[relayURL] ?? initialCreatedAt,
+                    relayURL: relayURL,
+                    subscriptionPrefix: "\(Self.fullOutboxSubscriptionPrefix)-\(index + 1)"
+                )
+            }
+        }
+    }
+
+    private func relayScopedForwardPacket(
+        authors: [String],
+        newestCreatedAt: Int?,
+        relayURL: String,
+        subscriptionPrefix: String
+    ) -> NostrREQPacket {
+        let basePacket = NostrHomeForwardREQBuilder.reconnectPacket(
+            authors: authors,
+            newestCreatedAt: newestCreatedAt,
+            relayURLs: [relayURL]
+        )
+        let subscriptionID = "\(subscriptionPrefix)-\(stableRelayIdentifier(relayURL))"
+        let packet = NostrREQPacket(
+            strategy: .forward,
+            subscriptionID: subscriptionID,
+            groupID: subscriptionID,
+            filters: basePacket.filters,
+            relayURLs: basePacket.relayURLs
+        )
+        return initialLimitedPacketIfNeeded(packet, cursorCreatedAt: newestCreatedAt)
+    }
+
+    private func initialLimitedPacketIfNeeded(
+        _ packet: NostrREQPacket,
+        cursorCreatedAt: Int?
+    ) -> NostrREQPacket {
+        guard cursorCreatedAt == nil else { return packet }
+        let filters = packet.filters.map { filter in
+            var filter = filter
+            filter["limit"] = .int(Self.initialForwardLimit)
+            return filter
+        }
+        return packet.replacing(filters: filters)
+    }
+
+    private func stableRelayIdentifier(_ relayURL: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in relayURL.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
     }
 
     static func isHomeForwardSubscription(_ subscriptionID: String) -> Bool {

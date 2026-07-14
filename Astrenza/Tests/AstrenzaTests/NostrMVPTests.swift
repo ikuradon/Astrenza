@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import AstrenzaCore
 @testable import Astrenza
+import UIKit
 
 @Suite("Nostr MVP")
 struct NostrMVPTests {
@@ -72,7 +73,7 @@ struct NostrMVPTests {
     }
 
     @Test("Nostr image cache stores and reads image data by URL")
-    func imageCacheStoresImageData() throws {
+    func imageCacheStoresImageData() async throws {
         let urlCache = URLCache(memoryCapacity: 1024 * 1024, diskCapacity: 0, diskPath: nil)
         let cache = NostrImageCache(urlCache: urlCache)
         let url = try #require(URL(string: "https://cdn.example.test/avatar.png"))
@@ -83,7 +84,53 @@ struct NostrMVPTests {
         cache.store(data: data, response: response, for: request)
 
         #expect(cache.cachedImageData(for: url) == data)
-        #expect(cache.cachedImage(for: url) != nil)
+        #expect(try await cache.image(for: url, maximumPixelSize: 64).cgImage != nil)
+    }
+
+    @Test("Nostr image cache coalesces matching requests and downsamples offscreen-sized images")
+    @MainActor
+    func imageCacheCoalescesAndDownsamples() async throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let sourceSize = CGSize(width: 3_000, height: 1_500)
+        let sourceData = UIGraphicsImageRenderer(size: sourceSize, format: format).pngData { context in
+            UIColor.systemIndigo.setFill()
+            context.fill(CGRect(origin: .zero, size: sourceSize))
+        }
+        let provider = NostrImageTestDataProvider(data: sourceData)
+        let dataCache = NostrRemoteDataCache(
+            urlCache: URLCache(memoryCapacity: 0, diskCapacity: 0, diskPath: nil)
+        )
+        let cache = NostrImageCache(dataCache: dataCache) { url in
+            try await provider.data(for: url)
+        }
+        let url = try #require(URL(string: "https://cdn.example.test/coalesced-avatar.png"))
+
+        let decodedMaximumDimensions = try await withThrowingTaskGroup(of: Int.self) { group in
+            for _ in 0..<20 {
+                group.addTask {
+                    let image = try await cache.image(for: url, maximumPixelSize: 128)
+                    guard let cgImage = image.cgImage else { return 0 }
+                    return max(cgImage.width, cgImage.height)
+                }
+            }
+
+            var values: [Int] = []
+            for try await value in group {
+                values.append(value)
+            }
+            return values
+        }
+
+        #expect(decodedMaximumDimensions.count == 20)
+        #expect(decodedMaximumDimensions.allSatisfy { $0 > 0 && $0 <= 128 })
+        let requestCount = await provider.requestCount
+        #expect(requestCount == 1)
+
+        let cappedURL = try #require(URL(string: "https://cdn.example.test/capped-media.png"))
+        let cappedImage = try await cache.image(for: cappedURL, maximumPixelSize: 10_000)
+        let cappedCGImage = try #require(cappedImage.cgImage)
+        #expect(max(cappedCGImage.width, cappedCGImage.height) <= NostrImageCache.mediaMaximumPixelSize)
     }
 
     private func nostrEvent(
@@ -110,6 +157,21 @@ struct NostrMVPTests {
             content: content,
             sig: String(repeating: "1", count: 128)
         )
+    }
+}
+
+private actor NostrImageTestDataProvider {
+    private let responseData: Data
+    private(set) var requestCount = 0
+
+    init(data: Data) {
+        self.responseData = data
+    }
+
+    func data(for _: URL) async throws -> Data {
+        requestCount += 1
+        try await Task.sleep(for: .milliseconds(50))
+        return responseData
     }
 }
 

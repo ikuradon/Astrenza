@@ -18,6 +18,8 @@ struct HomeTimelineView: View {
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var isTimelineAtNewestWindow = true
+    @State private var isViewportRestoreProtectionActive: Bool
+    @State private var isTimelineDetachedFromLiveEdge: Bool
     @State private var homeReturnAnchor: TimelineViewportState?
     @State private var homeScrollCommand: TimelineScrollCommand?
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
@@ -46,9 +48,19 @@ struct HomeTimelineView: View {
 
         let restoreStore = TimelineRestoreStore()
         let initialAccountID = sessionStore.account?.pubkey ?? "mock-account"
+        let initialViewportState = restoreStore.viewportState(
+            accountID: initialAccountID,
+            timelineKey: TimelineKind.home.id
+        ) ?? liveTimelineStore.restoredViewportState(
+            accountID: initialAccountID,
+            timelineKey: TimelineKind.home.id
+        )
         _timelineRestoreStore = State(initialValue: restoreStore)
-        _homeViewportState = State(initialValue: restoreStore.viewportState(accountID: initialAccountID, timelineKey: TimelineKind.home.id))
+        _homeViewportState = State(initialValue: initialViewportState)
         _homeLayoutCache = State(initialValue: restoreStore.layoutCache(accountID: initialAccountID, timelineKey: TimelineKind.home.id))
+        _isTimelineAtNewestWindow = State(initialValue: initialViewportState == nil)
+        _isViewportRestoreProtectionActive = State(initialValue: initialViewportState != nil)
+        _isTimelineDetachedFromLiveEdge = State(initialValue: initialViewportState != nil)
     }
 
     private var actionMenuTopClearance: CGFloat {
@@ -102,6 +114,28 @@ struct HomeTimelineView: View {
             let listEntries = liveTimelineStore.listEntries()
             return listEntries.isEmpty ? MockTimelineData.entries(for: selectedTimeline) : listEntries
         }
+    }
+
+    private var timelineEntriesSourceRevision: Int {
+        switch selectedTimeline {
+        case .home:
+            liveTimelineStore.resolvedContentRevision
+        case .relays:
+            0
+        case .lists:
+            liveTimelineStore.listContentRevision
+        }
+    }
+
+    private var followsRealtimeTimelineEntries: Bool {
+        guard selectedTimeline == .home else { return false }
+        return HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
+            isRealtime: liveTimelineStore.isHomeTimelineRealtime &&
+                liveTimelineStore.realtimeFollowSourceRevision == timelineEntriesSourceRevision,
+            isAtNewestWindow: isTimelineAtNewestWindow,
+            isRestoreProtected: isViewportRestoreProtectionActive,
+            isDetachedFromLiveEdge: isTimelineDetachedFromLiveEdge
+        )
     }
 
     private var timelineEmptyState: TimelineEmptyState {
@@ -162,7 +196,8 @@ struct HomeTimelineView: View {
                         onAddAccount: presentSettings,
                         relayConnectedCount: relayConnectedCount,
                         relayPlannedCount: relayPlannedCount,
-                        isRelayProcessing: liveTimelineStore.isRelayProcessing
+                        isRelayProcessing: liveTimelineStore.isRelayProcessing,
+                        relayProcessingLabel: liveTimelineStore.activityStatus?.compactLabel
                     )
                     .zIndex(30)
 
@@ -219,6 +254,10 @@ struct HomeTimelineView: View {
             clearHomeReturnAnchor()
             loadTimelineRestoreState()
         }
+        .onDisappear {
+            timelineRestoreStore.flushPendingSaves()
+            liveTimelineStore.flushPendingViewportStateSave()
+        }
         .homeTimelinePresentations(
             isComposerPresented: $isComposerPresented,
             isSettingsPresented: $isSettingsPresented,
@@ -264,11 +303,14 @@ private extension HomeTimelineView {
         NavigationStack(path: $postNavigationPath) {
             TimelineFeedView(
                 entries: timelineEntries,
+                sourceIdentity: "\(accountID)/\(selectedTimeline.id)",
+                sourceRevision: timelineEntriesSourceRevision,
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: homeViewportState,
                 scrollCommand: homeScrollCommand,
-                followsNewestEntries: isTimelineAtNewestWindow,
+                viewportRestoreProtectionActive: isViewportRestoreProtectionActive,
+                followsRealtimeEntries: followsRealtimeTimelineEntries,
                 layoutCache: homeLayoutCache,
                 emptyState: timelineEmptyState,
                 onEmptyStatePrimaryAction: handleTimelineEmptyStatePrimaryAction,
@@ -283,18 +325,18 @@ private extension HomeTimelineView {
                 onPostActionChoice: handlePostActionChoice,
                 onRefresh: refreshVisibleTimeline,
                 onLoadOlderPost: loadOlderVisibleTimeline,
-                onBackfillGap: backfillVisibleTimelineGap
-            ) { offset in
-                handleTimelineScrollOffset(offset)
-            } onViewportStateChanged: { state in
-                saveTimelineViewportState(state)
-            } onReadablePostIDsChanged: { ids in
-                guard sessionStore.account != nil, selectedTimeline == .home else { return }
-                liveTimelineStore.markMaterializedPostsRead(visiblePostIDs: ids)
-            } onLayoutCacheChanged: { cache in
-                saveTimelineLayoutCache(cache)
-            }
-            .id(selectedTimeline.id)
+                onBackfillGap: backfillVisibleTimelineGap,
+                onScrollOffsetChanged: handleTimelineScrollOffset,
+                onScrollActivityChanged: handleTimelineScrollActivityChanged,
+                onViewportRestoreCompleted: handleTimelineViewportRestoreCompleted,
+                onViewportStateChanged: saveTimelineViewportState,
+                onReadablePostIDsChanged: { ids in
+                    guard sessionStore.account != nil, selectedTimeline == .home else { return }
+                    liveTimelineStore.markMaterializedPostsRead(visiblePostIDs: ids)
+                },
+                onLayoutCacheChanged: saveTimelineLayoutCache
+            )
+            .id("\(accountID)/\(selectedTimeline.id)")
             .navigationDestination(for: TimelineNavigationRoute.self) { route in
                 timelineDestination(for: route)
             }
@@ -466,16 +508,36 @@ private extension HomeTimelineView {
             timelineScrollOffset = newChromeOffset
         }
 
-        if sessionStore.account != nil, selectedTimeline == .home {
-            let nextIsNewestWindow = offset <= 6
-            if nextIsNewestWindow {
-                liveTimelineStore.markNewestMaterializedWindowRead()
-            }
-            if isTimelineAtNewestWindow != nextIsNewestWindow {
-                isTimelineAtNewestWindow = nextIsNewestWindow
-                liveTimelineStore.setTimelineAtNewestWindow(nextIsNewestWindow)
-            }
+        synchronizeTimelineNewestWindowState(for: offset)
+    }
+
+    func handleTimelineScrollActivityChanged(_ isActive: Bool) {
+        guard sessionStore.account != nil, selectedTimeline == .home else { return }
+        liveTimelineStore.setTimelineScrollActive(isActive)
+    }
+
+    func handleTimelineViewportRestoreCompleted(_ restoredOffset: CGFloat) {
+        guard isViewportRestoreProtectionActive else { return }
+        isViewportRestoreProtectionActive = false
+        synchronizeTimelineNewestWindowState(for: restoredOffset, forceStoreSync: true)
+    }
+
+    func synchronizeTimelineNewestWindowState(
+        for offset: CGFloat,
+        forceStoreSync: Bool = false
+    ) {
+        guard sessionStore.account != nil, selectedTimeline == .home else { return }
+        let nextIsNewestWindow = HomeTimelineViewportRestorePolicy.isAtNewestWindow(
+            offset: offset,
+            isRestoreProtected: isViewportRestoreProtectionActive,
+            isDetachedFromLiveEdge: isTimelineDetachedFromLiveEdge
+        )
+        if nextIsNewestWindow {
+            liveTimelineStore.markNewestMaterializedWindowRead()
         }
+        guard forceStoreSync || isTimelineAtNewestWindow != nextIsNewestWindow else { return }
+        isTimelineAtNewestWindow = nextIsNewestWindow
+        liveTimelineStore.setTimelineAtNewestWindow(nextIsNewestWindow)
     }
 
     func openPost(_ post: TimelinePost) {
@@ -539,12 +601,27 @@ private extension HomeTimelineView {
     func handleHomeTabRetap() {
         guard selectedTab == .home, selectedTimeline == .home, sessionStore.account != nil else { return }
         dismissFloatingMenus()
+        let currentViewportState = homeViewportState
+        releaseViewportRestoreProtection(clearViewportState: true)
         if let returnAnchor = homeReturnAnchor {
+            // DBの表示windowを復元対象へ切り替えてからSwiftUIへscrollを指示する。
+            isTimelineDetachedFromLiveEdge = true
+            isTimelineAtNewestWindow = false
+            liveTimelineStore.setTimelineAtNewestWindow(false)
+            liveTimelineStore.setRestoreProjectionAnchor(returnAnchor.anchorPostID)
             homeScrollCommand = TimelineScrollCommand(target: .viewport(returnAnchor))
             homeReturnAnchor = nil
         } else {
-            homeReturnAnchor = homeViewportState
+            isTimelineDetachedFromLiveEdge = false
+            homeReturnAnchor = timelineRestoreStore.latestViewportState(
+                accountID: accountID,
+                timelineKey: selectedTimeline.id
+            ) ?? currentViewportState
             liveTimelineStore.markNewestMaterializedWindowRead()
+            // ページング後の先頭Rowは最新とは限らないため、Generic Feedの最新windowを先に復元する。
+            liveTimelineStore.setRestoreProjectionAnchor(nil)
+            isTimelineAtNewestWindow = true
+            liveTimelineStore.setTimelineAtNewestWindow(true)
             homeScrollCommand = TimelineScrollCommand(target: .top)
         }
     }
@@ -615,14 +692,13 @@ private extension HomeTimelineView {
         selectedTab = .explore
     }
 
-    func refreshVisibleTimeline() async {
-        guard sessionStore.account != nil, selectedTimeline == .home else { return }
+    func refreshVisibleTimeline() async -> Bool {
+        guard sessionStore.account != nil, selectedTimeline == .home else { return false }
         clearHomeReturnAnchor()
-        if liveTimelineStore.unmaterializedNewCount > 0 {
-            await liveTimelineStore.applyPendingNewEvents()
-            return
-        }
-        await liveTimelineStore.refreshLatest()
+        releaseViewportRestoreProtection(clearViewportState: true)
+        isTimelineDetachedFromLiveEdge = false
+        synchronizeTimelineNewestWindowState(for: timelineScrollOffset, forceStoreSync: true)
+        return await liveTimelineStore.applyPendingNewEvents()
     }
 
     func loadOlderVisibleTimeline(_ postID: TimelinePost.ID) {
@@ -694,10 +770,29 @@ private extension HomeTimelineView {
     }
 
     func loadTimelineRestoreState() {
-        homeViewportState = timelineRestoreStore.viewportState(accountID: accountID, timelineKey: selectedTimeline.id)
+        timelineRestoreStore.flushPendingSaves()
+        let restoredViewportState = timelineRestoreStore.viewportState(
+            accountID: accountID,
+            timelineKey: selectedTimeline.id
+        ) ?? liveTimelineStore.restoredViewportState(
+            accountID: accountID,
+            timelineKey: selectedTimeline.id
+        )
+        homeViewportState = restoredViewportState
+        isViewportRestoreProtectionActive = restoredViewportState != nil
+        isTimelineDetachedFromLiveEdge = restoredViewportState != nil
+        isTimelineAtNewestWindow = restoredViewportState == nil
         homeLayoutCache = timelineRestoreStore.layoutCache(accountID: accountID, timelineKey: selectedTimeline.id)
         if sessionStore.account != nil, selectedTimeline == .home {
-            liveTimelineStore.setRestoreProjectionAnchor(homeViewportState?.anchorPostID)
+            liveTimelineStore.setRestoreProjectionAnchor(restoredViewportState?.anchorPostID)
+            liveTimelineStore.setTimelineAtNewestWindow(restoredViewportState == nil)
+        }
+    }
+
+    func releaseViewportRestoreProtection(clearViewportState: Bool) {
+        isViewportRestoreProtectionActive = false
+        if clearViewportState {
+            homeViewportState = nil
         }
     }
 
@@ -711,21 +806,37 @@ private extension HomeTimelineView {
             updatedAt: state.updatedAt
         )
 
-        if let homeViewportState,
-           homeViewportState.anchorPostID == nextState.anchorPostID,
-           abs(homeViewportState.anchorOffset - nextState.anchorOffset) < 0.5,
-           abs(homeViewportState.contentOffset - nextState.contentOffset) < 0.5 {
-            return
-        }
-
-        homeViewportState = nextState
-        timelineRestoreStore.saveViewportState(nextState)
+        timelineRestoreStore.scheduleViewportStateSave(nextState)
+        liveTimelineStore.saveViewportState(nextState)
     }
 
     func saveTimelineLayoutCache(_ cache: TimelineLayoutCache) {
         guard homeLayoutCache != cache else { return }
         homeLayoutCache = cache
-        timelineRestoreStore.saveLayoutCache(cache, accountID: accountID, timelineKey: selectedTimeline.id)
+        timelineRestoreStore.scheduleLayoutCacheSave(
+            cache,
+            accountID: accountID,
+            timelineKey: selectedTimeline.id
+        )
+    }
+}
+
+enum HomeTimelineViewportRestorePolicy {
+    static func isAtNewestWindow(
+        offset: CGFloat,
+        isRestoreProtected: Bool,
+        isDetachedFromLiveEdge: Bool
+    ) -> Bool {
+        !isRestoreProtected && !isDetachedFromLiveEdge && offset <= 6
+    }
+
+    static func followsRealtimeEntries(
+        isRealtime: Bool,
+        isAtNewestWindow: Bool,
+        isRestoreProtected: Bool,
+        isDetachedFromLiveEdge: Bool
+    ) -> Bool {
+        isRealtime && !isRestoreProtected && !isDetachedFromLiveEdge && isAtNewestWindow
     }
 }
 

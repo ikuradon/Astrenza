@@ -11,6 +11,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
     public let createdAt: Int
     public let avatarPictureState: NostrAvatarPictureState
     public let avatarImageURL: URL?
+    public let profileResolutionState: NostrProfileResolutionState
     public let filterMatch: NostrFilterMatchReason?
 
     public init(
@@ -24,6 +25,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
         createdAt: Int,
         avatarPictureState: NostrAvatarPictureState,
         avatarImageURL: URL?,
+        profileResolutionState: NostrProfileResolutionState = .unknown,
         filterMatch: NostrFilterMatchReason? = nil
     ) {
         self.id = id
@@ -36,6 +38,7 @@ public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.avatarPictureState = avatarPictureState
         self.avatarImageURL = avatarImageURL
+        self.profileResolutionState = profileResolutionState
         self.filterMatch = filterMatch
     }
 }
@@ -52,11 +55,13 @@ public enum NostrHomeTimelineMaterializer {
         metadataEvents: [NostrEvent],
         followedPubkeys: Set<String>,
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         filterRules: NostrFilterRuleSet? = nil,
         timeline: NostrFilterTimelineScope = .home,
         now: Int = Int(Date().timeIntervalSince1970)
     ) -> [NostrHomeTimelineItem] {
         let metadataByPubkey = latestMetadataByPubkey(metadataEvents)
+        let metadataEventPubkeys = Set(metadataEvents.lazy.filter { $0.kind == 0 }.map(\.pubkey))
         return noteEvents
             .filter { $0.kind == 1 && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .compactMap { event in
@@ -67,6 +72,9 @@ public enum NostrHomeTimelineMaterializer {
                 return item(
                     for: event,
                     metadata: metadataByPubkey[event.pubkey],
+                    profileResolutionState: metadataEventPubkeys.contains(event.pubkey)
+                        ? .resolved
+                        : profileResolutionStates[event.pubkey] ?? .unknown,
                     nip05Resolution: nip05Resolutions[event.pubkey],
                     isFollowed: followedPubkeys.contains(event.pubkey),
                     filterMatch: filterMatch?.reason
@@ -99,13 +107,14 @@ public enum NostrHomeTimelineMaterializer {
     private static func item(
         for event: NostrEvent,
         metadata: NostrProfileMetadata?,
+        profileResolutionState: NostrProfileResolutionState,
         nip05Resolution: NostrNIP05Resolution?,
         isFollowed: Bool,
         filterMatch: NostrFilterMatchReason?
     ) -> NostrHomeTimelineItem {
         let pictureURL = metadata?.pictureURL
         let pictureState: NostrAvatarPictureState
-        if metadata == nil {
+        if profileResolutionState != .resolved {
             pictureState = .metadataPending
         } else if pictureURL == nil {
             pictureState = .missing
@@ -124,6 +133,7 @@ public enum NostrHomeTimelineMaterializer {
             createdAt: event.createdAt,
             avatarPictureState: pictureState,
             avatarImageURL: pictureURL,
+            profileResolutionState: profileResolutionState,
             filterMatch: filterMatch
         )
     }

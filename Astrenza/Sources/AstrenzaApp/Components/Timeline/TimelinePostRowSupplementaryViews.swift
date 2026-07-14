@@ -5,10 +5,31 @@ struct RelativeTimestampText: View {
 
     var body: some View {
         if let createdAt {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(RelativeTimestampSchedule(createdAt: createdAt)) { context in
                 Text(TimelineTimestampFormatter.relativeText(from: createdAt, now: context.date))
             }
         }
+    }
+}
+
+struct RelativeTimestampSchedule: TimelineSchedule {
+    let createdAt: Int
+
+    func entries(from startDate: Date, mode: Mode) -> AnySequence<Date> {
+        AnySequence(
+            sequence(
+                first: TimelineTimestampFormatter.nextRelativeTextChangeDate(
+                    from: createdAt,
+                    after: startDate
+                ),
+                next: { date in
+                    TimelineTimestampFormatter.nextRelativeTextChangeDate(
+                        from: createdAt,
+                        after: date
+                    )
+                }
+            )
+        )
     }
 }
 

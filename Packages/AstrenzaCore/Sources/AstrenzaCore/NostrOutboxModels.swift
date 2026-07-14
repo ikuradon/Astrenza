@@ -37,19 +37,22 @@ public struct NostrOutboxRelayRecord: Codable, Equatable, Sendable {
     public let status: String
     public let lastAttemptAt: Int?
     public let okMessage: String?
+    public let attemptCount: Int
 
     public init(
         localID: String,
         relayURL: String,
         status: String,
         lastAttemptAt: Int?,
-        okMessage: String?
+        okMessage: String?,
+        attemptCount: Int = 0
     ) {
         self.localID = localID
         self.relayURL = relayURL
         self.status = status
         self.lastAttemptAt = lastAttemptAt
         self.okMessage = okMessage
+        self.attemptCount = attemptCount
     }
 }
 
@@ -59,6 +62,7 @@ public enum NostrOutboxStatus {
     public static let published = "published"
     public static let partial = "partial"
     public static let failed = "failed"
+    public static let rejected = "rejected"
 }
 
 public enum NostrPublishDestinationResolver {

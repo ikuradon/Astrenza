@@ -16,6 +16,7 @@ struct HomeTimelineTopBar: View {
     let relayConnectedCount: Int
     let relayPlannedCount: Int
     let isRelayProcessing: Bool
+    let relayProcessingLabel: String?
 
     var body: some View {
         ZStack {
@@ -47,7 +48,8 @@ struct HomeTimelineTopBar: View {
                         connected: relayConnectedCount,
                         planned: relayPlannedCount,
                         collapseProgress: collapseProgress,
-                        isProcessing: isRelayProcessing
+                        isProcessing: isRelayProcessing,
+                        processingLabel: relayProcessingLabel
                     )
                 }
                 .buttonStyle(.plain)

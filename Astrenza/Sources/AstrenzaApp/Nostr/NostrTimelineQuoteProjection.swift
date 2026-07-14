@@ -8,6 +8,7 @@ struct NostrTimelineQuoteProjection {
         eventsByID: [String: NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         followedPubkeys: Set<String>,
         avatarForItem: (NostrHomeTimelineItem) -> AvatarStyle
     ) -> QuotedTimelinePost? {
@@ -20,14 +21,20 @@ struct NostrTimelineQuoteProjection {
             noteEvents: [quoted],
             metadataEvents: metadataEvents,
             followedPubkeys: followedPubkeys,
-            nip05Resolutions: nip05Resolutions
-        ).first ?? fallbackItem(for: quoted, followedPubkeys: followedPubkeys)
+            nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates
+        ).first ?? fallbackItem(
+            for: quoted,
+            profileResolutionStates: profileResolutionStates,
+            followedPubkeys: followedPubkeys
+        )
         let contentProjection = NostrTimelineContentProjection(event: quoted)
         let richBody = NostrTimelineRichContentResolver.resolve(
             contentProjection.richBody,
             eventsByID: eventsByID,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys
         )
 
@@ -43,6 +50,7 @@ struct NostrTimelineQuoteProjection {
 
     private static func fallbackItem(
         for event: NostrEvent,
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> NostrHomeTimelineItem {
         NostrHomeTimelineItem(
@@ -55,7 +63,8 @@ struct NostrTimelineQuoteProjection {
             body: event.content,
             createdAt: event.createdAt,
             avatarPictureState: .metadataPending,
-            avatarImageURL: nil
+            avatarImageURL: nil,
+            profileResolutionState: profileResolutionStates[event.pubkey] ?? .unknown
         )
     }
 

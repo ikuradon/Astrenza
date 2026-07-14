@@ -7,6 +7,7 @@ enum NostrTimelineRichContentResolver {
         eventsByID: [String: NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         followedPubkeys: Set<String>
     ) -> NostrRichContent {
         richContent.resolving(
@@ -14,6 +15,7 @@ enum NostrTimelineRichContentResolver {
                 for: richContent,
                 metadataEvents: metadataEvents,
                 nip05Resolutions: nip05Resolutions,
+                profileResolutionStates: profileResolutionStates,
                 followedPubkeys: followedPubkeys
             ),
             eventDisplayTextByID: eventDisplayTexts(
@@ -21,6 +23,7 @@ enum NostrTimelineRichContentResolver {
                 eventsByID: eventsByID,
                 metadataEvents: metadataEvents,
                 nip05Resolutions: nip05Resolutions,
+                profileResolutionStates: profileResolutionStates,
                 followedPubkeys: followedPubkeys
             )
         )
@@ -30,6 +33,7 @@ enum NostrTimelineRichContentResolver {
         for richContent: NostrRichContent,
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> [String: String] {
         let metadataByPubkey = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)
@@ -45,6 +49,7 @@ enum NostrTimelineRichContentResolver {
                 for: pubkey,
                 metadataByPubkey: metadataByPubkey,
                 nip05Resolutions: nip05Resolutions,
+                profileResolutionStates: profileResolutionStates,
                 followedPubkeys: followedPubkeys
             ) else { return nil }
             return (pubkey, displayName)
@@ -56,6 +61,7 @@ enum NostrTimelineRichContentResolver {
         eventsByID: [String: NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> [String: String] {
         let metadataByPubkey = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)
@@ -72,6 +78,7 @@ enum NostrTimelineRichContentResolver {
                     for: event.pubkey,
                     metadataByPubkey: metadataByPubkey,
                     nip05Resolutions: nip05Resolutions,
+                    profileResolutionStates: profileResolutionStates,
                     followedPubkeys: followedPubkeys
                   )
             else { return nil }
@@ -83,6 +90,7 @@ enum NostrTimelineRichContentResolver {
         for pubkey: String,
         metadataByPubkey: [String: NostrProfileMetadata],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> String? {
         let metadata = metadataByPubkey[pubkey]
@@ -96,7 +104,10 @@ enum NostrTimelineRichContentResolver {
             body: "",
             createdAt: 0,
             avatarPictureState: metadata == nil ? .metadataPending : (metadata?.pictureURL == nil ? .missing : .resolved),
-            avatarImageURL: metadata?.pictureURL
+            avatarImageURL: metadata?.pictureURL,
+            profileResolutionState: metadata == nil
+                ? profileResolutionStates[pubkey] ?? .unknown
+                : .resolved
         )
         let author = NostrTimelineAuthorProjection.author(for: item)
         guard author.isMetadataResolved else { return nil }

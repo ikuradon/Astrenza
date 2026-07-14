@@ -2,14 +2,13 @@ import CryptoKit
 import Foundation
 import Testing
 import AstrenzaCore
-import secp256k1
 @testable import Astrenza
 
 @Suite("Nostr timeline sync")
 struct NostrTimelineSyncTests {
     @Test("BIP340 verifier accepts signed events and rejects tampering")
-    func bip340SignatureVerification() throws {
-        let event = try signedEvent(
+    func bip340SignatureVerification() async throws {
+        let event = try await signedEvent(
             kind: 1,
             createdAt: 1_707_409_439,
             tags: [["-"]],
@@ -92,8 +91,46 @@ struct NostrTimelineSyncTests {
         )
 
         #expect(plan.packets.allSatisfy { $0.relayURLs == relays })
+        #expect(plan.packets.allSatisfy { $0.filters[0]["since"] == nil })
+        #expect(plan.packets.allSatisfy { $0.filters[0]["limit"] == .int(250) })
         #expect(plan.totalAuthorCount == 300)
         #expect(plan.mode == .ownRelayList)
+    }
+
+    @Test("Home forward sync keeps an independent reconnect cursor for each relay")
+    func homeTimelinePlannerUsesRelayScopedCursors() throws {
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "account",
+            readOnly: true
+        )
+        let relays = [
+            "wss://first.example",
+            "wss://second.example",
+            "wss://new.example"
+        ]
+        let plan = HomeTimelineSyncPlanner().forwardPlan(
+            account: account,
+            followedPubkeys: [String(repeating: "b", count: 64)],
+            newestCreatedAt: 300,
+            newestCreatedAtByRelay: [
+                relays[0]: 100,
+                relays[1]: 200
+            ],
+            initialCreatedAt: 50,
+            relayURLs: relays,
+            policy: .default(networkType: .wifi)
+        )
+
+        #expect(plan.packets.count == 3)
+        #expect(Set(plan.packets.map(\.subscriptionID)).count == 3)
+        #expect(plan.packets.allSatisfy { $0.relayURLs.count == 1 })
+        let sinceByRelay = Dictionary(uniqueKeysWithValues: plan.packets.map { packet in
+            (packet.relayURLs[0], packet.filters[0]["since"])
+        })
+        #expect(sinceByRelay[relays[0]] == .int(90))
+        #expect(sinceByRelay[relays[1]] == .int(190))
+        #expect(sinceByRelay[relays[2]] == .int(40))
     }
 
     @Test("Full outbox mode groups authors by contact relay hints")
@@ -175,6 +212,220 @@ struct NostrTimelineSyncTests {
         #expect(!AstrenzaLaunchMode(arguments: ["Astrenza"], environment: [:]).usesMockTimeline)
     }
 
+    @Test("Backward sync keeps request provenance and a partial-page gap")
+    @MainActor
+    func backwardSyncKeepsRequestProvenanceAndGap() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let author = String(repeating: "b", count: 64)
+        let account = NostrAccount(pubkey: accountID, displayIdentifier: "account", readOnly: true)
+        let anchor = signedShapeOnlyEvent(kind: 1, pubkey: author, createdAt: 200, content: "anchor")
+        let older = signedShapeOnlyEvent(kind: 1, pubkey: author, createdAt: 100, content: "older")
+        let definition = try homeFeedDefinition(accountID: accountID, revision: 1, authors: [author])
+        try eventStore.save(events: [anchor], receivedAt: 10)
+        try eventStore.replaceFeedProjection(
+            definition,
+            memberships: [NostrFeedMembershipRecord(
+                feedID: definition.feedID,
+                eventID: anchor.id,
+                sortTimestamp: anchor.createdAt,
+                reason: "initial",
+                insertedAt: 10,
+                feedRevision: definition.revision
+            )]
+        )
+
+        let packet = NostrREQPacket.backward(
+            purpose: "older-notes",
+            filters: [[
+                "authors": .strings([author]),
+                "kinds": .ints([1, 6]),
+                "until": .int(anchor.createdAt - 1)
+            ]],
+            relayURLs: ["wss://relay.example"],
+            groupID: "astrenza-older-notes-test",
+            subscriptionID: "astrenza-older-notes-test-req"
+        )
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.testingActivateHomeFeed(account: account, definition: definition, sourceAuthors: [author])
+        store.testingRegisterOlderFeedRequest(
+            packet: packet,
+            definition: definition,
+            anchorEventID: anchor.id
+        )
+        let attempt = NostrRelayRequestAttempt(
+            requestID: "older-attempt",
+            relayURL: "wss://relay.example",
+            packet: packet,
+            startedAt: 20
+        )
+        store.testingHandleFeedSyncRequestStarted(attempt)
+        await store.testingHandleBackwardEvent(
+            relayURL: attempt.relayURL,
+            subscriptionID: packet.subscriptionID,
+            event: older
+        )
+        store.testingHandleBackwardCompletion(NostrBackwardREQCompletion(
+            groupID: packet.groupID,
+            relayURLs: [attempt.relayURL],
+            subscriptionIDs: [packet.subscriptionID],
+            eventCount: 1,
+            eoseCount: 0,
+            closedCount: 1,
+            timeoutCount: 0
+        ))
+
+        let sources = try eventStore.feedMembershipSources(
+            feedID: definition.feedID,
+            revision: definition.revision,
+            eventID: older.id
+        )
+        #expect(sources.contains {
+            $0.sourceType == "sync-request" && $0.sourceID == attempt.requestID
+        })
+        let gap = try #require(try eventStore.feedGaps(
+            feedID: definition.feedID,
+            revision: definition.revision
+        ).first)
+        #expect(gap.newerEventID == anchor.id)
+        #expect(gap.olderEventID == older.id)
+        #expect(gap.sourceRequestID == attempt.requestID)
+    }
+
+    @Test("Backward EVENT is projected even when request provenance is still queued")
+    @MainActor
+    func backwardEventDoesNotWaitForRequestProvenance() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "1", count: 64)
+        let author = String(repeating: "2", count: 64)
+        let account = NostrAccount(pubkey: accountID, displayIdentifier: "account", readOnly: true)
+        let older = signedShapeOnlyEvent(kind: 1, pubkey: author, createdAt: 100, content: "early event")
+        let definition = try homeFeedDefinition(accountID: accountID, revision: 1, authors: [author])
+        try eventStore.replaceFeedProjection(definition, memberships: [])
+        let packet = NostrREQPacket.backward(
+            purpose: "older-notes",
+            filters: [["authors": .strings([author]), "kinds": .ints([1, 6])]],
+            relayURLs: ["wss://relay.example"],
+            groupID: "astrenza-older-notes-early",
+            subscriptionID: "astrenza-older-notes-early-req"
+        )
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.testingActivateHomeFeed(account: account, definition: definition, sourceAuthors: [author])
+        store.testingRegisterOlderFeedRequest(packet: packet, definition: definition, anchorEventID: nil)
+
+        await store.testingHandleBackwardEvent(
+            relayURL: "wss://relay.example",
+            subscriptionID: packet.subscriptionID,
+            event: older
+        )
+
+        #expect(try eventStore.feedMemberships(
+            feedID: definition.feedID,
+            revision: definition.revision,
+            limit: 10
+        ).map(\.eventID) == [older.id])
+    }
+
+    @Test("A superseded feed revision cannot receive a delayed backward result")
+    @MainActor
+    func supersededRevisionRejectsDelayedBackwardResult() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "c", count: 64)
+        let oldAuthor = String(repeating: "d", count: 64)
+        let newAuthor = String(repeating: "e", count: 64)
+        let account = NostrAccount(pubkey: accountID, displayIdentifier: "account", readOnly: true)
+        let revision1 = try homeFeedDefinition(accountID: accountID, revision: 1, authors: [oldAuthor])
+        let revision2 = try homeFeedDefinition(accountID: accountID, revision: 2, authors: [newAuthor])
+        try eventStore.replaceFeedProjection(revision1, memberships: [])
+
+        let packet = NostrREQPacket.backward(
+            purpose: "older-notes",
+            filters: [["authors": .strings([oldAuthor]), "kinds": .ints([1, 6])]],
+            relayURLs: ["wss://relay.example"],
+            groupID: "astrenza-older-notes-stale",
+            subscriptionID: "astrenza-older-notes-stale-req"
+        )
+        let forwardPacket = NostrREQPacket.forward(
+            subscriptionID: "astrenza-home-forward-stale",
+            filters: [["authors": .strings([oldAuthor]), "kinds": .ints([1, 6])]],
+            relayURLs: ["wss://relay.example"]
+        )
+        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        store.testingActivateHomeFeed(account: account, definition: revision1, sourceAuthors: [oldAuthor])
+        store.testingRegisterOlderFeedRequest(packet: packet, definition: revision1, anchorEventID: nil)
+        store.testingRegisterForwardFeedRequest(packet: forwardPacket, definition: revision1)
+        let forwardAttempt = NostrRelayRequestAttempt(
+            requestID: "stale-forward-attempt",
+            relayURL: "wss://relay.example",
+            packet: forwardPacket,
+            startedAt: 29
+        )
+        let attempt = NostrRelayRequestAttempt(
+            requestID: "stale-attempt",
+            relayURL: "wss://relay.example",
+            packet: packet,
+            startedAt: 30
+        )
+        store.testingHandleFeedSyncRequestStarted(forwardAttempt)
+        store.testingHandleFeedSyncRequestStarted(attempt)
+
+        try eventStore.replaceFeedProjection(revision2, memberships: [])
+        store.testingActivateHomeFeed(account: account, definition: revision2, sourceAuthors: [newAuthor])
+        let delayed = signedShapeOnlyEvent(
+            kind: 1,
+            pubkey: oldAuthor,
+            createdAt: 50,
+            content: "delayed"
+        )
+        await store.testingHandleBackwardEvent(
+            relayURL: attempt.relayURL,
+            subscriptionID: packet.subscriptionID,
+            event: delayed
+        )
+        let delayedForward = signedShapeOnlyEvent(
+            kind: 1,
+            pubkey: oldAuthor,
+            createdAt: 60,
+            content: "delayed forward"
+        )
+        await store.testingHandleHomeForwardEvent(
+            relayURL: forwardAttempt.relayURL,
+            subscriptionID: forwardPacket.subscriptionID,
+            event: delayedForward
+        )
+        store.testingHandleBackwardCompletion(NostrBackwardREQCompletion(
+            groupID: packet.groupID,
+            relayURLs: [attempt.relayURL],
+            subscriptionIDs: [packet.subscriptionID],
+            eventCount: 0,
+            eoseCount: 1,
+            closedCount: 0,
+            timeoutCount: 0
+        ))
+
+        #expect(try eventStore.event(id: delayed.id) == delayed)
+        #expect(try eventStore.event(id: delayedForward.id) == delayedForward)
+        #expect(try eventStore.feedMemberships(
+            feedID: revision2.feedID,
+            revision: revision2.revision,
+            limit: 10
+        ).isEmpty)
+        #expect(try eventStore.feedMembershipSources(
+            feedID: revision2.feedID,
+            revision: revision2.revision,
+            eventID: delayed.id
+        ).isEmpty)
+        #expect(Set(try eventStore.feedSyncRequests(
+            feedID: revision1.feedID,
+            revision: revision1.revision
+        ).map(\.requestID)) == Set([attempt.requestID, forwardAttempt.requestID]))
+        #expect(try eventStore.feedSyncRequests(
+            feedID: revision2.feedID,
+            revision: revision2.revision
+        ).isEmpty)
+        #expect(store.hasMoreOlder)
+    }
+
     @Test("Live npub can resolve follows and signed home notes from relays")
     func liveNpubHomeFetch() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -254,6 +505,28 @@ struct NostrTimelineSyncTests {
         )
     }
 
+    private func homeFeedDefinition(
+        accountID: String,
+        revision: Int,
+        authors: [String]
+    ) throws -> NostrFeedDefinitionRecord {
+        let specificationJSON = try JSONSerialization.data(
+            withJSONObject: ["authors": authors.sorted(), "kinds": [1, 6]],
+            options: [.sortedKeys]
+        )
+        return NostrFeedDefinitionRecord(
+            feedID: "feed:home:\(accountID)",
+            accountID: accountID,
+            kind: "home",
+            specificationJSON: specificationJSON,
+            specificationHash: "specification-\(revision)",
+            sortPolicy: "created_at_desc_event_id_asc",
+            revision: revision,
+            createdAt: 1,
+            updatedAt: revision
+        )
+    }
+
 }
 
 private func authorCount(in packet: NostrREQPacket) -> Int {
@@ -307,30 +580,16 @@ private func liveMergedEvents(
     }
 }
 
-private func signedEvent(kind: Int, createdAt: Int, tags: [[String]], content: String) throws -> NostrEvent {
-    let privateBytes = Array(repeating: UInt8(0x21), count: 32)
-    let privateKey = try secp256k1.Signing.PrivateKey(rawRepresentation: privateBytes)
-    let pubkey = NostrHex.hexString(Array(privateKey.publicKey.xonly.bytes))
-    let canonical = NostrCanonicalJSON.serialize(
-        pubkey: pubkey,
+private func signedEvent(kind: Int, createdAt: Int, tags: [[String]], content: String) async throws -> NostrEvent {
+    let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "21", count: 32))
+    let unsignedEvent = NostrUnsignedEvent(
+        pubkey: signer.pubkey,
         createdAt: createdAt,
         kind: kind,
         tags: tags,
         content: content
     )
-    let id = SHA256Digest.hex(for: canonical)
-    var digest = try #require(NostrHex.bytes(fromLowercaseHex: id))
-    var auxiliaryRandomness = Array(repeating: UInt8(0), count: 64)
-    let signature = try privateKey.schnorr.signature(message: &digest, auxiliaryRand: &auxiliaryRandomness)
-    return NostrEvent(
-        id: id,
-        pubkey: pubkey,
-        createdAt: createdAt,
-        kind: kind,
-        tags: tags,
-        content: content,
-        sig: NostrHex.hexString(Array(signature.rawRepresentation))
-    )
+    return try await signer.sign(unsignedEvent)
 }
 
 private enum SHA256Digest {

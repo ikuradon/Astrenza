@@ -234,13 +234,11 @@ private struct TimelineRichPostBodyText: View {
 
     private func loadEmojiImages() async {
         for url in emojiURLs where emojiImages[url] == nil {
-            if let cachedImage = NostrImageCache.shared.cachedImage(for: url) {
-                emojiImages[url] = cachedImage
-                continue
-            }
-
             do {
-                let image = try await NostrImageCache.shared.image(for: url)
+                let image = try await NostrImageCache.shared.image(
+                    for: url,
+                    maximumPixelSize: NostrImageCache.customEmojiMaximumPixelSize
+                )
                 guard !Task.isCancelled else { return }
                 emojiImages[url] = image
             } catch {

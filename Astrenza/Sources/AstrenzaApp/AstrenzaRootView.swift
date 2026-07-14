@@ -2,7 +2,7 @@ import AstrenzaCore
 import SwiftUI
 
 struct AstrenzaRootView: View {
-    @StateObject private var sessionStore = NostrSessionStore()
+    @StateObject private var sessionStore: NostrSessionStore
     @StateObject private var homeTimelineStore: NostrHomeTimelineStore
     @State private var isStartupSplashVisible = true
     @State private var hasPresentedStartupTimeline = false
@@ -13,6 +13,10 @@ struct AstrenzaRootView: View {
     private let startupSplashMinimumDuration: TimeInterval = 0.45
 
     init() {
+        let isRunningUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        _sessionStore = StateObject(
+            wrappedValue: NostrSessionStore(restoreAccount: !isRunningUnitTests)
+        )
         _homeTimelineStore = StateObject(wrappedValue: NostrHomeTimelineStore(
             relayRuntime: NostrRelayRuntime { _ in
                 NostrURLSessionRelayTransport()
@@ -45,14 +49,22 @@ struct AstrenzaRootView: View {
             }
 
             if shouldShowStartupSplash {
-                AstrenzaStartupSplashView(startDate: startupSplashStartDate)
+                AstrenzaStartupSplashView(
+                    startDate: startupSplashStartDate,
+                    status: startupStatus
+                )
                     .transition(.opacity)
                     .zIndex(1_000)
             }
         }
         .preferredColorScheme(themeMode.preferredColorScheme)
         .onAppear(perform: scheduleStartupSplashDismissIfReady)
-        .onChange(of: startupAccountID) { _, _ in
+        .onChange(of: startupAccountID) { previousAccountID, currentAccountID in
+            if !launchMode.usesMockTimeline,
+               previousAccountID != nil,
+               currentAccountID == nil {
+                homeTimelineStore.cancel()
+            }
             resetStartupSplash()
         }
         .onChange(of: homeTimelineStore.phase) { _, _ in
@@ -86,6 +98,39 @@ struct AstrenzaRootView: View {
             return true
         case .idle, .resolvingRelays, .resolvingContacts, .loadingHome:
             return false
+        }
+    }
+
+    private var startupStatus: NostrTimelineActivityStatus {
+        if launchMode.usesMockTimeline {
+            return NostrTimelineActivityStatus(
+                title: "Preparing timeline",
+                detail: "Loading the local preview",
+                compactLabel: "Preparing"
+            )
+        }
+        if let activityStatus = homeTimelineStore.activityStatus {
+            return activityStatus
+        }
+        switch homeTimelineStore.phase {
+        case .failed(let message):
+            return NostrTimelineActivityStatus(
+                title: "Home timeline unavailable",
+                detail: message,
+                compactLabel: "Error"
+            )
+        case .loaded:
+            return NostrTimelineActivityStatus(
+                title: "Home timeline ready",
+                detail: "Restoring your last reading position",
+                compactLabel: "Ready"
+            )
+        case .idle, .resolvingRelays, .resolvingContacts, .loadingHome:
+            return NostrTimelineActivityStatus(
+                title: "Preparing Home timeline",
+                detail: "Checking local timeline data",
+                compactLabel: "Preparing"
+            )
         }
     }
 

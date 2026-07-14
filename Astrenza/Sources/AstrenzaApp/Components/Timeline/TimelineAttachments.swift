@@ -518,29 +518,16 @@ struct TimelineInAppBrowserView: UIViewControllerRepresentable {
 
 private struct GalleryAttachmentView: View {
     let tiles: [MediaTile]
-    @State private var availableWidth: CGFloat = 0
 
     var body: some View {
         if tiles.count == 1 {
             SingleMediaAttachmentView(tile: tiles[0])
         } else {
-            let width = max(availableWidth, 1)
-            let height = width / resolvedAspectRatio
-
-            galleryGrid
-                .frame(width: width, height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: height, alignment: .topLeading)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: GalleryAvailableWidthKey.self, value: proxy.size.width)
-                    }
-                )
-                .onPreferenceChange(GalleryAvailableWidthKey.self) { width in
-                    guard width > 0, abs(width - availableWidth) > 0.5 else { return }
-                    availableWidth = width
-                }
+            GalleryAttachmentLayout(aspectRatio: resolvedAspectRatio) {
+                galleryGrid
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -584,49 +571,90 @@ private struct GalleryAttachmentView: View {
     }
 }
 
-private struct GalleryAvailableWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 private struct SingleMediaAttachmentView: View {
     let tile: MediaTile
-    @State private var availableWidth: CGFloat = 0
 
     var body: some View {
-        let size = TimelineMediaLayoutMetrics.singleMediaSize(
-            aspectRatio: tile.aspectRatio,
-            availableWidth: measuredWidth
-        )
-
-        TimelineMediaTileView(tile: tile)
-            .frame(width: size.width, height: size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: SingleMediaAvailableWidthKey.self, value: proxy.size.width)
-                }
-            )
-            .onPreferenceChange(SingleMediaAvailableWidthKey.self) { width in
-                guard width > 0, abs(width - availableWidth) > 0.5 else { return }
-                availableWidth = width
-            }
-    }
-
-    private var measuredWidth: CGFloat {
-        availableWidth > 0 ? availableWidth : 320
+        SingleMediaAttachmentLayout(aspectRatio: tile.aspectRatio) {
+            TimelineMediaTileView(tile: tile)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-private struct SingleMediaAvailableWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
+enum TimelineAttachmentLayoutMetrics {
+    static let fallbackAvailableWidth: CGFloat = 320
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+    static func availableWidth(for proposedWidth: CGFloat?) -> CGFloat {
+        guard let proposedWidth, proposedWidth.isFinite, proposedWidth > 0 else {
+            return fallbackAvailableWidth
+        }
+        return proposedWidth
+    }
+}
+
+private struct GalleryAttachmentLayout: Layout {
+    let aspectRatio: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let width = TimelineAttachmentLayoutMetrics.availableWidth(for: proposal.width)
+        return CGSize(width: width, height: width / aspectRatio)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let subview = subviews.first else { return }
+        subview.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+        )
+    }
+}
+
+private struct SingleMediaAttachmentLayout: Layout {
+    let aspectRatio: CGFloat?
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let availableWidth = TimelineAttachmentLayoutMetrics.availableWidth(for: proposal.width)
+        let mediaSize = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: aspectRatio,
+            availableWidth: availableWidth
+        )
+        return CGSize(width: availableWidth, height: mediaSize.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let subview = subviews.first else { return }
+        let mediaSize = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: aspectRatio,
+            availableWidth: bounds.width
+        )
+        subview.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: mediaSize.width, height: mediaSize.height)
+        )
     }
 }
 
@@ -724,13 +752,11 @@ private final class RemoteMediaImageLoader: ObservableObject {
         }
         currentURL = url
 
-        if let cachedImage = NostrImageCache.shared.cachedImage(for: url) {
-            image = cachedImage
-            return
-        }
-
         do {
-            let loadedImage = try await NostrImageCache.shared.image(for: url)
+            let loadedImage = try await NostrImageCache.shared.image(
+                for: url,
+                maximumPixelSize: NostrImageCache.mediaMaximumPixelSize
+            )
             guard currentURL == url else { return }
             image = loadedImage
         } catch {
@@ -941,12 +967,12 @@ private final class RemoteLinkPreviewImageLoader: ObservableObject {
         guard loadedURL != url else { return }
         loadedURL = url
 
-        if let cachedImage = NostrImageCache.shared.memoryCachedImage(for: url) {
-            image = cachedImage
-            return
-        }
-
-        image = try? await NostrImageCache.shared.image(for: url)
+        let loadedImage = try? await NostrImageCache.shared.image(
+            for: url,
+            maximumPixelSize: NostrImageCache.linkPreviewMaximumPixelSize
+        )
+        guard loadedURL == url else { return }
+        image = loadedImage
     }
 }
 

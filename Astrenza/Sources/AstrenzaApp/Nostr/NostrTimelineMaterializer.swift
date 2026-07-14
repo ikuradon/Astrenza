@@ -13,23 +13,24 @@ enum NostrTimelineMaterializer {
         contextEvents: [NostrEvent] = [],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         followedPubkeys: Set<String>,
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
         filterRules: NostrFilterRuleSet? = nil,
-        deletedEntries: [NostrDeletedTimelineEntryRecord] = [],
-        timelineEntries: [NostrTimelineEntryRecord] = [],
+        deletedEntries: [NostrDeletedFeedItemRecord] = [],
+        gaps: [NostrFeedGapRecord] = [],
         relayCount: Int = 1,
         timeline: NostrFilterTimelineScope = .home,
         policy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) -> [TimelineFeedEntry] {
         let deletedTargetIDs = Set(deletedEntries.map(\.targetEventID))
-        let timelineEntryByEventID = Dictionary(uniqueKeysWithValues: timelineEntries.map { ($0.eventID, $0) })
         let postsByID = Dictionary(uniqueKeysWithValues: posts(
             noteEvents: noteEvents,
             contextEvents: contextEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys,
             mediaAssetsByEventID: mediaAssetsByEventID,
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
@@ -64,13 +65,14 @@ enum NostrTimelineMaterializer {
                 return lhs.sortTimestamp > rhs.sortTimestamp
             }
 
-        guard !timelineEntryByEventID.isEmpty else {
+        let visibleGaps = gaps.filter { $0.state != .resolved }
+        guard !visibleGaps.isEmpty else {
             return sortedEntries.map(\.entry)
         }
 
         return insertingGapRows(
             into: sortedEntries,
-            timelineEntryByEventID: timelineEntryByEventID,
+            gaps: visibleGaps,
             relayCount: relayCount
         )
         .map(\.entry)
@@ -81,6 +83,7 @@ enum NostrTimelineMaterializer {
         contextEvents: [NostrEvent] = [],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         followedPubkeys: Set<String>,
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]] = [:],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
@@ -98,6 +101,7 @@ enum NostrTimelineMaterializer {
             metadataEvents: metadataEvents,
             followedPubkeys: followedPubkeys,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             filterRules: filterRules,
             timeline: timeline,
             now: now
@@ -113,6 +117,7 @@ enum NostrTimelineMaterializer {
                     eventsByID: eventsByID,
                     metadataEvents: metadataEvents,
                     nip05Resolutions: nip05Resolutions,
+                    profileResolutionStates: profileResolutionStates,
                     followedPubkeys: followedPubkeys,
                     mediaAssets: mediaAssetsByEventID[event.id] ?? [],
                     linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
@@ -124,6 +129,7 @@ enum NostrTimelineMaterializer {
             from: noteEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys,
             eventsByID: eventsByID,
             mediaAssetsByEventID: mediaAssetsByEventID,
@@ -147,59 +153,49 @@ enum NostrTimelineMaterializer {
 
     private static func insertingGapRows(
         into sortedEntries: [SortableTimelineEntry],
-        timelineEntryByEventID: [String: NostrTimelineEntryRecord],
+        gaps: [NostrFeedGapRecord],
         relayCount: Int
     ) -> [SortableTimelineEntry] {
+        let orderedPostIDs = sortedEntries.compactMap { entry -> String? in
+            guard case .post = entry.entry else { return nil }
+            return entry.id
+        }
+        let postIndexByID = Dictionary(uniqueKeysWithValues: orderedPostIDs.enumerated().map { ($0.element, $0.offset) })
+        var gapStateByPair: [GapPair: TimelineGap.State] = [:]
+        for gap in gaps {
+            guard let newerIndex = postIndexByID[gap.newerEventID],
+                  let olderIndex = postIndexByID[gap.olderEventID],
+                  newerIndex < olderIndex
+            else { continue }
+            let state: TimelineGap.State = gap.state == .requested ? .fetching : .needsBackfill
+            for index in newerIndex..<olderIndex {
+                let pair = GapPair(newerPostID: orderedPostIDs[index], olderPostID: orderedPostIDs[index + 1])
+                if gapStateByPair[pair] != .fetching {
+                    gapStateByPair[pair] = state
+                }
+            }
+        }
+
         var output: [SortableTimelineEntry] = []
 
         for index in sortedEntries.indices {
             let entry = sortedEntries[index]
-            let isPostEntry: Bool
-            if case .post = entry.entry {
-                isPostEntry = true
-            } else {
-                isPostEntry = false
-            }
-
-            if isPostEntry,
-               let timelineEntry = timelineEntryByEventID[entry.id],
-               timelineEntry.gapBefore,
-               let previousPostID = nearestPostID(in: sortedEntries, before: index),
-               timelineEntryByEventID[previousPostID]?.gapAfter != true {
-                output.append(gapEntry(
-                    newerPostID: previousPostID,
-                    olderPostID: entry.id,
-                    sortTimestamp: entry.sortTimestamp + 1,
-                    relayCount: relayCount
-                ))
-            }
-
             output.append(entry)
 
-            if isPostEntry,
-               let timelineEntry = timelineEntryByEventID[entry.id],
-               timelineEntry.gapAfter,
-               let nextPostID = nearestPostID(in: sortedEntries, after: index) {
+            if case .post = entry.entry,
+               let nextPostID = nearestPostID(in: sortedEntries, after: index),
+               let state = gapStateByPair[GapPair(newerPostID: entry.id, olderPostID: nextPostID)] {
                 output.append(gapEntry(
                     newerPostID: entry.id,
                     olderPostID: nextPostID,
                     sortTimestamp: entry.sortTimestamp - 1,
-                    relayCount: relayCount
+                    relayCount: relayCount,
+                    state: state
                 ))
             }
         }
 
         return output
-    }
-
-    private static func nearestPostID(in entries: [SortableTimelineEntry], before index: Int) -> String? {
-        guard index > entries.startIndex else { return nil }
-        for candidateIndex in stride(from: index - 1, through: entries.startIndex, by: -1) {
-            if case .post = entries[candidateIndex].entry {
-                return entries[candidateIndex].id
-            }
-        }
-        return nil
     }
 
     private static func nearestPostID(in entries: [SortableTimelineEntry], after index: Int) -> String? {
@@ -217,7 +213,8 @@ enum NostrTimelineMaterializer {
         newerPostID: String,
         olderPostID: String,
         sortTimestamp: Int,
-        relayCount: Int
+        relayCount: Int,
+        state: TimelineGap.State
     ) -> SortableTimelineEntry {
         let gapID = "gap-\(newerPostID)-\(olderPostID)"
         return SortableTimelineEntry(
@@ -229,10 +226,15 @@ enum NostrTimelineMaterializer {
                 olderPostID: olderPostID,
                 missingEstimate: 1,
                 relayCount: max(1, relayCount),
-                state: .needsBackfill,
+                state: state,
                 backfilledPosts: []
             ))
         )
+    }
+
+    private struct GapPair: Hashable {
+        let newerPostID: String
+        let olderPostID: String
     }
 
     private struct SortableTimelinePost {
@@ -245,6 +247,7 @@ enum NostrTimelineMaterializer {
         from events: [NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>,
         eventsByID: [String: NostrEvent],
         mediaAssetsByEventID: [String: [NostrMediaAssetRecord]],
@@ -260,6 +263,7 @@ enum NostrTimelineMaterializer {
                     for: repostEvent,
                     metadataEvents: metadataEvents,
                     nip05Resolutions: nip05Resolutions,
+                    profileResolutionStates: profileResolutionStates,
                     followedPubkeys: followedPubkeys,
                     avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
                 )
@@ -281,7 +285,8 @@ enum NostrTimelineMaterializer {
                     noteEvents: [targetEvent],
                     metadataEvents: metadataEvents,
                     followedPubkeys: followedPubkeys,
-                    nip05Resolutions: nip05Resolutions
+                    nip05Resolutions: nip05Resolutions,
+                    profileResolutionStates: profileResolutionStates
                 ).first
                 guard let targetItem else { return nil }
 
@@ -294,6 +299,7 @@ enum NostrTimelineMaterializer {
                         eventsByID: eventsByID,
                         metadataEvents: metadataEvents,
                         nip05Resolutions: nip05Resolutions,
+                        profileResolutionStates: profileResolutionStates,
                         followedPubkeys: followedPubkeys,
                         mediaAssets: mediaAssetsByEventID[targetEvent.id] ?? [],
                         linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,

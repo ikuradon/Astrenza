@@ -6,14 +6,17 @@ protocol HomeTimelineCoordinating {
     func handleRuntimePacket(
         _ packet: NostrRelayRuntimePacket,
         handlers: HomeTimelineRuntimePacketHandlers
-    )
+    ) async
 }
 
 @MainActor
 struct HomeTimelineRuntimePacketHandlers {
     let shouldHandle: () -> Bool
     let stateChanged: (_ relayURL: String, _ state: NostrRelayConnectionState) -> Void
-    let event: (_ relayURL: String, _ subscriptionID: String, _ event: NostrEvent) -> Void
+    let requestStarted: (_ attempt: NostrRelayRequestAttempt) -> Void
+    let requestInstalled: (_ requestID: String, _ relayURL: String, _ subscriptionID: String, _ installedAt: Int) -> Void
+    let requestEnded: (_ end: NostrRelayRequestAttemptEnd) -> Void
+    let event: (_ relayURL: String, _ subscriptionID: String, _ event: NostrEvent) async -> Void
     let eose: (_ relayURL: String, _ subscriptionID: String) -> Void
     let closed: (_ relayURL: String, _ subscriptionID: String, _ message: String) -> Void
     let timeout: (_ relayURL: String, _ subscriptionID: String, _ message: String) -> Void
@@ -28,7 +31,7 @@ struct HomeTimelineCoordinator: HomeTimelineCoordinating {
     func handleRuntimePacket(
         _ packet: NostrRelayRuntimePacket,
         handlers: HomeTimelineRuntimePacketHandlers
-    ) {
+    ) async {
         guard handlers.shouldHandle() else { return }
 
         switch packet {
@@ -36,8 +39,14 @@ struct HomeTimelineCoordinator: HomeTimelineCoordinating {
             handlers.stateChanged(relayURL, state)
         case .traffic(let delta):
             handlers.traffic(delta)
+        case .requestStarted(let attempt):
+            handlers.requestStarted(attempt)
+        case .requestInstalled(let requestID, let relayURL, let subscriptionID, let installedAt):
+            handlers.requestInstalled(requestID, relayURL, subscriptionID, installedAt)
+        case .requestEnded(let end):
+            handlers.requestEnded(end)
         case .event(let relayURL, let subscriptionID, let event):
-            handlers.event(relayURL, subscriptionID, event)
+            await handlers.event(relayURL, subscriptionID, event)
         case .eose(let relayURL, let subscriptionID):
             handlers.eose(relayURL, subscriptionID)
         case .closed(let relayURL, let subscriptionID, let message):

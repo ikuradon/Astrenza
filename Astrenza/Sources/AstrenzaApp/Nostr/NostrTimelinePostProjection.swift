@@ -8,6 +8,7 @@ struct NostrTimelinePostProjection {
         eventsByID: [String: NostrEvent] = [:],
         metadataEvents: [NostrEvent] = [],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
+        profileResolutionStates: [String: NostrProfileResolutionState] = [:],
         followedPubkeys: Set<String> = [],
         mediaAssets: [NostrMediaAssetRecord] = [],
         linkPreviewsByNormalizedURL: [String: NostrLinkPreviewRecord] = [:],
@@ -23,6 +24,7 @@ struct NostrTimelinePostProjection {
             eventsByID: eventsByID,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys
         )
         let bodyText = richBody?.displayText ?? item.body
@@ -38,6 +40,7 @@ struct NostrTimelinePostProjection {
                         event: parent,
                         metadataEvents: metadataEvents,
                         nip05Resolutions: nip05Resolutions,
+                        profileResolutionStates: profileResolutionStates,
                         followedPubkeys: followedPubkeys
                     )
                 },
@@ -46,6 +49,7 @@ struct NostrTimelinePostProjection {
                         for: parent,
                         metadataEvents: metadataEvents,
                         nip05Resolutions: nip05Resolutions,
+                        profileResolutionStates: profileResolutionStates,
                         followedPubkeys: followedPubkeys
                     ))
                 },
@@ -54,6 +58,7 @@ struct NostrTimelinePostProjection {
                         for: pubkey,
                         metadataEvents: metadataEvents,
                         nip05Resolutions: nip05Resolutions,
+                        profileResolutionStates: profileResolutionStates,
                         followedPubkeys: followedPubkeys
                     )
                 }
@@ -87,6 +92,7 @@ struct NostrTimelinePostProjection {
                     eventsByID: eventsByID,
                     metadataEvents: metadataEvents,
                     nip05Resolutions: nip05Resolutions,
+                    profileResolutionStates: profileResolutionStates,
                     followedPubkeys: followedPubkeys,
                     avatarForItem: NostrTimelineAuthorProjection.avatar(for:)
                 )
@@ -110,6 +116,7 @@ struct NostrTimelinePostProjection {
         event: NostrEvent?,
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> TimelineAuthor {
         if let event {
@@ -117,6 +124,7 @@ struct NostrTimelinePostProjection {
                 for: event,
                 metadataEvents: metadataEvents,
                 nip05Resolutions: nip05Resolutions,
+                profileResolutionStates: profileResolutionStates,
                 followedPubkeys: followedPubkeys
             ))
         }
@@ -125,6 +133,7 @@ struct NostrTimelinePostProjection {
             for: pubkey,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys
         ))
     }
@@ -133,6 +142,7 @@ struct NostrTimelinePostProjection {
         for pubkey: String,
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> String? {
         let author = author(
@@ -140,6 +150,7 @@ struct NostrTimelinePostProjection {
             event: nil,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys
         )
         guard author.isMetadataResolved else { return nil }
@@ -150,13 +161,15 @@ struct NostrTimelinePostProjection {
         for event: NostrEvent,
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> NostrHomeTimelineItem {
         NostrHomeTimelineMaterializer.items(
             noteEvents: [event],
             metadataEvents: metadataEvents,
             followedPubkeys: followedPubkeys,
-            nip05Resolutions: nip05Resolutions
+            nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates
         ).first ?? item(
             for: event.pubkey,
             id: event.id,
@@ -164,6 +177,7 @@ struct NostrTimelinePostProjection {
             createdAt: event.createdAt,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys
         )
     }
@@ -175,9 +189,11 @@ struct NostrTimelinePostProjection {
         createdAt: Int = 0,
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> NostrHomeTimelineItem {
         let metadata = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)[pubkey]
+        let hasMetadataEvent = metadataEvents.contains { $0.kind == 0 && $0.pubkey == pubkey }
         return NostrHomeTimelineItem(
             id: id ?? "profile-\(pubkey)",
             pubkey: pubkey,
@@ -188,7 +204,10 @@ struct NostrTimelinePostProjection {
             body: body,
             createdAt: createdAt,
             avatarPictureState: avatarPictureState(for: metadata),
-            avatarImageURL: metadata?.pictureURL
+            avatarImageURL: metadata?.pictureURL,
+            profileResolutionState: hasMetadataEvent
+                ? .resolved
+                : profileResolutionStates[pubkey] ?? .unknown
         )
     }
 
@@ -212,6 +231,7 @@ private extension NostrRichContent {
         eventsByID: [String: NostrEvent],
         metadataEvents: [NostrEvent],
         nip05Resolutions: [String: NostrNIP05Resolution],
+        profileResolutionStates: [String: NostrProfileResolutionState],
         followedPubkeys: Set<String>
     ) -> NostrRichContent {
         NostrTimelineRichContentResolver.resolve(
@@ -219,6 +239,7 @@ private extension NostrRichContent {
             eventsByID: eventsByID,
             metadataEvents: metadataEvents,
             nip05Resolutions: nip05Resolutions,
+            profileResolutionStates: profileResolutionStates,
             followedPubkeys: followedPubkeys
         )
     }

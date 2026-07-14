@@ -92,6 +92,7 @@ public struct NostrDependencyFetchQueue: Equatable, Sendable {
         dependencies: NostrEventDependencies,
         cacheSnapshot: NostrDependencyFetchCacheSnapshot,
         availableRelayURLs: [String],
+        availableProfileRelayURLs: [String]? = nil,
         now: Int = Int(Date().timeIntervalSince1970)
     ) -> Bool {
         let missingProfiles = dependencies.profilePubkeys.filter { pubkey in
@@ -113,7 +114,7 @@ public struct NostrDependencyFetchQueue: Equatable, Sendable {
 
         for (relayURLs, pubkeys) in groupedDependencies(
             missingProfiles,
-            availableRelayURLs: availableRelayURLs,
+            availableRelayURLs: availableProfileRelayURLs ?? availableRelayURLs,
             hintsForValue: { dependencies.profileRelayURLsByPubkey[$0] ?? [] }
         ) {
             bufferedProfilePubkeysByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(pubkeys)

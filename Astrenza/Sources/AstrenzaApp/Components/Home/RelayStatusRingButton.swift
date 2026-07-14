@@ -5,6 +5,7 @@ struct RelayStatusRingButton: View {
     let planned: Int
     let collapseProgress: CGFloat
     let isProcessing: Bool
+    let processingLabel: String?
     @State private var processingRotation: Double = 0
 
     private var progress: Double {
@@ -67,10 +68,12 @@ struct RelayStatusRingButton: View {
                 Text("Relays")
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
-                Text("\(connected)/\(planned)")
+                Text(processingLabel ?? "\(connected)/\(planned)")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
             }
             .scaleEffect(x: labelProgress, y: labelProgress, anchor: .leading)
             .frame(width: 45 * labelProgress, alignment: .leading)
@@ -84,6 +87,12 @@ struct RelayStatusRingButton: View {
         .contentShape(Capsule())
         .animation(.spring(duration: 0.36, bounce: 0.16), value: collapseProgress)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Show relay information, \(connected) of \(planned) recently reachable")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        let base = "Show relay information, \(connected) of \(planned) recently reachable"
+        guard let processingLabel else { return base }
+        return "\(base), \(processingLabel) in progress"
     }
 }

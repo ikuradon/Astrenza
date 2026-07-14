@@ -148,6 +148,23 @@ enum TimelineTimestampFormatter {
         formatter.dateFormat = "yyyy/MM/dd HH:mm 'JST'"
         return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdAt)))
     }
+
+    static func nextRelativeTextChangeDate(from createdAt: Int, after date: Date) -> Date {
+        let nowSeconds = Int(floor(date.timeIntervalSince1970))
+        let delta = max(0, nowSeconds - createdAt)
+        let step: Int
+        if delta < 60 {
+            step = 1
+        } else if delta < 3_600 {
+            step = 60
+        } else if delta < 86_400 {
+            step = 3_600
+        } else {
+            step = 86_400
+        }
+        let nextDelta = (delta / step + 1) * step
+        return Date(timeIntervalSince1970: TimeInterval(createdAt + nextDelta))
+    }
 }
 
 enum TimelineMockClock {
@@ -570,8 +587,12 @@ struct TimelineAuthor {
     let nip05: String?
     let nip05Status: NIP05Status
     let pubkey: String
-    let isMetadataResolved: Bool
+    let profileResolutionState: NostrProfileResolutionState
     let isFollowed: Bool
+
+    var isMetadataResolved: Bool {
+        profileResolutionState == .resolved
+    }
 
     var primaryText: String {
         guard let displayName, !displayName.isEmpty else {
@@ -582,8 +603,13 @@ struct TimelineAuthor {
     }
 
     var secondaryText: String {
-        guard isMetadataResolved else {
+        switch profileResolutionState {
+        case .fetching:
             return "kind:0 pending"
+        case .unknown, .unavailable:
+            return abbreviatedPubkey
+        case .resolved:
+            break
         }
 
         guard let nip05, !nip05.isEmpty else {
@@ -594,9 +620,11 @@ struct TimelineAuthor {
     }
 
     var secondarySystemName: String {
-        if !isMetadataResolved {
+        if profileResolutionState == .fetching {
             return "clock"
         }
+
+        guard isMetadataResolved else { return "person.crop.circle" }
 
         switch nip05Status {
         case .valid:
@@ -622,13 +650,40 @@ struct TimelineAuthor {
             nip05: nip05,
             nip05Status: nip05 == nil ? .absent : nip05Status,
             pubkey: pubkey,
-            isMetadataResolved: true,
+            profileResolutionState: .resolved,
             isFollowed: isFollowed
         )
     }
 
-    static func unresolved(pubkey: String) -> TimelineAuthor {
-        TimelineAuthor(displayName: nil, nip05: nil, nip05Status: .absent, pubkey: pubkey, isMetadataResolved: false, isFollowed: false)
+    static func metadataResolved(
+        displayName: String?,
+        nip05: String?,
+        nip05Status: NIP05Status,
+        pubkey: String,
+        isFollowed: Bool
+    ) -> TimelineAuthor {
+        TimelineAuthor(
+            displayName: displayName,
+            nip05: nip05,
+            nip05Status: nip05 == nil ? .absent : nip05Status,
+            pubkey: pubkey,
+            profileResolutionState: .resolved,
+            isFollowed: isFollowed
+        )
+    }
+
+    static func unresolved(
+        pubkey: String,
+        state: NostrProfileResolutionState = .unknown
+    ) -> TimelineAuthor {
+        TimelineAuthor(
+            displayName: nil,
+            nip05: nil,
+            nip05Status: .absent,
+            pubkey: pubkey,
+            profileResolutionState: state,
+            isFollowed: false
+        )
     }
 
     static func mockPubkey(for seed: String) -> String {

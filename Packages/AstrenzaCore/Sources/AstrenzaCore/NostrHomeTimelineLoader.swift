@@ -1,5 +1,11 @@
 import Foundation
 
+public enum NostrHomeTimelineLoadStage: Equatable, Sendable {
+    case resolvingRelayList
+    case resolvingContactList
+    case loadingTimeline
+}
+
 public struct NostrHomeTimelineState: Equatable, Sendable {
     public let relays: [String]
     public let followedPubkeys: [String]
@@ -57,9 +63,13 @@ public struct NostrHomeTimelineLoader: Sendable {
         self.pageLimit = max(1, min(pageLimit, 250))
     }
 
-    public func bootstrapState(account: NostrAccount) async throws -> NostrHomeTimelineState {
+    public func bootstrapState(
+        account: NostrAccount,
+        onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
+    ) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
         let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
+        await onStage?(.resolvingRelayList)
         let relayListResult = try await latestEvent(
             relays: discoveryRelays,
             request: NostrRelayRequest(
@@ -79,7 +89,8 @@ public struct NostrHomeTimelineLoader: Sendable {
         let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
         let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
 
-        let contactResult = try await firstAvailableEvent(
+        await onStage?(.resolvingContactList)
+        let contactResult = try await settledLatestEvent(
             relays: contactRelays,
             request: NostrRelayRequest(
                 subscriptionID: "astrenza-kind3",
@@ -108,9 +119,13 @@ public struct NostrHomeTimelineLoader: Sendable {
         )
     }
 
-    public func initialState(account: NostrAccount) async throws -> NostrHomeTimelineState {
+    public func initialState(
+        account: NostrAccount,
+        onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
+    ) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
         let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
+        await onStage?(.resolvingRelayList)
         let relayListResult = try await latestEvent(
             relays: discoveryRelays,
             request: NostrRelayRequest(
@@ -130,6 +145,7 @@ public struct NostrHomeTimelineLoader: Sendable {
         let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
         let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
 
+        await onStage?(.resolvingContactList)
         let contactResult = try await latestEvent(
             relays: contactRelays,
             request: NostrRelayRequest(
@@ -160,6 +176,7 @@ public struct NostrHomeTimelineLoader: Sendable {
             )
         }
 
+        await onStage?(.loadingTimeline)
         let planner = NostrHomeFetchPlanner(authors: contacts, pageLimit: pageLimit)
         let homeResult = try await mergedEvents(
             relays: readRelays,
@@ -423,29 +440,45 @@ public struct NostrHomeTimelineLoader: Sendable {
         return (event, result.syncEvents)
     }
 
-    private func firstAvailableEvent(
+    private func settledLatestEvent(
         relays: [String],
         request: NostrRelayRequest,
-        accountID: String
+        accountID: String,
+        settlementNanoseconds: UInt64 = 150_000_000
     ) async throws -> (event: NostrEvent?, syncEvents: [NostrRelaySyncEventRecord]) {
         let relayClient = relayClient
-        return try await withThrowingTaskGroup(of: (String, Result<[NostrEvent], Error>, Int, Int).self) { group in
+        return await withTaskGroup(of: SettledRelayFetchOutcome.self) { group in
             for relay in relays {
                 group.addTask {
                     let started = Date()
                     do {
                         let events = try await relayClient.fetch(relayURL: relay, request: request)
                         let latency = Int(Date().timeIntervalSince(started) * 1_000)
-                        return (relay, .success(events), Int(started.timeIntervalSince1970), latency)
+                        return .relay(
+                            relay,
+                            .success(events),
+                            Int(started.timeIntervalSince1970),
+                            latency
+                        )
                     } catch {
                         let latency = Int(Date().timeIntervalSince(started) * 1_000)
-                        return (relay, .failure(error), Int(started.timeIntervalSince1970), latency)
+                        return .relay(
+                            relay,
+                            .failure(error),
+                            Int(started.timeIntervalSince1970),
+                            latency
+                        )
                     }
                 }
             }
 
+            var eventsByID: [String: NostrEvent] = [:]
             var syncEvents: [NostrRelaySyncEventRecord] = []
-            for try await (relay, result, startedAt, latency) in group {
+            var didScheduleSettlement = false
+            fetchLoop: while let outcome = await group.next() {
+                guard case .relay(let relay, let result, let startedAt, let latency) = outcome else {
+                    break fetchLoop
+                }
                 let syncEvent = relaySyncEvent(
                     relay: relay,
                     result: result,
@@ -456,19 +489,26 @@ public struct NostrHomeTimelineLoader: Sendable {
                 )
                 syncEvents.append(syncEvent)
 
-                if case .success(let relayEvents) = result,
-                   let event = relayEvents.max(by: { lhs, rhs in
-                       if lhs.createdAt == rhs.createdAt {
-                           return lhs.id > rhs.id
-                       }
-                       return lhs.createdAt < rhs.createdAt
-                   }) {
-                    group.cancelAll()
-                    return (event, syncEvents)
+                if case .success(let relayEvents) = result {
+                    relayEvents.forEach { eventsByID[$0.id] = $0 }
+                    if !relayEvents.isEmpty, !didScheduleSettlement {
+                        didScheduleSettlement = true
+                        group.addTask {
+                            try? await Task.sleep(nanoseconds: settlementNanoseconds)
+                            return .settlementDeadline
+                        }
+                    }
                 }
             }
 
-            return (nil, syncEvents)
+            group.cancelAll()
+            let event = eventsByID.values.max { lhs, rhs in
+                if lhs.createdAt == rhs.createdAt {
+                    return lhs.id > rhs.id
+                }
+                return lhs.createdAt < rhs.createdAt
+            }
+            return (event, syncEvents)
         }
     }
 
@@ -605,6 +645,11 @@ public struct NostrHomeTimelineLoader: Sendable {
             return value
         }
     }
+}
+
+private enum SettledRelayFetchOutcome: Sendable {
+    case relay(String, Result<[NostrEvent], any Error>, Int, Int)
+    case settlementDeadline
 }
 
 private extension Array where Element == String {

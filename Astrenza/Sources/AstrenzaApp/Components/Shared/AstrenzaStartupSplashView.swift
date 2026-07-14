@@ -4,12 +4,14 @@ struct AstrenzaStartupSplashView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let startDate: Date
+    let status: NostrTimelineActivityStatus
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let elapsed = context.date.timeIntervalSince(startDate)
             let showsRelayRing = elapsed >= 0.8
             let showsStatusText = elapsed >= 1.5
+            let showsStatusDetail = elapsed >= 2.1
 
             ZStack {
                 Color.black.ignoresSafeArea()
@@ -31,12 +33,25 @@ struct AstrenzaStartupSplashView: View {
                     }
                     .frame(width: 92, height: 92)
 
-                    Text("Connecting relays...")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.64))
-                        .opacity(showsStatusText ? 1 : 0)
-                        .offset(y: showsStatusText ? 0 : 4)
-                        .animation(.easeOut(duration: 0.18), value: showsStatusText)
+                    VStack(spacing: 4) {
+                        Text(status.title)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .contentTransition(.opacity)
+
+                        Text(status.detail)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.44))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .opacity(showsStatusDetail ? 1 : 0)
+                    }
+                    .frame(maxWidth: 280)
+                    .opacity(showsStatusText ? 1 : 0)
+                    .offset(y: showsStatusText ? 0 : 4)
+                    .animation(.easeOut(duration: 0.18), value: showsStatusText)
+                    .animation(.easeOut(duration: 0.18), value: showsStatusDetail)
+                    .animation(.easeInOut(duration: 0.16), value: status)
                 }
             }
             .animation(.easeOut(duration: 0.18), value: showsRelayRing)

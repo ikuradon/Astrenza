@@ -132,21 +132,15 @@ struct TimelineModelTests {
             noteEvents: [newer, older],
             metadataEvents: [],
             followedPubkeys: [author],
-            timelineEntries: [
-                NostrTimelineEntryRecord(
-                    accountID: "account",
-                    timelineKey: "home",
-                    eventID: newer.id,
-                    sortTimestamp: newer.createdAt,
-                    insertedAt: 400,
-                    gapAfter: true
-                ),
-                NostrTimelineEntryRecord(
-                    accountID: "account",
-                    timelineKey: "home",
-                    eventID: older.id,
-                    sortTimestamp: older.createdAt,
-                    insertedAt: 400
+            gaps: [
+                NostrFeedGapRecord(
+                    feedID: "feed:home:account",
+                    feedRevision: 1,
+                    newerEventID: newer.id,
+                    olderEventID: older.id,
+                    state: .unresolved,
+                    createdAt: 400,
+                    updatedAt: 400
                 )
             ],
             relayCount: 3
@@ -182,29 +176,15 @@ struct TimelineModelTests {
             noteEvents: [newer, middle, older],
             metadataEvents: [],
             followedPubkeys: [author],
-            timelineEntries: [
-                NostrTimelineEntryRecord(
-                    accountID: "account",
-                    timelineKey: "home",
-                    eventID: newer.id,
-                    sortTimestamp: newer.createdAt,
-                    insertedAt: 400,
-                    gapAfter: true
-                ),
-                NostrTimelineEntryRecord(
-                    accountID: "account",
-                    timelineKey: "home",
-                    eventID: middle.id,
-                    sortTimestamp: middle.createdAt,
-                    insertedAt: 410
-                ),
-                NostrTimelineEntryRecord(
-                    accountID: "account",
-                    timelineKey: "home",
-                    eventID: older.id,
-                    sortTimestamp: older.createdAt,
-                    insertedAt: 400,
-                    gapBefore: true
+            gaps: [
+                NostrFeedGapRecord(
+                    feedID: "feed:home:account",
+                    feedRevision: 1,
+                    newerEventID: newer.id,
+                    olderEventID: older.id,
+                    state: .unresolved,
+                    createdAt: 400,
+                    updatedAt: 410
                 )
             ],
             relayCount: 2
@@ -260,6 +240,44 @@ struct TimelineModelTests {
         let createdAt = TimelineMockClock.createdAt(relative: "8m")
 
         #expect(TimelineTimestampFormatter.relativeText(from: createdAt) == "8m")
+    }
+
+    @Test("Relative timestamp updates only when its displayed value changes")
+    func relativeTimestampChangeBoundaries() {
+        let createdAt = 1_000
+        func date(_ delta: TimeInterval) -> Date {
+            Date(timeIntervalSince1970: TimeInterval(createdAt) + delta)
+        }
+
+        #expect(TimelineTimestampFormatter.relativeText(from: createdAt, now: date(59)) == "59s")
+        #expect(TimelineTimestampFormatter.relativeText(from: createdAt, now: date(60)) == "1m")
+        #expect(TimelineTimestampFormatter.relativeText(from: createdAt, now: date(3_600)) == "1h")
+        #expect(TimelineTimestampFormatter.relativeText(from: createdAt, now: date(86_400)) == "1d")
+
+        #expect(TimelineTimestampFormatter.nextRelativeTextChangeDate(
+            from: createdAt,
+            after: date(58.25)
+        ) == date(59))
+        #expect(TimelineTimestampFormatter.nextRelativeTextChangeDate(
+            from: createdAt,
+            after: date(59)
+        ) == date(60))
+        #expect(TimelineTimestampFormatter.nextRelativeTextChangeDate(
+            from: createdAt,
+            after: date(60)
+        ) == date(120))
+        #expect(TimelineTimestampFormatter.nextRelativeTextChangeDate(
+            from: createdAt,
+            after: date(3_599)
+        ) == date(3_600))
+        #expect(TimelineTimestampFormatter.nextRelativeTextChangeDate(
+            from: createdAt,
+            after: date(3_600)
+        ) == date(7_200))
+        #expect(TimelineTimestampFormatter.nextRelativeTextChangeDate(
+            from: createdAt,
+            after: date(86_400)
+        ) == date(172_800))
     }
 
     @Test("Reply tree exposes ancestors and descendants from mock store")
@@ -856,7 +874,9 @@ struct TimelineModelTests {
         let author = String(repeating: "a", count: 64)
         let newer = timelineEvent(idSeed: "newer", pubkey: author, createdAt: 300, content: "newer")
         let older = timelineEvent(idSeed: "older", pubkey: author, createdAt: 100, content: "older")
-        let deleted = NostrDeletedTimelineEntryRecord(
+        let deleted = NostrDeletedFeedItemRecord(
+            feedID: "feed:home:account",
+            feedRevision: 1,
             targetEventID: "deleted-target",
             deletionEventID: "delete-event",
             deletedAt: 210,
@@ -1085,7 +1105,8 @@ struct TimelineModelTests {
             body: "body",
             createdAt: 120,
             avatarPictureState: .resolved,
-            avatarImageURL: URL(string: "https://example.test/avatar.png")
+            avatarImageURL: URL(string: "https://example.test/avatar.png"),
+            profileResolutionState: .resolved
         )
         let event = timelineEvent(
             idSeed: "author-projection-warning",
@@ -1137,7 +1158,8 @@ struct TimelineModelTests {
             body: note.content,
             createdAt: note.createdAt,
             avatarPictureState: .metadataPending,
-            avatarImageURL: nil
+            avatarImageURL: nil,
+            profileResolutionState: .resolved
         )
         let previewURL = try #require(URL(string: "https://example.test/card"))
         let preview = NostrLinkPreviewRecord(
@@ -1426,7 +1448,7 @@ struct TimelineModelTests {
     }
 
     @Test("Home timeline event ingestor stores event and relay source")
-    func homeTimelineEventIngestorStoresEventAndRelaySource() throws {
+    func homeTimelineEventIngestorStoresEventAndRelaySource() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let event = timelineEvent(
             idSeed: "ingest-note",
@@ -1436,7 +1458,7 @@ struct TimelineModelTests {
         )
         let ingestor = HomeTimelineEventIngestor(eventStore: eventStore)
 
-        let result = try ingestor.ingest(event: event, relayURL: "wss://relay.example")
+        let result = try await ingestor.ingest(event: event, relayURL: "wss://relay.example")
 
         #expect(result.primaryEventID == event.id)
         #expect(result.embeddedEvent == nil)
@@ -1467,7 +1489,7 @@ struct TimelineModelTests {
         )
         let ingestor = HomeTimelineEventIngestor(eventStore: eventStore)
 
-        let result = try ingestor.ingest(event: repost, relayURL: "wss://relay.example")
+        let result = try await ingestor.ingest(event: repost, relayURL: "wss://relay.example")
 
         #expect(result.primaryEventID == repost.id)
         #expect(result.embeddedEvent?.id == target.id)
@@ -1631,9 +1653,58 @@ struct TimelineModelTests {
         #expect(snapshot.renderFingerprint.count == snapshot.entries.count)
     }
 
+    @Test("Home timeline render fingerprint covers same-ID visible row changes")
+    func homeTimelineRenderFingerprintCoversVisibleFields() {
+        let repository = HomeTimelineRepository(eventStore: nil)
+        let author = TimelineAuthor.resolved(
+            displayName: "Fingerprint",
+            nip05: "fingerprint@example.test",
+            pubkey: String(repeating: "a", count: 64)
+        )
+        let avatar = AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person.fill")
+
+        func post(
+            isLocked: Bool = false,
+            replyMention: TimelineReplyMention? = nil,
+            bodyPresentation: TimelineBodyPresentation = .standard
+        ) -> TimelinePost {
+            TimelinePost(
+                id: "same-id",
+                author: author,
+                avatar: avatar,
+                body: "Same canonical body",
+                richBody: NostrRichContent(
+                    displayText: "Same canonical body",
+                    tokens: [.text("Same canonical body")],
+                    references: []
+                ),
+                createdAt: 100,
+                replyCount: 1,
+                boostCount: 2,
+                favoriteCount: 3,
+                isLocked: isLocked,
+                media: nil,
+                context: nil,
+                replyMention: replyMention,
+                bodyPresentation: bodyPresentation
+            )
+        }
+
+        let fingerprints = [
+            post(),
+            post(isLocked: true),
+            post(replyMention: TimelineReplyMention(text: "Replying to @someone", isExternal: true)),
+            post(bodyPresentation: .collapsed(lineLimit: 2, reason: .filtered))
+        ].map { post in
+            repository.entriesRenderFingerprint(for: [.post(post)]).first
+        }
+
+        #expect(Set(fingerprints).count == fingerprints.count)
+    }
+
     @Test("Home timeline coordinator classifies runtime packets")
     @MainActor
-    func homeTimelineCoordinatorClassifiesRuntimePackets() {
+    func homeTimelineCoordinatorClassifiesRuntimePackets() async {
         let coordinator = HomeTimelineCoordinator()
         let event = timelineEvent(
             idSeed: "coordinator-event",
@@ -1648,6 +1719,9 @@ struct TimelineModelTests {
         let handlers = HomeTimelineRuntimePacketHandlers(
             shouldHandle: { true },
             stateChanged: { relayURL, state in receivedState = (relayURL, state) },
+            requestStarted: { _ in },
+            requestInstalled: { _, _, _, _ in },
+            requestEnded: { _ in },
             event: { _, _, event in receivedEventID = event.id },
             eose: { _, subscriptionID in receivedEOSE = subscriptionID },
             closed: { _, _, _ in },
@@ -1658,14 +1732,295 @@ struct TimelineModelTests {
             auth: { _, _ in }
         )
 
-        coordinator.handleRuntimePacket(.stateChanged(relayURL: "wss://relay.example", state: .connected), handlers: handlers)
-        coordinator.handleRuntimePacket(.event(relayURL: "wss://relay.example", subscriptionID: "home", event: event), handlers: handlers)
-        coordinator.handleRuntimePacket(.eose(relayURL: "wss://relay.example", subscriptionID: "home"), handlers: handlers)
+        await coordinator.handleRuntimePacket(.stateChanged(relayURL: "wss://relay.example", state: .connected), handlers: handlers)
+        await coordinator.handleRuntimePacket(.event(relayURL: "wss://relay.example", subscriptionID: "home", event: event), handlers: handlers)
+        await coordinator.handleRuntimePacket(.eose(relayURL: "wss://relay.example", subscriptionID: "home"), handlers: handlers)
 
         #expect(receivedState?.0 == "wss://relay.example")
         #expect(receivedState?.1 == .connected)
         #expect(receivedEventID == event.id)
         #expect(receivedEOSE == "home")
+    }
+
+    @Test("Routine persistence projection stays bounded to the in-memory 480-event window")
+    func homeTimelinePersistenceProjectionStaysBounded() {
+        let allowedAuthor = String(repeating: "a", count: 64)
+        let excludedAuthor = String(repeating: "b", count: 64)
+        let allowedEvents = (0..<600).map { index in
+            timelineEvent(
+                idSeed: "persistence-bounded-\(index)",
+                kind: index.isMultiple(of: 2) ? 1 : 6,
+                pubkey: allowedAuthor,
+                createdAt: 10_000 - index,
+                content: "bounded \(index)"
+            )
+        }
+        let excludedEvents = [
+            timelineEvent(
+                idSeed: "persistence-excluded-author",
+                pubkey: excludedAuthor,
+                createdAt: 20_000,
+                content: "excluded author"
+            ),
+            timelineEvent(
+                idSeed: "persistence-excluded-kind",
+                kind: 7,
+                pubkey: allowedAuthor,
+                createdAt: 20_001,
+                content: "excluded kind"
+            )
+        ]
+
+        let projection = HomeTimelinePersistenceProjection.boundedEvents(
+            from: excludedEvents + Array(allowedEvents.reversed()),
+            allowedAuthors: [allowedAuthor]
+        )
+
+        #expect(projection.count == HomeTimelinePersistenceProjection.retainedEventLimit)
+        #expect(projection.allSatisfy { $0.pubkey == allowedAuthor && ($0.kind == 1 || $0.kind == 6) })
+        #expect(projection.map(\.id) == Array(allowedEvents.prefix(480)).map(\.id))
+    }
+
+    @Test("Persistence worker keeps relay history single-saved and viewport/read state independent")
+    func homeTimelinePersistenceWorkerKeepsPartialStateIndependent() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "c", count: 64)
+        let feedID = "feed:home:\(accountID)"
+        let definition = NostrFeedDefinitionRecord(
+            feedID: feedID,
+            accountID: accountID,
+            kind: "home",
+            specificationJSON: Data(#"{"authors":[],"kinds":[1,6]}"#.utf8),
+            specificationHash: "persistence-worker-test",
+            sortPolicy: "created_at_desc_event_id_asc",
+            revision: 1,
+            createdAt: 100,
+            updatedAt: 100
+        )
+        let snapshot = HomeTimelineFeedPersistenceSnapshot(
+            state: NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [accountID],
+                noteEvents: [],
+                metadataEvents: [],
+                hasMoreOlder: true,
+                relaySyncEvents: []
+            ),
+            accountID: accountID,
+            definition: definition,
+            memberships: [],
+            membershipSources: [],
+            savedAt: 100,
+            windowLimit: 240
+        )
+        let syncEvent = NostrRelaySyncEventRecord(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURL: "wss://relay.example",
+            kind: .eose,
+            occurredAt: 101,
+            subscriptionID: "persistence-worker",
+            eventCount: 0,
+            message: "EOSE"
+        )
+        let worker = HomeTimelinePersistenceWorker(eventStore: eventStore)
+
+        try await worker.saveRelaySyncEvents([syncEvent])
+        _ = try await worker.saveFeedSnapshot(snapshot)
+        _ = try await worker.saveFeedSnapshot(snapshot)
+
+        let history = try eventStore.relaySyncEvents(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURL: syncEvent.relayURL,
+            limit: 10
+        )
+        #expect(history == [syncEvent])
+
+        let firstBoundary = NostrTimelineEntryCursor(sortTimestamp: 90, eventID: "event-90")
+        try await worker.saveReadBoundary(feedID: feedID, boundary: firstBoundary, updatedAt: 102)
+        try await worker.saveViewportState(
+            feedID: feedID,
+            anchorEventID: "viewport-anchor",
+            anchorOffset: 18,
+            updatedAt: 103
+        )
+
+        let stateAfterViewport = try #require(try eventStore.feedReadState(feedID: feedID))
+        #expect(stateAfterViewport.viewportAnchorEventID == "viewport-anchor")
+        #expect(stateAfterViewport.viewportAnchorOffset == 18)
+        #expect(stateAfterViewport.readBoundary == firstBoundary)
+
+        let latestBoundary = NostrTimelineEntryCursor(sortTimestamp: 95, eventID: "event-95")
+        try await worker.saveReadBoundary(feedID: feedID, boundary: latestBoundary, updatedAt: 104)
+
+        let stateAfterBoundary = try #require(try eventStore.feedReadState(feedID: feedID))
+        #expect(stateAfterBoundary.viewportAnchorEventID == "viewport-anchor")
+        #expect(stateAfterBoundary.viewportAnchorOffset == 18)
+        #expect(stateAfterBoundary.readBoundary == latestBoundary)
+    }
+
+    @Test("Home timeline store debounces viewport writes and flushes the latest anchor")
+    @MainActor
+    func homeTimelineStoreDebouncesViewportPersistence() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "d", count: 64)
+        let account = NostrAccount(
+            pubkey: accountID,
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
+                bootstrapRelays: []
+            ),
+            eventStore: eventStore
+        )
+        store.start(account: account)
+        defer { store.cancel() }
+
+        func viewport(anchor: String, updatedAt: TimeInterval) -> TimelineViewportState {
+            TimelineViewportState(
+                accountID: accountID,
+                timelineKey: "home",
+                anchorPostID: anchor,
+                anchorOffset: 18,
+                contentOffset: 240,
+                updatedAt: Date(timeIntervalSince1970: updatedAt)
+            )
+        }
+
+        store.saveViewportState(viewport(anchor: "first", updatedAt: 200))
+        store.saveViewportState(viewport(anchor: "latest", updatedAt: 201))
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID)) == nil)
+
+        try await Task.sleep(for: .milliseconds(500))
+        let debouncedState = try #require(
+            try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID))
+        )
+        #expect(debouncedState.viewportAnchorEventID == "latest")
+
+        store.saveViewportState(viewport(anchor: "flushed", updatedAt: 202))
+        store.flushPendingViewportStateSave()
+        for _ in 0..<20 {
+            if try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID))?
+                .viewportAnchorEventID == "flushed" {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(
+            try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID))?
+                .viewportAnchorEventID == "flushed"
+        )
+    }
+
+    @Test("Home timeline store restores metadata and viewport from an empty Generic Feed")
+    @MainActor
+    func homeTimelineStoreRestoresEmptyGenericFeedMetadata() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "b", count: 64)
+        let definition = NostrFeedDefinitionRecord(
+            feedID: "feed:home:\(account.pubkey)",
+            accountID: account.pubkey,
+            kind: "home",
+            specificationJSON: Data(#"{"authors":[],"kinds":[1,6]}"#.utf8),
+            specificationHash: "empty-app-home",
+            revision: 1,
+            createdAt: 100,
+            updatedAt: 100
+        )
+        let state = NostrHomeTimelineState(
+            relays: ["wss://relay.example"],
+            followedPubkeys: [followed],
+            noteEvents: [],
+            metadataEvents: [],
+            hasMoreOlder: false
+        )
+        let readState = NostrFeedReadStateRecord(
+            feedID: definition.feedID,
+            viewportAnchorEventID: "empty-feed-anchor",
+            viewportAnchorOffset: 18,
+            readBoundary: nil,
+            updatedAt: 101
+        )
+        try eventStore.saveHomeFeedState(
+            state,
+            accountID: account.pubkey,
+            definition: definition,
+            memberships: [],
+            readState: readState,
+            savedAt: 101
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
+                bootstrapRelays: []
+            ),
+            eventStore: eventStore
+        )
+
+        store.start(account: account)
+
+        #expect(store.entries.isEmpty)
+        #expect(store.resolvedRelays == state.relays)
+        #expect(store.followedPubkeys == state.followedPubkeys)
+        #expect(store.hasMoreOlder == false)
+        let viewport = try #require(store.restoredViewportState(
+            accountID: account.pubkey,
+            timelineKey: "home"
+        ))
+        #expect(viewport.anchorPostID == "empty-feed-anchor")
+        #expect(viewport.anchorOffset == 18)
+        store.cancel()
+    }
+
+    @Test("Home timeline store confines legacy timeline restore to migration and creates Generic Feed")
+    @MainActor
+    func homeTimelineStoreMigratesLegacyTimelineSnapshot() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "c", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let note = timelineEvent(
+            idSeed: "legacy-migration-note",
+            pubkey: account.pubkey,
+            createdAt: 100,
+            content: "legacy migration"
+        )
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://legacy.example"],
+                followedPubkeys: [account.pubkey],
+                noteEvents: [note],
+                metadataEvents: []
+            ),
+            accountID: account.pubkey
+        )
+        #expect(try eventStore.feedDefinition(feedID: "feed:home:\(account.pubkey)") == nil)
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
+                bootstrapRelays: []
+            ),
+            eventStore: eventStore
+        )
+
+        store.start(account: account)
+
+        #expect(store.entries.compactMap(\.post?.id) == [note.id])
+        #expect(try eventStore.feedDefinition(feedID: "feed:home:\(account.pubkey)") != nil)
+        #expect(try eventStore.homeFeedState(accountID: account.pubkey)?.noteEvents == [note])
+        store.cancel()
     }
 
     @Test("Home timeline store restores live gap rows from database timeline entries")
@@ -1690,23 +2045,13 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.start(account: account)
@@ -1749,15 +2094,12 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries(events.map { event in
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: event.id,
-                sortTimestamp: event.createdAt,
-                insertedAt: 10_001
-            )
-        })
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: events,
+            insertedAt: 10_001
+        )
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.setRestoreProjectionAnchor(anchor.id)
@@ -1998,7 +2340,7 @@ struct TimelineModelTests {
         try await waitForRelayStatusCounts(in: store, connected: 0, planned: 1)
     }
 
-    @Test("Home timeline runtime exposes provisional bootstrap relays immediately")
+    @Test("Home timeline exposes discovery relays without starting a provisional Home feed")
     @MainActor
     func homeTimelineRuntimeExposesProvisionalBootstrapRelaysImmediately() throws {
         let eventStore = try NostrEventStore.inMemory()
@@ -2032,9 +2374,193 @@ struct TimelineModelTests {
             "wss://bootstrap.example",
             "wss://fallback.example"
         ])
-        #expect(store.followedPubkeys == [account.pubkey])
+        #expect(store.followedPubkeys.isEmpty)
         #expect(store.relayStatusCounts.planned == 3)
+        #expect(store.phase == .resolvingRelays)
+    }
+
+    @Test("Fresh Home runtime waits for kind 10002 and kind 3 before installing forward REQ")
+    @MainActor
+    func freshHomeRuntimeWaitsForBootstrapBeforeForwardREQ() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "b", count: 64)
+        let relayURL = "wss://relay.example"
+        let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [
+            "astrenza-nip65": [timelineEvent(
+                idSeed: "gated-nip65",
+                kind: 10002,
+                pubkey: account.pubkey,
+                createdAt: 100,
+                tags: [["r", relayURL, "read"]],
+                content: ""
+            )],
+            "astrenza-kind3": [timelineEvent(
+                idSeed: "gated-kind3",
+                kind: 3,
+                pubkey: account.pubkey,
+                createdAt: 101,
+                tags: [["p", followed]],
+                content: ""
+            )]
+        ])
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: relayClient,
+                bootstrapRelays: [relayURL],
+                pageLimit: 20
+            ),
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        try await relayClient.waitUntilBootstrapFetchStarts()
+
+        #expect(await connection.sentFrames().allSatisfy { !$0.contains("astrenza-home-forward") })
+        #expect(store.followedPubkeys.isEmpty)
+        #expect(store.phase == .resolvingRelays)
+        #expect(store.activityStatus?.compactLabel == "kind:10002")
+        #expect(store.activityStatus?.detail.contains("kind:10002") == true)
+
+        await relayClient.releaseBootstrap()
+        try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 1)
+
+        let forwardFrame = try #require(await connection.sentFrames().first { $0.contains("astrenza-home-forward") })
+        #expect(forwardFrame.contains(followed))
+        #expect(!forwardFrame.contains(#""authors":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]"#))
+        #expect(store.followedPubkeys == [followed])
+    }
+
+    @Test("Fresh Home runtime reports kind 3 resolution before opening Home")
+    @MainActor
+    func freshHomeRuntimeReportsContactResolution() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "c", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "d", count: 64)
+        let relayURL = "wss://relay.example"
+        let relayClient = GatedStoreRelayClient(
+            eventsBySubscriptionID: [
+                "astrenza-nip65": [timelineEvent(
+                    idSeed: "gated-stage-nip65",
+                    kind: 10002,
+                    pubkey: account.pubkey,
+                    createdAt: 100,
+                    tags: [["r", relayURL, "read"]],
+                    content: ""
+                )],
+                "astrenza-kind3": [timelineEvent(
+                    idSeed: "gated-stage-kind3",
+                    kind: 3,
+                    pubkey: account.pubkey,
+                    createdAt: 101,
+                    tags: [["p", followed]],
+                    content: ""
+                )]
+            ],
+            gatedSubscriptionID: "astrenza-kind3"
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: relayClient,
+                bootstrapRelays: [relayURL],
+                pageLimit: 20
+            ),
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        try await relayClient.waitUntilBootstrapFetchStarts()
+
+        #expect(store.phase == .resolvingContacts)
+        #expect(store.activityStatus?.title == "Resolving contacts")
+        #expect(store.activityStatus?.compactLabel == "kind:3")
+        #expect(await connection.sentFrames().allSatisfy { !$0.contains("astrenza-home-forward") })
+
+        await relayClient.releaseBootstrap()
+        try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 1)
+        for _ in 0..<100 {
+            if store.phase == .loaded { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
         #expect(store.phase == .loaded)
+        #expect(store.activityStatus == nil)
+    }
+
+    @Test("Home timeline releases dependency work when packet relays are unavailable")
+    @MainActor
+    func homeTimelineReleasesUnavailableRelayDependencyWork() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "e", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let store = NostrHomeTimelineStore(
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+        let definition = NostrFeedDefinitionRecord(
+            feedID: homeFeedID(accountID: account.pubkey),
+            accountID: account.pubkey,
+            kind: "home",
+            specificationJSON: Data(#"{"authors":[],"kinds":[1,6]}"#.utf8),
+            specificationHash: "unavailable-relay-dependency",
+            revision: 1,
+            createdAt: 100,
+            updatedAt: 100
+        )
+        let dependencyEventID = String(repeating: "f", count: 64)
+
+        try await relayRuntime.setDefaultRelays(["wss://default.example"])
+        store.testingActivateHomeFeed(
+            account: account,
+            definition: definition,
+            sourceAuthors: [account.pubkey]
+        )
+        #expect(store.testingEnqueueBackwardDependencies(
+            NostrEventDependencies(sourceEventIDs: [dependencyEventID]),
+            availableRelayURLs: ["wss://scoped.example"]
+        ))
+        store.testingFlushBackwardDependencies()
+
+        for _ in 0..<100 {
+            guard store.testingHasPendingDependencyWork else { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(store.testingPendingBackwardRequestCount == 0)
+        #expect(store.testingHasPendingDependencyWork == false)
+        #expect(await connection.sentFrames().isEmpty)
     }
 
     @Test("Home relay pill keeps newer cached NIP-65 over stale bootstrap result")
@@ -2234,6 +2760,64 @@ struct TimelineModelTests {
         try await Task.sleep(nanoseconds: 200_000_000)
 
         #expect(store.followedPubkeys == [firstFollow, secondFollow])
+    }
+
+    @Test("Home timeline treats a newer empty cached kind 3 as unfollow all")
+    @MainActor
+    func homeTimelineTreatsEmptyCachedKind3AsUnfollowAll() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let account = NostrAccount(
+            pubkey: String(repeating: "9", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let staleFollow = String(repeating: "8", count: 64)
+        let emptyContactList = timelineEvent(
+            idSeed: "newer-empty-cached-kind3",
+            kind: 3,
+            pubkey: account.pubkey,
+            createdAt: 300,
+            tags: [],
+            content: ""
+        )
+        try eventStore.save(events: [emptyContactList])
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "empty-kind3-relays",
+                        kind: 10002,
+                        pubkey: account.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "stale-nonempty-kind3",
+                        kind: 3,
+                        pubkey: account.pubkey,
+                        createdAt: 100,
+                        tags: [["p", staleFollow]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(timelineLoader: timelineLoader, eventStore: eventStore)
+
+        store.start(account: account)
+        for _ in 0..<100 {
+            if store.phase == .loaded { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(store.phase == .loaded)
+        #expect(store.followedPubkeys.isEmpty)
     }
 
     @Test("Relay status sheet refresh does not mark NIP-11 HTTP fetches as relay connectivity")
@@ -2629,6 +3213,70 @@ struct TimelineModelTests {
         #expect(forwardREQCount == 1)
     }
 
+    @Test("Home timeline store resets account-scoped projection state on direct account switch")
+    @MainActor
+    func homeTimelineStoreResetsStateOnDirectAccountSwitch() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let firstAccount = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "first",
+            readOnly: true
+        )
+        let secondAccount = NostrAccount(
+            pubkey: String(repeating: "b", count: 64),
+            displayIdentifier: "second",
+            readOnly: true
+        )
+        let firstNote = timelineEvent(
+            idSeed: "account-switch-first",
+            pubkey: firstAccount.pubkey,
+            createdAt: 100,
+            content: "first account"
+        )
+        let secondNote = timelineEvent(
+            idSeed: "account-switch-second",
+            pubkey: secondAccount.pubkey,
+            createdAt: 200,
+            content: "second account"
+        )
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: [],
+                followedPubkeys: [firstAccount.pubkey],
+                noteEvents: [firstNote],
+                metadataEvents: []
+            ),
+            accountID: firstAccount.pubkey
+        )
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: [],
+                followedPubkeys: [secondAccount.pubkey],
+                noteEvents: [secondNote],
+                metadataEvents: []
+            ),
+            accountID: secondAccount.pubkey
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: NostrHomeTimelineLoader(
+                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
+                bootstrapRelays: []
+            ),
+            eventStore: eventStore
+        )
+
+        store.start(account: firstAccount)
+        #expect(store.entries.compactMap(\.post?.id) == [firstNote.id])
+
+        store.start(account: secondAccount)
+
+        #expect(store.account?.pubkey == secondAccount.pubkey)
+        #expect(store.followedPubkeys == [secondAccount.pubkey])
+        #expect(store.entries.compactMap(\.post?.id) == [secondNote.id])
+        #expect(!store.entries.compactMap(\.post?.id).contains(firstNote.id))
+        store.cancel()
+    }
+
     @Test("Home timeline initial load uses runtime forward REQ instead of short lived home fetch")
     @MainActor
     func homeTimelineInitialLoadUsesRuntimeForwardREQ() async throws {
@@ -2760,9 +3408,9 @@ struct TimelineModelTests {
         #expect(!store.isRelayProcessing)
     }
 
-    @Test("Home timeline refresh uses runtime forward REQ instead of short lived newer fetch")
+    @Test("Home timeline refresh keeps the installed runtime forward REQ without resending it")
     @MainActor
-    func homeTimelineRefreshUsesRuntimeForwardREQ() async throws {
+    func homeTimelineRefreshKeepsInstalledRuntimeForwardREQ() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "f", count: 64),
@@ -2833,11 +3481,18 @@ struct TimelineModelTests {
 
         store.start(account: account)
         try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 1)
+        let requestCountBeforeRefresh = await connection.sentFrames().filter { frame in
+            reqSubscriptionID(from: frame, containing: "astrenza-home-forward") != nil
+        }.count
         store.refresh()
-        try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 2)
         try await Task.sleep(nanoseconds: 100_000_000)
+        let requestCountAfterRefresh = await connection.sentFrames().filter { frame in
+            reqSubscriptionID(from: frame, containing: "astrenza-home-forward") != nil
+        }.count
 
         let fetchSubscriptionIDs = await relayClient.fetchSubscriptionIDs()
+        #expect(requestCountBeforeRefresh == 1)
+        #expect(requestCountAfterRefresh == requestCountBeforeRefresh)
         #expect(!fetchSubscriptionIDs.contains("astrenza-home"))
         #expect(!fetchSubscriptionIDs.contains("astrenza-home-newer"))
         #expect(store.entries.compactMap(\.post).map(\.id) == [initialNote.id])
@@ -2918,6 +3573,7 @@ struct TimelineModelTests {
         store.loadOlder()
         let olderSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-older-notes")
         #expect(store.isRelayProcessing)
+        #expect(store.activityStatus?.compactLabel == "Older")
 
         await connection.appendInboundFrames([
             try relayEventFrame(subscriptionID: olderSubscriptionID, event: olderNote),
@@ -2972,7 +3628,7 @@ struct TimelineModelTests {
         let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
             FakeRelayRuntimeTransport(connection: connection)
         }, autoReceive: false)
-        let relayClient = FakeStoreRelayClient(eventsBySubscriptionID: [
+        let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [
             "astrenza-nip65": [
                 timelineEvent(
                     idSeed: "runtime-older-delete-relays",
@@ -3017,6 +3673,7 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
+        try await relayClient.waitUntilBootstrapFetchStarts()
         _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
         store.loadOlder()
         let olderSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-older-notes")
@@ -3029,7 +3686,17 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try await waitForDeletedFeedItem(
+            in: eventStore,
+            accountID: account.pubkey,
+            targetEventID: olderNote.id
+        )
+        try await waitForTimelineEntryIDs(
+            in: store,
+            ids: [initialNote.id, "deleted-\(olderNote.id)"]
+        )
+        await relayClient.releaseBootstrap()
+        try await Task.sleep(nanoseconds: 500_000_000)
 
         #expect(store.entries.compactMap(\.post).map(\.id) == [initialNote.id])
         guard case .deleted(let deletedEntry) = try #require(store.entries.last) else {
@@ -3109,24 +3776,13 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400,
-                gapBefore: true
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
         let store = NostrHomeTimelineStore(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
@@ -3161,19 +3817,17 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await waitForTimelinePostIDs(in: store, ids: [newer.id, middle.id, older.id])
-        try await waitForTimelineGapFlags(
+        try await waitForHomeFeedGapState(
             in: eventStore,
             accountID: account.pubkey,
             newerEventID: newer.id,
             olderEventID: older.id,
-            gapAfter: false,
-            gapBefore: false
+            state: .resolved
         )
 
         #expect(store.entries.compactMap(\.post).map(\.id) == [newer.id, middle.id, older.id])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == false)
-        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == false)
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [newer.id, middle.id, older.id])
+        #expect(try homeFeedGaps(in: eventStore, accountID: account.pubkey).first?.state == .resolved)
         let fetchSubscriptionIDs = await relayClient.fetchSubscriptionIDs()
         #expect(!fetchSubscriptionIDs.contains("astrenza-home-older"))
     }
@@ -3233,24 +3887,13 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400,
-                gapBefore: true
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
         let store = NostrHomeTimelineStore(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
@@ -3274,19 +3917,17 @@ struct TimelineModelTests {
         await connection.appendInboundFrames([try relayEOSEFrame(subscriptionID: gapSubscriptionID)])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await waitForTimelinePostIDs(in: store, ids: [newer.id, older.id])
-        try await waitForTimelineGapFlags(
+        try await waitForHomeFeedGapState(
             in: eventStore,
             accountID: account.pubkey,
             newerEventID: newer.id,
             olderEventID: older.id,
-            gapAfter: false,
-            gapBefore: false
+            state: .resolved
         )
 
         #expect(store.entries.map(\.id) == [newer.id, older.id])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == false)
-        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == false)
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [newer.id, older.id])
+        #expect(try homeFeedGaps(in: eventStore, accountID: account.pubkey).first?.state == .resolved)
         #expect(store.hasMoreOlder)
     }
 
@@ -3367,24 +4008,13 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400,
-                gapBefore: true
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
         let store = NostrHomeTimelineStore(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
@@ -3410,22 +4040,24 @@ struct TimelineModelTests {
         ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await waitForRelayProcessing(in: store, isProcessing: false)
-        try await Task.sleep(nanoseconds: 100_000_000)
-
-        #expect(store.entries.map(\.id) == [
+        let expectedEntryIDs = [
             newer.id,
             "gap-\(newer.id)-\(middle.id)",
             middle.id,
             "gap-\(middle.id)-\(older.id)",
             older.id
-        ])
+        ]
+        try await waitForTimelineEntryIDs(in: store, ids: expectedEntryIDs)
+
+        #expect(store.entries.map(\.id) == expectedEntryIDs)
         let fetchSubscriptionIDs = await relayClient.fetchSubscriptionIDs()
         #expect(fetchSubscriptionIDs.contains("astrenza-gap-events"))
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == true)
-        #expect(timelineEntries.first { $0.eventID == middle.id }?.gapBefore == false)
-        #expect(timelineEntries.first { $0.eventID == middle.id }?.gapAfter == false)
-        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == true)
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [newer.id, middle.id, older.id])
+        let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
+        #expect(gaps.count == 1)
+        #expect(gaps.first?.newerEventID == newer.id)
+        #expect(gaps.first?.olderEventID == older.id)
+        #expect(gaps.first?.state == .unresolved)
     }
 
     @Test("Home timeline gap backfill keeps gap flags after partial runtime success")
@@ -3505,24 +4137,13 @@ struct TimelineModelTests {
         store.start(account: account)
         _ = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-home-forward")
         _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-home-forward")
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400,
-                gapBefore: true
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
         let gap = TimelineGap(
             id: "gap-\(newer.id)-\(older.id)",
             newerPostID: newer.id,
@@ -3551,20 +4172,22 @@ struct TimelineModelTests {
             subscriptionID: gapSubscriptionID
         )
         try await waitForRelayProcessing(in: store, isProcessing: false)
-        try await waitForTimelinePostIDs(in: store, ids: [newer.id, middle.id, older.id])
-
-        #expect(store.entries.map(\.id) == [
+        let expectedEntryIDs = [
             newer.id,
             "gap-\(newer.id)-\(middle.id)",
             middle.id,
             "gap-\(middle.id)-\(older.id)",
             older.id
-        ])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == true)
-        #expect(timelineEntries.first { $0.eventID == middle.id }?.gapBefore == false)
-        #expect(timelineEntries.first { $0.eventID == middle.id }?.gapAfter == false)
-        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == true)
+        ]
+        try await waitForTimelineEntryIDs(in: store, ids: expectedEntryIDs)
+
+        #expect(store.entries.map(\.id) == expectedEntryIDs)
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [newer.id, middle.id, older.id])
+        let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
+        #expect(gaps.count == 1)
+        #expect(gaps.first?.newerEventID == newer.id)
+        #expect(gaps.first?.olderEventID == older.id)
+        #expect(gaps.first?.state == .unresolved)
     }
 
     @Test("Home timeline gap backfill keeps original gap after runtime timeout without events")
@@ -3627,24 +4250,13 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400,
-                gapBefore: true
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
         let store = NostrHomeTimelineStore(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
@@ -3674,14 +4286,18 @@ struct TimelineModelTests {
         )
         try await waitForRelayProcessing(in: store, isProcessing: false)
 
-        #expect(store.entries.map(\.id) == [
+        let expectedEntryIDs = [
             newer.id,
             "gap-\(newer.id)-\(older.id)",
             older.id
-        ])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == true)
-        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == true)
+        ]
+        try await waitForTimelineEntryIDs(in: store, ids: expectedEntryIDs)
+        #expect(store.entries.map(\.id) == expectedEntryIDs)
+        let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
+        #expect(gaps.count == 1)
+        #expect(gaps.first?.newerEventID == newer.id)
+        #expect(gaps.first?.olderEventID == older.id)
+        #expect(gaps.first?.state == .requested)
     }
 
     @Test("Home timeline gap backfill keeps original gap after runtime closed without events")
@@ -3743,24 +4359,13 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        try eventStore.saveTimelineEntries([
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: newer.id,
-                sortTimestamp: newer.createdAt,
-                insertedAt: 400,
-                gapAfter: true
-            ),
-            NostrTimelineEntryRecord(
-                accountID: account.pubkey,
-                timelineKey: "home",
-                eventID: older.id,
-                sortTimestamp: older.createdAt,
-                insertedAt: 400,
-                gapBefore: true
-            )
-        ])
+        try seedHomeFeedProjection(
+            in: eventStore,
+            accountID: account.pubkey,
+            events: [newer, older],
+            gapPairs: [(newer.id, older.id)],
+            insertedAt: 400
+        )
         let store = NostrHomeTimelineStore(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
@@ -3792,9 +4397,11 @@ struct TimelineModelTests {
             "gap-\(newer.id)-\(older.id)",
             older.id
         ])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == newer.id }?.gapAfter == true)
-        #expect(timelineEntries.first { $0.eventID == older.id }?.gapBefore == true)
+        let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
+        #expect(gaps.count == 1)
+        #expect(gaps.first?.newerEventID == newer.id)
+        #expect(gaps.first?.olderEventID == older.id)
+        #expect(gaps.first?.state == .requested)
     }
 
     @Test("Home timeline older partial completion marks boundary gap")
@@ -3894,9 +4501,12 @@ struct TimelineModelTests {
             "gap-\(initialNote.id)-\(olderNote.id)",
             olderNote.id
         ])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == initialNote.id }?.gapAfter == true)
-        #expect(timelineEntries.first { $0.eventID == olderNote.id }?.gapBefore == true)
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [initialNote.id, olderNote.id])
+        let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
+        #expect(gaps.count == 1)
+        #expect(gaps.first?.newerEventID == initialNote.id)
+        #expect(gaps.first?.olderEventID == olderNote.id)
+        #expect(gaps.first?.state == .unresolved)
     }
 
     @Test("Home timeline older completed page with events does not mark boundary gap")
@@ -3995,9 +4605,8 @@ struct TimelineModelTests {
         try await waitForRelayProcessing(in: store, isProcessing: false)
 
         #expect(store.entries.map(\.id) == [initialNote.id, olderNote.id])
-        let timelineEntries = try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
-        #expect(timelineEntries.first { $0.eventID == initialNote.id }?.gapAfter == false)
-        #expect(timelineEntries.first { $0.eventID == olderNote.id }?.gapBefore == false)
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [initialNote.id, olderNote.id])
+        #expect(try homeFeedGaps(in: eventStore, accountID: account.pubkey).isEmpty)
     }
 
     @Test("Home timeline runtime older completion without events marks older end")
@@ -4102,10 +4711,7 @@ struct TimelineModelTests {
                 content: #"{"name":"live-user","display_name":"Live User"}"#
             )
         )
-        let connection = FakeRelayRuntimeConnection(inboundFrames: [
-            #"["EOSE","astrenza-home-forward"]"#,
-            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: liveEvent)
-        ])
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
         let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
             FakeRelayRuntimeTransport(connection: connection)
         }, autoReceive: false)
@@ -4143,9 +4749,17 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        let forwardSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: "astrenza-home-forward"
+        )
         try await waitForRelayRuntimeState(in: store, relayURL: "wss://relay.example", state: .connected)
+        await connection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: forwardSubscriptionID),
+            try relayEventFrame(subscriptionID: forwardSubscriptionID, event: liveEvent)
+        ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await waitForHomeTimelineRealtime(in: store, isRealtime: true)
         try await Task.sleep(nanoseconds: 50_000_000)
         let revisionAfterEOSE = store.relayStatusRevision
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
@@ -4176,10 +4790,49 @@ struct TimelineModelTests {
             timelineKey: "home",
             relayURL: "wss://relay.example"
         ))
-        #expect(cursor.newestCreatedAt == metadataEvent.createdAt)
-        #expect((cursor.oldestCreatedAt ?? Int.max) <= liveEvent.createdAt)
+        #expect(cursor.newestCreatedAt == nil)
+        #expect(cursor.oldestCreatedAt == nil)
         #expect(cursor.lastEOSEAt != nil)
         #expect(store.relayStatusCounts.connected == 1)
+
+        let forwardRequestAfterEOSE = try #require(
+            try eventStore.feedSyncRequests(feedID: homeFeedID(accountID: account.pubkey)).first {
+                $0.subscriptionID == forwardSubscriptionID
+            }
+        )
+        #expect(forwardRequestAfterEOSE.eoseAt != nil)
+        #expect(forwardRequestAfterEOSE.endedAt == nil)
+        #expect(forwardRequestAfterEOSE.endReason == nil)
+        #expect(store.testingActiveFeedSyncRequestCount == 1)
+        #expect(store.testingActiveFeedSyncContextCount == 1)
+
+        await connection.appendInboundFrames([
+            try relayClosedFrame(
+                subscriptionID: forwardSubscriptionID,
+                message: "blocked: terminal test close"
+            )
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await waitForHomeTimelineRealtime(in: store, isRealtime: false)
+        for _ in 0..<100 {
+            let request = try eventStore.feedSyncRequests(
+                feedID: homeFeedID(accountID: account.pubkey)
+            ).first { $0.subscriptionID == forwardSubscriptionID }
+            if request?.endReason == .closed {
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let closedForwardRequest = try #require(
+            try eventStore.feedSyncRequests(feedID: homeFeedID(accountID: account.pubkey)).first {
+                $0.subscriptionID == forwardSubscriptionID
+            }
+        )
+        #expect(closedForwardRequest.endReason == .closed)
+        #expect(closedForwardRequest.endedAt != nil)
+        #expect(store.testingActiveFeedSyncRequestCount == 0)
+        #expect(store.testingActiveFeedSyncContextCount == 0)
     }
 
     @Test("Home timeline store buffers runtime forward events away from newest window")
@@ -4256,15 +4909,23 @@ struct TimelineModelTests {
 
         store.setTimelineAtNewestWindow(false)
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        try await Task.sleep(nanoseconds: 150_000_000)
 
         #expect(store.unmaterializedNewCount == 1)
         #expect(store.entries.compactMap(\.post).map(\.id) == [initialEvent.id])
         #expect(try eventStore.event(id: liveEvent.id)?.content == "buffered live")
-        #expect(try eventStore.timelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10).map(\.eventID) == [liveEvent.id, initialEvent.id])
+        #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [liveEvent.id, initialEvent.id])
 
-        await store.applyPendingNewEvents()
+        let requestCountBeforeApplying = await connection.sentFrames().filter { frame in
+            reqSubscriptionID(from: frame, containing: "astrenza-home-forward") != nil
+        }.count
+        let didApplyPendingNewEvents = await store.applyPendingNewEvents()
+        let requestCountAfterApplying = await connection.sentFrames().filter { frame in
+            reqSubscriptionID(from: frame, containing: "astrenza-home-forward") != nil
+        }.count
 
+        #expect(didApplyPendingNewEvents)
+        #expect(requestCountAfterApplying == requestCountBeforeApplying)
         #expect(store.unmaterializedNewCount == 0)
         #expect(store.entries.compactMap(\.post).map(\.id) == [liveEvent.id, initialEvent.id])
     }
@@ -4295,10 +4956,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let connection = FakeRelayRuntimeConnection(inboundFrames: [
-            #"["EOSE","astrenza-home-forward"]"#,
-            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: liveEvent)
-        ])
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
         let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
             FakeRelayRuntimeTransport(connection: connection)
         }, autoReceive: false)
@@ -4336,10 +4994,19 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        let forwardSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: "astrenza-home-forward"
+        )
         try await waitForRelayRuntimeState(in: store, relayURL: "wss://relay.example", state: .connected)
         try await waitForTimelinePostIDs(in: store, ids: [initialEvent.id])
+        #expect(!store.isHomeTimelineRealtime)
+        await connection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: forwardSubscriptionID),
+            try relayEventFrame(subscriptionID: forwardSubscriptionID, event: liveEvent)
+        ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await waitForHomeTimelineRealtime(in: store, isRealtime: true)
 
         store.setTimelineAtNewestWindow(true)
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
@@ -4347,6 +5014,7 @@ struct TimelineModelTests {
 
         #expect(store.unmaterializedNewCount == 0)
         #expect(store.entries.compactMap(\.post).map(\.id) == [liveEvent.id, initialEvent.id])
+        #expect(store.realtimeFollowSourceRevision == store.resolvedContentRevision)
     }
 
     @Test("Home timeline runtime EOSE preserves subscription event window in relay history")
@@ -4363,11 +5031,7 @@ struct TimelineModelTests {
             NostrPublishInput.post(content: "second live note")
                 .unsignedEvent(pubkey: signer.pubkey, createdAt: 520)
         )
-        let connection = FakeRelayRuntimeConnection(inboundFrames: [
-            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: firstEvent),
-            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: secondEvent),
-            try relayEOSEFrame(subscriptionID: "astrenza-home-forward")
-        ])
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
         let relayRuntime = NostrRelayRuntime(transportFactory: { _ in
             FakeRelayRuntimeTransport(connection: connection)
         }, autoReceive: false)
@@ -4405,20 +5069,32 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        let forwardSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: "astrenza-home-forward"
+        )
+        #expect(!store.isHomeTimelineRealtime)
+        await connection.appendInboundFrames([
+            try relayEventFrame(subscriptionID: forwardSubscriptionID, event: firstEvent),
+            try relayEventFrame(subscriptionID: forwardSubscriptionID, event: secondEvent),
+            try relayEOSEFrame(subscriptionID: forwardSubscriptionID)
+        ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await waitForHomeTimelineRealtime(in: store, isRealtime: true)
+        try await waitForTimelinePostIDs(in: store, ids: [secondEvent.id, firstEvent.id])
+        #expect(store.realtimeFollowSourceRevision == nil)
 
         let eose = try await waitForRelaySyncEvent(
             in: eventStore,
             accountID: account.pubkey,
             relayURL: "wss://relay.example",
             kind: .eose,
-            subscriptionID: "astrenza-home-forward"
+            subscriptionID: forwardSubscriptionID
         )
-        #expect(eose.subscriptionID == "astrenza-home-forward")
-        #expect(eose.eventCount == 0)
+        #expect(eose.subscriptionID == forwardSubscriptionID)
+        #expect(eose.eventCount == 2)
         #expect(eose.newestCreatedAt == secondEvent.createdAt)
         #expect(eose.oldestCreatedAt == firstEvent.createdAt)
 
@@ -4436,6 +5112,79 @@ struct TimelineModelTests {
         #expect(cursor.newestCreatedAt == secondEvent.createdAt)
         #expect((cursor.oldestCreatedAt ?? Int.max) <= firstEvent.createdAt)
         #expect(cursor.lastEOSEAt == eose.occurredAt)
+    }
+
+    @Test("Home timeline enters realtime only after every forward relay reaches EOSE")
+    @MainActor
+    func homeTimelineRealtimeWaitsForEveryForwardRelayEOSE() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "42", count: 32))
+        let account = NostrAccount(pubkey: signer.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let fastConnection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let slowConnection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(transportFactory: { relayURL in
+            FakeRelayRuntimeTransport(
+                connection: relayURL.contains("slow") ? slowConnection : fastConnection
+            )
+        }, autoReceive: false)
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "runtime-realtime-relays",
+                        kind: 10002,
+                        pubkey: signer.pubkey,
+                        createdAt: 100,
+                        tags: [
+                            ["r", "wss://fast.example", "read"],
+                            ["r", "wss://slow.example", "read"]
+                        ],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "runtime-realtime-follows",
+                        kind: 3,
+                        pubkey: signer.pubkey,
+                        createdAt: 101,
+                        tags: [["p", signer.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://fast.example", "wss://slow.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        let fastSubscriptionID = try await waitForREQSubscriptionID(
+            in: fastConnection,
+            containing: "astrenza-home-forward"
+        )
+        let slowSubscriptionID = try await waitForREQSubscriptionID(
+            in: slowConnection,
+            containing: "astrenza-home-forward"
+        )
+        #expect(!store.isHomeTimelineRealtime)
+
+        await fastConnection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: fastSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://fast.example")
+        #expect(!store.isHomeTimelineRealtime)
+
+        await slowConnection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: slowSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: "wss://slow.example")
+        try await waitForHomeTimelineRealtime(in: store, isRealtime: true)
     }
 
     @Test("Home timeline store classifies runtime CLOSED auth and payment states")
@@ -4732,10 +5481,7 @@ struct TimelineModelTests {
             )
             .unsignedEvent(pubkey: signer.pubkey, createdAt: 505)
         )
-        let hintedConnection = FakeRelayRuntimeConnection(inboundFrames: [
-            #"["EOSE","astrenza-home-forward"]"#,
-            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: quoteEvent)
-        ])
+        let hintedConnection = FakeRelayRuntimeConnection(inboundFrames: [])
         let otherConnection = FakeRelayRuntimeConnection(inboundFrames: [])
         let relayRuntime = NostrRelayRuntime(transportFactory: { relayURL in
             FakeRelayRuntimeTransport(connection: relayURL == "wss://hinted.example" ? hintedConnection : otherConnection)
@@ -4777,7 +5523,14 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: hintedConnection, containing: "astrenza-home-forward")
+        let forwardSubscriptionID = try await waitForREQSubscriptionID(
+            in: hintedConnection,
+            containing: "astrenza-home-forward"
+        )
+        await hintedConnection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: forwardSubscriptionID),
+            try relayEventFrame(subscriptionID: forwardSubscriptionID, event: quoteEvent)
+        ])
         try await relayRuntime.receiveNext(relayURL: "wss://hinted.example")
         try await relayRuntime.receiveNext(relayURL: "wss://hinted.example")
         let sourceSubscriptionID = try await waitForREQSubscriptionID(in: hintedConnection, containing: quotedEvent.id)
@@ -4892,6 +5645,98 @@ struct TimelineModelTests {
         #expect(post.quotedPost?.author.primaryText == "Cached Quote Author")
         try await assertNoREQSubscriptionID(in: connection, containing: quotedEvent.id)
         try await assertNoREQSubscriptionID(in: connection, containing: #""kinds":[0]"#)
+    }
+
+    @Test("Home timeline materializes a cached profile while another dependency remains unresolved")
+    @MainActor
+    func homeTimelineStoreMaterializesCachedProfileWithPendingDependency() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "6c", count: 32))
+        let unresolvedPubkey = String(repeating: "d", count: 64)
+        let account = NostrAccount(pubkey: signer.pubkey, displayIdentifier: "npub-test", readOnly: true)
+        let note = try await signer.sign(
+            NostrPublishInput.post(
+                content: "cached author with pending mention",
+                tags: [["p", unresolvedPubkey]]
+            )
+            .unsignedEvent(pubkey: signer.pubkey, createdAt: 600)
+        )
+        let pictureURL = "https://cdn.example.test/cached-pending-avatar.png"
+        let cachedMetadata = try await signer.sign(
+            NostrUnsignedEvent(
+                pubkey: signer.pubkey,
+                createdAt: 601,
+                kind: 0,
+                tags: [],
+                content: #"{"display_name":"Cached Pending Author","picture":"https://cdn.example.test/cached-pending-avatar.png"}"#
+            )
+        )
+        try eventStore.saveHomeTimelineState(
+            NostrHomeTimelineState(
+                relays: ["wss://relay.example"],
+                followedPubkeys: [signer.pubkey],
+                noteEvents: [note],
+                metadataEvents: []
+            ),
+            accountID: account.pubkey
+        )
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            autoReceive: false
+        )
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [
+                    timelineEvent(
+                        idSeed: "cached-pending-relays",
+                        kind: 10002,
+                        pubkey: signer.pubkey,
+                        createdAt: 100,
+                        tags: [["r", "wss://relay.example", "read"]],
+                        content: ""
+                    )
+                ],
+                "astrenza-kind3": [
+                    timelineEvent(
+                        idSeed: "cached-pending-follows",
+                        kind: 3,
+                        pubkey: signer.pubkey,
+                        createdAt: 101,
+                        tags: [["p", signer.pubkey]],
+                        content: ""
+                    )
+                ],
+                "astrenza-home": []
+            ]),
+            bootstrapRelays: ["wss://relay.example"],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+        defer { store.cancel() }
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        let unresolvedPost = try await waitForTimelinePost(in: store, id: note.id) { post in
+            post.avatar.imageURL == nil
+        }
+        #expect(unresolvedPost.avatar.imageURL == nil)
+
+        try eventStore.save(events: [cachedMetadata])
+        let unresolvedRevision = store.resolvedContentRevision
+        await store.testingEnqueueBackwardDependencies(for: note)
+
+        let resolvedPost = try await waitForTimelinePost(in: store, id: note.id) { post in
+            post.author.primaryText == "Cached Pending Author" &&
+                post.avatar.imageURL?.absoluteString == pictureURL
+        }
+        #expect(resolvedPost.author.primaryText == "Cached Pending Author")
+        #expect(resolvedPost.avatar.imageURL?.absoluteString == pictureURL)
+        #expect(store.resolvedContentRevision > unresolvedRevision)
     }
 
     @Test("Home timeline store batches burst profile dependency requests")
@@ -5451,13 +6296,25 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
 
-        let firstProfileSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: #""kinds":[0]"#)
+        let reposterProfileSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: reposterSigner.pubkey
+        )
         await connection.appendInboundFrames([
-            try relayEventFrame(subscriptionID: firstProfileSubscriptionID, event: reposterMetadata),
-            try relayEventFrame(subscriptionID: firstProfileSubscriptionID, event: targetMetadata),
-            try relayEOSEFrame(subscriptionID: firstProfileSubscriptionID)
+            try relayEventFrame(subscriptionID: reposterProfileSubscriptionID, event: reposterMetadata),
+            try relayEOSEFrame(subscriptionID: reposterProfileSubscriptionID)
         ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+
+        let targetProfileSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: targetSigner.pubkey
+        )
+        await connection.appendInboundFrames([
+            try relayEventFrame(subscriptionID: targetProfileSubscriptionID, event: targetMetadata),
+            try relayEOSEFrame(subscriptionID: targetProfileSubscriptionID)
+        ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
 
@@ -5640,7 +6497,7 @@ struct TimelineModelTests {
         #expect(try eventStore.event(id: parentEvent.id)?.content == "parent source body")
     }
 
-    @Test("Home timeline store records runtime backward idle timeouts")
+    @Test("Profile directory persists runtime backward idle timeouts without blocking Home sync")
     @MainActor
     func homeTimelineStoreRecordsRuntimeBackwardIdleTimeouts() async throws {
         let eventStore = try NostrEventStore.inMemory()
@@ -5702,11 +6559,10 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         _ = try await waitForREQSubscriptionID(in: connection, containing: #""kinds":[0]"#)
-        let summary = try await waitForRelaySummary(
+        let profileRecord = try await waitForProfileFetchRecord(
             in: eventStore,
-            accountID: account.pubkey,
-            relayURL: "wss://relay.example",
-            kind: .timeout
+            pubkey: mentionedPubkey,
+            outcome: .failed
         )
         let history = try eventStore.relaySyncEvents(
             accountID: account.pubkey,
@@ -5715,10 +6571,103 @@ struct TimelineModelTests {
             limit: 10
         )
 
-        #expect(summary.timeoutCount >= 1)
-        #expect(history.contains { event in
-            event.kind == .timeout && event.subscriptionID?.contains("astrenza-kind0-") == true
+        #expect(profileRecord.lastError == "timeout")
+        #expect(profileRecord.nextRetryAt.map { $0 > profileRecord.lastAttemptAt } == true)
+        #expect(history.allSatisfy { event in
+            event.subscriptionID?.contains(NostrProfileDirectory.groupIDPrefix) != true
         })
+    }
+
+    @Test("An arriving kind 0 event republishes the visible timeline row")
+    @MainActor
+    func homeTimelineStoreRepublishesVisibleRowAfterProfileResolution() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "2a", count: 32))
+        let authorSigner = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "2b", count: 32))
+        let account = NostrAccount(
+            pubkey: accountSigner.pubkey,
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let note = try await authorSigner.sign(
+            NostrPublishInput.post(content: "profile updates this visible row")
+                .unsignedEvent(pubkey: authorSigner.pubkey, createdAt: 530)
+        )
+        let metadata = try await authorSigner.sign(
+            NostrUnsignedEvent(
+                pubkey: authorSigner.pubkey,
+                createdAt: 531,
+                kind: 0,
+                tags: [],
+                content: #"{"display_name":"Resolved Visible Author"}"#
+            )
+        )
+        let relayURL = "wss://relay.example"
+        let connection = FakeRelayRuntimeConnection(inboundFrames: [
+            #"["EOSE","astrenza-home-forward"]"#,
+            try relayEventFrame(subscriptionID: "astrenza-home-forward", event: note)
+        ])
+        let relayRuntime = NostrRelayRuntime(
+            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let timelineLoader = NostrHomeTimelineLoader(
+            relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
+                "astrenza-nip65": [timelineEvent(
+                    idSeed: "visible-profile-relays",
+                    kind: 10002,
+                    pubkey: account.pubkey,
+                    createdAt: 100,
+                    tags: [["r", relayURL, "read"]],
+                    content: ""
+                )],
+                "astrenza-kind3": [timelineEvent(
+                    idSeed: "visible-profile-follows",
+                    kind: 3,
+                    pubkey: account.pubkey,
+                    createdAt: 101,
+                    tags: [["p", authorSigner.pubkey]],
+                    content: ""
+                )]
+            ]),
+            bootstrapRelays: [relayURL],
+            pageLimit: 20
+        )
+        let store = NostrHomeTimelineStore(
+            timelineLoader: timelineLoader,
+            eventStore: eventStore,
+            relayRuntime: relayRuntime
+        )
+
+        store.start(account: account)
+        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await relayRuntime.receiveNext(relayURL: relayURL)
+        try await relayRuntime.receiveNext(relayURL: relayURL)
+
+        let unresolvedPost = try await waitForTimelinePost(in: store, id: note.id) { post in
+            post.author.profileResolutionState == .fetching
+        }
+        #expect(unresolvedPost.author.primaryText != "Resolved Visible Author")
+        let unresolvedRevision = store.resolvedContentRevision
+        let profileSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: #""kinds":[0]"#
+        )
+        await connection.appendInboundFrames([
+            try relayEventFrame(subscriptionID: profileSubscriptionID, event: metadata),
+            try relayEOSEFrame(subscriptionID: profileSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: relayURL)
+        try await relayRuntime.receiveNext(relayURL: relayURL)
+
+        let resolvedPost = try await waitForTimelinePost(in: store, id: note.id) { post in
+            post.author.primaryText == "Resolved Visible Author"
+        }
+        #expect(resolvedPost.id == unresolvedPost.id)
+        #expect(resolvedPost.author.profileResolutionState == .resolved)
+        #expect(store.resolvedContentRevision > unresolvedRevision)
     }
 
     @Test("Home timeline store clears missing backward profile requests after EOSE")
@@ -5798,7 +6747,7 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await waitForREQFrameCount(in: connection, containing: #""kinds":[0]"#, count: 2)
 
-        #expect(store.isRelayProcessing)
+        #expect(!store.isRelayProcessing)
         #expect(store.entries.compactMap(\.post).map(\.id).contains(secondEvent.id))
     }
 
@@ -6122,7 +7071,10 @@ struct TimelineModelTests {
             return
         }
         #expect(deletedEntry.id == "deleted-\(noteEvent.id)")
-        let deletedRows = try eventStore.deletedTimelineEntries(accountID: account.pubkey, timelineKey: "home", limit: 10)
+        let deletedRows = try eventStore.deletedFeedItems(
+            feedID: homeFeedID(accountID: account.pubkey),
+            limit: 10
+        )
         #expect(deletedRows.map(\.targetEventID) == [noteEvent.id])
     }
 
@@ -6402,6 +7354,17 @@ struct TimelineModelTests {
 
         #expect(author.primaryText.hasPrefix("npub1"))
         #expect(author.primaryText.contains("..."))
+        #expect(author.secondaryText == author.primaryText)
+        #expect(author.secondarySystemName == "person.crop.circle")
+    }
+
+    @Test("Fetching authors keep the existing transient pending presentation")
+    func fetchingAuthorDisplay() {
+        let author = TimelineAuthor.unresolved(
+            pubkey: TimelineAuthor.mockPubkey(for: "fetching"),
+            state: .fetching
+        )
+
         #expect(author.secondaryText == "kind:0 pending")
         #expect(author.secondarySystemName == "clock")
     }
@@ -6431,6 +7394,200 @@ struct TimelineModelTests {
         cache.merge(measuredFrames: [post.id: CGRect(x: 0, y: 0, width: 390, height: 321)])
 
         #expect(cache.height(for: post) == 321)
+    }
+
+    @Test("Timeline layout cache ignores subpixel height churn and prunes removed posts")
+    func timelineLayoutCacheCoalescesMeasurementsAndPrunes() throws {
+        let posts = Array(MockTimelineData.posts.prefix(3))
+        let firstPost = try #require(posts.first)
+        let lastPost = try #require(posts.last)
+        var cache = TimelineLayoutCache()
+
+        let didRecordInitialHeight = cache.recordMeasuredHeight(100, for: firstPost.id)
+        let didIgnoreSubpixelChange = !cache.recordMeasuredHeight(100.4, for: firstPost.id)
+        let didRecordMaterialChange = cache.recordMeasuredHeight(101, for: firstPost.id)
+        cache.measuredHeights[lastPost.id] = 240
+        cache.prune(keeping: [firstPost.id])
+
+        #expect(didRecordInitialHeight)
+        #expect(didIgnoreSubpixelChange)
+        #expect(didRecordMaterialChange)
+        #expect(cache.measuredHeights == [firstPost.id: 101])
+    }
+
+    @Test("Incremental timeline heights match a full snapshot across gaps and deleted rows")
+    func timelineLayoutSnapshotAppliesIncrementalHeights() throws {
+        let posts = Array(MockTimelineData.posts.prefix(4))
+        let firstPost = try #require(posts.first)
+        let thirdPost = posts[2]
+        let gap = TimelineGap(
+            id: "incremental-height-gap",
+            newerPostID: posts[0].id,
+            olderPostID: posts[1].id,
+            missingEstimate: 2,
+            relayCount: 1,
+            state: .needsBackfill,
+            backfilledPosts: []
+        )
+        let entries: [TimelineFeedEntry] = [
+            .post(posts[0]),
+            .gap(gap),
+            .post(posts[1]),
+            .deleted(TimelineDeletedEntry(id: "incremental-deleted")),
+            .post(posts[2]),
+            .post(posts[3])
+        ]
+        var cache = TimelineLayoutCache(measuredHeights: [
+            posts[0].id: 100,
+            posts[1].id: 120,
+            posts[2].id: 140,
+            posts[3].id: 160
+        ])
+        var incrementalSnapshot = TimelineLayoutSnapshot(
+            entries: entries,
+            layoutCache: cache,
+            topContentPadding: 72
+        )
+
+        let didRecordFirstHeight = incrementalSnapshot.recordMeasuredHeight(180, for: firstPost.id)
+        let didUpdateFirstHeight = incrementalSnapshot.recordMeasuredHeight(210, for: firstPost.id)
+        let didRecordThirdHeight = incrementalSnapshot.recordMeasuredHeight(260, for: thirdPost.id)
+        #expect(didRecordFirstHeight)
+        #expect(didUpdateFirstHeight)
+        #expect(didRecordThirdHeight)
+        cache.measuredHeights[firstPost.id] = 210
+        cache.measuredHeights[thirdPost.id] = 260
+        let rebuiltSnapshot = TimelineLayoutSnapshot(
+            entries: entries,
+            layoutCache: cache,
+            topContentPadding: 72
+        )
+
+        for post in posts {
+            #expect(incrementalSnapshot.offset(for: post.id) == rebuiltSnapshot.offset(for: post.id))
+        }
+        for contentOffset: CGFloat in [0, 80, 220, 360, 520, 760, 1_000] {
+            #expect(
+                incrementalSnapshot.anchor(at: contentOffset, anchorLineY: 72) ==
+                    rebuiltSnapshot.anchor(at: contentOffset, anchorLineY: 72)
+            )
+        }
+    }
+
+    @Test("Timeline attachment layout never starts from a one-point width")
+    func timelineAttachmentLayoutUsesStableFallbackWidth() {
+        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: nil) == 320)
+        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: 0) == 320)
+        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: .infinity) == 320)
+        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: 287) == 287)
+    }
+
+    @Test("Home viewport restore protection does not treat the temporary top as newest")
+    func homeViewportRestoreProtectionBlocksTemporaryTopFollowing() {
+        #expect(!HomeTimelineViewportRestorePolicy.isAtNewestWindow(
+            offset: 0,
+            isRestoreProtected: true,
+            isDetachedFromLiveEdge: false
+        ))
+        #expect(!HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
+            isRealtime: true,
+            isAtNewestWindow: true,
+            isRestoreProtected: true,
+            isDetachedFromLiveEdge: false
+        ))
+        #expect(HomeTimelineViewportRestorePolicy.isAtNewestWindow(
+            offset: 0,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: false
+        ))
+        #expect(!HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
+            isRealtime: false,
+            isAtNewestWindow: true,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: false
+        ))
+        #expect(HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
+            isRealtime: true,
+            isAtNewestWindow: true,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: false
+        ))
+    }
+
+    @Test("Home restored window remains detached after viewport writes unlock")
+    func homeRestoredWindowDoesNotFollowNewestAfterRestoreCompletes() {
+        #expect(!HomeTimelineViewportRestorePolicy.isAtNewestWindow(
+            offset: 0,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: true
+        ))
+        #expect(!HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
+            isRealtime: true,
+            isAtNewestWindow: true,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: true
+        ))
+    }
+
+    @Test("Feed blocks viewport writes while waiting for or applying restore")
+    func timelineFeedBlocksViewportWritesUntilRestoreCompletes() {
+        #expect(!TimelineFeedViewportRestorePolicy.canSaveViewport(
+            isRestoreProtected: true,
+            didRestoreViewport: false,
+            isRestoringViewport: false
+        ))
+        #expect(!TimelineFeedViewportRestorePolicy.canSaveViewport(
+            isRestoreProtected: true,
+            didRestoreViewport: true,
+            isRestoringViewport: true
+        ))
+        #expect(TimelineFeedViewportRestorePolicy.canSaveViewport(
+            isRestoreProtected: true,
+            didRestoreViewport: true,
+            isRestoringViewport: false
+        ))
+        #expect(!TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: true,
+            isPullRefreshProtected: false,
+            isRestoreProtected: true,
+            didRestoreViewport: false,
+            isRestoringViewport: false
+        ))
+        #expect(!TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: true,
+            isPullRefreshProtected: false,
+            isRestoreProtected: true,
+            didRestoreViewport: true,
+            isRestoringViewport: true
+        ))
+        #expect(!TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: false,
+            isPullRefreshProtected: false,
+            isRestoreProtected: false,
+            didRestoreViewport: true,
+            isRestoringViewport: false
+        ))
+        #expect(!TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: true,
+            isPullRefreshProtected: true,
+            isRestoreProtected: false,
+            didRestoreViewport: true,
+            isRestoringViewport: false
+        ))
+        #expect(TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: true,
+            isPullRefreshProtected: false,
+            isRestoreProtected: true,
+            didRestoreViewport: true,
+            isRestoringViewport: false
+        ))
+        #expect(TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
+            isRealtimeEnabled: true,
+            isPullRefreshProtected: false,
+            isRestoreProtected: false,
+            didRestoreViewport: false,
+            isRestoringViewport: false
+        ))
     }
 
     @Test("Timeline viewport resolver converts anchor offset into content offset")
@@ -6615,6 +7772,214 @@ struct TimelineModelTests {
         #expect(preservedOffset == 200)
     }
 
+    @Test("Pull refresh keeps its original anchor through prepend and row remeasurement")
+    func pullRefreshKeepsOriginalAnchorThroughPrependAndRemeasurement() throws {
+        let posts = Array(MockTimelineData.posts.prefix(4))
+        let firstNewPost = try #require(posts.first)
+        let secondNewPost = posts[1]
+        let anchorPost = posts[2]
+        let olderPost = try #require(posts.last)
+        let oldEntries: [TimelineFeedEntry] = [
+            .post(anchorPost),
+            .post(olderPost)
+        ]
+        let newEntries: [TimelineFeedEntry] = [
+            .post(firstNewPost),
+            .post(secondNewPost),
+            .post(anchorPost),
+            .post(olderPost)
+        ]
+        let anchor = TimelineViewportAnchor(postID: anchorPost.id, offset: 0)
+
+        #expect(TimelinePullRefreshAnchorPolicy.prependedAnchor(
+            anchor,
+            oldIDs: oldEntries.map(\.id),
+            newIDs: newEntries.map(\.id)
+        ) == anchor)
+        #expect(TimelineContentHeightAnchorPlanner.insertedPostIDsAffectingAnchor(
+            oldEntries: oldEntries,
+            newEntries: newEntries,
+            anchorPostID: anchor.postID
+        ) == [firstNewPost.id, secondNewPost.id])
+
+        var estimatedCache = TimelineLayoutCache(measuredHeights: [
+            firstNewPost.id: 80,
+            secondNewPost.id: 100,
+            anchorPost.id: 120,
+            olderPost.id: 140
+        ])
+        let estimatedOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: newEntries,
+            anchor: anchor,
+            layoutCache: estimatedCache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        estimatedCache.measuredHeights[firstNewPost.id] = 130
+        estimatedCache.measuredHeights[secondNewPost.id] = 70
+        let correctedOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: newEntries,
+            anchor: anchor,
+            layoutCache: estimatedCache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        #expect(estimatedOffset == 180)
+        #expect(correctedOffset == 200)
+    }
+
+    @Test("Timeline same-ID row remeasurement preserves the downstream anchor")
+    func timelineSameIDRowRemeasurementPreservesDownstreamAnchor() throws {
+        let avatar = AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person.fill")
+        func post(id: String, body: String) -> TimelinePost {
+            TimelinePost(
+                id: id,
+                authorName: "Anchor Test",
+                handle: "anchor@example.test",
+                avatar: avatar,
+                body: body,
+                createdAt: 100,
+                replyCount: 0,
+                boostCount: 0,
+                favoriteCount: 0,
+                isLocked: false,
+                media: nil,
+                context: nil
+            )
+        }
+
+        let oldChangingPost = post(id: "changing-post", body: "Short body")
+        let newChangingPost = post(
+            id: "changing-post",
+            body: "A much longer body that resolves without changing the row identity."
+        )
+        let anchorPost = post(id: "anchor-post", body: "Anchor body")
+        let oldEntries: [TimelineFeedEntry] = [.post(oldChangingPost), .post(anchorPost)]
+        let newEntries: [TimelineFeedEntry] = [.post(newChangingPost), .post(anchorPost)]
+        let anchor = TimelineViewportAnchor(postID: anchorPost.id, offset: 20)
+
+        let changedPostIDs = TimelineContentHeightAnchorPlanner.changedPostIDs(
+            oldEntries: oldEntries,
+            newEntries: newEntries
+        )
+        #expect(changedPostIDs == [oldChangingPost.id])
+        #expect(TimelineContentHeightAnchorPlanner.changedPostIDsAffectingAnchor(
+            entries: newEntries,
+            changedPostIDs: changedPostIDs,
+            anchorPostID: anchor.postID
+        ) == [oldChangingPost.id])
+
+        var cache = TimelineLayoutCache(measuredHeights: [
+            oldChangingPost.id: 100,
+            anchorPost.id: 120
+        ])
+        let beforeOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: oldEntries,
+            anchor: anchor,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        let didInvalidateChangedPost = cache.invalidate(postIDs: changedPostIDs)
+        #expect(didInvalidateChangedPost)
+        #expect(cache.measuredHeights[oldChangingPost.id] == nil)
+        #expect(cache.measuredHeights[anchorPost.id] == 120)
+        let didRecordRemeasuredHeight = cache.recordMeasuredHeight(300, for: newChangingPost.id)
+        #expect(didRecordRemeasuredHeight)
+
+        let afterOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: newEntries,
+            anchor: anchor,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+        let remeasuredSnapshot = TimelineLayoutSnapshot(
+            entries: newEntries,
+            layoutCache: cache,
+            topContentPadding: 72
+        )
+
+        #expect(afterOffset == beforeOffset + 200)
+        #expect(remeasuredSnapshot.anchor(at: afterOffset, anchorLineY: 72) == anchor)
+    }
+
+    @Test("Timeline prepend plus common row remeasurement preserves the downstream anchor")
+    func timelinePrependPlusCommonRowRemeasurementPreservesDownstreamAnchor() throws {
+        let avatar = AvatarStyle(primary: .blue, secondary: .purple, symbolName: "person.fill")
+        func post(id: String, body: String) -> TimelinePost {
+            TimelinePost(
+                id: id,
+                authorName: "Anchor Test",
+                handle: "anchor@example.test",
+                avatar: avatar,
+                body: body,
+                createdAt: 100,
+                replyCount: 0,
+                boostCount: 0,
+                favoriteCount: 0,
+                isLocked: false,
+                media: nil,
+                context: nil
+            )
+        }
+
+        let prependedPost = post(id: "prepended-post", body: "New post")
+        let oldChangingPost = post(id: "changing-post", body: "Short body")
+        let newChangingPost = post(
+            id: oldChangingPost.id,
+            body: "A much longer body arriving in the same revision as the prepend."
+        )
+        let anchorPost = post(id: "anchor-post", body: "Anchor body")
+        let oldEntries: [TimelineFeedEntry] = [.post(oldChangingPost), .post(anchorPost)]
+        let newEntries: [TimelineFeedEntry] = [
+            .post(prependedPost),
+            .post(newChangingPost),
+            .post(anchorPost)
+        ]
+        let anchor = TimelineViewportAnchor(postID: anchorPost.id, offset: 20)
+        let changedPostIDs = TimelineContentHeightAnchorPlanner.changedCommonPostIDsAffectingAnchor(
+            oldEntries: oldEntries,
+            newEntries: newEntries,
+            anchorPostID: anchor.postID
+        )
+        #expect(changedPostIDs == [oldChangingPost.id])
+
+        var cache = TimelineLayoutCache(measuredHeights: [
+            prependedPost.id: 80,
+            oldChangingPost.id: 100,
+            anchorPost.id: 120
+        ])
+        let beforeOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            entries: oldEntries,
+            anchor: anchor,
+            layoutCache: cache,
+            topContentPadding: 72,
+            anchorLineY: 72
+        ))
+
+        let didInvalidateChangedPost = cache.invalidate(postIDs: changedPostIDs)
+        #expect(didInvalidateChangedPost)
+        var newSnapshot = TimelineLayoutSnapshot(
+            entries: newEntries,
+            layoutCache: cache,
+            topContentPadding: 72
+        )
+        let didRecordRemeasuredHeight = newSnapshot.recordMeasuredHeight(300, for: newChangingPost.id)
+        #expect(didRecordRemeasuredHeight)
+        let afterOffset = try #require(TimelineViewportResolver.contentOffsetPreservingAnchor(
+            snapshot: newSnapshot,
+            anchor: anchor,
+            anchorLineY: 72
+        ))
+
+        #expect(afterOffset == beforeOffset + 80 + 200)
+        #expect(newSnapshot.anchor(at: afterOffset, anchorLineY: 72) == anchor)
+    }
+
     @Test("Timeline gap downward fill keeps upper anchor visually fixed")
     func timelineGapDownwardFillKeepsUpperAnchor() throws {
         let posts = Array(MockTimelineData.posts.prefix(4))
@@ -6733,7 +8098,7 @@ struct TimelineModelTests {
         let store = TimelineRestoreStore(defaults: defaults)
         store.saveLayoutCache(cache, accountID: "account-a", timelineKey: "home")
         let persistedCache = store.layoutCache(accountID: "account-a", timelineKey: "home")
-        let snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: cache, topContentPadding: 72)
+        var snapshot = TimelineLayoutSnapshot(posts: posts, layoutCache: cache, topContentPadding: 72)
         let state = TimelineViewportState(
             accountID: "account-a",
             timelineKey: "home",
@@ -6748,10 +8113,22 @@ struct TimelineModelTests {
             state: state,
             anchorLineY: 72
         )
+        let didApplyMeasuredHeight = snapshot.recordMeasuredHeight(180, for: "large-0")
+        let shiftedOffset = TimelineViewportResolver.restoredContentOffsetY(
+            snapshot: snapshot,
+            state: state,
+            anchorLineY: 72
+        )
 
         #expect(persistedCache.measuredHeights.count == 10_000)
         #expect(persistedCache.height(for: posts[9_876]) == 80)
         #expect(restoredOffset == CGFloat(9876 * 80 + 19))
+        #expect(didApplyMeasuredHeight)
+        #expect(shiftedOffset == restoredOffset.map { $0 + 100 })
+        #expect(snapshot.anchor(at: shiftedOffset ?? 0, anchorLineY: 72) == TimelineViewportAnchor(
+            postID: state.anchorPostID,
+            offset: state.anchorOffset
+        ))
     }
 
     @Test("Timeline restore store persists viewport state per timeline key")
@@ -6774,6 +8151,60 @@ struct TimelineModelTests {
         #expect(store.viewportState(accountID: "account-a", timelineKey: "home") == state)
         #expect(store.viewportState(accountID: "account-a", timelineKey: "lists") == nil)
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test("Timeline restore store coalesces pending writes and flushes only the latest values")
+    @MainActor
+    func timelineRestoreStoreDebouncesLatestValues() throws {
+        let suiteName = "TimelineRestoreStoreDebounceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = TimelineRestoreStore(defaults: defaults)
+        let firstState = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: "first",
+            anchorOffset: 10,
+            contentOffset: 120,
+            updatedAt: Date(timeIntervalSince1970: 1_800)
+        )
+        let latestState = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: "latest",
+            anchorOffset: 20,
+            contentOffset: 240,
+            updatedAt: Date(timeIntervalSince1970: 1_801)
+        )
+        let firstCache = TimelineLayoutCache(measuredHeights: ["first": 100])
+        let latestCache = TimelineLayoutCache(measuredHeights: ["latest": 220])
+
+        store.scheduleViewportStateSave(firstState, delay: 0.02)
+        store.scheduleViewportStateSave(latestState, delay: 0.02)
+        store.scheduleLayoutCacheSave(firstCache, accountID: "account-a", timelineKey: "home", delay: 0.02)
+        store.scheduleLayoutCacheSave(latestCache, accountID: "account-a", timelineKey: "home", delay: 0.02)
+
+        #expect(store.viewportState(accountID: "account-a", timelineKey: "home") == nil)
+        #expect(store.latestViewportState(accountID: "account-a", timelineKey: "home") == latestState)
+        #expect(store.layoutCache(accountID: "account-a", timelineKey: "home").measuredHeights.isEmpty)
+
+        store.flushPendingSaves()
+
+        #expect(store.viewportState(accountID: "account-a", timelineKey: "home") == latestState)
+        #expect(store.layoutCache(accountID: "account-a", timelineKey: "home") == latestCache)
+    }
+
+    @Test("Unread persistence advances only across a contiguous read suffix")
+    func unreadBoundaryDoesNotSkipUnreadHoles() {
+        var state = HomeTimelineUnreadState()
+        state.replaceMaterializedPostIDs(["old"])
+        state.replaceMaterializedPostIDs(["new-1", "new-2", "old"])
+
+        state.markVisiblePostsRead(["new-1"])
+        #expect(state.readBoundaryPostID == "old")
+
+        state.markVisiblePostsRead(["new-2"])
+        #expect(state.readBoundaryPostID == "new-1")
     }
 }
 
@@ -6800,6 +8231,136 @@ private func timelineEvent(
 private func timelineEventID(_ seed: String) -> String {
     let hex = seed.utf8.map { String(format: "%02x", $0) }.joined()
     return String((hex + String(repeating: "0", count: 64)).prefix(64))
+}
+
+private struct TimelineTestHomeFeedSpecification: Codable {
+    let authors: [String]
+    let kinds: [Int]
+}
+
+private func homeFeedID(accountID: String) -> String {
+    "feed:home:\(accountID)"
+}
+
+private func seedHomeFeedProjection(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    events: [NostrEvent],
+    sourceAuthors: [String]? = nil,
+    gapPairs: [(newerEventID: String, olderEventID: String)] = [],
+    insertedAt: Int
+) throws {
+    let authors = (sourceAuthors ?? [accountID]).sorted()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let specificationJSON = try encoder.encode(
+        TimelineTestHomeFeedSpecification(authors: authors, kinds: [1, 6])
+    )
+    let specificationHash = stableHomeFeedSpecificationHash(specificationJSON)
+    let feedID = homeFeedID(accountID: accountID)
+    let existingDefinition = try eventStore.feedDefinition(feedID: feedID)
+    let definition: NostrFeedDefinitionRecord
+    if let existingDefinition,
+       existingDefinition.specificationHash == specificationHash {
+        definition = existingDefinition
+    } else {
+        definition = NostrFeedDefinitionRecord(
+            feedID: feedID,
+            accountID: accountID,
+            kind: "home",
+            specificationJSON: specificationJSON,
+            specificationHash: specificationHash,
+            sortPolicy: "created_at_desc_event_id_asc",
+            revision: (existingDefinition?.revision ?? 0) + 1,
+            createdAt: existingDefinition?.createdAt ?? insertedAt,
+            updatedAt: insertedAt
+        )
+    }
+
+    let projectionEvents = events.filter { event in
+        (event.kind == 1 || event.kind == 6) && authors.contains(event.pubkey)
+    }
+    try eventStore.save(events: projectionEvents, receivedAt: insertedAt)
+    let memberships = projectionEvents.map { event in
+        NostrFeedMembershipRecord(
+            feedID: feedID,
+            eventID: event.id,
+            subjectEventID: event.kind == 6
+                ? event.tags.last(where: { $0.count >= 2 && $0[0] == "e" })?[1]
+                : nil,
+            sortTimestamp: event.createdAt,
+            reason: "test-seed",
+            insertedAt: insertedAt,
+            feedRevision: definition.revision
+        )
+    }
+    let sources = projectionEvents.flatMap { event in
+        [
+            NostrFeedMembershipSourceRecord(
+                feedID: feedID,
+                eventID: event.id,
+                sourceType: "author",
+                sourceID: event.pubkey,
+                insertedAt: insertedAt,
+                feedRevision: definition.revision
+            ),
+            NostrFeedMembershipSourceRecord(
+                feedID: feedID,
+                eventID: event.id,
+                sourceType: "ingest",
+                sourceID: "test-seed",
+                insertedAt: insertedAt,
+                feedRevision: definition.revision
+            )
+        ]
+    }
+    let gaps = gapPairs.map { pair in
+        NostrFeedGapRecord(
+            feedID: feedID,
+            feedRevision: definition.revision,
+            newerEventID: pair.newerEventID,
+            olderEventID: pair.olderEventID,
+            state: .unresolved,
+            createdAt: insertedAt,
+            updatedAt: insertedAt
+        )
+    }
+    try eventStore.replaceFeedProjection(
+        definition,
+        memberships: memberships,
+        sources: sources,
+        gaps: gaps
+    )
+}
+
+private func stableHomeFeedSpecificationHash(_ data: Data) -> String {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in data {
+        hash ^= UInt64(byte)
+        hash &*= 1_099_511_628_211
+    }
+    return String(hash, radix: 16)
+}
+
+private func homeFeedMemberships(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    limit: Int = 100
+) throws -> [NostrFeedMembershipRecord] {
+    try eventStore.feedMemberships(
+        feedID: homeFeedID(accountID: accountID),
+        limit: limit
+    )
+}
+
+private func homeFeedGaps(
+    in eventStore: NostrEventStore,
+    accountID: String
+) throws -> [NostrFeedGapRecord] {
+    try eventStore.feedGaps(
+        feedID: homeFeedID(accountID: accountID),
+        includeResolved: true
+    )
 }
 
 private func relayEventFrame(subscriptionID: String, event: NostrEvent) throws -> String {
@@ -6860,7 +8421,11 @@ private func waitForREQSubscriptionID(
         try await Task.sleep(nanoseconds: 50_000_000)
     }
 
-    return try #require(nil as String?)
+    let sentFrames = await connection.sentFrames()
+    return try #require(
+        nil as String?,
+        "REQ containing \(needle) was not sent. Frames: \(sentFrames)"
+    )
 }
 
 private func assertNoREQSubscriptionID(
@@ -6907,27 +8472,71 @@ private func waitForTimelinePostIDs(
 }
 
 @MainActor
-private func waitForTimelineGapFlags(
-    in eventStore: NostrEventStore,
-    accountID: String,
-    newerEventID: String,
-    olderEventID: String,
-    gapAfter: Bool,
-    gapBefore: Bool,
+private func waitForTimelineEntryIDs(
+    in store: NostrHomeTimelineStore,
+    ids: [String],
     attempts: Int = 100
 ) async throws {
     for _ in 0..<attempts {
-        let timelineEntries = try eventStore.timelineEntries(accountID: accountID, timelineKey: "home", limit: 100)
-        if timelineEntries.first(where: { $0.eventID == newerEventID })?.gapAfter == gapAfter,
-           timelineEntries.first(where: { $0.eventID == olderEventID })?.gapBefore == gapBefore {
+        if store.entries.map(\.id) == ids {
             return
         }
         try await Task.sleep(nanoseconds: 50_000_000)
     }
 
-    let timelineEntries = try eventStore.timelineEntries(accountID: accountID, timelineKey: "home", limit: 100)
-    #expect(timelineEntries.first { $0.eventID == newerEventID }?.gapAfter == gapAfter)
-    #expect(timelineEntries.first { $0.eventID == olderEventID }?.gapBefore == gapBefore)
+    #expect(store.entries.map(\.id) == ids)
+}
+
+@MainActor
+private func waitForHomeFeedGapState(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    newerEventID: String,
+    olderEventID: String,
+    state: NostrFeedGapState,
+    attempts: Int = 100
+) async throws {
+    for _ in 0..<attempts {
+        let gap = try homeFeedGaps(in: eventStore, accountID: accountID).first { gap in
+            gap.newerEventID == newerEventID && gap.olderEventID == olderEventID
+        }
+        if gap?.state == state {
+            return
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    let gap = try homeFeedGaps(in: eventStore, accountID: accountID).first { gap in
+        gap.newerEventID == newerEventID && gap.olderEventID == olderEventID
+    }
+    #expect(gap?.state == state)
+}
+
+private func waitForDeletedFeedItem(
+    in eventStore: NostrEventStore,
+    accountID: String,
+    targetEventID: String,
+    attempts: Int = 100
+) async throws -> NostrDeletedFeedItemRecord {
+    let feedID = "feed:home:\(accountID)"
+    for _ in 0..<attempts {
+        if let definition = try eventStore.feedDefinition(feedID: feedID),
+           let deletedItem = try eventStore.deletedFeedItems(
+               feedID: feedID,
+               revision: definition.revision,
+               limit: 100
+           ).first(where: { $0.targetEventID == targetEventID }) {
+            return deletedItem
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    let definition = try #require(try eventStore.feedDefinition(feedID: feedID))
+    return try #require(try eventStore.deletedFeedItems(
+        feedID: feedID,
+        revision: definition.revision,
+        limit: 100
+    ).first(where: { $0.targetEventID == targetEventID }))
 }
 
 private func waitForSentFrameCount(
@@ -7037,6 +8646,22 @@ private func waitForRelayRuntimeState(
 }
 
 @MainActor
+private func waitForHomeTimelineRealtime(
+    in store: NostrHomeTimelineStore,
+    isRealtime: Bool,
+    attempts: Int = 100
+) async throws {
+    for _ in 0..<attempts {
+        if store.isHomeTimelineRealtime == isRealtime {
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+
+    #expect(store.isHomeTimelineRealtime == isRealtime)
+}
+
+@MainActor
 private func waitForLinkPreview(
     in store: NostrEventStore,
     url: URL,
@@ -7062,14 +8687,14 @@ private func waitForNIP05Resolution(
     attempts: Int = 100
 ) async throws -> NostrNIP05Resolution {
     for _ in 0..<attempts {
-        if let resolution = try store.homeTimelineState(accountID: accountID)?
+        if let resolution = try store.homeFeedState(accountID: accountID)?
             .nip05Resolutions[pubkey] {
             return resolution
         }
         try await Task.sleep(nanoseconds: 50_000_000)
     }
 
-    return try #require(try store.homeTimelineState(accountID: accountID)?.nip05Resolutions[pubkey])
+    return try #require(try store.homeFeedState(accountID: accountID)?.nip05Resolutions[pubkey])
 }
 
 @MainActor
@@ -7114,6 +8739,24 @@ private func waitForRelaySummary(
 }
 
 @MainActor
+private func waitForProfileFetchRecord(
+    in store: NostrEventStore,
+    pubkey: String,
+    outcome: NostrProfileFetchOutcome,
+    attempts: Int = 100
+) async throws -> NostrProfileFetchRecord {
+    for _ in 0..<attempts {
+        if let record = try store.profileFetchRecords(pubkeys: [pubkey]).first,
+           record.outcome == outcome {
+            return record
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    return try #require(try store.profileFetchRecords(pubkeys: [pubkey]).first)
+}
+
+@MainActor
 private func waitForRelaySyncEvent(
     in store: NostrEventStore,
     accountID: String,
@@ -7147,6 +8790,66 @@ private func waitForRelaySyncEvent(
             event.kind == kind && event.subscriptionID == subscriptionID
         })
     )
+}
+
+private actor GatedStoreRelayClient: NostrRelayFetching {
+    private let eventsBySubscriptionID: [String: [NostrEvent]]
+    private let gatedSubscriptionID: String
+    private var fetchCalls: [String] = []
+    private var isBootstrapReleased = false
+    private var bootstrapWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(
+        eventsBySubscriptionID: [String: [NostrEvent]],
+        gatedSubscriptionID: String = "astrenza-nip65"
+    ) {
+        self.eventsBySubscriptionID = eventsBySubscriptionID
+        self.gatedSubscriptionID = gatedSubscriptionID
+    }
+
+    func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
+        fetchCalls.append(request.subscriptionID)
+        if request.subscriptionID == gatedSubscriptionID, !isBootstrapReleased {
+            await withCheckedContinuation { continuation in
+                if isBootstrapReleased {
+                    continuation.resume()
+                } else {
+                    bootstrapWaiters.append(continuation)
+                }
+            }
+        }
+        return eventsBySubscriptionID[request.subscriptionID] ?? []
+    }
+
+    func fetchMissingEventIDs(
+        relayURL: String,
+        filter: NostrRelayFilter,
+        localEvents: [NostrEvent],
+        subscriptionID: String
+    ) async throws -> [String] {
+        []
+    }
+
+    func waitUntilBootstrapFetchStarts() async throws {
+        for _ in 0..<100 {
+            if fetchCalls.contains(gatedSubscriptionID) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("\(gatedSubscriptionID) bootstrap fetch did not start")
+    }
+
+    func releaseBootstrap() {
+        isBootstrapReleased = true
+        let waiters = bootstrapWaiters
+        bootstrapWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func fetchSubscriptionIDs() -> [String] {
+        fetchCalls
+    }
 }
 
 private actor FakeStoreRelayClient: NostrRelayFetching {
