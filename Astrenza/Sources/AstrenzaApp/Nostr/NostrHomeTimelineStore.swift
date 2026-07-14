@@ -46,7 +46,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
-    private let relayRuntimeConfigurator: HomeTimelineRelayRuntimeConfigurator
+    private let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -349,11 +349,20 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
         self.runtimeEventPump = runtimeEventPump
-        self.relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
+        let relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
             relayRuntime: relayRuntime,
             runtimeEventPump: runtimeEventPump,
             dependencyCoordinator: dependencyCoordinator,
             syncPlanner: syncPlanner
+        )
+        self.runtimeSetupCoordinator = HomeTimelineRuntimeSetupCoordinator(
+            configurator: relayRuntimeConfigurator,
+            contentCoordinator: contentCoordinator,
+            dependencyCoordinator: dependencyCoordinator,
+            projectionController: homeFeedProjection,
+            feedSyncCoordinator: feedSyncCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator,
+            timelineRepository: timelineRepository
         )
         self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
         let relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
@@ -694,7 +703,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         applyActivityTransition(activityCoordinator.reset())
         invalidateListEntries()
         homeFeedProjection.reset()
-        relayRuntimeConfigurator.reset()
+        runtimeSetupCoordinator.reset()
         resetHomeTimelineRealtime()
         feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
         applyContentSnapshot(contentCoordinator.reset())
@@ -723,7 +732,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 else { return }
 
                 runtimeEventPump.cancel()
-                relayRuntimeConfigurator.reset()
+                runtimeSetupCoordinator.reset()
                 resetHomeTimelineRealtime()
                 startRuntimeEventPump()
                 await configureRelayRuntime(account: account, forceInstall: true)
@@ -1247,83 +1256,37 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
-        guard relayRuntime != nil,
-              !relayRuntimeTerminator.isTerminating,
-              self.account?.pubkey == account.pubkey,
-              lifecycleCoordinator.hasCompletedRuntimeBootstrap,
-              !resolvedRelays.isEmpty,
-              let identity = currentRelayRuntimeConfigurationIdentity(),
-              identity.accountID == account.pubkey
-        else { return }
-
-        let request = HomeTimelineRelayRuntimeConfigurationRequest(
-            identity: identity,
-            account: account,
-            contactItems: NostrContactList.items(from: contactListEvent),
-            defaultRelayURLs: runtimeRelayURLs(account: account),
-            policy: syncPolicy,
-            forceInstall: forceInstall
-        )
-        await relayRuntimeConfigurator.configure(
-            request,
-            handlers: HomeTimelineRelayRuntimeConfigurationHandlers(
-                currentIdentity: { [weak self] in
-                    self?.currentRelayRuntimeConfigurationIdentity()
-                },
-                prepareDependencies: { [weak self] in
-                    guard let self else { return }
-                    await ensureProfileDirectoryDependencies(for: noteEvents)
-                },
-                prepareFeed: { [weak self] in
-                    guard let self else { return nil }
-                    ensureHomeFeedDefinition(account: account)
-                    guard let context = activeHomeFeedRuntimeContext() else { return nil }
-                    return HomeTimelineRelayRuntimeFeedPreparation(
-                        context: context,
-                        newestCreatedAt: noteEvents.map(\.createdAt).max(),
-                        newestCreatedAtByRelay: forwardCursorNewestCreatedAtByRelay(
-                            accountID: account.pubkey
-                        ),
-                        initialCreatedAt: noteEvents.map(\.createdAt).min()
-                    )
-                },
-                prepareInstall: { [weak self] packets, runtimeKeys, context in
-                    guard let self else { return }
-                    resetHomeTimelineRealtime(expecting: runtimeKeys)
-                    for packet in packets {
-                        feedSyncCoordinator.registerForwardContext(
-                            context,
-                            groupID: packet.groupID
-                        )
-                    }
-                },
-                isFeedContextCurrent: { [weak self] context in
-                    self?.isCurrentHomeFeedContext(context) == true
-                },
-                didFail: { [weak self] message in
-                    self?.recordRuntimeSyncEvent(
-                        relayURL: identity.resolvedRelays.first ?? "runtime",
-                        kind: .partialFailure,
-                        subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
-                        message: message
-                    )
+        await runtimeSetupCoordinator.configure(
+            HomeTimelineRuntimeSetupRequest(
+                account: account,
+                defaultRelayURLs: runtimeRelayURLs(account: account),
+                policy: syncPolicy,
+                hasRelayRuntime: relayRuntime != nil,
+                isTerminating: relayRuntimeTerminator.isTerminating,
+                forceInstall: forceInstall
+            ),
+            handlers: HomeTimelineRuntimeSetupHandlers(
+                perform: { [weak self] command in
+                    self?.applyRuntimeSetupCommand(command)
                 }
             )
         )
     }
 
-    private func currentRelayRuntimeConfigurationIdentity()
-        -> HomeTimelineRelayRuntimeConfigurationIdentity? {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return nil }
-        return HomeTimelineRelayRuntimeConfigurationIdentity(
-            accountID: account.pubkey,
-            lifecycleGeneration: lifecycle.generation,
-            resolvedRelays: resolvedRelays,
-            followedPubkeys: followedPubkeys,
-            contactListEventID: contactListEvent?.id
-        )
+    private func applyRuntimeSetupCommand(
+        _ command: HomeTimelineRuntimeSetupCommand
+    ) {
+        switch command {
+        case .setRealtime(let isRealtime):
+            publishHomeTimelineRealtimeState(isRealtime)
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        }
     }
 
     private func runtimeRelayURLs(account: NostrAccount) -> [String] {
@@ -1361,14 +1324,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func publishHomeTimelineRealtimeState(_ nextIsRealtime: Bool) {
         applyActivityTransition(
             activityCoordinator.setRealtime(nextIsRealtime)
-        )
-    }
-
-    private func forwardCursorNewestCreatedAtByRelay(accountID: String) -> [String: Int]? {
-        timelineRepository.newestCreatedAtByRelay(
-            accountID: accountID,
-            timelineKey: "home",
-            relayURLs: resolvedRelays
         )
     }
 
@@ -1564,10 +1519,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             ),
             handlers: runtimeEventApplicationHandlers()
         )
-    }
-
-    private func ensureProfileDirectoryDependencies(for events: [NostrEvent]) async {
-        await dependencyCoordinator.ensureProfiles(for: events)
     }
 
     private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
