@@ -39,6 +39,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backwardCompletionPlanner: HomeTimelineBackwardCompletionPlanner
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
+    private let filterCoordinator: HomeTimelineFilterCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
@@ -61,7 +62,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
-    private var areTimelineFiltersSuspended = false
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
 
@@ -90,7 +90,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func timelineReadContext(
-        filterRules: NostrFilterRuleSet?
+        applyingHomeFilters: Bool = true
     ) -> HomeTimelineReadContext {
         HomeTimelineReadContext(
             accountID: account?.pubkey,
@@ -100,7 +100,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             profileResolutionStates: dependencyCoordinator.profileResolutionStates,
             followedPubkeys: Set(followedPubkeys),
             resolvedRelayCount: resolvedRelays.count,
-            filterRules: filterRules,
+            filterRules: applyingHomeFilters
+                ? filterCoordinator.effectiveRuleSet(accountID: account?.pubkey)
+                : nil,
             syncPolicy: syncPolicy
         )
     }
@@ -270,6 +272,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller: sourcePacketInstaller
         )
         self.dependencyCoordinator = dependencyCoordinator
+        self.filterCoordinator = HomeTimelineFilterCoordinator(eventStore: eventStore)
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.activityCoordinator = HomeTimelineActivityCoordinator()
         self.presentationCoordinator = HomeTimelinePresentationCoordinator()
@@ -614,7 +617,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             limit: limit,
             homeContentRevision: resolvedContentRevision
         )
-        let readContext = timelineReadContext(filterRules: nil)
+        let readContext = timelineReadContext(applyingHomeFilters: false)
         return listProjectionCache.entries(for: cacheKey) {
             timelineRepository.listEntries(
                 limit: limit,
@@ -624,15 +627,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func suspendTimelineFilters() {
-        guard !areTimelineFiltersSuspended else { return }
-        areTimelineFiltersSuspended = true
+        guard filterCoordinator.suspend() else { return }
         invalidateListEntries()
         materializeEntries()
     }
 
     func resumeTimelineFilters() {
-        guard areTimelineFiltersSuspended else { return }
-        areTimelineFiltersSuspended = false
+        guard filterCoordinator.resume() else { return }
         invalidateListEntries()
         materializeEntries()
     }
@@ -660,7 +661,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
-        areTimelineFiltersSuspended = false
+        filterCoordinator.reset()
         relayStatusRevision &+= 1
         account = nil
         scheduleRelayRuntimeTermination(cancellationGeneration: cancellationGeneration)
@@ -691,7 +692,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     func post(eventID: String) -> TimelinePost? {
         timelineRepository.post(
             eventID: eventID,
-            context: timelineReadContext(filterRules: homeFilterRuleSet())
+            context: timelineReadContext()
         )
     }
 
@@ -699,7 +700,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         timelineRepository.profile(
             pubkey: pubkey,
             isCurrentUser: isCurrentUser,
-            context: timelineReadContext(filterRules: homeFilterRuleSet())
+            context: timelineReadContext()
         )
     }
 
@@ -707,7 +708,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         timelineRepository.profilePosts(
             pubkey: pubkey,
             limit: limit,
-            context: timelineReadContext(filterRules: homeFilterRuleSet())
+            context: timelineReadContext()
         )
     }
 
@@ -715,7 +716,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         timelineRepository.replyAncestors(
             for: post,
             limit: limit,
-            context: timelineReadContext(filterRules: homeFilterRuleSet())
+            context: timelineReadContext()
         )
     }
 
@@ -723,7 +724,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         timelineRepository.replies(
             for: post,
             limit: limit,
-            context: timelineReadContext(filterRules: homeFilterRuleSet())
+            context: timelineReadContext()
         )
     }
 
@@ -2183,9 +2184,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             reloadNewestProjectionWindow(account: account)
             presentationCoordinator.clearNewestProjectionReload()
         }
-        let filterRules = homeFilterRules()
-        let activeFilterRuleSet = filterRules.isEmpty ? nil : NostrFilterRuleSet(rules: filterRules)
-        let materializerFilterRuleSet = areTimelineFiltersSuspended ? nil : activeFilterRuleSet
+        let filterProjection = filterCoordinator.projection(
+            accountID: account?.pubkey,
+            events: noteEvents
+        )
         let contextEvents = contextEventsForCurrentProjection()
         let snapshot = timelineRepository.materialize(
             account: account,
@@ -2197,8 +2199,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             profileResolutionStates: dependencyCoordinator.profileResolutionStates,
             followedPubkeys: followedPubkeys,
             resolvedRelays: resolvedRelays,
-            filterRules: materializerFilterRuleSet,
-            filterStatus: timelineFilterStatus(ruleSet: activeFilterRuleSet),
+            filterRules: filterProjection.effectiveRuleSet,
+            filterStatus: filterProjection.status,
             policy: syncPolicy
         )
         applyPresentationTransition(
@@ -2234,65 +2236,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func setUnmaterializedNewCount(_ count: Int) {
         guard unmaterializedNewCount != count else { return }
         unmaterializedNewCount = count
-    }
-
-    private func homeFilterRuleSet() -> NostrFilterRuleSet? {
-        guard !areTimelineFiltersSuspended else { return nil }
-        let rules = homeFilterRules()
-        guard !rules.isEmpty else { return nil }
-        return NostrFilterRuleSet(rules: rules)
-    }
-
-    private func homeFilterRules() -> [NostrFilterRuleRecord] {
-        guard let account, let eventStore else {
-            return []
-        }
-
-        var rules = ((try? eventStore.filterRules(accountID: account.pubkey)) ?? [])
-            .filter { $0.applies(to: .home) }
-        let publicMuteItems = cachedPublicMuteItems(accountID: account.pubkey, eventStore: eventStore)
-        rules.append(
-            contentsOf: NostrFilterRuleSet.publicMuteRules(
-                accountID: account.pubkey,
-                items: publicMuteItems,
-                updatedAt: Int(Date().timeIntervalSince1970)
-            )
-        )
-
-        return rules
-    }
-
-    private func timelineFilterStatus(ruleSet: NostrFilterRuleSet?) -> TimelineFilterStatus {
-        guard let ruleSet else {
-            return TimelineFilterStatus(isSuspended: areTimelineFiltersSuspended)
-        }
-
-        var status = TimelineFilterStatus(
-            activeRuleCount: ruleSet.rules.count,
-            isSuspended: areTimelineFiltersSuspended
-        )
-        guard !areTimelineFiltersSuspended else { return status }
-
-        let now = Int(Date().timeIntervalSince1970)
-        for event in noteEvents {
-            guard let match = ruleSet.matchDetail(event: event, timeline: .home, now: now) else { continue }
-            switch match.rule.presentation {
-            case .maskWithWarning:
-                status.warningMatchCount += 1
-            case .hide:
-                status.hiddenMatchCount += 1
-            }
-        }
-        return status
-    }
-
-    private func cachedPublicMuteItems(accountID: String, eventStore: NostrEventStore) -> [NostrListItemRecord] {
-        guard let summaries = try? eventStore.listSummaries(accountID: accountID) else { return [] }
-        return summaries
-            .filter { $0.kind == 10_000 }
-            .flatMap { summary in
-                (try? eventStore.listItems(listID: summary.listID)) ?? []
-            }
     }
 
     private func loaderState() -> NostrHomeTimelineState {
