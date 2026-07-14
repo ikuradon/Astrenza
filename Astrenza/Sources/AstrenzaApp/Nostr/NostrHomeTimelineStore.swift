@@ -47,6 +47,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     private let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
     private let runtimeShutdownCoordinator: HomeTimelineRuntimeShutdownCoordinator
+    private let accountStartCoordinator: HomeTimelineAccountStartCoordinator
     private let accountResetCoordinator: HomeTimelineAccountResetCoordinator
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -60,7 +61,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
-    private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
@@ -328,6 +328,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.pendingEventBuffer = pendingEventBuffer
         let lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
         self.lifecycleCoordinator = lifecycleCoordinator
+        self.accountStartCoordinator = HomeTimelineAccountStartCoordinator(
+            lifecycleCoordinator: lifecycleCoordinator,
+            resolveSyncPolicy: { accountID, fallback in
+                syncPolicySettingsStore.policy(accountID: accountID, fallback: fallback)
+            }
+        )
         self.loadApplicationCoordinator = HomeTimelineLoadApplicationCoordinator(
             lifecycleCoordinator: lifecycleCoordinator
         )
@@ -458,54 +464,17 @@ final class NostrHomeTimelineStore: ObservableObject {
                 resetFilters: filterCoordinator.reset
             )
         )
-        self.syncPolicySettingsStore = syncPolicySettingsStore
         self.syncPolicy = syncPolicy
     }
 
     func start(account: NostrAccount) {
-        let isSameAccount = self.account?.pubkey == account.pubkey
-        if isSameAccount {
-            startRuntimeSession()
-            activateOutbox(accountID: account.pubkey)
-            return
-        }
-        if let currentAccount = self.account,
-           currentAccount.pubkey != account.pubkey {
-            cancel()
-        }
-        let lifecycle = lifecycleCoordinator.begin(accountID: account.pubkey)
-        self.account = account
-        syncPolicy = syncPolicySettingsStore.policy(accountID: account.pubkey, fallback: syncPolicy)
-        startRuntimeSession()
-        lifecycleCoordinator.setRuntimeBootstrapCompleted(
-            restoreCachedSnapshot(account: account),
-            for: lifecycle
+        accountStartCoordinator.start(
+            HomeTimelineAccountStartRequest(
+                account: account,
+                hasRelayRuntime: relayRuntime != nil
+            ),
+            handlers: accountStartHandlers()
         )
-        ensureHomeFeedDefinition(account: account)
-        if restoreProjectionAnchorEventID == nil,
-           let viewportState = restoredViewportState(accountID: account.pubkey, timelineKey: "home") {
-            restoreProjectionAnchorEventID = viewportState.anchorPostID
-            isTimelineAtNewestWindow = false
-        }
-        if restoreProjectionAnchorEventID == nil {
-            reloadNewestProjectionWindow(account: account)
-            materializeEntries()
-        } else {
-            applyRestoreProjectionAnchorIfPossible(account: account)
-        }
-        installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        restoreHomeFeedReadState(account: account)
-        if relayRuntime != nil,
-           lifecycleCoordinator.hasCompletedRuntimeBootstrap,
-           !resolvedRelays.isEmpty {
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        } else if relayRuntime != nil || entries.isEmpty {
-            applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
-        }
-        lifecycleCoordinator.startLoad(for: lifecycle) { [weak self] in
-            await self?.load(account: account, lifecycle: lifecycle)
-        }
-        activateOutbox(accountID: account.pubkey)
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
@@ -1231,6 +1200,68 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .profileDirectoryChanged:
             invalidateListEntries()
             scheduleMaterializeEntries()
+        }
+    }
+
+    private func accountStartHandlers() -> HomeTimelineAccountStartHandlers {
+        HomeTimelineAccountStartHandlers(
+            state: { [unowned self] in accountStartState() },
+            perform: { [weak self] command in
+                self?.applyAccountStartCommand(command)
+            },
+            restoreCachedSnapshot: { [weak self] account in
+                self?.restoreCachedSnapshot(account: account) ?? false
+            },
+            restoredViewport: { [weak self] accountID in
+                self?.restoredViewportState(accountID: accountID, timelineKey: "home")
+                    .map { HomeTimelineRestoredViewport(anchorEventID: $0.anchorPostID) }
+            },
+            load: { [weak self] account, lifecycle in
+                await self?.load(account: account, lifecycle: lifecycle)
+            }
+        )
+    }
+
+    private func accountStartState() -> HomeTimelineAccountStartState {
+        HomeTimelineAccountStartState(
+            accountID: account?.pubkey,
+            syncPolicy: syncPolicy,
+            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
+            hasEntries: !entries.isEmpty,
+            hasResolvedRelays: !resolvedRelays.isEmpty
+        )
+    }
+
+    private func applyAccountStartCommand(
+        _ command: HomeTimelineAccountStartCommand
+    ) {
+        switch command {
+        case .cancelCurrentAccount:
+            cancel()
+        case .setAccount(let account, let syncPolicy):
+            self.account = account
+            self.syncPolicy = syncPolicy
+        case .startRuntimeSession:
+            startRuntimeSession()
+        case .ensureHomeFeedDefinition(let account):
+            ensureHomeFeedDefinition(account: account)
+        case .applyRestoredViewport(let viewport):
+            restoreProjectionAnchorEventID = viewport.anchorEventID
+            isTimelineAtNewestWindow = false
+        case .reloadNewestProjectionWindow(let account):
+            reloadNewestProjectionWindow(account: account)
+        case .materializeEntries:
+            materializeEntries()
+        case .applyRestoreProjectionAnchor(let account):
+            applyRestoreProjectionAnchorIfPossible(account: account)
+        case .installProvisionalRuntimeBootstrap(let account):
+            installProvisionalRuntimeBootstrapIfNeeded(account: account)
+        case .restoreHomeFeedReadState(let account):
+            restoreHomeFeedReadState(account: account)
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
+        case .activateOutbox(let accountID):
+            activateOutbox(accountID: accountID)
         }
     }
 
