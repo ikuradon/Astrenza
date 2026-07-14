@@ -26,7 +26,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var isHomeTimelineRealtime = false
     @Published private(set) var realtimeFollowSourceRevision: Int?
 
-    private let timelineLoader: NostrHomeTimelineLoader
+    private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
@@ -226,7 +226,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
     ) {
         let persistenceWorker = eventStore.map(HomeTimelinePersistenceWorker.init)
-        self.timelineLoader = timelineLoader
         self.eventStore = eventStore
         self.contentCoordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
         let eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
@@ -302,11 +301,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             syncPlanner: syncPlanner
         )
         self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
-        self.relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
+        let relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
             diagnostics: HomeTimelineRelayDiagnosticsLedger(
                 eventStore: eventStore,
                 persistenceWorker: persistenceWorker
             )
+        )
+        self.relayStatusCoordinator = relayStatusCoordinator
+        self.remoteLoadCoordinator = HomeTimelineRemoteLoadCoordinator(
+            loader: timelineLoader,
+            relayEventPersistence: relayStatusCoordinator
         )
         self.linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
             eventStore: eventStore,
@@ -711,24 +715,21 @@ final class NostrHomeTimelineStore: ObservableObject {
             return
         }
 
-        do {
-            let state = try await timelineLoader.initialState(
-                account: account,
-                onStage: { [weak self] stage in
-                    await self?.handleLoadStage(
-                        stage,
-                        lifecycle: lifecycle
-                    )
-                }
-            )
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
-            await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        let outcome = await remoteLoadCoordinator.load(
+            .initial(account: account),
+            isCurrent: { [weak self] in
+                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
+            },
+            didReceiveStage: { [weak self] stage in
+                self?.handleLoadStage(stage, lifecycle: lifecycle)
+            },
+            didFetch: { [weak self] in
+                guard let self else { return }
+                applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
+            }
+        )
+        switch outcome {
+        case .loaded(let state):
             apply(state)
             materializeEntries()
             await persistDatabase(account: account)
@@ -738,12 +739,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        } catch {
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        case .cancelled:
+            return
+        case .failed(let message):
             applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Home timeline failed: \(error.localizedDescription)"))
+                activityCoordinator.setPhase(.failed("Home timeline failed: \(message)"))
             )
         }
     }
@@ -764,24 +764,21 @@ final class NostrHomeTimelineStore: ObservableObject {
             applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
         }
 
-        do {
-            let bootstrapState = try await timelineLoader.bootstrapState(
-                account: account,
-                onStage: { [weak self] stage in
-                    await self?.handleLoadStage(
-                        stage,
-                        lifecycle: lifecycle
-                    )
-                }
-            )
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
-            await relayStatusCoordinator.persistFetchedEvents(bootstrapState.relaySyncEvents)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        let outcome = await remoteLoadCoordinator.load(
+            .runtimeBootstrap(account: account),
+            isCurrent: { [weak self] in
+                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
+            },
+            didReceiveStage: { [weak self] stage in
+                self?.handleLoadStage(stage, lifecycle: lifecycle)
+            },
+            didFetch: { [weak self] in
+                guard let self else { return }
+                applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
+            }
+        )
+        switch outcome {
+        case .loaded(let bootstrapState):
             apply(runtimeBootstrapState(from: bootstrapState))
             lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
             materializeEntries()
@@ -792,15 +789,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        } catch {
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        case .cancelled:
+            return
+        case .failed(let message):
             recordRuntimeSyncEvent(
                 relayURL: resolvedRelays.first ?? "runtime",
                 kind: .partialFailure,
                 subscriptionID: "astrenza-bootstrap",
-                message: "bootstrap refresh failed: \(error.localizedDescription)"
+                message: "bootstrap refresh failed: \(message)"
             )
             if hadCachedBootstrap {
                 applyActivityTransition(activityCoordinator.setPhase(.loaded))
@@ -813,7 +809,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 applyActivityTransition(activityCoordinator.setPhase(.loaded))
             } else {
                 applyActivityTransition(
-                    activityCoordinator.setPhase(.failed("Home timeline failed: \(error.localizedDescription)"))
+                    activityCoordinator.setPhase(.failed("Home timeline failed: \(message)"))
                 )
             }
         }
@@ -870,15 +866,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             return
         }
 
-        do {
-            let state = try await timelineLoader.refreshedState(account: account, current: loaderState())
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        let outcome = await remoteLoadCoordinator.load(
+            .refresh(account: account, current: loaderState()),
+            isCurrent: { [weak self] in
+                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
+            }
+        )
+        switch outcome {
+        case .loaded(let state):
             apply(state)
             materializeEntries()
             await persistDatabase(account: account)
@@ -888,12 +883,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        } catch {
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        case .cancelled:
+            return
+        case .failed(let message):
             applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Refresh failed: \(error.localizedDescription)"))
+                activityCoordinator.setPhase(.failed("Refresh failed: \(message)"))
             )
         }
     }
@@ -920,21 +914,20 @@ final class NostrHomeTimelineStore: ObservableObject {
             return
         }
 
-        do {
-            let current = loaderState()
-            let localBackfillEvents = databaseBackfillEvents(account: account, current: current)
-            let state = try await timelineLoader.olderState(
+        let current = loaderState()
+        let localBackfillEvents = databaseBackfillEvents(account: account, current: current)
+        let outcome = await remoteLoadCoordinator.load(
+            .older(
                 account: account,
                 current: current,
                 localBackfillEvents: localBackfillEvents
-            )
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+            ),
+            isCurrent: { [weak self] in
+                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
+            }
+        )
+        switch outcome {
+        case .loaded(let state):
             apply(state)
             if !state.hasMoreOlder {
                 return
@@ -948,12 +941,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        } catch {
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
+        case .cancelled:
+            return
+        case .failed(let message):
             applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Older notes failed: \(error.localizedDescription)"))
+                activityCoordinator.setPhase(.failed("Older notes failed: \(message)"))
             )
         }
     }
@@ -1255,7 +1247,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func provisionalDiscoveryRelays(for account: NostrAccount) -> [String] {
-        normalizedRelayURLs(account.discoveryRelays + timelineLoader.bootstrapRelays)
+        normalizedRelayURLs(account.discoveryRelays + remoteLoadCoordinator.bootstrapRelays)
             .dedupedPreservingOrder()
     }
 
@@ -1359,7 +1351,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func runtimeRelayURLs(account: NostrAccount) -> [String] {
         Array(
             normalizedRelayURLs(
-                resolvedRelays + account.discoveryRelays + timelineLoader.bootstrapRelays
+                resolvedRelays + account.discoveryRelays + remoteLoadCoordinator.bootstrapRelays
             )
             .dedupedPreservingOrder()
             .prefix(10)
