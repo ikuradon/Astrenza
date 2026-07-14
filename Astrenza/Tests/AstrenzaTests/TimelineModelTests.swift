@@ -1702,46 +1702,6 @@ struct TimelineModelTests {
         #expect(Set(fingerprints).count == fingerprints.count)
     }
 
-    @Test("Home timeline coordinator classifies runtime packets")
-    @MainActor
-    func homeTimelineCoordinatorClassifiesRuntimePackets() async {
-        let coordinator = HomeTimelineCoordinator()
-        let event = timelineEvent(
-            idSeed: "coordinator-event",
-            pubkey: String(repeating: "a", count: 64),
-            createdAt: 100,
-            content: "coordinator body"
-        )
-        var receivedState: (String, NostrRelayConnectionState)?
-        var receivedEventID: String?
-        var receivedEOSE: String?
-
-        let handlers = HomeTimelineRuntimePacketHandlers(
-            shouldHandle: { true },
-            stateChanged: { relayURL, state in receivedState = (relayURL, state) },
-            requestStarted: { _ in },
-            requestInstalled: { _, _, _, _ in },
-            requestEnded: { _ in },
-            event: { _, _, event in receivedEventID = event.id },
-            eose: { _, subscriptionID in receivedEOSE = subscriptionID },
-            closed: { _, _, _ in },
-            timeout: { _, _, _ in },
-            backwardCompleted: { _ in },
-            traffic: { _ in },
-            notice: { _, _ in },
-            auth: { _, _ in }
-        )
-
-        await coordinator.handleRuntimePacket(.stateChanged(relayURL: "wss://relay.example", state: .connected), handlers: handlers)
-        await coordinator.handleRuntimePacket(.event(relayURL: "wss://relay.example", subscriptionID: "home", event: event), handlers: handlers)
-        await coordinator.handleRuntimePacket(.eose(relayURL: "wss://relay.example", subscriptionID: "home"), handlers: handlers)
-
-        #expect(receivedState?.0 == "wss://relay.example")
-        #expect(receivedState?.1 == .connected)
-        #expect(receivedEventID == event.id)
-        #expect(receivedEOSE == "home")
-    }
-
     @Test("Routine persistence projection stays bounded to the in-memory 480-event window")
     func homeTimelinePersistenceProjectionStaysBounded() {
         let allowedAuthor = String(repeating: "a", count: 64)

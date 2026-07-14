@@ -51,7 +51,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let timelineRepository: HomeTimelineRepository
-    private let timelineCoordinator: HomeTimelineCoordinator
+    private let runtimePacketCoordinator: HomeTimelineRuntimePacketCoordinator
     private let gapReconciliationApplicationCoordinator: HomeTimelineGapReconciliationApplicationCoordinator
     private let homeFeedProjection: HomeFeedProjectionController
     private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
@@ -253,7 +253,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.backfillPersistence = backfillPersistence
         let timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.timelineRepository = timelineRepository
-        self.timelineCoordinator = HomeTimelineCoordinator()
         let gapReconciliationCoordinator = HomeTimelineGapReconciliationCoordinator(
             reconciler: HomeTimelineGapReconciler(
                 eventStore: eventStore,
@@ -360,6 +359,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         )
         self.relayStatusCoordinator = relayStatusCoordinator
+        self.runtimePacketCoordinator = HomeTimelineRuntimePacketCoordinator(
+            feedSyncCoordinator: feedSyncCoordinator,
+            relayStatusCoordinator: relayStatusCoordinator
+        )
         self.remoteLoadCoordinator = HomeTimelineRemoteLoadCoordinator(
             loader: timelineLoader,
             relayEventPersistence: relayStatusCoordinator
@@ -1372,20 +1375,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func applyFeedSyncTransition(_ transition: HomeTimelineFeedSyncTransition) {
-        publishHomeTimelineRealtimeState(transition.isRealtime)
-        let diagnostic = transition.diagnostic
-        recordRuntimeSyncEvent(
-            relayURL: diagnostic.relayURL,
-            kind: diagnostic.kind,
-            subscriptionID: diagnostic.subscriptionID,
-            eventCount: diagnostic.eventCount,
-            newestCreatedAt: diagnostic.newestCreatedAt,
-            oldestCreatedAt: diagnostic.oldestCreatedAt,
-            message: diagnostic.message
-        )
-    }
-
     private func forwardCursorNewestCreatedAtByRelay(accountID: String) -> [String: Int]? {
         timelineRepository.newestCreatedAtByRelay(
             accountID: accountID,
@@ -1395,119 +1384,46 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleRuntimePacket(_ packet: NostrRelayRuntimePacket) async {
-        guard !Self.isProfileDirectoryPacket(packet) else { return }
-        await timelineCoordinator.handleRuntimePacket(
+        let application = runtimePacketCoordinator.handle(
             packet,
-            handlers: HomeTimelineRuntimePacketHandlers(
-                shouldHandle: { self.activityCoordinator.snapshot.phase != .idle },
-                stateChanged: { relayURL, state in
-                    self.handleRuntimeStateChange(relayURL: relayURL, state: state)
-                },
-                requestStarted: { attempt in
-                    self.handleFeedSyncRequestStarted(attempt)
-                },
-                requestInstalled: { requestID, _, _, installedAt in
-                    self.feedSyncCoordinator.recordRequestInstalled(
-                        requestID: requestID,
-                        installedAt: installedAt
-                    )
-                },
-                requestEnded: { end in
-                    self.feedSyncCoordinator.endRequestAttempt(end)
-                    self.publishHomeTimelineRealtimeState()
-                },
-                event: { relayURL, subscriptionID, event in
-                    await self.handleRuntimeEvent(
-                        relayURL: relayURL,
-                        subscriptionID: subscriptionID,
-                        event: event
-                    )
-                },
-                eose: { relayURL, subscriptionID in
-                    self.applyFeedSyncTransition(
-                        self.feedSyncCoordinator.handleStreamCompletion(
-                            relayURL: relayURL,
-                            subscriptionID: subscriptionID,
-                            completion: .eose
-                        )
-                    )
-                },
-                closed: { relayURL, subscriptionID, message in
-                    self.applyFeedSyncTransition(
-                        self.feedSyncCoordinator.handleStreamCompletion(
-                            relayURL: relayURL,
-                            subscriptionID: subscriptionID,
-                            completion: .closed(message: message)
-                        )
-                    )
-                },
-                timeout: { relayURL, subscriptionID, message in
-                    self.applyFeedSyncTransition(
-                        self.feedSyncCoordinator.handleStreamCompletion(
-                            relayURL: relayURL,
-                            subscriptionID: subscriptionID,
-                            completion: .timeout(message: message)
-                        )
-                    )
-                },
-                backwardCompleted: { completion in
-                    self.handleBackwardCompletion(completion)
-                },
-                traffic: { delta in
-                    self.relayStatusCoordinator.recordTraffic(delta)
-                },
-                notice: { relayURL, message in
-                    self.applyRelayStatusTransition(
-                        self.relayStatusCoordinator.handleNotice(
-                            accountID: self.account?.pubkey,
-                            resolvedRelays: self.resolvedRelays,
-                            relayURL: relayURL,
-                            message: message
-                        )
-                    )
-                },
-                auth: { relayURL, challenge in
-                    self.applyRelayStatusTransition(
-                        self.relayStatusCoordinator.handleAuthenticationChallenge(
-                            accountID: self.account?.pubkey,
-                            resolvedRelays: self.resolvedRelays,
-                            relayURL: relayURL,
-                            challenge: challenge
-                        )
-                    )
-                }
+            context: runtimePacketContext(
+                isActive: activityCoordinator.snapshot.phase != .idle
             )
         )
-    }
-
-    private func handleRuntimeStateChange(relayURL: String, state: NostrRelayConnectionState) {
-        applyRelayStatusTransition(
-            relayStatusCoordinator.handleRuntimeStateChange(
-                accountID: account?.pubkey,
-                resolvedRelays: resolvedRelays,
+        guard application.wasHandled else { return }
+        applyRuntimePacketState(application)
+        switch application.action {
+        case .event(let relayURL, let subscriptionID, let event):
+            await handleRuntimeEvent(
                 relayURL: relayURL,
-                state: state
+                subscriptionID: subscriptionID,
+                event: event
             )
+        case .backwardCompleted(let completion):
+            handleBackwardCompletion(completion)
+        case nil:
+            break
+        }
+    }
+
+    private func runtimePacketContext(isActive: Bool) -> HomeTimelineRuntimePacketContext {
+        HomeTimelineRuntimePacketContext(
+            isActive: isActive,
+            accountID: account?.pubkey,
+            resolvedRelays: resolvedRelays,
+            isCurrentFeedContext: { [weak self] context in
+                self?.isCurrentHomeFeedContext(context) == true
+            }
         )
     }
 
-    private static func isProfileDirectoryPacket(_ packet: NostrRelayRuntimePacket) -> Bool {
-        switch packet {
-        case .requestStarted(let attempt):
-            NostrProfileDirectory.handles(groupID: attempt.packet.groupID)
-        case .requestInstalled(_, _, let subscriptionID, _),
-             .event(_, let subscriptionID, _),
-             .eose(_, let subscriptionID),
-             .closed(_, let subscriptionID, _),
-             .timeout(_, let subscriptionID, _):
-            NostrProfileDirectory.handles(subscriptionID: subscriptionID)
-        case .requestEnded(let end):
-            NostrProfileDirectory.handles(subscriptionID: end.subscriptionID)
-        case .backwardCompleted(let completion):
-            NostrProfileDirectory.handles(groupID: completion.groupID)
-        case .stateChanged, .traffic, .notice, .auth:
-            false
+    private func applyRuntimePacketState(
+        _ application: HomeTimelineRuntimePacketApplication
+    ) {
+        if let realtimeState = application.realtimeState {
+            publishHomeTimelineRealtimeState(realtimeState)
         }
+        applyRelayStatusTransition(application.relayStatusTransition)
     }
 
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
@@ -1810,25 +1726,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func handleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) {
-        let result = feedSyncCoordinator.startRequest(
-            attempt,
-            isCurrentFeedContext: { [weak self] context in
-                self?.isCurrentHomeFeedContext(context) == true
-            }
-        )
-        guard result.wasHandled else { return }
-        publishHomeTimelineRealtimeState(result.isRealtime)
-        if let failureMessage = result.failureMessage {
-            recordRuntimeSyncEvent(
-                relayURL: attempt.relayURL,
-                kind: .partialFailure,
-                subscriptionID: attempt.packet.subscriptionID,
-                message: "feed sync request save failed: \(failureMessage)"
-            )
-        }
-    }
-
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
         timelineRepository.olderBackfillEvents(
             accountID: account.pubkey,
@@ -2032,7 +1929,11 @@ extension NostrHomeTimelineStore {
     }
 
     func testingHandleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) {
-        handleFeedSyncRequestStarted(attempt)
+        let application = runtimePacketCoordinator.handle(
+            .requestStarted(attempt),
+            context: runtimePacketContext(isActive: true)
+        )
+        applyRuntimePacketState(application)
     }
 
     func testingHandleBackwardEvent(
