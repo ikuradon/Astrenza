@@ -84,6 +84,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
+    private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
@@ -100,8 +101,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
-    private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
-    private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
     private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
@@ -171,22 +170,21 @@ final class NostrHomeTimelineStore: ObservableObject {
                 compactLabel: "Updating"
             )
         }
-        if isLoadingOlder || pendingBackwardRequests.values.contains(where: \.isOlderPage) {
+        if isLoadingOlder || backwardRequestRegistry.hasOlderPageRequest {
             return NostrTimelineActivityStatus(
                 title: "Loading older posts",
                 detail: "Fetching the previous Home timeline window",
                 compactLabel: "Older"
             )
         }
-        if !pendingGapReconciliationIDs.isEmpty ||
-            pendingBackwardRequests.values.contains(where: { $0.gap != nil }) {
+        if backwardRequestRegistry.hasGapWork {
             return NostrTimelineActivityStatus(
                 title: "Filling a timeline gap",
                 detail: "Reconciling missing events between local windows",
                 compactLabel: "Gap"
             )
         }
-        if !pendingBackwardRequests.isEmpty || dependencyCoordinator.hasPendingWork {
+        if backwardRequestRegistry.hasRequests || dependencyCoordinator.hasPendingWork {
             return NostrTimelineActivityStatus(
                 title: "Resolving referenced posts",
                 detail: "Fetching events referenced by visible posts",
@@ -247,6 +245,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
+        self.backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.runtimeEventPump = HomeTimelineRuntimeEventPump()
         self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
@@ -619,8 +618,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         loadTask = nil
         paginationTask = nil
         dependencyCoordinator.reset()
-        pendingBackwardRequests.removeAll()
-        pendingGapReconciliationIDs.removeAll()
+        backwardRequestRegistry.reset()
         clearPendingNewEvents()
         isRefreshing = false
         isLoadingOlder = false
@@ -1035,16 +1033,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             relayURLs: resolvedRelays
         ) else { return }
 
-        pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            feedContext: feedContext,
-            isOlderPage: true,
-            olderAnchorPostID: olderAnchorPostID
+        backwardRequestRegistry.registerOlderPage(
+            groupID: packet.groupID,
+            context: feedContext,
+            anchorEventID: olderAnchorPostID
         )
 
         do {
             try await relayRuntime.installBackward([packet], mergeField: .authors)
         } catch {
-            pendingBackwardRequests.removeValue(forKey: packet.groupID)
+            backwardRequestRegistry.remove(groupID: packet.groupID)
             recordRuntimeSyncEvent(
                 relayURL: resolvedRelays.first ?? "runtime",
                 kind: .partialFailure,
@@ -1075,20 +1073,19 @@ final class NostrHomeTimelineStore: ObservableObject {
             relayURLs: resolvedRelays
         ) else { return false }
 
-        pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            feedContext: feedContext,
-            gap: PendingGapBackfill(
-                newerPostID: gap.newerPostID,
-                olderPostID: gap.olderPostID,
-                direction: direction
-            )
+        backwardRequestRegistry.registerGap(
+            groupID: packet.groupID,
+            context: feedContext,
+            newerEventID: gap.newerPostID,
+            olderEventID: gap.olderPostID,
+            direction: direction
         )
 
         do {
             try await relayRuntime.installBackward([packet], mergeField: .authors)
             return true
         } catch {
-            pendingBackwardRequests.removeValue(forKey: packet.groupID)
+            backwardRequestRegistry.remove(groupID: packet.groupID)
             recordRuntimeSyncEvent(
                 relayURL: resolvedRelays.first ?? "runtime",
                 kind: .partialFailure,
@@ -1778,21 +1775,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         await handleBackwardEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
     }
 
-    private func pendingBackwardRequestKey(for subscriptionID: String) -> String? {
-        if let exactOrPrefixed = pendingBackwardRequests.first(where: { entry in
-            subscriptionID == entry.key || subscriptionID.hasPrefix(entry.key + "-")
-        })?.key {
-            return exactOrPrefixed
-        }
-        if subscriptionID.contains("astrenza-gap-notes") {
-            return pendingBackwardRequests.first { $0.value.gap != nil }?.key
-        }
-        if subscriptionID.contains("astrenza-older-notes") {
-            return pendingBackwardRequests.first { $0.value.isOlderPage }?.key
-        }
-        return nil
-    }
-
     private func handleHomeForwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
         guard event.kind == 1 || event.kind == 5 || event.kind == 6,
               let account
@@ -1878,8 +1860,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account else { return }
         let lifecycleGeneration = runtimeLifecycleGeneration
         let accountID = account.pubkey
-        let requestKey = pendingBackwardRequestKey(for: subscriptionID)
-        let request = requestKey.flatMap { pendingBackwardRequests[$0] }
+        let requestKey = backwardRequestRegistry.key(for: subscriptionID)
+        let request = requestKey.flatMap { backwardRequestRegistry.request(for: $0) }
         let isTimelineBackfill = request?.isOlderPage == true || request?.gap != nil
         let runtimeKey = RuntimeSubscriptionKey(relayURL: relayURL, subscriptionID: subscriptionID)
         let sourceRequestID = feedSyncLifecycle.requestID(for: runtimeKey)
@@ -1892,7 +1874,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             if isTimelineBackfill {
                 ensureHomeFeedDefinition(account: account)
             }
-            // 配信可否はpendingBackwardRequestsで判定する。provenance用requestStartedは
+            // 配信可否はbackward request registryで判定する。provenance用requestStartedは
             // 最初のEVENT到着時点でまだqueue内に残っている場合がある。
             projectsIntoCurrentFeed = isTimelineBackfill &&
                 requestContext != nil &&
@@ -1951,10 +1933,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         case 1, 6:
             if projectsIntoCurrentFeed {
                 if let requestKey {
-                    pendingBackwardRequests[requestKey]?.receivedTimelineEventCount += 1
-                    if pendingBackwardRequests[requestKey]?.receivedTimelineEventIDs.contains(event.id) != true {
-                        pendingBackwardRequests[requestKey]?.receivedTimelineEventIDs.append(event.id)
-                    }
+                    backwardRequestRegistry.recordTimelineEvent(event.id, for: requestKey)
                 }
             }
             dependencyCoordinator.finishSourceEvent(eventID: event.id)
@@ -2045,7 +2024,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        guard let request = pendingBackwardRequests.removeValue(forKey: completion.groupID) else {
+        guard let request = backwardRequestRegistry.remove(groupID: completion.groupID) else {
             if dependencyCoordinator.completeSourceRequest(completion) {
                 relayStatusRevision &+= 1
             }
@@ -2175,8 +2154,10 @@ final class NostrHomeTimelineStore: ObservableObject {
               isCurrentHomeFeedContext(context)
         else { return }
         let lifecycleGeneration = runtimeLifecycleGeneration
-        let reconciliationID = "\(context.feedID)#\(context.revision):\(gap.newerPostID)-\(gap.olderPostID)"
-        pendingGapReconciliationIDs.insert(reconciliationID)
+        let reconciliationID = backwardRequestRegistry.beginGapReconciliation(
+            gap: gap,
+            context: context
+        )
         relayStatusRevision &+= 1
 
         Task { [weak self] in
@@ -2200,7 +2181,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         defer {
             if self.runtimeLifecycleGeneration == lifecycleGeneration,
                self.account?.pubkey == accountID {
-                pendingGapReconciliationIDs.remove(reconciliationID)
+                backwardRequestRegistry.endGapReconciliation(reconciliationID)
                 relayStatusRevision &+= 1
             }
         }
@@ -2357,7 +2338,10 @@ final class NostrHomeTimelineStore: ObservableObject {
                 purpose: registration.purpose
             )
             if let pendingRequestKey = registration.pendingRequestKey {
-                pendingBackwardRequests[pendingRequestKey]?.sourceRequestIDs.append(attempt.requestID)
+                backwardRequestRegistry.appendSourceRequestID(
+                    attempt.requestID,
+                    for: pendingRequestKey
+                )
             }
             if let gap = registration.gap,
                isCurrentHomeFeedContext(registration.context) {
@@ -2394,8 +2378,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         }
         guard packet.strategy == .backward,
-              let requestKey = pendingBackwardRequestKey(for: packet.subscriptionID),
-              let request = pendingBackwardRequests[requestKey],
+              let requestKey = backwardRequestRegistry.key(for: packet.subscriptionID),
+              let request = backwardRequestRegistry.request(for: requestKey),
               let context = request.feedContext
         else { return nil }
         if request.gap != nil {
@@ -2961,10 +2945,10 @@ extension NostrHomeTimelineStore {
         definition: NostrFeedDefinitionRecord,
         anchorEventID: String?
     ) {
-        pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            feedContext: HomeFeedRuntimeContext(definition: definition),
-            isOlderPage: true,
-            olderAnchorPostID: anchorEventID
+        backwardRequestRegistry.registerOlderPage(
+            groupID: packet.groupID,
+            context: HomeFeedRuntimeContext(definition: definition),
+            anchorEventID: anchorEventID
         )
     }
 
@@ -2985,13 +2969,12 @@ extension NostrHomeTimelineStore {
         olderEventID: String,
         direction: TimelineGapFillDirection
     ) {
-        pendingBackwardRequests[packet.groupID] = PendingBackwardRequest(
-            feedContext: HomeFeedRuntimeContext(definition: definition),
-            gap: PendingGapBackfill(
-                newerPostID: newerEventID,
-                olderPostID: olderEventID,
-                direction: direction
-            )
+        backwardRequestRegistry.registerGap(
+            groupID: packet.groupID,
+            context: HomeFeedRuntimeContext(definition: definition),
+            newerEventID: newerEventID,
+            olderEventID: olderEventID,
+            direction: direction
         )
     }
 
@@ -3041,7 +3024,7 @@ extension NostrHomeTimelineStore {
     }
 
     var testingPendingBackwardRequestCount: Int {
-        pendingBackwardRequests.count + dependencyCoordinator.pendingSourceRequestCount
+        backwardRequestRegistry.requestCount + dependencyCoordinator.pendingSourceRequestCount
     }
 
     var testingHasPendingDependencyWork: Bool {
@@ -3073,37 +3056,12 @@ extension NIP05Status {
     }
 }
 
-private struct PendingBackwardRequest {
-    var feedContext: HomeFeedRuntimeContext? = nil
-    var isOlderPage = false
-    var olderAnchorPostID: String?
-    var gap: PendingGapBackfill?
-    var receivedTimelineEventCount = 0
-    var receivedTimelineEventIDs: [String] = []
-    var sourceRequestIDs: [String] = []
-}
-
 private struct HomeFeedSyncRegistration {
     let context: HomeFeedRuntimeContext
     let direction: NostrFeedSyncDirection
     let purpose: NostrFeedSyncPurpose
     let pendingRequestKey: String?
     let gap: PendingGapBackfill?
-}
-
-private struct PendingGapBackfill {
-    let newerPostID: String
-    let olderPostID: String
-    let direction: TimelineGapFillDirection
-
-    var stableAnchorPostID: String {
-        switch direction {
-        case .newer:
-            olderPostID
-        case .older:
-            newerPostID
-        }
-    }
 }
 
 private extension Array where Element == String {
