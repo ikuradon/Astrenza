@@ -47,6 +47,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     private let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
     private let runtimeShutdownCoordinator: HomeTimelineRuntimeShutdownCoordinator
+    private let accountResetCoordinator: HomeTimelineAccountResetCoordinator
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -312,7 +313,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.filterCoordinator = filterCoordinator
         let listProjectionCache = HomeTimelineListProjectionCache()
         self.listProjectionCache = listProjectionCache
-        self.activityCoordinator = HomeTimelineActivityCoordinator()
+        let activityCoordinator = HomeTimelineActivityCoordinator()
+        self.activityCoordinator = activityCoordinator
         let presentationCoordinator = HomeTimelinePresentationCoordinator()
         self.presentationCoordinator = presentationCoordinator
         self.materializationCoordinator = HomeTimelineMaterializationCoordinator(
@@ -329,7 +331,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.loadApplicationCoordinator = HomeTimelineLoadApplicationCoordinator(
             lifecycleCoordinator: lifecycleCoordinator
         )
-        self.gapReconciliationApplicationCoordinator =
+        let gapReconciliationApplicationCoordinator =
             HomeTimelineGapReconciliationApplicationCoordinator(
                 reconciliationCoordinator: gapReconciliationCoordinator,
                 contentCoordinator: contentCoordinator,
@@ -338,6 +340,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 backwardRequestRegistry: backwardRequestRegistry,
                 lifecycleCoordinator: lifecycleCoordinator
             )
+        self.gapReconciliationApplicationCoordinator = gapReconciliationApplicationCoordinator
         let runtimeEventApplicationCoordinator = HomeTimelineRuntimeEventApplicationCoordinator(
             contentCoordinator: contentCoordinator,
             dependencyCoordinator: dependencyCoordinator,
@@ -388,7 +391,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             dependencyCoordinator: dependencyCoordinator,
             syncPlanner: syncPlanner
         )
-        self.runtimeSetupCoordinator = HomeTimelineRuntimeSetupCoordinator(
+        let runtimeSetupCoordinator = HomeTimelineRuntimeSetupCoordinator(
             configurator: relayRuntimeConfigurator,
             contentCoordinator: contentCoordinator,
             dependencyCoordinator: dependencyCoordinator,
@@ -397,6 +400,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             lifecycleCoordinator: lifecycleCoordinator,
             timelineRepository: timelineRepository
         )
+        self.runtimeSetupCoordinator = runtimeSetupCoordinator
         let relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
             diagnostics: HomeTimelineRelayDiagnosticsLedger(
                 eventStore: eventStore,
@@ -412,18 +416,46 @@ final class NostrHomeTimelineStore: ObservableObject {
             loader: timelineLoader,
             relayEventPersistence: relayStatusCoordinator
         )
-        self.linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
+        let linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
             eventStore: eventStore,
             resolver: linkPreviewResolver
         )
-        self.readStateCoordinator = HomeTimelineReadStateCoordinator(
+        self.linkPreviewCoordinator = linkPreviewCoordinator
+        let readStateCoordinator = HomeTimelineReadStateCoordinator(
             eventStore: eventStore,
             persistenceWorker: persistenceWorker
         )
-        self.outboxCoordinator = HomeTimelineOutboxCoordinator(
+        self.readStateCoordinator = readStateCoordinator
+        let outboxCoordinator = HomeTimelineOutboxCoordinator(
             drainer: HomeTimelineOutboxDrainer(
                 eventStore: eventStore,
                 publisher: outboxPublisher
+            )
+        )
+        self.outboxCoordinator = outboxCoordinator
+        self.accountResetCoordinator = HomeTimelineAccountResetCoordinator(
+            dependencies: HomeTimelineAccountResetDependencies(
+                endReadSession: { readBoundaryWrite in
+                    readStateCoordinator.endSession(flushing: readBoundaryWrite)
+                },
+                flushRelayTraffic: relayStatusCoordinator.flushTraffic,
+                cancelLifecycle: lifecycleCoordinator.cancel,
+                cancelGapReconciliation: gapReconciliationApplicationCoordinator.cancel,
+                cancelRuntimeEvents: runtimeSessionCoordinator.cancelRuntimeEvents,
+                resetLinkPreviews: linkPreviewCoordinator.reset,
+                resetPresentation: presentationCoordinator.reset,
+                cancelOutbox: outboxCoordinator.cancel,
+                resetDependencies: dependencyCoordinator.reset,
+                resetBackwardRequests: backwardRequestRegistry.reset,
+                resetActivity: activityCoordinator.reset,
+                resetProjection: homeFeedProjection.reset,
+                resetRuntimeSetup: runtimeSetupCoordinator.reset,
+                resetFeedSync: {
+                    feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
+                },
+                resetContent: contentCoordinator.reset,
+                resetRelayStatus: relayStatusCoordinator.reset,
+                resetFilters: filterCoordinator.reset
             )
         )
         self.syncPolicySettingsStore = syncPolicySettingsStore
@@ -721,35 +753,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func cancel() {
-        readStateCoordinator.endSession(flushing: homeFeedReadBoundaryWrite())
-        relayStatusCoordinator.flushTraffic()
-        let cancellationGeneration = lifecycleCoordinator.cancel()
-        gapReconciliationApplicationCoordinator.cancel()
-        runtimeSessionCoordinator.cancelRuntimeEvents()
-        linkPreviewCoordinator.reset()
-        applyPresentationTransition(presentationCoordinator.reset())
-        outboxCoordinator.cancel()
-        dependencyCoordinator.reset()
-        backwardRequestRegistry.reset()
-        clearPendingNewEvents()
-        applyActivityTransition(activityCoordinator.reset())
-        invalidateListEntries()
-        homeFeedProjection.reset()
-        runtimeSetupCoordinator.reset()
-        resetHomeTimelineRealtime()
-        feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
-        applyContentSnapshot(contentCoordinator.reset())
-        applyRelayStatusSnapshot(
-            relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
-        )
-        restoreProjectionAnchorEventID = nil
-        isTimelineAtNewestWindow = true
-        filterCoordinator.reset()
-        relayStatusRevision &+= 1
-        account = nil
-        runtimeShutdownCoordinator.schedule(
-            cancellationGeneration: cancellationGeneration,
-            handlers: runtimeShutdownHandlers()
+        accountResetCoordinator.reset(
+            context: HomeTimelineAccountResetContext(
+                readBoundaryWrite: homeFeedReadBoundaryWrite(),
+                resolvedRelays: resolvedRelays
+            ),
+            handlers: accountResetHandlers()
         )
     }
 
@@ -1223,6 +1232,55 @@ final class NostrHomeTimelineStore: ObservableObject {
             invalidateListEntries()
             scheduleMaterializeEntries()
         }
+    }
+
+    private func accountResetHandlers() -> HomeTimelineAccountResetHandlers {
+        HomeTimelineAccountResetHandlers(
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
+            },
+            clearPendingEvents: { [weak self] in
+                self?.clearPendingNewEvents()
+            },
+            applyActivityTransition: { [weak self] transition in
+                self?.applyActivityTransition(transition)
+            },
+            invalidateListEntries: { [weak self] in
+                self?.invalidateListEntries()
+            },
+            resetRealtimeState: { [weak self] in
+                self?.resetHomeTimelineRealtime()
+            },
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            applyRelayStatusSnapshot: { [weak self] snapshot in
+                self?.applyRelayStatusSnapshot(snapshot)
+            },
+            resetProjectionRestoreState: { [weak self] in
+                self?.resetProjectionRestoreState()
+            },
+            clearPublishedAccountState: { [weak self] in
+                self?.clearPublishedAccountState()
+            },
+            scheduleRuntimeShutdown: { [weak self] cancellationGeneration in
+                guard let self else { return }
+                runtimeShutdownCoordinator.schedule(
+                    cancellationGeneration: cancellationGeneration,
+                    handlers: runtimeShutdownHandlers()
+                )
+            }
+        )
+    }
+
+    private func resetProjectionRestoreState() {
+        restoreProjectionAnchorEventID = nil
+        isTimelineAtNewestWindow = true
+    }
+
+    private func clearPublishedAccountState() {
+        relayStatusRevision &+= 1
+        account = nil
     }
 
     private func runtimeShutdownHandlers() -> HomeTimelineRuntimeShutdownHandlers {
