@@ -89,6 +89,22 @@ final class NostrHomeTimelineStore: ObservableObject {
         contentCoordinator.contactListEvent
     }
 
+    private func timelineReadContext(
+        filterRules: NostrFilterRuleSet?
+    ) -> HomeTimelineReadContext {
+        HomeTimelineReadContext(
+            accountID: account?.pubkey,
+            fallbackEntries: entries,
+            metadataEvents: metadataEvents,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
+            followedPubkeys: Set(followedPubkeys),
+            resolvedRelayCount: resolvedRelays.count,
+            filterRules: filterRules,
+            syncPolicy: syncPolicy
+        )
+    }
+
     private func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
         if resolvedRelays != snapshot.resolvedRelays {
             resolvedRelays = snapshot.resolvedRelays
@@ -585,40 +601,24 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func isBookmarked(_ post: TimelinePost) -> Bool {
-        guard let account, let eventStore else { return false }
-        return ((try? eventStore.localBookmarks(accountID: account.pubkey)) ?? [])
-            .contains { $0.eventID == post.id }
+        timelineRepository.isBookmarked(
+            eventID: post.id,
+            accountID: account?.pubkey
+        )
     }
 
     func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
-        guard let account, let eventStore else { return [] }
+        guard let account else { return [] }
         let cacheKey = HomeTimelineListProjectionCache.Key(
             accountID: account.pubkey,
             limit: limit,
             homeContentRevision: resolvedContentRevision
         )
+        let readContext = timelineReadContext(filterRules: nil)
         return listProjectionCache.entries(for: cacheKey) {
-            let listEvents = cachedListTimelineEvents(
-                accountID: account.pubkey,
-                eventStore: eventStore,
-                limit: limit
-            )
-            guard !listEvents.isEmpty else { return [] }
-            let pubkeys = Set(listEvents.map(\.pubkey))
-            let metadata = (try? eventStore.latestReplaceableEvents(
-                pubkeys: pubkeys,
-                kind: 0
-            )) ?? metadataEvents.filter { pubkeys.contains($0.pubkey) }
-            return NostrTimelineMaterializer.entries(
-                noteEvents: listEvents,
-                metadataEvents: metadata,
-                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-                profileResolutionStates: dependencyCoordinator.profileResolutionStates,
-                followedPubkeys: Set(followedPubkeys),
-                mediaAssetsByEventID: mediaAssetsByEventID(for: listEvents),
-                linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: listEvents),
-                filterRules: listFilterRuleSet(),
-                timeline: .lists
+            timelineRepository.listEntries(
+                limit: limit,
+                context: readContext
             )
         }
     }
@@ -689,81 +689,42 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func post(eventID: String) -> TimelinePost? {
-        guard let eventStore,
-              let event = try? eventStore.event(id: eventID),
-              event.kind == 1
-        else {
-            return entries.compactMap(\.post).first { $0.id == eventID }
-        }
-
-        return materializedPosts(from: [event]).first
+        timelineRepository.post(
+            eventID: eventID,
+            context: timelineReadContext(filterRules: homeFilterRuleSet())
+        )
     }
 
     func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
-        let metadata = try? eventStore?.latestReplaceableEvent(pubkey: pubkey, kind: 0)
-        let posts = profilePosts(pubkey: pubkey, limit: 1_000)
-        let author = materializedAuthor(pubkey: pubkey, metadataEvent: metadata)
-        let avatar = posts.first?.avatar ?? avatar(for: pubkey)
-        let relayCount = isCurrentUser ? resolvedRelays.count : max(1, resolvedRelays.count)
-
-        return UserProfile(
-            id: pubkey,
-            author: author,
-            avatar: avatar,
-            banner: banner(for: pubkey),
-            bio: metadata.flatMap(Self.profileMetadata).map { _ in "kind:0 profile metadata is cached." } ?? "kind:0 profile is not cached yet.",
+        timelineRepository.profile(
+            pubkey: pubkey,
             isCurrentUser: isCurrentUser,
-            isFollowed: followedPubkeys.contains(pubkey) || isCurrentUser,
-            followerCount: 0,
-            followingCount: isCurrentUser ? followedPubkeys.count : 0,
-            postCount: posts.count,
-            relayCount: relayCount,
-            latestFollowers: [],
-            featuredHashtags: []
+            context: timelineReadContext(filterRules: homeFilterRuleSet())
         )
     }
 
     func profilePosts(pubkey: String, limit: Int = 80) -> [TimelinePost] {
-        guard let events = try? eventStore?.events(kind: 1, authors: [pubkey], limit: limit) else {
-            return entries.compactMap(\.post).filter { $0.author.pubkey == pubkey }
-        }
-
-        return materializedPosts(from: events)
+        timelineRepository.profilePosts(
+            pubkey: pubkey,
+            limit: limit,
+            context: timelineReadContext(filterRules: homeFilterRuleSet())
+        )
     }
 
     func replyAncestors(for post: TimelinePost, limit: Int = 8) -> [TimelinePost] {
-        guard let eventStore else { return [] }
-
-        var ancestors: [NostrEvent] = []
-        var currentID = post.id
-        var visited = Set([post.id])
-
-        while ancestors.count < limit {
-            guard let tags = try? eventStore.tags(eventID: currentID),
-                  let parentID = NostrTimelineReplyProjection.replyParentID(from: tags),
-                  !visited.contains(parentID),
-                  let parentEvent = try? eventStore.event(id: parentID),
-                  parentEvent.kind == 1
-            else {
-                break
-            }
-
-            ancestors.append(parentEvent)
-            visited.insert(parentID)
-            currentID = parentID
-        }
-
-        return materializedPosts(from: ancestors.reversed())
+        timelineRepository.replyAncestors(
+            for: post,
+            limit: limit,
+            context: timelineReadContext(filterRules: homeFilterRuleSet())
+        )
     }
 
     func replies(for post: TimelinePost, limit: Int = 24) -> [TimelinePost] {
-        guard let events = try? eventStore?.eventsReferencing(eventID: post.id, kind: 1, limit: limit) else {
-            return []
-        }
-
-        return materializedPosts(from: events.filter { event in
-            NostrTimelineReplyProjection.replyParentID(from: event.tags) == post.id
-        })
+        timelineRepository.replies(
+            for: post,
+            limit: limit,
+            context: timelineReadContext(filterRules: homeFilterRuleSet())
+        )
     }
 
     private func load(
@@ -2275,38 +2236,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         unmaterializedNewCount = count
     }
 
-    private func materializedPosts(from events: [NostrEvent]) -> [TimelinePost] {
-        let profilePubkeys = Set(events.flatMap { event in
-            NostrEventDependencies.extract(from: event).profilePubkeys
-        })
-        let storedMetadata = (try? eventStore?.latestReplaceableEvents(pubkeys: profilePubkeys, kind: 0)) ?? []
-        let liveMetadata = metadataEvents.filter { profilePubkeys.contains($0.pubkey) }
-        let metadata = storedMetadata + liveMetadata
-
-        return NostrTimelineMaterializer.posts(
-            noteEvents: events,
-            metadataEvents: metadata,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
-            followedPubkeys: Set(followedPubkeys),
-            mediaAssetsByEventID: mediaAssetsByEventID(for: events),
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events),
-            filterRules: homeFilterRuleSet(),
-            policy: syncPolicy
-        )
-    }
-
     private func homeFilterRuleSet() -> NostrFilterRuleSet? {
         guard !areTimelineFiltersSuspended else { return nil }
         let rules = homeFilterRules()
-        guard !rules.isEmpty else { return nil }
-        return NostrFilterRuleSet(rules: rules)
-    }
-
-    private func listFilterRuleSet() -> NostrFilterRuleSet? {
-        guard let account, let eventStore else { return nil }
-        let rules = ((try? eventStore.filterRules(accountID: account.pubkey)) ?? [])
-            .filter { $0.applies(to: .lists) }
         guard !rules.isEmpty else { return nil }
         return NostrFilterRuleSet(rules: rules)
     }
@@ -2361,109 +2293,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             .flatMap { summary in
                 (try? eventStore.listItems(listID: summary.listID)) ?? []
             }
-    }
-
-    private func cachedListTimelineEvents(
-        accountID: String,
-        eventStore: NostrEventStore,
-        limit: Int
-    ) -> [NostrEvent] {
-        guard let summaries = try? eventStore.listSummaries(accountID: accountID) else { return [] }
-        var eventsByID: [String: NostrEvent] = [:]
-        var remaining = max(0, limit)
-        guard remaining > 0 else { return [] }
-
-        for summary in summaries where remaining > 0 {
-            let items = (try? eventStore.listItems(listID: summary.listID)) ?? []
-            switch summary.kind {
-            case 30_000:
-                let authors = items
-                    .filter { $0.itemType == "pubkey" }
-                    .map(\.value)
-                let events = (try? eventStore.events(kind: 1, authors: authors, limit: remaining)) ?? []
-                for event in events where eventsByID[event.id] == nil {
-                    eventsByID[event.id] = event
-                    remaining -= 1
-                    if remaining <= 0 { break }
-                }
-            case 10_003, 30_003:
-                for item in items where item.itemType == "event" && remaining > 0 {
-                    guard let event = try? eventStore.event(id: item.value),
-                          event.kind == 1,
-                          eventsByID[event.id] == nil
-                    else { continue }
-                    eventsByID[event.id] = event
-                    remaining -= 1
-                }
-            default:
-                break
-            }
-        }
-
-        return eventsByID.values.sorted { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt {
-                return lhs.id < rhs.id
-            }
-            return lhs.createdAt > rhs.createdAt
-        }
-    }
-
-    private func mediaAssetsByEventID(for events: [NostrEvent]) -> [String: [NostrMediaAssetRecord]] {
-        guard let eventStore else { return [:] }
-        return (try? eventStore.mediaAssets(eventIDs: events.map(\.id))) ?? [:]
-    }
-
-    private func linkPreviewsByNormalizedURL(for events: [NostrEvent]) -> [String: NostrLinkPreviewRecord] {
-        guard let eventStore else { return [:] }
-        let urls = events.flatMap { NostrLinkParser.webURLs(in: $0.content) }
-        return (try? eventStore.linkPreviews(urls: urls)) ?? [:]
-    }
-
-    private func materializedAuthor(pubkey: String, metadataEvent: NostrEvent?) -> TimelineAuthor {
-        let metadata = metadataEvent.flatMap(Self.profileMetadata)
-        guard metadataEvent != nil else {
-            return .unresolved(
-                pubkey: pubkey,
-                state: dependencyCoordinator.profileResolutionStates[pubkey] ?? .unknown
-            )
-        }
-
-        return .metadataResolved(
-            displayName: metadata?.bestName,
-            nip05: metadata?.nip05,
-            nip05Status: NIP05Status(
-                dependencyCoordinator.nip05Resolutions[pubkey]?.status ?? .unchecked
-            ),
-            pubkey: pubkey,
-            isFollowed: followedPubkeys.contains(pubkey)
-        )
-    }
-
-    private func avatar(for pubkey: String) -> AvatarStyle {
-        let item = NostrHomeTimelineItem(
-            id: pubkey,
-            pubkey: pubkey,
-            displayName: nil,
-            nip05: nil,
-            nip05Status: .absent,
-            isFollowed: followedPubkeys.contains(pubkey),
-            body: "",
-            createdAt: Int(Date().timeIntervalSince1970),
-            avatarPictureState: .metadataPending,
-            avatarImageURL: nil,
-            profileResolutionState: dependencyCoordinator.profileResolutionStates[pubkey] ?? .unknown
-        )
-        return NostrTimelineAuthorProjection.avatar(for: item)
-    }
-
-    private func banner(for pubkey: String) -> ProfileBannerStyle {
-        let palette = NostrTimelineAuthorProjection.avatarPalette(for: pubkey)
-        return ProfileBannerStyle(colors: [palette.secondary, palette.primary], symbolName: "sparkles")
-    }
-
-    private static func profileMetadata(from event: NostrEvent) -> NostrProfileMetadata? {
-        guard let data = event.content.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(NostrProfileMetadata.self, from: data)
     }
 
     private func loaderState() -> NostrHomeTimelineState {
