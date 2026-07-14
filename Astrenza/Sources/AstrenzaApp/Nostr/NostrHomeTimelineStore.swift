@@ -87,6 +87,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
+    private let relayRuntimeConfigurator: HomeTimelineRelayRuntimeConfigurator
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -102,7 +103,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
-    private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
     private var relayListEvent: NostrEvent?
@@ -113,7 +113,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var restoreProjectionAnchorEventID: String?
     private var hasCompletedRuntimeBootstrap = false
     private var runtimeLifecycleGeneration: UInt64 = 0
-    private var relayRuntimeConfigurationSequence: UInt64 = 0
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -240,17 +239,25 @@ final class NostrHomeTimelineStore: ObservableObject {
             backwardRequestRegistry: backwardRequestRegistry
         )
         self.relayRuntime = relayRuntime
-        self.dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
+        let dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
             eventIngestor: eventIngestor,
             profileDirectory: profileDirectory,
             nip05Resolver: timelineLoader.nip05Resolver,
             syncPlanner: syncPlanner,
             sourcePacketInstaller: sourcePacketInstaller
         )
+        self.dependencyCoordinator = dependencyCoordinator
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
-        self.runtimeEventPump = HomeTimelineRuntimeEventPump()
+        let runtimeEventPump = HomeTimelineRuntimeEventPump()
+        self.runtimeEventPump = runtimeEventPump
+        self.relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
+            relayRuntime: relayRuntime,
+            runtimeEventPump: runtimeEventPump,
+            dependencyCoordinator: dependencyCoordinator,
+            syncPlanner: syncPlanner
+        )
         self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
             eventStore: eventStore,
@@ -628,7 +635,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         isLoadingOlder = false
         invalidateListEntries()
         homeFeedProjection.reset()
-        installedHomeForwardPackets = []
+        relayRuntimeConfigurator.reset()
         resetHomeTimelineRealtime()
         feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
         relayRuntimeStates = [:]
@@ -669,7 +676,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 else { return }
 
                 runtimeEventPump.cancel()
-                installedHomeForwardPackets = []
+                relayRuntimeConfigurator.reset()
                 resetHomeTimelineRealtime()
                 startRuntimeEventPump()
                 await configureRelayRuntime(account: account, forceInstall: true)
@@ -1271,22 +1278,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         homeFeedProjection.isCurrent(context, accountID: account?.pubkey)
     }
 
-    private func feedScopedForwardPackets(
-        _ packets: [NostrREQPacket],
-        context: HomeFeedRuntimeContext
-    ) -> [NostrREQPacket] {
-        let specificationToken = String(context.specificationHash.prefix(12))
-        return packets.map { packet in
-            NostrREQPacket(
-                strategy: packet.strategy,
-                subscriptionID: packet.subscriptionID,
-                groupID: "\(packet.groupID)-feed-r\(context.revision)-\(specificationToken)",
-                filters: packet.filters,
-                relayURLs: packet.relayURLs
-            )
-        }
-    }
-
     private func restoreHomeFeedReadState(account: NostrAccount) {
         guard let definition = homeFeedProjection.definition,
               definition.accountID == account.pubkey
@@ -1445,86 +1436,81 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
-        guard let relayRuntime,
+        guard relayRuntime != nil,
               !relayRuntimeTerminator.isTerminating,
               self.account?.pubkey == account.pubkey,
               hasCompletedRuntimeBootstrap,
-              !resolvedRelays.isEmpty
+              !resolvedRelays.isEmpty,
+              let identity = currentRelayRuntimeConfigurationIdentity(),
+              identity.accountID == account.pubkey
         else { return }
 
-        relayRuntimeConfigurationSequence &+= 1
-        let configurationSequence = relayRuntimeConfigurationSequence
-        let lifecycleGeneration = runtimeLifecycleGeneration
-        let expectedResolvedRelays = resolvedRelays
-        let expectedFollowedPubkeys = followedPubkeys
-        let expectedContactListEventID = contactListEvent?.id
-        let expectedContactItems = NostrContactList.items(from: contactListEvent)
-        let expectedDefaultRelays = runtimeRelayURLs(account: account)
+        let request = HomeTimelineRelayRuntimeConfigurationRequest(
+            identity: identity,
+            account: account,
+            contactItems: NostrContactList.items(from: contactListEvent),
+            defaultRelayURLs: runtimeRelayURLs(account: account),
+            policy: syncPolicy,
+            forceInstall: forceInstall
+        )
+        await relayRuntimeConfigurator.configure(
+            request,
+            handlers: HomeTimelineRelayRuntimeConfigurationHandlers(
+                currentIdentity: { [weak self] in
+                    self?.currentRelayRuntimeConfigurationIdentity()
+                },
+                prepareDependencies: { [weak self] in
+                    guard let self else { return }
+                    await ensureProfileDirectoryDependencies(for: noteEvents)
+                },
+                prepareFeed: { [weak self] in
+                    guard let self else { return nil }
+                    ensureHomeFeedDefinition(account: account)
+                    guard let context = activeHomeFeedRuntimeContext() else { return nil }
+                    return HomeTimelineRelayRuntimeFeedPreparation(
+                        context: context,
+                        newestCreatedAt: noteEvents.map(\.createdAt).max(),
+                        newestCreatedAtByRelay: forwardCursorNewestCreatedAtByRelay(
+                            accountID: account.pubkey
+                        ),
+                        initialCreatedAt: noteEvents.map(\.createdAt).min()
+                    )
+                },
+                prepareInstall: { [weak self] packets, runtimeKeys, context in
+                    guard let self else { return }
+                    resetHomeTimelineRealtime(expecting: runtimeKeys)
+                    for packet in packets {
+                        feedSyncCoordinator.registerForwardContext(
+                            context,
+                            groupID: packet.groupID
+                        )
+                    }
+                },
+                isFeedContextCurrent: { [weak self] context in
+                    self?.isCurrentHomeFeedContext(context) == true
+                },
+                didFail: { [weak self] message in
+                    self?.recordRuntimeSyncEvent(
+                        relayURL: identity.resolvedRelays.first ?? "runtime",
+                        kind: .partialFailure,
+                        subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
+                        message: message
+                    )
+                }
+            )
+        )
+    }
 
-        func remainsCurrent() -> Bool {
-            relayRuntimeConfigurationSequence == configurationSequence &&
-                isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) &&
-                resolvedRelays == expectedResolvedRelays &&
-                followedPubkeys == expectedFollowedPubkeys &&
-                contactListEvent?.id == expectedContactListEventID
-        }
-
-        do {
-            guard await runtimeEventPump.waitUntilReady() else { return }
-            guard remainsCurrent() else { return }
-            await relayRuntime.setTrafficContext(
-                accountID: account.pubkey,
-                policy: syncPolicy
-            )
-            guard remainsCurrent() else { return }
-            await dependencyCoordinator.updateProfileRelayURLs(expectedDefaultRelays)
-            guard remainsCurrent() else { return }
-            try await relayRuntime.setDefaultRelays(expectedDefaultRelays)
-            guard remainsCurrent() else { return }
-            await ensureProfileDirectoryDependencies(for: noteEvents)
-            guard remainsCurrent() else { return }
-            ensureHomeFeedDefinition(account: account)
-            let newestCreatedAt = noteEvents.map(\.createdAt).max()
-            let initialCreatedAt = noteEvents.map(\.createdAt).min()
-            let newestCreatedAtByRelay = forwardCursorNewestCreatedAtByRelay(accountID: account.pubkey)
-            let plan = syncPlanner.forwardPlan(
-                account: account,
-                followedPubkeys: expectedFollowedPubkeys,
-                contactItems: expectedContactItems,
-                newestCreatedAt: newestCreatedAt,
-                newestCreatedAtByRelay: newestCreatedAtByRelay,
-                initialCreatedAt: initialCreatedAt,
-                relayURLs: expectedResolvedRelays,
-                policy: syncPolicy
-            )
-            guard remainsCurrent() else { return }
-            guard let feedContext = activeHomeFeedRuntimeContext() else { return }
-            let scopedPackets = feedScopedForwardPackets(plan.packets, context: feedContext)
-            guard forceInstall || installedHomeForwardPackets != scopedPackets else { return }
-            resetHomeTimelineRealtime(
-                expecting: homeForwardRuntimeKeys(
-                    packets: scopedPackets,
-                    defaultRelayURLs: expectedDefaultRelays
-                )
-            )
-            for packet in scopedPackets {
-                feedSyncCoordinator.registerForwardContext(feedContext, groupID: packet.groupID)
-            }
-            try await relayRuntime.installForward(
-                scopedPackets,
-                replacingGroupIDsWithPrefix: HomeTimelineSyncPlanner.homeForwardGroupPrefix
-            )
-            guard remainsCurrent(), isCurrentHomeFeedContext(feedContext) else { return }
-            installedHomeForwardPackets = scopedPackets
-        } catch {
-            guard remainsCurrent() else { return }
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
-                message: String(describing: error)
-            )
-        }
+    private func currentRelayRuntimeConfigurationIdentity()
+        -> HomeTimelineRelayRuntimeConfigurationIdentity? {
+        guard let account else { return nil }
+        return HomeTimelineRelayRuntimeConfigurationIdentity(
+            accountID: account.pubkey,
+            lifecycleGeneration: runtimeLifecycleGeneration,
+            resolvedRelays: resolvedRelays,
+            followedPubkeys: followedPubkeys,
+            contactListEventID: contactListEvent?.id
+        )
     }
 
     private func runtimeRelayURLs(account: NostrAccount) -> [String] {
@@ -1535,25 +1521,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             .dedupedPreservingOrder()
             .prefix(10)
         )
-    }
-
-    private func homeForwardRuntimeKeys(
-        packets: [NostrREQPacket],
-        defaultRelayURLs: [String]
-    ) -> Set<RuntimeSubscriptionKey> {
-        Set(packets.flatMap { packet in
-            NostrREQScheduler.forwardChunks(packet)
-        }.flatMap { packet in
-            let relayURLs = packet.relayURLs.isEmpty
-                ? defaultRelayURLs
-                : defaultRelayURLs.filter { packet.relayURLs.contains($0) }
-            return relayURLs.map { relayURL in
-                RuntimeSubscriptionKey(
-                    relayURL: relayURL,
-                    subscriptionID: packet.subscriptionID
-                )
-            }
-        })
     }
 
     private func resetHomeTimelineRealtime(
