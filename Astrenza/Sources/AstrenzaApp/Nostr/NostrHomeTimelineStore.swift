@@ -92,7 +92,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let homeFeedProjection: HomeFeedProjectionController
     private let relayRuntime: NostrRelayRuntime?
     private let profileDirectory: NostrProfileDirectory?
-    private let outboxDrainer: HomeTimelineOutboxDrainer
+    private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
@@ -100,8 +100,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var runtimeTask: Task<Void, Never>?
     private var profileDirectoryUpdateTask: Task<Void, Never>?
     private var unmaterializedCountTask: Task<Void, Never>?
-    private var outboxTask: Task<Void, Never>?
-    private var outboxTaskGeneration: UInt64 = 0
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
@@ -261,9 +259,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             eventStore: eventStore,
             persistenceWorker: persistenceWorker
         )
-        self.outboxDrainer = HomeTimelineOutboxDrainer(
-            eventStore: eventStore,
-            publisher: outboxPublisher
+        self.outboxCoordinator = HomeTimelineOutboxCoordinator(
+            drainer: HomeTimelineOutboxDrainer(
+                eventStore: eventStore,
+                publisher: outboxPublisher
+            )
         )
         self.syncPolicySettingsStore = syncPolicySettingsStore
         self.syncPolicy = syncPolicy
@@ -273,7 +273,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let isSameAccount = self.account?.pubkey == account.pubkey
         if isSameAccount {
             startRuntimeEventPump()
-            scheduleOutboxDrain()
+            activateOutbox(accountID: account.pubkey)
             return
         }
         if let currentAccount = self.account,
@@ -308,7 +308,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         loadTask = Task {
             await load(account: account)
         }
-        scheduleOutboxDrain()
+        activateOutbox(accountID: account.pubkey)
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
@@ -506,40 +506,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         materializeEntries()
         await persistDatabase(account: account)
         phase = .loaded
-        scheduleOutboxDrain()
+        outboxCoordinator.requestImmediateDrain()
     }
 
-    private func scheduleOutboxDrain(delayNanoseconds: UInt64 = 0) {
-        if outboxTask != nil {
-            guard delayNanoseconds == 0 else { return }
-            outboxTask?.cancel()
-            outboxTask = nil
-        }
-        guard account != nil, eventStore != nil else { return }
-        outboxTaskGeneration &+= 1
-        let taskGeneration = outboxTaskGeneration
-        outboxTask = Task { [weak self] in
-            guard let self, let accountID = self.account?.pubkey else { return }
-            if delayNanoseconds > 0 {
-                do {
-                    try await Task.sleep(nanoseconds: delayNanoseconds)
-                } catch {
-                    return
-                }
-            }
-            let result = await self.outboxDrainer.drain(accountID: accountID)
-            guard self.outboxTaskGeneration == taskGeneration else { return }
-            self.outboxTask = nil
-            if result.didRecordRelayResults {
-                self.relayStatusRevision &+= 1
-            }
-            guard !Task.isCancelled,
-                  self.account?.pubkey == accountID,
-                  let nextRetryAt = result.nextRetryAt
-            else { return }
-            let now = Int(Date().timeIntervalSince1970)
-            let delaySeconds = max(1, nextRetryAt - now)
-            self.scheduleOutboxDrain(delayNanoseconds: UInt64(delaySeconds) * 1_000_000_000)
+    private func activateOutbox(accountID: String) {
+        outboxCoordinator.activate(accountID: accountID) { [weak self] in
+            self?.relayStatusRevision &+= 1
         }
     }
 
@@ -657,15 +629,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         materializationScheduler.reset()
         realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         unmaterializedCountTask?.cancel()
-        outboxTask?.cancel()
-        outboxTaskGeneration &+= 1
+        outboxCoordinator.cancel()
         dependencyFlushTask?.cancel()
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
         profileDirectoryUpdateTask = nil
         unmaterializedCountTask = nil
-        outboxTask = nil
         dependencyFlushTask = nil
         dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()

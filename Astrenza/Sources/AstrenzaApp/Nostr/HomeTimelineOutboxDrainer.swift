@@ -6,7 +6,7 @@ struct HomeTimelineOutboxDrainResult: Sendable {
     let didRecordRelayResults: Bool
 }
 
-actor HomeTimelineOutboxDrainer {
+actor HomeTimelineOutboxDrainer: HomeTimelineOutboxDraining {
     private let eventStore: NostrEventStore?
     private let publisher: NostrOutboxRelayPublisher
 
