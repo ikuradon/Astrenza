@@ -288,7 +288,7 @@ struct TimelineEmptyState: Equatable {
     )
 }
 
-enum TimelineGapFillDirection: Equatable {
+enum TimelineGapFillDirection: Equatable, Sendable {
     case newer
     case older
 

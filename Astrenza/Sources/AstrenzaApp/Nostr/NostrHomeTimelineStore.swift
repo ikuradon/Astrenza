@@ -81,6 +81,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let eventIngestor: HomeTimelineEventIngestor
     private let runtimeEventApplicationPlanner: HomeTimelineRuntimeEventApplicationPlanner
+    private let backwardCompletionPlanner: HomeTimelineBackwardCompletionPlanner
+    private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let materializationScheduler: HomeTimelineMaterializationScheduler
@@ -223,6 +225,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         self.eventIngestor = eventIngestor
         self.runtimeEventApplicationPlanner = HomeTimelineRuntimeEventApplicationPlanner()
+        self.backwardCompletionPlanner = HomeTimelineBackwardCompletionPlanner()
+        self.backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
         self.syncPlanner = syncPlanner
         self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.timelineCoordinator = HomeTimelineCoordinator()
@@ -2033,41 +2037,52 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
             return
         }
-        let priorBottomPostID = request.olderAnchorPostID ?? noteEvents.last?.id
-        let isTimelineBackfill = request.isOlderPage || request.gap != nil
-        guard !isTimelineBackfill || isCurrentHomeFeedContext(request.feedContext) else {
+        let plan = backwardCompletionPlanner.plan(.init(
+            request: request,
+            completion: completion,
+            fallbackBottomEventID: noteEvents.last?.id,
+            isCurrentFeedContext: isCurrentHomeFeedContext(request.feedContext)
+        ))
+        guard plan.acceptsTimelineRequest else {
             relayStatusRevision &+= 1
             return
         }
-        if request.isOlderPage && completion.status == .completed && completion.eventCount == 0 {
+        if plan.marksOlderEnd {
             hasMoreOlder = false
         }
-        let didReceiveTimelineEvents = completion.eventCount > 0 ||
-            request.receivedTimelineEventCount > 0 ||
-            !request.receivedTimelineEventIDs.isEmpty
-        if request.isOlderPage,
-           didReceiveTimelineEvents,
-           let account {
-            if completion.status != .completed {
-                markOlderPageBoundaryGap(request)
+        if let update = plan.olderPageUpdate, let account {
+            if update.marksBoundaryGap,
+               let definition = homeFeedProjection.definition {
+                do {
+                    try backfillPersistence.markOlderPageBoundaryGap(
+                        request: update.request,
+                        definition: definition
+                    )
+                } catch {
+                    recordRuntimeSyncEvent(
+                        relayURL: resolvedRelays.first ?? "runtime",
+                        kind: .partialFailure,
+                        subscriptionID: nil,
+                        message: "older gap mark failed: \(error.localizedDescription)"
+                    )
+                }
             }
             reloadProjectionWindow(
                 account: account,
-                around: priorBottomPostID,
+                around: update.anchorEventID,
                 mergingWithCurrentWindow: true
             )
             materializeEntries()
             scheduleLinkPreviewResolution()
         }
 
-        if let gap = request.gap,
-           let feedContext = request.feedContext,
-           let account {
-            if completion.status == .completed {
-                reconcileCompletedGap(gap, context: feedContext)
-            } else {
-                if completion.status == .partial || didReceiveTimelineEvents {
-                    markGapUnresolved(gap, context: feedContext)
+        if let gapUpdate = plan.gapUpdate, let account {
+            switch gapUpdate {
+            case .reconcile(let gap, let context):
+                reconcileCompletedGap(gap, context: context)
+            case .restore(let gap, let context, let marksUnresolved):
+                if marksUnresolved {
+                    backfillPersistence.markGapUnresolved(gap, context: context)
                 }
                 // eventなしのtimeout/CLOSEDでも永続化済みgapを再投影する。
                 // bootstrap保存と競合するとeventだけのwindowが残る場合があるため。
@@ -2077,75 +2092,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             }
         }
         relayStatusRevision &+= 1
-    }
-
-    private func markOlderPageBoundaryGap(_ request: PendingBackwardRequest) {
-        guard account != nil,
-              let definition = homeFeedProjection.definition,
-              let anchorPostID = request.olderAnchorPostID,
-              let newestReceivedEventID = newestReceivedTimelineEventID(in: request)
-        else { return }
-        do {
-            try eventStore?.markFeedGap(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                newerEventID: anchorPostID,
-                olderEventID: newestReceivedEventID,
-                state: .unresolved,
-                sourceRequestID: request.sourceRequestIDs.last
-            )
-        } catch {
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: nil,
-                message: "older gap mark failed: \(error.localizedDescription)"
-            )
-        }
-    }
-
-    private func newestReceivedTimelineEventID(in request: PendingBackwardRequest) -> String? {
-        guard let eventStore else { return nil }
-        let uniqueEventIDs = Array(Set(request.receivedTimelineEventIDs))
-        guard !uniqueEventIDs.isEmpty,
-              let events = try? eventStore.events(ids: uniqueEventIDs)
-        else { return nil }
-        return events.max { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt {
-                return lhs.id > rhs.id
-            }
-            return lhs.createdAt < rhs.createdAt
-        }?.id
-    }
-
-    private func markGapResolved(_ gap: PendingGapBackfill, context: HomeFeedRuntimeContext) {
-        guard account != nil, isCurrentHomeFeedContext(context) else { return }
-        do {
-            try eventStore?.resolveFeedGap(
-                feedID: context.feedID,
-                revision: context.revision,
-                newerEventID: gap.newerPostID,
-                olderEventID: gap.olderPostID
-            )
-        } catch {
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: nil,
-                message: "gap resolve failed: \(error.localizedDescription)"
-            )
-        }
-    }
-
-    private func markGapUnresolved(_ gap: PendingGapBackfill, context: HomeFeedRuntimeContext) {
-        guard isCurrentHomeFeedContext(context) else { return }
-        try? eventStore?.markFeedGap(
-            feedID: context.feedID,
-            revision: context.revision,
-            newerEventID: gap.newerPostID,
-            olderEventID: gap.olderPostID,
-            state: .unresolved
-        )
     }
 
     private func reconcileCompletedGap(
@@ -2216,11 +2162,17 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: diagnostic.message
             )
         }
-        switch output.result {
-        case .verifiedComplete:
-            markGapResolved(gap, context: context)
+        switch backfillPersistence.apply(output.result, gap: gap, context: context) {
+        case .verifiedComplete(let resolveFailure):
+            if let resolveFailure {
+                recordRuntimeSyncEvent(
+                    relayURL: resolvedRelays.first ?? "runtime",
+                    kind: .partialFailure,
+                    subscriptionID: nil,
+                    message: "gap resolve failed: \(resolveFailure)"
+                )
+            }
         case .indeterminate:
-            markGapUnresolved(gap, context: context)
             recordRuntimeSyncEvent(
                 relayURL: resolvedRelays.first ?? "runtime",
                 kind: .partialFailure,
@@ -2228,45 +2180,27 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: "gap reconciliation was inconclusive"
             )
         case .recovered(let recoveredEvents):
-            do {
-                let insertedAt = Int(Date().timeIntervalSince1970)
-                let scopedEvents = recoveredEvents.filter(context.includes)
-                let feedMemberships = HomeFeedProjectionBuilder.memberships(
-                    events: scopedEvents,
-                    feedID: context.feedID,
-                    feedRevision: context.revision,
-                    reason: "gap-negentropy",
-                    insertedAt: insertedAt
-                )
-                let feedMembershipSources = HomeFeedProjectionBuilder.membershipSources(
-                    events: scopedEvents,
-                    feedID: context.feedID,
-                    feedRevision: context.revision,
-                    reason: "gap-negentropy",
-                    insertedAt: insertedAt
-                )
-                try eventStore?.ingest(
-                    events: scopedEvents,
-                    eventSources: [],
-                    feedMemberships: feedMemberships,
-                    feedMembershipSources: feedMembershipSources,
-                    receivedAt: insertedAt
-                )
-                for event in scopedEvents {
-                    await enqueueBackwardDependencies(for: event)
-                }
-                markGapUnresolved(gap, context: context)
-            } catch {
-                recordRuntimeSyncEvent(
-                    relayURL: resolvedRelays.first ?? "runtime",
-                    kind: .partialFailure,
-                    subscriptionID: "astrenza-gap-events",
-                    message: "gap negentropy save failed: \(error.localizedDescription)"
-                )
-                return
+            for event in recoveredEvents {
+                await enqueueBackwardDependencies(for: event)
+                guard lifecycleCoordinator.isCurrent(lifecycle),
+                      self.account?.pubkey == accountID,
+                      isCurrentHomeFeedContext(context)
+                else { return }
             }
+        case .recoveryFailed(let message):
+            recordRuntimeSyncEvent(
+                relayURL: resolvedRelays.first ?? "runtime",
+                kind: .partialFailure,
+                subscriptionID: "astrenza-gap-events",
+                message: "gap negentropy save failed: \(message)"
+            )
+            return
         }
 
+        guard lifecycleCoordinator.isCurrent(lifecycle),
+              self.account?.pubkey == accountID,
+              isCurrentHomeFeedContext(context)
+        else { return }
         reloadProjectionWindow(account: account, around: gap.stableAnchorPostID)
         materializeEntries()
         scheduleLinkPreviewResolution()

@@ -113,7 +113,7 @@ final class HomeTimelineBackwardRequestRegistry {
     }
 }
 
-struct PendingBackwardRequest {
+struct PendingBackwardRequest: Equatable, Sendable {
     let feedContext: HomeFeedRuntimeContext?
     let isOlderPage: Bool
     let olderAnchorPostID: String?
@@ -122,7 +122,7 @@ struct PendingBackwardRequest {
     private(set) var receivedTimelineEventIDs: [String]
     private(set) var sourceRequestIDs: [String]
 
-    fileprivate init(
+    init(
         feedContext: HomeFeedRuntimeContext? = nil,
         isOlderPage: Bool = false,
         olderAnchorPostID: String? = nil,
@@ -152,7 +152,7 @@ struct PendingBackwardRequest {
     }
 }
 
-struct PendingGapBackfill {
+struct PendingGapBackfill: Equatable, Sendable {
     let newerPostID: String
     let olderPostID: String
     let direction: TimelineGapFillDirection
