@@ -31,6 +31,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventProcessor: HomeTimelineRuntimeEventProcessor
     private let runtimeEventApplicationCoordinator: HomeTimelineRuntimeEventApplicationCoordinator
+    private let backwardRequestCoordinator: HomeTimelineBackwardRequestCoordinator
     private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -49,7 +50,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
-    private let syncPlanner: HomeTimelineSyncPlanner
     private let timelineRepository: HomeTimelineRepository
     private let timelineCoordinator: HomeTimelineCoordinator
     private let gapReconciliationApplicationCoordinator: HomeTimelineGapReconciliationApplicationCoordinator
@@ -237,16 +237,20 @@ final class NostrHomeTimelineStore: ObservableObject {
             NostrProfileDirectory(eventStore: eventStore, relayRuntime: $0)
         }
         let sourcePacketInstaller: HomeTimelineDependencyResolutionCoordinator.SourcePacketInstaller?
+        let backwardPacketInstaller: HomeTimelineBackwardRequestCoordinator.PacketInstaller?
         if let relayRuntime {
             sourcePacketInstaller = { packets in
                 try await relayRuntime.installBackward(packets, mergeField: .ids)
             }
+            backwardPacketInstaller = { packets, mergeField in
+                try await relayRuntime.installBackward(packets, mergeField: mergeField)
+            }
         } else {
             sourcePacketInstaller = nil
+            backwardPacketInstaller = nil
         }
         let backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
         self.backfillPersistence = backfillPersistence
-        self.syncPlanner = syncPlanner
         let timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.timelineRepository = timelineRepository
         self.timelineCoordinator = HomeTimelineCoordinator()
@@ -270,6 +274,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.backwardRequestRegistry = backwardRequestRegistry
+        self.backwardRequestCoordinator = HomeTimelineBackwardRequestCoordinator(
+            contentCoordinator: contentCoordinator,
+            timelineRepository: timelineRepository,
+            projectionController: homeFeedProjection,
+            backwardRequestRegistry: backwardRequestRegistry,
+            syncPlanner: syncPlanner,
+            packetInstaller: backwardPacketInstaller
+        )
         let feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
             eventStore: eventStore,
             backwardRequestRegistry: backwardRequestRegistry
@@ -539,8 +551,12 @@ final class NostrHomeTimelineStore: ObservableObject {
               !resolvedRelays.isEmpty
         else { return false }
 
-        let installed = await requestGapNotesThroughRuntime(account: account, gap: gap, direction: direction)
-        if installed, let definition = homeFeedProjection.definition {
+        let outcome = await backwardRequestCoordinator.requestGap(
+            account: account,
+            gap: gap,
+            direction: direction
+        )
+        if let definition = applyBackwardRequestOutcome(outcome) {
             try? backfillPersistence.markGapRequested(
                 newerEventID: gap.newerPostID,
                 olderEventID: gap.olderPostID,
@@ -548,8 +564,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
             _ = reloadProjectionWindow(account: account, around: gap.newerPostID)
             materializeEntries()
+            return true
         }
-        return installed
+        return false
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
@@ -947,7 +964,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
 
         if relayRuntime != nil {
-            await requestOlderNotesThroughRuntime(account: account)
+            let outcome = await backwardRequestCoordinator.requestOlder(
+                account: account
+            )
+            _ = applyBackwardRequestOutcome(outcome)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
@@ -991,89 +1011,27 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func requestOlderNotesThroughRuntime(account: NostrAccount) async {
-        guard let relayRuntime,
-              let oldestCreatedAt = noteEvents.map(\.createdAt).min()
-        else { return }
-        ensureHomeFeedDefinition(account: account)
-        guard let feedContext = activeHomeFeedRuntimeContext() else { return }
-        let olderAnchorPostID = noteEvents.last?.id
-
-        guard let packet = syncPlanner.olderNotesPacket(
-            account: account,
-            followedPubkeys: followedPubkeys,
-            oldestCreatedAt: oldestCreatedAt,
-            relayURLs: resolvedRelays
-        ) else { return }
-
-        backwardRequestRegistry.registerOlderPage(
-            groupID: packet.groupID,
-            context: feedContext,
-            anchorEventID: olderAnchorPostID
-        )
-
-        do {
-            try await relayRuntime.installBackward([packet], mergeField: .authors)
-        } catch {
-            backwardRequestRegistry.remove(groupID: packet.groupID)
+    private func applyBackwardRequestOutcome(
+        _ outcome: HomeTimelineBackwardRequestOutcome
+    ) -> NostrFeedDefinitionRecord? {
+        switch outcome {
+        case .unavailable:
+            return nil
+        case .installed(let definition):
+            return definition
+        case .failed(let diagnostic):
             recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
+                relayURL: diagnostic.relayURL,
                 kind: .partialFailure,
-                subscriptionID: packet.subscriptionID,
-                message: "older enqueue failed: \(error.localizedDescription)"
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
             )
-        }
-    }
-
-    private func requestGapNotesThroughRuntime(
-        account: NostrAccount,
-        gap: TimelineGap,
-        direction: TimelineGapFillDirection
-    ) async -> Bool {
-        guard let relayRuntime,
-              let newerEvent = timelineEvent(id: gap.newerPostID),
-              let olderEvent = timelineEvent(id: gap.olderPostID)
-        else { return false }
-        ensureHomeFeedDefinition(account: account)
-        guard let feedContext = activeHomeFeedRuntimeContext() else { return false }
-
-        guard let packet = syncPlanner.gapNotesPacket(
-            account: account,
-            followedPubkeys: followedPubkeys,
-            newerEvent: newerEvent,
-            olderEvent: olderEvent,
-            missingEstimate: gap.missingEstimate,
-            relayURLs: resolvedRelays
-        ) else { return false }
-
-        backwardRequestRegistry.registerGap(
-            groupID: packet.groupID,
-            context: feedContext,
-            newerEventID: gap.newerPostID,
-            olderEventID: gap.olderPostID,
-            direction: direction
-        )
-
-        do {
-            try await relayRuntime.installBackward([packet], mergeField: .authors)
-            return true
-        } catch {
-            backwardRequestRegistry.remove(groupID: packet.groupID)
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: packet.subscriptionID,
-                message: "gap enqueue failed: \(error.localizedDescription)"
-            )
-            return false
+            return nil
         }
     }
 
     private func timelineEvent(id: String) -> NostrEvent? {
-        if let event = noteEvents.first(where: { $0.id == id }) {
-            return event
-        }
-        return timelineRepository.event(id: id)
+        noteEvents.first { $0.id == id } ?? timelineRepository.event(id: id)
     }
 
     @discardableResult

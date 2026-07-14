@@ -1,0 +1,172 @@
+import AstrenzaCore
+
+struct HomeTimelineBackwardRequestDiagnostic: Equatable, Sendable {
+    let relayURL: String
+    let subscriptionID: String
+    let message: String
+}
+
+enum HomeTimelineBackwardRequestOutcome: Equatable, Sendable {
+    case unavailable
+    case installed(NostrFeedDefinitionRecord)
+    case failed(HomeTimelineBackwardRequestDiagnostic)
+}
+
+@MainActor
+final class HomeTimelineBackwardRequestCoordinator {
+    typealias PacketInstaller = @MainActor @Sendable (
+        _ packets: [NostrREQPacket],
+        _ mergeField: NostrREQMergeField
+    ) async throws -> Void
+
+    private let contentCoordinator: HomeTimelineContentCoordinator
+    private let timelineRepository: HomeTimelineRepository
+    private let projectionController: HomeFeedProjectionController
+    private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
+    private let syncPlanner: HomeTimelineSyncPlanner
+    private let packetInstaller: PacketInstaller?
+
+    init(
+        contentCoordinator: HomeTimelineContentCoordinator,
+        timelineRepository: HomeTimelineRepository,
+        projectionController: HomeFeedProjectionController,
+        backwardRequestRegistry: HomeTimelineBackwardRequestRegistry,
+        syncPlanner: HomeTimelineSyncPlanner,
+        packetInstaller: PacketInstaller?
+    ) {
+        self.contentCoordinator = contentCoordinator
+        self.timelineRepository = timelineRepository
+        self.projectionController = projectionController
+        self.backwardRequestRegistry = backwardRequestRegistry
+        self.syncPlanner = syncPlanner
+        self.packetInstaller = packetInstaller
+    }
+
+    func requestOlder(
+        account: NostrAccount
+    ) async -> HomeTimelineBackwardRequestOutcome {
+        guard packetInstaller != nil else { return .unavailable }
+        let content = contentCoordinator.snapshot
+        guard let oldestCreatedAt = content.noteEvents.map(\.createdAt).min(),
+              let feed = currentFeed(account: account, content: content),
+              let packet = syncPlanner.olderNotesPacket(
+                account: account,
+                followedPubkeys: content.followedPubkeys,
+                oldestCreatedAt: oldestCreatedAt,
+                relayURLs: content.resolvedRelays
+              )
+        else { return .unavailable }
+
+        return await install(
+            packet,
+            feed: feed,
+            fallbackRelayURL: content.resolvedRelays.first,
+            failurePrefix: "older enqueue failed"
+        ) {
+            backwardRequestRegistry.registerOlderPage(
+                groupID: packet.groupID,
+                context: feed.context,
+                anchorEventID: content.noteEvents.last?.id
+            )
+        }
+    }
+
+    func requestGap(
+        account: NostrAccount,
+        gap: TimelineGap,
+        direction: TimelineGapFillDirection
+    ) async -> HomeTimelineBackwardRequestOutcome {
+        guard packetInstaller != nil else { return .unavailable }
+        let content = contentCoordinator.snapshot
+        guard let newerEvent = timelineEvent(
+            id: gap.newerPostID,
+            inMemoryEvents: content.noteEvents
+        ),
+        let olderEvent = timelineEvent(
+            id: gap.olderPostID,
+            inMemoryEvents: content.noteEvents
+        ),
+        let feed = currentFeed(account: account, content: content),
+        let packet = syncPlanner.gapNotesPacket(
+            account: account,
+            followedPubkeys: content.followedPubkeys,
+            newerEvent: newerEvent,
+            olderEvent: olderEvent,
+            missingEstimate: gap.missingEstimate,
+            relayURLs: content.resolvedRelays
+        ) else { return .unavailable }
+
+        return await install(
+            packet,
+            feed: feed,
+            fallbackRelayURL: content.resolvedRelays.first,
+            failurePrefix: "gap enqueue failed"
+        ) {
+            backwardRequestRegistry.registerGap(
+                groupID: packet.groupID,
+                context: feed.context,
+                newerEventID: gap.newerPostID,
+                olderEventID: gap.olderPostID,
+                direction: direction
+            )
+        }
+    }
+
+    private func currentFeed(
+        account: NostrAccount,
+        content: HomeTimelineContentSnapshot
+    ) -> (definition: NostrFeedDefinitionRecord, context: HomeFeedRuntimeContext)? {
+        projectionController.ensureDefinition(
+            accountID: account.pubkey,
+            followedPubkeys: content.followedPubkeys,
+            liveEvents: content.noteEvents
+        )
+        guard let definition = projectionController.definition,
+              let context = projectionController.runtimeContext(),
+              projectionController.isCurrent(context, accountID: account.pubkey)
+        else { return nil }
+        return (definition, context)
+    }
+
+    private func install(
+        _ packet: NostrREQPacket,
+        feed: (definition: NostrFeedDefinitionRecord, context: HomeFeedRuntimeContext),
+        fallbackRelayURL: String?,
+        failurePrefix: String,
+        register: () -> Void
+    ) async -> HomeTimelineBackwardRequestOutcome {
+        guard let packetInstaller, !Task.isCancelled else { return .unavailable }
+        register()
+        do {
+            try await packetInstaller([packet], .authors)
+        } catch is CancellationError {
+            backwardRequestRegistry.remove(groupID: packet.groupID)
+            return .unavailable
+        } catch {
+            backwardRequestRegistry.remove(groupID: packet.groupID)
+            return .failed(HomeTimelineBackwardRequestDiagnostic(
+                relayURL: fallbackRelayURL ?? "runtime",
+                subscriptionID: packet.subscriptionID,
+                message: "\(failurePrefix): \(error.localizedDescription)"
+            ))
+        }
+
+        guard !Task.isCancelled,
+              projectionController.isCurrent(
+                feed.context,
+                accountID: feed.definition.accountID
+              )
+        else {
+            backwardRequestRegistry.remove(groupID: packet.groupID)
+            return .unavailable
+        }
+        return .installed(feed.definition)
+    }
+
+    private func timelineEvent(
+        id: String,
+        inMemoryEvents: [NostrEvent]
+    ) -> NostrEvent? {
+        inMemoryEvents.first { $0.id == id } ?? timelineRepository.event(id: id)
+    }
+}
