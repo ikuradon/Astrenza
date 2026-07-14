@@ -109,6 +109,46 @@ struct HomeFeedProjectionTests {
         #expect(controller.generation == 3)
     }
 
+    @Test("Controller activates its stored projection window")
+    @MainActor
+    func controllerActivatesStoredProjectionWindow() throws {
+        let accountID = String(repeating: "a", count: 64)
+        let plan = try #require(HomeFeedProjectionBuilder.definitionPlan(
+            accountID: accountID,
+            followedPubkeys: ["followed"],
+            existingDefinition: nil,
+            now: 100
+        ))
+        let storedEvent = event(
+            id: String(repeating: "c", count: 64),
+            kind: 1,
+            tags: []
+        )
+        let eventStore = try NostrEventStore.inMemory()
+        try eventStore.save(events: [storedEvent], receivedAt: 100)
+        try eventStore.replaceFeedProjection(
+            plan.definition,
+            memberships: HomeFeedProjectionBuilder.memberships(
+                events: [storedEvent],
+                feedID: plan.definition.feedID,
+                feedRevision: plan.definition.revision,
+                reason: "test",
+                insertedAt: 100
+            )
+        )
+        let controller = HomeFeedProjectionController(eventStore: eventStore)
+
+        controller.activateStoredProjection(
+            definition: plan.definition,
+            sourceAuthors: plan.sourceAuthors
+        )
+
+        #expect(controller.definition == plan.definition)
+        #expect(controller.window?.events.map(\.id) == [storedEvent.id])
+        #expect(controller.sourceAuthors == plan.sourceAuthors)
+        #expect(controller.generation == 1)
+    }
+
     private func event(id: String, kind: Int, tags: [[String]]) -> NostrEvent {
         NostrEvent(
             id: id,

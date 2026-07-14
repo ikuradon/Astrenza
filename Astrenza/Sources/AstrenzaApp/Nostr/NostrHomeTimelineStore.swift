@@ -490,12 +490,10 @@ final class NostrHomeTimelineStore: ObservableObject {
 
         let installed = await requestGapNotesThroughRuntime(account: account, gap: gap, direction: direction)
         if installed, let definition = homeFeedProjection.definition {
-            try? eventStore?.markFeedGap(
-                feedID: definition.feedID,
-                revision: definition.revision,
+            try? backfillPersistence.markGapRequested(
                 newerEventID: gap.newerPostID,
                 olderEventID: gap.olderPostID,
-                state: .requested
+                definition: definition
             )
             _ = reloadProjectionWindow(account: account, around: gap.newerPostID)
             materializeEntries()
@@ -1035,7 +1033,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         if let event = noteEvents.first(where: { $0.id == id }) {
             return event
         }
-        return try? eventStore?.event(id: id)
+        return timelineRepository.event(id: id)
     }
 
     @discardableResult
@@ -1195,13 +1193,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func contextEventsForCurrentProjection() -> [NostrEvent] {
-        guard let eventStore else { return [] }
-        let sourceIDs = Array(Set(noteEvents.flatMap { event in
-            NostrEventDependencies.extract(from: event).sourceEventIDs
-        })).sorted()
-        guard !sourceIDs.isEmpty else { return [] }
-        let visibleIDs = Set(noteEvents.map(\.id))
-        return ((try? eventStore.events(ids: sourceIDs)) ?? []).filter { !visibleIDs.contains($0.id) }
+        timelineRepository.contextEvents(for: noteEvents)
     }
 
     private func startRuntimeEventPump() {
@@ -1410,19 +1402,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func forwardCursorNewestCreatedAtByRelay(accountID: String) -> [String: Int]? {
-        guard let eventStore else { return nil }
-
-        var newestCreatedAtByRelay: [String: Int] = [:]
-        for relayURL in resolvedRelays {
-            if let newestCreatedAt = try? eventStore.syncCursor(
-                accountID: accountID,
-                timelineKey: "home",
-                relayURL: relayURL
-            )?.newestCreatedAt {
-                newestCreatedAtByRelay[relayURL] = newestCreatedAt
-            }
-        }
-        return newestCreatedAtByRelay
+        timelineRepository.newestCreatedAtByRelay(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURLs: resolvedRelays
+        )
     }
 
     private func handleRuntimePacket(_ packet: NostrRelayRuntimePacket) async {
@@ -2050,19 +2034,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
-        guard let eventStore,
-              let until = current.noteEvents.map(\.createdAt).min().map({ max(0, $0 - 1) })
-        else {
-            return nil
-        }
-
-        let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : current.followedPubkeys
-        guard let events = try? eventStore.events(kind: 1, authors: authors, until: until, limit: 1_000),
-              !events.isEmpty
-        else {
-            return nil
-        }
-        return events
+        timelineRepository.olderBackfillEvents(
+            accountID: account.pubkey,
+            followedPubkeys: current.followedPubkeys,
+            currentEvents: current.noteEvents,
+            limit: 1_000
+        )
     }
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
@@ -2242,13 +2219,8 @@ extension NostrHomeTimelineStore {
         applyContentSnapshot(
             contentCoordinator.replaceFollowedPubkeys(sourceAuthors)
         )
-        homeFeedProjection.activate(
+        homeFeedProjection.activateStoredProjection(
             definition: definition,
-            window: try? eventStore?.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: homeFeedProjection.windowLimit
-            ),
             sourceAuthors: sourceAuthors
         )
     }

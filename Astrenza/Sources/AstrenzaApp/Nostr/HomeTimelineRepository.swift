@@ -22,6 +22,67 @@ struct HomeTimelineReadContext {
 struct HomeTimelineRepository {
     let eventStore: NostrEventStore?
 
+    func event(id: String) -> NostrEvent? {
+        try? eventStore?.event(id: id)
+    }
+
+    func contextEvents(for visibleEvents: [NostrEvent]) -> [NostrEvent] {
+        guard let eventStore else { return [] }
+        let sourceEventIDs = Array(Set(visibleEvents.flatMap { event in
+            NostrEventDependencies.extract(from: event).sourceEventIDs
+        })).sorted()
+        guard !sourceEventIDs.isEmpty else { return [] }
+
+        let visibleEventIDs = Set(visibleEvents.map(\.id))
+        return ((try? eventStore.events(ids: sourceEventIDs)) ?? []).filter {
+            !visibleEventIDs.contains($0.id)
+        }
+    }
+
+    func newestCreatedAtByRelay(
+        accountID: String,
+        timelineKey: String,
+        relayURLs: [String]
+    ) -> [String: Int]? {
+        guard let eventStore else { return nil }
+
+        var result: [String: Int] = [:]
+        for relayURL in relayURLs {
+            if let newestCreatedAt = try? eventStore.syncCursor(
+                accountID: accountID,
+                timelineKey: timelineKey,
+                relayURL: relayURL
+            )?.newestCreatedAt {
+                result[relayURL] = newestCreatedAt
+            }
+        }
+        return result
+    }
+
+    func olderBackfillEvents(
+        accountID: String,
+        followedPubkeys: [String],
+        currentEvents: [NostrEvent],
+        limit: Int
+    ) -> [NostrEvent]? {
+        guard let eventStore,
+              let until = currentEvents.map(\.createdAt).min().map({ max(0, $0 - 1) })
+        else {
+            return nil
+        }
+
+        let authors = followedPubkeys.isEmpty ? [accountID] : followedPubkeys
+        guard let events = try? eventStore.events(
+            kind: 1,
+            authors: authors,
+            until: until,
+            limit: limit
+        ), !events.isEmpty else {
+            return nil
+        }
+        return events
+    }
+
     func materialize(
         account: NostrAccount?,
         noteEvents: [NostrEvent],

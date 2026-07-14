@@ -246,6 +246,149 @@ struct HomeTimelineRepositoryReadTests {
         ))
     }
 
+    @Test("Projection support reads resolve stored events and exclude visible context")
+    func projectionSupportReadsResolveStoredEventsAndExcludeVisibleContext() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let storedContext = event(id: "6", pubkey: author, createdAt: 100)
+        let visibleContext = event(id: "7", pubkey: author, createdAt: 200)
+        let storedDependency = event(
+            id: "8",
+            pubkey: author,
+            createdAt: 300,
+            tags: [["e", storedContext.id, "", "reply"]]
+        )
+        let visibleDependency = event(
+            id: "9",
+            pubkey: author,
+            createdAt: 400,
+            tags: [["e", visibleContext.id, "", "reply"]]
+        )
+        try eventStore.save(events: [storedContext, visibleContext])
+        let repository = HomeTimelineRepository(eventStore: eventStore)
+
+        #expect(repository.event(id: storedContext.id) == storedContext)
+        #expect(repository.event(id: String(repeating: "f", count: 64)) == nil)
+        #expect(repository.contextEvents(for: [
+            storedDependency,
+            visibleDependency,
+            visibleContext
+        ]) == [storedContext])
+        #expect(HomeTimelineRepository(eventStore: nil).contextEvents(
+            for: [storedDependency]
+        ).isEmpty)
+    }
+
+    @Test("Relay cursor reads keep only persisted newest boundaries")
+    func relayCursorReadsKeepOnlyPersistedNewestBoundaries() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "b", count: 64)
+        let firstRelay = "wss://first.example"
+        let secondRelay = "wss://second.example"
+        try eventStore.saveSyncCursor(NostrSyncCursorRecord(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURL: firstRelay,
+            newestCreatedAt: 300,
+            oldestCreatedAt: 100,
+            lastEOSEAt: 400,
+            lastNegentropyAt: nil
+        ))
+        try eventStore.saveSyncCursor(NostrSyncCursorRecord(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURL: secondRelay,
+            newestCreatedAt: nil,
+            oldestCreatedAt: 50,
+            lastEOSEAt: 500,
+            lastNegentropyAt: nil
+        ))
+        let repository = HomeTimelineRepository(eventStore: eventStore)
+
+        #expect(repository.newestCreatedAtByRelay(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURLs: [firstRelay, secondRelay, "wss://missing.example"]
+        ) == [firstRelay: 300])
+        #expect(HomeTimelineRepository(eventStore: nil).newestCreatedAtByRelay(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURLs: [firstRelay]
+        ) == nil)
+    }
+
+    @Test("Older backfill reads honor the oldest boundary and follow scope")
+    func olderBackfillReadsHonorBoundaryAndFollowScope() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let followedAuthor = String(repeating: "b", count: 64)
+        let foreignAuthor = String(repeating: "c", count: 64)
+        let currentBoundary = event(
+            id: "a",
+            pubkey: followedAuthor,
+            createdAt: 200
+        )
+        let followedOlder = event(
+            id: "b",
+            pubkey: followedAuthor,
+            createdAt: 199
+        )
+        let followedAtBoundary = event(
+            id: "c",
+            pubkey: followedAuthor,
+            createdAt: 200
+        )
+        let accountOlder = event(
+            id: "d",
+            pubkey: accountID,
+            createdAt: 190
+        )
+        let foreignOlder = event(
+            id: "e",
+            pubkey: foreignAuthor,
+            createdAt: 180
+        )
+        let followedRepost = event(
+            id: "f",
+            pubkey: followedAuthor,
+            createdAt: 170,
+            kind: 6
+        )
+        try eventStore.save(events: [
+            followedOlder,
+            followedAtBoundary,
+            accountOlder,
+            foreignOlder,
+            followedRepost
+        ])
+        let repository = HomeTimelineRepository(eventStore: eventStore)
+
+        #expect(repository.olderBackfillEvents(
+            accountID: accountID,
+            followedPubkeys: [followedAuthor],
+            currentEvents: [currentBoundary],
+            limit: 10
+        ) == [followedOlder])
+        #expect(repository.olderBackfillEvents(
+            accountID: accountID,
+            followedPubkeys: [],
+            currentEvents: [currentBoundary],
+            limit: 10
+        ) == [accountOlder])
+        #expect(repository.olderBackfillEvents(
+            accountID: accountID,
+            followedPubkeys: [followedAuthor],
+            currentEvents: [],
+            limit: 10
+        ) == nil)
+        #expect(HomeTimelineRepository(eventStore: nil).olderBackfillEvents(
+            accountID: accountID,
+            followedPubkeys: [followedAuthor],
+            currentEvents: [currentBoundary],
+            limit: 10
+        ) == nil)
+    }
+
     private func readContext(
         accountID: String? = nil,
         fallbackEntries: [TimelineFeedEntry] = [],

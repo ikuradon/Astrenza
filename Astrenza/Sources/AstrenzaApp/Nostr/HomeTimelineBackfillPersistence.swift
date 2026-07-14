@@ -56,6 +56,21 @@ struct HomeTimelineBackfillPersistence: Sendable {
         )
     }
 
+    func markGapRequested(
+        newerEventID: String,
+        olderEventID: String,
+        definition: NostrFeedDefinitionRecord
+    ) throws {
+        try eventStore?.markFeedGap(
+            feedID: definition.feedID,
+            revision: definition.revision,
+            newerEventID: newerEventID,
+            olderEventID: olderEventID,
+            state: .requested,
+            at: now()
+        )
+    }
+
     func apply(
         _ result: HomeTimelineGapReconciliationResult,
         gap: PendingGapBackfill,

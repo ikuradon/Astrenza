@@ -437,6 +437,27 @@ final class HomeFeedProjectionController {
         generation &+= 1
     }
 
+    func activateStoredProjection(
+        definition: NostrFeedDefinitionRecord,
+        sourceAuthors: [String]
+    ) {
+        let storedWindow: NostrFeedWindow?
+        if let eventStore {
+            storedWindow = try? eventStore.feedWindow(
+                feedID: definition.feedID,
+                revision: definition.revision,
+                limit: windowLimit
+            )
+        } else {
+            storedWindow = nil
+        }
+        activate(
+            definition: definition,
+            window: storedWindow,
+            sourceAuthors: sourceAuthors
+        )
+    }
+
     func runtimeContext() -> HomeFeedRuntimeContext? {
         definition.map(HomeFeedRuntimeContext.init)
     }

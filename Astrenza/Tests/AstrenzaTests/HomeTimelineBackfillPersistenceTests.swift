@@ -68,6 +68,24 @@ struct HomeTimelineBackfillPersistenceTests {
         #expect(gap.updatedAt == 500)
     }
 
+    @Test("Installed gap requests persist the requested state and timestamp")
+    func marksInstalledGapRequested() throws {
+        let fixture = try fixture(initialState: .unresolved)
+
+        try fixture.persistence.markGapRequested(
+            newerEventID: fixture.gap.newerPostID,
+            olderEventID: fixture.gap.olderPostID,
+            definition: fixture.definition
+        )
+
+        let gap = try #require(try fixture.eventStore.feedGaps(
+            feedID: fixture.definition.feedID,
+            revision: fixture.definition.revision
+        ).first)
+        #expect(gap.state == .requested)
+        #expect(gap.updatedAt == 500)
+    }
+
     @Test("Verified reconciliation resolves the persisted gap")
     func resolvesVerifiedGap() throws {
         let fixture = try fixture(initialState: .requested)
