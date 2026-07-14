@@ -50,7 +50,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let syncPlanner: HomeTimelineSyncPlanner
     private let timelineRepository: HomeTimelineRepository
     private let timelineCoordinator: HomeTimelineCoordinator
-    private let gapReconciler: HomeTimelineGapReconciler
+    private let gapReconciliationCoordinator: HomeTimelineGapReconciliationCoordinator
     private let homeFeedProjection: HomeFeedProjectionController
     private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
     private let publishCoordinator: HomeTimelinePublishCoordinator?
@@ -243,13 +243,17 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller = nil
         }
         self.backwardCompletionPlanner = HomeTimelineBackwardCompletionPlanner()
-        self.backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
+        let backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
+        self.backfillPersistence = backfillPersistence
         self.syncPlanner = syncPlanner
         self.timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.timelineCoordinator = HomeTimelineCoordinator()
-        self.gapReconciler = HomeTimelineGapReconciler(
-            eventStore: eventStore,
-            relayClient: timelineLoader.relayClient
+        self.gapReconciliationCoordinator = HomeTimelineGapReconciliationCoordinator(
+            reconciler: HomeTimelineGapReconciler(
+                eventStore: eventStore,
+                relayClient: timelineLoader.relayClient
+            ),
+            persistence: backfillPersistence
         )
         let homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
         self.homeFeedProjection = homeFeedProjection
@@ -1820,61 +1824,36 @@ final class NostrHomeTimelineStore: ObservableObject {
               let olderEvent = timelineEvent(id: gap.olderPostID)
         else { return }
 
-        let output = await gapReconciler.reconcile(
+        let execution = await gapReconciliationCoordinator.reconcile(
             newerEvent: newerEvent,
             olderEvent: olderEvent,
+            gap: gap,
             context: context,
-            relays: Array(resolvedRelays.prefix(4)),
+            relays: resolvedRelays,
             inMemoryEvents: noteEvents
         )
         guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID,
               isCurrentHomeFeedContext(context)
         else { return }
-        for diagnostic in output.diagnostics {
+        for diagnostic in execution.diagnostics {
             recordRuntimeSyncEvent(
                 relayURL: diagnostic.relayURL,
                 kind: .partialFailure,
-                subscriptionID: "astrenza-neg-gap",
+                subscriptionID: diagnostic.subscriptionID,
                 message: diagnostic.message
             )
         }
-        switch backfillPersistence.apply(output.result, gap: gap, context: context) {
-        case .verifiedComplete(let resolveFailure):
-            if let resolveFailure {
-                recordRuntimeSyncEvent(
-                    relayURL: resolvedRelays.first ?? "runtime",
-                    kind: .partialFailure,
-                    subscriptionID: nil,
-                    message: "gap resolve failed: \(resolveFailure)"
-                )
-            }
-        case .indeterminate:
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: "astrenza-neg-gap",
-                message: "gap reconciliation was inconclusive"
-            )
-        case .recovered(let recoveredEvents):
-            for event in recoveredEvents {
-                await enqueueBackwardDependencies(for: event)
-                guard lifecycleCoordinator.isCurrent(lifecycle),
-                      self.account?.pubkey == accountID,
-                      isCurrentHomeFeedContext(context)
-                else { return }
-            }
-        case .recoveryFailed(let message):
-            recordRuntimeSyncEvent(
-                relayURL: resolvedRelays.first ?? "runtime",
-                kind: .partialFailure,
-                subscriptionID: "astrenza-gap-events",
-                message: "gap negentropy save failed: \(message)"
-            )
-            return
+        for event in execution.recoveredEvents {
+            await enqueueBackwardDependencies(for: event)
+            guard lifecycleCoordinator.isCurrent(lifecycle),
+                  self.account?.pubkey == accountID,
+                  isCurrentHomeFeedContext(context)
+            else { return }
         }
 
-        guard lifecycleCoordinator.isCurrent(lifecycle),
+        guard execution.reloadsProjection,
+              lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID,
               isCurrentHomeFeedContext(context)
         else { return }
