@@ -7,9 +7,48 @@ struct HomeTimelineDependencyEnqueueResult: Sendable {
     let didEnqueueSourceDependencies: Bool
 }
 
+struct HomeTimelineProfileUpdateSource: Sendable {
+    typealias UpdatesProvider = @MainActor @Sendable () async -> AsyncStream<NostrProfileDirectoryUpdate>
+    typealias RelayHandler = @MainActor @Sendable (_ relayURLs: [String]) async -> Void
+    typealias StopHandler = @MainActor @Sendable () async -> Void
+
+    let updates: UpdatesProvider
+    let start: RelayHandler
+    let updateRelayURLs: RelayHandler
+    let stop: StopHandler
+
+    init(
+        updates: @escaping UpdatesProvider,
+        start: @escaping RelayHandler,
+        updateRelayURLs: @escaping RelayHandler,
+        stop: @escaping StopHandler
+    ) {
+        self.updates = updates
+        self.start = start
+        self.updateRelayURLs = updateRelayURLs
+        self.stop = stop
+    }
+
+    init(profileDirectory: NostrProfileDirectory) {
+        self.init(
+            updates: { await profileDirectory.updates() },
+            start: { relayURLs in
+                await profileDirectory.start(relayURLs: relayURLs)
+            },
+            updateRelayURLs: { relayURLs in
+                await profileDirectory.updateRelayURLs(relayURLs)
+            },
+            stop: {
+                await profileDirectory.stop()
+            }
+        )
+    }
+}
+
 @MainActor
 final class HomeTimelineDependencyResolutionCoordinator {
     typealias NIP05ResolutionChangeHandler = @MainActor @Sendable () async -> Void
+    typealias ProfileUpdateHandler = @MainActor @Sendable (_ update: NostrProfileDirectoryUpdate) -> Void
     typealias SourcePacketInstaller = @MainActor @Sendable (_ packets: [NostrREQPacket]) async throws -> Void
     typealias SourceInstallFailureHandler = @MainActor @Sendable (_ message: String) -> Void
 
@@ -19,17 +58,21 @@ final class HomeTimelineDependencyResolutionCoordinator {
     private let syncPlanner: HomeTimelineSyncPlanner
     private let sourcePacketInstaller: SourcePacketInstaller?
     private let sourceFlushDelayNanoseconds: UInt64
+    private let profileUpdateSource: HomeTimelineProfileUpdateSource?
 
     private var sourceQueue = NostrDependencyFetchQueue()
     private var sourceEventIDsByGroupID: [String: [String]] = [:]
     private var sourceFlushTask: Task<Void, Never>?
     private var sourceInstallTasks: [UUID: Task<Void, Never>] = [:]
+    private var profileUpdateTask: Task<Void, Never>?
+    private var profileUpdateSequence: UInt64 = 0
     private var resolvingNIP05IdentifiersByPubkey: [String: String] = [:]
     private var latestNIP05IdentifiersByPubkey: [String: String] = [:]
     private var nip05TasksByPubkey: [String: Task<Void, Never>] = [:]
     private var lifecycleGeneration: UInt64 = 0
 
     private(set) var nip05Resolutions: [String: NostrNIP05Resolution] = [:]
+    private(set) var profileResolutionStates: [String: NostrProfileResolutionState] = [:]
 
     init(
         eventIngestor: HomeTimelineEventIngestor,
@@ -37,7 +80,8 @@ final class HomeTimelineDependencyResolutionCoordinator {
         nip05Resolver: any NostrNIP05Resolving,
         syncPlanner: HomeTimelineSyncPlanner,
         sourcePacketInstaller: SourcePacketInstaller? = nil,
-        sourceFlushDelayNanoseconds: UInt64 = 12_000_000
+        sourceFlushDelayNanoseconds: UInt64 = 12_000_000,
+        profileUpdateSource: HomeTimelineProfileUpdateSource? = nil
     ) {
         self.eventIngestor = eventIngestor
         self.profileDirectory = profileDirectory
@@ -45,6 +89,15 @@ final class HomeTimelineDependencyResolutionCoordinator {
         self.syncPlanner = syncPlanner
         self.sourcePacketInstaller = sourcePacketInstaller
         self.sourceFlushDelayNanoseconds = sourceFlushDelayNanoseconds
+        if let profileUpdateSource {
+            self.profileUpdateSource = profileUpdateSource
+        } else if let profileDirectory {
+            self.profileUpdateSource = HomeTimelineProfileUpdateSource(
+                profileDirectory: profileDirectory
+            )
+        } else {
+            self.profileUpdateSource = nil
+        }
     }
 
     var hasPendingWork: Bool {
@@ -63,8 +116,15 @@ final class HomeTimelineDependencyResolutionCoordinator {
         sourceInstallTasks.count
     }
 
+    var isObservingProfileUpdates: Bool {
+        profileUpdateTask != nil
+    }
+
     func reset() {
         lifecycleGeneration &+= 1
+        profileUpdateSequence &+= 1
+        profileUpdateTask?.cancel()
+        profileUpdateTask = nil
         sourceFlushTask?.cancel()
         sourceFlushTask = nil
         sourceInstallTasks.values.forEach { $0.cancel() }
@@ -74,12 +134,73 @@ final class HomeTimelineDependencyResolutionCoordinator {
         resolvingNIP05IdentifiersByPubkey.removeAll()
         latestNIP05IdentifiersByPubkey.removeAll()
         nip05Resolutions.removeAll()
+        profileResolutionStates.removeAll()
         sourceQueue.removeAll()
         sourceEventIDsByGroupID.removeAll()
     }
 
     func replaceNIP05Resolutions(_ resolutions: [String: NostrNIP05Resolution]) {
         nip05Resolutions = resolutions
+    }
+
+    @discardableResult
+    func startProfileUpdates(
+        relayURLs: [String],
+        onUpdate: @escaping ProfileUpdateHandler
+    ) -> Bool {
+        guard let profileUpdateSource, profileUpdateTask == nil else { return false }
+        profileUpdateSequence &+= 1
+        let expectedSequence = profileUpdateSequence
+        let expectedLifecycleGeneration = lifecycleGeneration
+        profileUpdateTask = Task { @MainActor [weak self] in
+            let updates = await profileUpdateSource.updates()
+            guard !Task.isCancelled,
+                  self?.isCurrentProfileUpdate(
+                    lifecycleGeneration: expectedLifecycleGeneration,
+                    sequence: expectedSequence
+                  ) == true
+            else { return }
+
+            await profileUpdateSource.start(relayURLs)
+            guard !Task.isCancelled,
+                  self?.isCurrentProfileUpdate(
+                    lifecycleGeneration: expectedLifecycleGeneration,
+                    sequence: expectedSequence
+                  ) == true
+            else { return }
+
+            for await update in updates {
+                guard !Task.isCancelled,
+                      let self,
+                      isCurrentProfileUpdate(
+                        lifecycleGeneration: expectedLifecycleGeneration,
+                        sequence: expectedSequence
+                      )
+                else { break }
+                profileResolutionStates.merge(update.states) { _, latest in latest }
+                onUpdate(update)
+            }
+
+            guard let self,
+                  isCurrentProfileUpdate(
+                    lifecycleGeneration: expectedLifecycleGeneration,
+                    sequence: expectedSequence
+                  )
+            else { return }
+            profileUpdateTask = nil
+        }
+        return true
+    }
+
+    func updateProfileRelayURLs(_ relayURLs: [String]) async {
+        await profileUpdateSource?.updateRelayURLs(relayURLs)
+    }
+
+    func stopProfileUpdates() async {
+        profileUpdateSequence &+= 1
+        profileUpdateTask?.cancel()
+        profileUpdateTask = nil
+        await profileUpdateSource?.stop()
     }
 
     func enqueueDependencies(
@@ -255,6 +376,13 @@ final class HomeTimelineDependencyResolutionCoordinator {
             onFailure(failureMessage)
         }
         return true
+    }
+
+    private func isCurrentProfileUpdate(
+        lifecycleGeneration: UInt64,
+        sequence: UInt64
+    ) -> Bool {
+        self.lifecycleGeneration == lifecycleGeneration && profileUpdateSequence == sequence
     }
 
     func resolveNIP05IfNeeded(

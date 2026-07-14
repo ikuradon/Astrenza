@@ -91,14 +91,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let gapReconciler: HomeTimelineGapReconciler
     private let homeFeedProjection: HomeFeedProjectionController
     private let relayRuntime: NostrRelayRuntime?
-    private let profileDirectory: NostrProfileDirectory?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
     private var runtimeTask: Task<Void, Never>?
-    private var profileDirectoryUpdateTask: Task<Void, Never>?
     private var unmaterializedCountTask: Task<Void, Never>?
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
@@ -106,7 +104,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
-    private var profileResolutionStates: [String: NostrProfileResolutionState] = [:]
     private var relayListEvent: NostrEvent?
     private var contactListEvent: NostrEvent?
     private var areTimelineFiltersSuspended = false
@@ -244,7 +241,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
         self.feedSyncLifecycle = HomeTimelineFeedSyncLifecycle(eventStore: eventStore)
         self.relayRuntime = relayRuntime
-        self.profileDirectory = profileDirectory
         self.dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
             eventIngestor: eventIngestor,
             profileDirectory: profileDirectory,
@@ -590,7 +586,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             noteEvents: listEvents,
             metadataEvents: metadata,
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: profileResolutionStates,
+            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: listEvents),
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: listEvents),
@@ -629,7 +625,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         loadTask?.cancel()
         paginationTask?.cancel()
         runtimeTask?.cancel()
-        profileDirectoryUpdateTask?.cancel()
         resolveRuntimeEventPumpReadiness(false)
         linkPreviewCoordinator.reset()
         materializationScheduler.reset()
@@ -639,7 +634,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         loadTask = nil
         paginationTask = nil
         runtimeTask = nil
-        profileDirectoryUpdateTask = nil
         unmaterializedCountTask = nil
         dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()
@@ -661,7 +655,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         followedPubkeys = []
         noteEvents = []
         metadataEvents = []
-        profileResolutionStates = [:]
         relayListEvent = nil
         contactListEvent = nil
         relayDiagnostics.reset()
@@ -687,7 +680,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let previousTerminationTask = relayRuntimeTerminationTask
         relayRuntimeTerminationTask = Task { [weak self] in
             await previousTerminationTask?.value
-            await self?.profileDirectory?.stop()
+            await self?.dependencyCoordinator.stopProfileUpdates()
             await relayRuntime.terminate()
             guard let self,
                   self.relayRuntimeTerminationSequence == terminationSequence
@@ -1441,30 +1434,17 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func startProfileDirectoryEventPump() {
-        guard let profileDirectory,
-              profileDirectoryUpdateTask == nil,
-              relayRuntimeTerminationTask == nil,
+        guard relayRuntimeTerminationTask == nil,
               let account
         else { return }
-        let accountID = account.pubkey
-        let lifecycleGeneration = runtimeLifecycleGeneration
         let relayURLs = runtimeRelayURLs(account: account)
-        profileDirectoryUpdateTask = Task { [weak self] in
-            let updates = await profileDirectory.updates()
-            await profileDirectory.start(relayURLs: relayURLs)
-            for await update in updates {
-                guard !Task.isCancelled,
-                      self?.runtimeLifecycleGeneration == lifecycleGeneration,
-                      self?.account?.pubkey == accountID
-                else { break }
-                self?.handleProfileDirectoryUpdate(update)
-            }
+        dependencyCoordinator.startProfileUpdates(relayURLs: relayURLs) { [weak self] update in
+            self?.handleProfileDirectoryUpdate(update)
         }
     }
 
     private func handleProfileDirectoryUpdate(_ update: NostrProfileDirectoryUpdate) {
         guard account != nil else { return }
-        profileResolutionStates.merge(update.states) { _, latest in latest }
         for event in update.metadataEvents {
             let effectiveEvent = rememberLatestMetadataEvent(event, consultEventStore: false)
             resolveNIP05IfNeeded(for: effectiveEvent)
@@ -1569,7 +1549,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 policy: syncPolicy
             )
             guard remainsCurrent() else { return }
-            await profileDirectory?.updateRelayURLs(expectedDefaultRelays)
+            await dependencyCoordinator.updateProfileRelayURLs(expectedDefaultRelays)
             guard remainsCurrent() else { return }
             try await relayRuntime.setDefaultRelays(expectedDefaultRelays)
             guard remainsCurrent() else { return }
@@ -2612,7 +2592,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             contextEvents: contextEvents,
             metadataEvents: metadataEvents,
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: profileResolutionStates,
+            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
             followedPubkeys: followedPubkeys,
             resolvedRelays: resolvedRelays,
             filterRules: materializerFilterRuleSet,
@@ -2685,7 +2665,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             noteEvents: events,
             metadataEvents: metadata,
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: profileResolutionStates,
+            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
             followedPubkeys: Set(followedPubkeys),
             mediaAssetsByEventID: mediaAssetsByEventID(for: events),
             linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events),
@@ -2822,7 +2802,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard metadataEvent != nil else {
             return .unresolved(
                 pubkey: pubkey,
-                state: profileResolutionStates[pubkey] ?? .unknown
+                state: dependencyCoordinator.profileResolutionStates[pubkey] ?? .unknown
             )
         }
 
@@ -2849,7 +2829,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             createdAt: Int(Date().timeIntervalSince1970),
             avatarPictureState: .metadataPending,
             avatarImageURL: nil,
-            profileResolutionState: profileResolutionStates[pubkey] ?? .unknown
+            profileResolutionState: dependencyCoordinator.profileResolutionStates[pubkey] ?? .unknown
         )
         return NostrTimelineAuthorProjection.avatar(for: item)
     }
