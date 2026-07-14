@@ -86,6 +86,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
+    private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
     private let relayRuntimeConfigurator: HomeTimelineRelayRuntimeConfigurator
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
@@ -101,8 +102,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private let syncPolicySettingsStore: NostrSyncPolicySettingsStore
     private var syncPolicy: NostrSyncPolicy
-    private var loadTask: Task<Void, Never>?
-    private var paginationTask: Task<Void, Never>?
     private var noteEvents: [NostrEvent] = []
     private var metadataEvents: [NostrEvent] = []
     private var relayListEvent: NostrEvent?
@@ -111,8 +110,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var unreadState = HomeTimelineUnreadState()
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
-    private var hasCompletedRuntimeBootstrap = false
-    private var runtimeLifecycleGeneration: UInt64 = 0
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -250,6 +247,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
+        self.lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
         self.runtimeEventPump = runtimeEventPump
         self.relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
@@ -292,11 +290,14 @@ final class NostrHomeTimelineStore: ObservableObject {
            currentAccount.pubkey != account.pubkey {
             cancel()
         }
-        runtimeLifecycleGeneration &+= 1
+        let lifecycle = lifecycleCoordinator.begin(accountID: account.pubkey)
         self.account = account
         syncPolicy = syncPolicySettingsStore.policy(accountID: account.pubkey, fallback: syncPolicy)
         startRuntimeEventPump()
-        hasCompletedRuntimeBootstrap = restoreCachedSnapshot(account: account)
+        lifecycleCoordinator.setRuntimeBootstrapCompleted(
+            restoreCachedSnapshot(account: account),
+            for: lifecycle
+        )
         ensureHomeFeedDefinition(account: account)
         if restoreProjectionAnchorEventID == nil,
            let viewportState = restoredViewportState(accountID: account.pubkey, timelineKey: "home") {
@@ -311,14 +312,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         installProvisionalRuntimeBootstrapIfNeeded(account: account)
         restoreHomeFeedReadState(account: account)
-        if relayRuntime != nil, hasCompletedRuntimeBootstrap, !resolvedRelays.isEmpty {
+        if relayRuntime != nil,
+           lifecycleCoordinator.hasCompletedRuntimeBootstrap,
+           !resolvedRelays.isEmpty {
             phase = .loaded
         } else if relayRuntime != nil || entries.isEmpty {
             phase = .resolvingRelays
         }
-        loadTask?.cancel()
-        loadTask = Task {
-            await load(account: account)
+        lifecycleCoordinator.startLoad(for: lifecycle) { [weak self] in
+            await self?.load(account: account, lifecycle: lifecycle)
         }
         activateOutbox(accountID: account.pubkey)
     }
@@ -362,18 +364,21 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func refresh() {
-        guard let account else { return }
+        guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return }
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
-        paginationTask?.cancel()
-        paginationTask = Task {
-            await refreshLatest(account: account)
+        lifecycleCoordinator.startPagination(for: lifecycle) { [weak self] in
+            await self?.refreshLatest(account: account, lifecycle: lifecycle)
         }
     }
 
     func refreshLatest() async {
-        guard let account else { return }
-        await refreshLatest(account: account)
+        guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return }
+        await refreshLatest(account: account, lifecycle: lifecycle)
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
@@ -424,6 +429,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func loadOlder() {
         guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey),
               !isLoadingOlder,
               hasMoreOlder,
               !noteEvents.isEmpty,
@@ -431,9 +437,8 @@ final class NostrHomeTimelineStore: ObservableObject {
               !followedPubkeys.isEmpty
         else { return }
 
-        paginationTask?.cancel()
-        paginationTask = Task {
-            await loadOlder(account: account)
+        lifecycleCoordinator.startPagination(for: lifecycle) { [weak self] in
+            await self?.loadOlder(account: account, lifecycle: lifecycle)
         }
     }
 
@@ -617,17 +622,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     func cancel() {
         readStateCoordinator.endSession(flushing: homeFeedReadBoundaryWrite())
         relayDiagnostics.flushTraffic()
-        runtimeLifecycleGeneration &+= 1
-        let cancellationGeneration = runtimeLifecycleGeneration
-        loadTask?.cancel()
-        paginationTask?.cancel()
+        let cancellationGeneration = lifecycleCoordinator.cancel()
         runtimeEventPump.cancel()
         linkPreviewCoordinator.reset()
         materializationScheduler.reset()
         realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         outboxCoordinator.cancel()
-        loadTask = nil
-        paginationTask = nil
         dependencyCoordinator.reset()
         backwardRequestRegistry.reset()
         clearPendingNewEvents()
@@ -653,7 +653,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         publishUnreadState()
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
-        hasCompletedRuntimeBootstrap = false
         areTimelineFiltersSuspended = false
         updateRelayStatusCounts()
         relayStatusRevision &+= 1
@@ -671,7 +670,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             },
             onLatestCompletion: { [weak self] in
                 guard let self,
-                      runtimeLifecycleGeneration != cancellationGeneration,
+                      lifecycleCoordinator.currentToken?.generation != cancellationGeneration,
                       let account
                 else { return }
 
@@ -762,15 +761,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         })
     }
 
-    private func isCurrentLifecycle(accountID: String, generation: UInt64) -> Bool {
-        runtimeLifecycleGeneration == generation && account?.pubkey == accountID
-    }
-
-    private func load(account: NostrAccount) async {
-        let lifecycleGeneration = runtimeLifecycleGeneration
-        guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+    private func load(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken
+    ) async {
+        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
         if relayRuntime != nil {
-            await loadRuntimeBootstrap(account: account)
+            await loadRuntimeBootstrap(account: account, lifecycle: lifecycle)
             return
         }
 
@@ -780,45 +777,46 @@ final class NostrHomeTimelineStore: ObservableObject {
                 onStage: { [weak self] stage in
                     await self?.handleLoadStage(
                         stage,
-                        accountID: account.pubkey,
-                        lifecycleGeneration: lifecycleGeneration
+                        lifecycle: lifecycle
                     )
                 }
             )
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .loadingHome
             await relayDiagnostics.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             apply(state)
             materializeEntries()
             await persistDatabase(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             await configureRelayRuntime(account: account)
-            guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             phase = .loaded
         } catch {
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .failed("Home timeline failed: \(error.localizedDescription)")
         }
     }
 
-    private func loadRuntimeBootstrap(account: NostrAccount) async {
-        let lifecycleGeneration = runtimeLifecycleGeneration
-        guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+    private func loadRuntimeBootstrap(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken
+    ) async {
+        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
         installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        let hadCachedBootstrap = hasCompletedRuntimeBootstrap
+        let hadCachedBootstrap = lifecycleCoordinator.hasCompletedRuntimeBootstrap
         if hadCachedBootstrap, !resolvedRelays.isEmpty {
             await configureRelayRuntime(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
         } else {
             phase = .resolvingRelays
@@ -830,32 +828,31 @@ final class NostrHomeTimelineStore: ObservableObject {
                 onStage: { [weak self] stage in
                     await self?.handleLoadStage(
                         stage,
-                        accountID: account.pubkey,
-                        lifecycleGeneration: lifecycleGeneration
+                        lifecycle: lifecycle
                     )
                 }
             )
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .loadingHome
             await relayDiagnostics.persistFetchedEvents(bootstrapState.relaySyncEvents)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             apply(runtimeBootstrapState(from: bootstrapState))
-            hasCompletedRuntimeBootstrap = true
+            lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
             materializeEntries()
             await persistDatabase(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             await configureRelayRuntime(account: account)
-            guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             phase = .loaded
         } catch {
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             recordRuntimeSyncEvent(
                 relayURL: resolvedRelays.first ?? "runtime",
@@ -867,7 +864,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 phase = .loaded
             } else if !resolvedRelays.isEmpty {
                 followedPubkeys = [account.pubkey]
-                hasCompletedRuntimeBootstrap = true
+                lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
                 await configureRelayRuntime(account: account)
                 phase = .loaded
             } else {
@@ -906,11 +903,10 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func handleLoadStage(
         _ stage: NostrHomeTimelineLoadStage,
-        accountID: String,
-        lifecycleGeneration: UInt64
+        lifecycle: HomeTimelineLifecycleToken
     ) {
         guard !Task.isCancelled,
-              isCurrentLifecycle(accountID: accountID, generation: lifecycleGeneration)
+              lifecycleCoordinator.isCurrent(lifecycle)
         else { return }
         switch stage {
         case .resolvingRelayList:
@@ -922,10 +918,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func refreshLatest(account: NostrAccount) async {
+    private func refreshLatest(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken
+    ) async {
         guard !isRefreshing else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
-        guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
         guard !noteEvents.isEmpty else {
             start(account: account)
             return
@@ -933,7 +931,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
         isRefreshing = true
         defer {
-            if isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) {
+            if lifecycleCoordinator.isCurrent(lifecycle) {
                 isRefreshing = false
             }
         }
@@ -941,7 +939,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         if relayRuntime != nil {
             await configureRelayRuntime(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .loaded
             return
@@ -950,35 +948,37 @@ final class NostrHomeTimelineStore: ObservableObject {
         do {
             let state = try await timelineLoader.refreshedState(account: account, current: loaderState())
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             await relayDiagnostics.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             apply(state)
             materializeEntries()
             await persistDatabase(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             await configureRelayRuntime(account: account)
-            guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             phase = .loaded
         } catch {
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .failed("Refresh failed: \(error.localizedDescription)")
         }
     }
 
-    private func loadOlder(account: NostrAccount) async {
-        let lifecycleGeneration = runtimeLifecycleGeneration
-        guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+    private func loadOlder(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken
+    ) async {
+        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
         isLoadingOlder = true
         defer {
-            if isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) {
+            if lifecycleCoordinator.isCurrent(lifecycle) {
                 isLoadingOlder = false
             }
         }
@@ -986,7 +986,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         if relayRuntime != nil {
             await requestOlderNotesThroughRuntime(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .loaded
             return
@@ -1001,11 +1001,11 @@ final class NostrHomeTimelineStore: ObservableObject {
                 localBackfillEvents: localBackfillEvents
             )
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             await relayDiagnostics.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             apply(state)
             if !state.hasMoreOlder {
@@ -1015,14 +1015,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             materializeEntries()
             await persistDatabase(account: account)
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             await configureRelayRuntime(account: account)
-            guard isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration) else { return }
+            guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
             phase = .loaded
         } catch {
             guard !Task.isCancelled,
-                  isCurrentLifecycle(accountID: account.pubkey, generation: lifecycleGeneration)
+                  lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .failed("Older notes failed: \(error.localizedDescription)")
         }
@@ -1153,7 +1153,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func persistDatabase(account: NostrAccount) async {
-        guard let persistenceWorker else { return }
+        guard let persistenceWorker,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return }
         let now = Int(Date().timeIntervalSince1970)
         guard let plan = homeFeedDefinitionPlan(account: account, now: now) else { return }
         let definition = plan.definition
@@ -1188,7 +1190,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             reason: "state",
             insertedAt: now
         )
-        let lifecycleGeneration = runtimeLifecycleGeneration
         let savedProjectionWindowGeneration = homeFeedProjection.generation
         do {
             let window = try await persistenceWorker.saveFeedSnapshot(
@@ -1203,7 +1204,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
             )
             guard !Task.isCancelled,
-                  runtimeLifecycleGeneration == lifecycleGeneration,
+                  lifecycleCoordinator.isCurrent(lifecycle),
                   self.account?.pubkey == account.pubkey,
                   homeFeedProjection.generation == savedProjectionWindowGeneration,
                   (followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys) == plan.sourceAuthors,
@@ -1225,9 +1226,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func persistTimelineMetadata(account: NostrAccount) async {
-        guard let persistenceWorker else { return }
+        guard let persistenceWorker,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return }
         let now = Int(Date().timeIntervalSince1970)
-        let lifecycleGeneration = runtimeLifecycleGeneration
         let state = NostrHomeTimelineState(
             relays: resolvedRelays,
             followedPubkeys: followedPubkeys,
@@ -1243,7 +1245,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 accountID: account.pubkey,
                 savedAt: now
             )
-            guard runtimeLifecycleGeneration == lifecycleGeneration,
+            guard lifecycleCoordinator.isCurrent(lifecycle),
                   self.account?.pubkey == account.pubkey
             else { return }
         } catch {
@@ -1368,13 +1370,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         startProfileDirectoryEventPump()
         guard let relayRuntime,
               !relayRuntimeTerminator.isTerminating,
-              let accountID = account?.pubkey
+              let accountID = account?.pubkey,
+              let lifecycle = lifecycleCoordinator.token(for: accountID)
         else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
         runtimeEventPump.start(
             stream: { await relayRuntime.events() },
             isSourceCurrent: { [weak self] in
-                self?.runtimeLifecycleGeneration == lifecycleGeneration &&
+                self?.lifecycleCoordinator.isCurrent(lifecycle) == true &&
                     self?.account?.pubkey == accountID
             },
             onPacket: { [weak self] packet in
@@ -1439,7 +1441,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard relayRuntime != nil,
               !relayRuntimeTerminator.isTerminating,
               self.account?.pubkey == account.pubkey,
-              hasCompletedRuntimeBootstrap,
+              lifecycleCoordinator.hasCompletedRuntimeBootstrap,
               !resolvedRelays.isEmpty,
               let identity = currentRelayRuntimeConfigurationIdentity(),
               identity.accountID == account.pubkey
@@ -1503,10 +1505,12 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func currentRelayRuntimeConfigurationIdentity()
         -> HomeTimelineRelayRuntimeConfigurationIdentity? {
-        guard let account else { return nil }
+        guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return nil }
         return HomeTimelineRelayRuntimeConfigurationIdentity(
             accountID: account.pubkey,
-            lifecycleGeneration: runtimeLifecycleGeneration,
+            lifecycleGeneration: lifecycle.generation,
             resolvedRelays: resolvedRelays,
             followedPubkeys: followedPubkeys,
             contactListEventID: contactListEvent?.id
@@ -1760,10 +1764,10 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func handleHomeForwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
         guard event.kind == 1 || event.kind == 5 || event.kind == 6,
-              let account
+              let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
         let receivedWhileRealtime = isHomeTimelineRealtime
-        let lifecycleGeneration = runtimeLifecycleGeneration
         let accountID = account.pubkey
 
         let requestID = feedSyncCoordinator.requestID(
@@ -1816,7 +1820,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
             return
         }
-        guard runtimeLifecycleGeneration == lifecycleGeneration,
+        guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID
         else { return }
         let embeddedTarget = ingestResult.embeddedEvent
@@ -1845,8 +1849,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleBackwardEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
-        guard let account else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
+        guard let account,
+              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
+        else { return }
         let accountID = account.pubkey
         let requestKey = backwardRequestRegistry.key(for: subscriptionID)
         let request = requestKey.flatMap { backwardRequestRegistry.request(for: $0) }
@@ -1910,7 +1915,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
             return
         }
-        guard runtimeLifecycleGeneration == lifecycleGeneration,
+        guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID
         else { return }
         let embeddedTarget = ingestResult.embeddedEvent
@@ -1967,15 +1972,18 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
-        guard relayRuntime != nil, !resolvedRelays.isEmpty, let accountID = account?.pubkey else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
+        guard relayRuntime != nil,
+              !resolvedRelays.isEmpty,
+              let accountID = account?.pubkey,
+              let lifecycle = lifecycleCoordinator.token(for: accountID)
+        else { return }
         let result = await dependencyCoordinator.enqueueDependencies(
             for: event,
             liveMetadataEvents: metadataEvents,
             liveNoteEventIDs: Set(noteEvents.map(\.id)),
             availableRelayURLs: resolvedRelays
         )
-        guard runtimeLifecycleGeneration == lifecycleGeneration,
+        guard lifecycleCoordinator.isCurrent(lifecycle),
               account?.pubkey == accountID
         else { return }
         result.cachedProfiles.forEach { profile in
@@ -2144,9 +2152,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) {
         guard let accountID = account?.pubkey,
               accountID == context.accountID,
+              let lifecycle = lifecycleCoordinator.token(for: accountID),
               isCurrentHomeFeedContext(context)
         else { return }
-        let lifecycleGeneration = runtimeLifecycleGeneration
         let reconciliationID = backwardRequestRegistry.beginGapReconciliation(
             gap: gap,
             context: context
@@ -2158,7 +2166,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 gap,
                 reconciliationID: reconciliationID,
                 accountID: accountID,
-                lifecycleGeneration: lifecycleGeneration,
+                lifecycle: lifecycle,
                 context: context
             )
         }
@@ -2168,18 +2176,18 @@ final class NostrHomeTimelineStore: ObservableObject {
         _ gap: PendingGapBackfill,
         reconciliationID: String,
         accountID: String,
-        lifecycleGeneration: UInt64,
+        lifecycle: HomeTimelineLifecycleToken,
         context: HomeFeedRuntimeContext
     ) async {
         defer {
-            if self.runtimeLifecycleGeneration == lifecycleGeneration,
+            if lifecycleCoordinator.isCurrent(lifecycle),
                self.account?.pubkey == accountID {
                 backwardRequestRegistry.endGapReconciliation(reconciliationID)
                 relayStatusRevision &+= 1
             }
         }
 
-        guard runtimeLifecycleGeneration == lifecycleGeneration,
+        guard lifecycleCoordinator.isCurrent(lifecycle),
               let account,
               account.pubkey == accountID,
               isCurrentHomeFeedContext(context),
@@ -2194,7 +2202,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             relays: Array(resolvedRelays.prefix(4)),
             inMemoryEvents: noteEvents
         )
-        guard runtimeLifecycleGeneration == lifecycleGeneration,
+        guard lifecycleCoordinator.isCurrent(lifecycle),
               self.account?.pubkey == accountID,
               isCurrentHomeFeedContext(context)
         else { return }
@@ -2813,6 +2821,9 @@ extension NostrHomeTimelineStore {
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
     ) {
+        if lifecycleCoordinator.token(for: account.pubkey) == nil {
+            lifecycleCoordinator.begin(accountID: account.pubkey)
+        }
         self.account = account
         followedPubkeys = sourceAuthors
         homeFeedProjection.activate(
