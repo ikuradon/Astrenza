@@ -2,44 +2,13 @@ import Foundation
 import AstrenzaCore
 import SwiftUI
 
-struct NostrTimelineActivityStatus: Equatable {
-    let title: String
-    let detail: String
-    let compactLabel: String
-}
-
 enum NostrHomeTimelineStoreError: Error, Equatable {
     case noPublishRelayDestinations
 }
 
 @MainActor
 final class NostrHomeTimelineStore: ObservableObject {
-    enum Phase: Equatable {
-        case idle
-        case resolvingRelays
-        case resolvingContacts
-        case loadingHome
-        case loaded
-        case failed(String)
-
-        var copy: String {
-            switch self {
-            case .idle:
-                "Preparing Home timeline"
-            case .resolvingRelays:
-                "Resolving kind:10002 relay list"
-            case .resolvingContacts:
-                "Resolving kind:3 contact list"
-            case .loadingHome:
-                "Connecting Home relays"
-            case .loaded:
-                "Home timeline loaded"
-            case .failed(let message):
-                message
-            }
-        }
-
-    }
+    typealias Phase = NostrHomeTimelinePhase
 
     @Published private(set) var account: NostrAccount?
     @Published private(set) var entries: [TimelineFeedEntry] = []
@@ -71,6 +40,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
+    private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -128,6 +98,25 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         if hasMoreOlder != snapshot.hasMoreOlder {
             hasMoreOlder = snapshot.hasMoreOlder
+        }
+    }
+
+    private func applyActivityTransition(
+        _ transition: HomeTimelineActivityTransition
+    ) {
+        let changes = transition.changes
+        let snapshot = transition.snapshot
+        if changes.contains(.phase) {
+            phase = snapshot.phase
+        }
+        if changes.contains(.refreshing) {
+            isRefreshing = snapshot.isRefreshing
+        }
+        if changes.contains(.loadingOlder) {
+            isLoadingOlder = snapshot.isLoadingOlder
+        }
+        if changes.contains(.realtime) {
+            isHomeTimelineRealtime = snapshot.isRealtime
         }
     }
 
@@ -195,58 +184,16 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        switch phase {
-        case .resolvingRelays:
-            return NostrTimelineActivityStatus(
-                title: "Resolving relay list",
-                detail: "Looking up kind:10002 on discovery relays",
-                compactLabel: "kind:10002"
+        activityCoordinator.activityStatus(
+            context: HomeTimelineActivityContext(
+                connectedRelayCount: relayStatusCounts.connected,
+                plannedRelayCount: relayStatusCounts.planned,
+                hasOlderPageRequest: backwardRequestRegistry.hasOlderPageRequest,
+                hasGapWork: backwardRequestRegistry.hasGapWork,
+                hasBackwardRequests: backwardRequestRegistry.hasRequests,
+                hasPendingDependencyWork: dependencyCoordinator.hasPendingWork
             )
-        case .resolvingContacts:
-            return NostrTimelineActivityStatus(
-                title: "Resolving contacts",
-                detail: "Looking up kind:3 before opening Home",
-                compactLabel: "kind:3"
-            )
-        case .loadingHome:
-            return NostrTimelineActivityStatus(
-                title: "Connecting Home relays",
-                detail: "\(relayStatusCounts.connected) of \(relayStatusCounts.planned) relays ready",
-                compactLabel: "Home"
-            )
-        case .idle, .loaded, .failed:
-            break
-        }
-
-        if isRefreshing {
-            return NostrTimelineActivityStatus(
-                title: "Updating Home timeline",
-                detail: "Fetching newer events from Home relays",
-                compactLabel: "Updating"
-            )
-        }
-        if isLoadingOlder || backwardRequestRegistry.hasOlderPageRequest {
-            return NostrTimelineActivityStatus(
-                title: "Loading older posts",
-                detail: "Fetching the previous Home timeline window",
-                compactLabel: "Older"
-            )
-        }
-        if backwardRequestRegistry.hasGapWork {
-            return NostrTimelineActivityStatus(
-                title: "Filling a timeline gap",
-                detail: "Reconciling missing events between local windows",
-                compactLabel: "Gap"
-            )
-        }
-        if backwardRequestRegistry.hasRequests || dependencyCoordinator.hasPendingWork {
-            return NostrTimelineActivityStatus(
-                title: "Resolving referenced posts",
-                detail: "Fetching events referenced by visible posts",
-                compactLabel: "Resolving"
-            )
-        }
-        return nil
+        )
     }
 
     var isRelayProcessing: Bool {
@@ -308,6 +255,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         self.dependencyCoordinator = dependencyCoordinator
         self.listProjectionCache = HomeTimelineListProjectionCache()
+        self.activityCoordinator = HomeTimelineActivityCoordinator()
         self.presentationCoordinator = HomeTimelinePresentationCoordinator()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
         self.lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
@@ -380,9 +328,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         if relayRuntime != nil,
            lifecycleCoordinator.hasCompletedRuntimeBootstrap,
            !resolvedRelays.isEmpty {
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
         } else if relayRuntime != nil || entries.isEmpty {
-            phase = .resolvingRelays
+            applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
         }
         lifecycleCoordinator.startLoad(for: lifecycle) { [weak self] in
             await self?.load(account: account, lifecycle: lifecycle)
@@ -495,7 +443,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     func loadOlder() {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey),
-              !isLoadingOlder,
+              activityCoordinator.canBeginLoadingOlder,
               hasMoreOlder,
               !noteEvents.isEmpty,
               !resolvedRelays.isEmpty,
@@ -585,7 +533,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         reloadNewestProjectionWindow(account: account)
         materializeEntries()
         await persistDatabase(account: account)
-        phase = .loaded
+        applyActivityTransition(activityCoordinator.setPhase(.loaded))
         outboxCoordinator.requestImmediateDrain()
     }
 
@@ -612,7 +560,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             invalidateListEntries()
             materializeEntries()
         } catch {
-            phase = .failed("Mute failed: \(error.localizedDescription)")
+            applyActivityTransition(
+                activityCoordinator.setPhase(.failed("Mute failed: \(error.localizedDescription)"))
+            )
         }
     }
 
@@ -628,7 +578,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         do {
             try eventStore.saveLocalBookmark(bookmark)
         } catch {
-            phase = .failed("Bookmark failed: \(error.localizedDescription)")
+            applyActivityTransition(
+                activityCoordinator.setPhase(.failed("Bookmark failed: \(error.localizedDescription)"))
+            )
         }
     }
 
@@ -696,8 +648,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         dependencyCoordinator.reset()
         backwardRequestRegistry.reset()
         clearPendingNewEvents()
-        isRefreshing = false
-        isLoadingOlder = false
+        applyActivityTransition(activityCoordinator.reset())
         invalidateListEntries()
         homeFeedProjection.reset()
         relayRuntimeConfigurator.reset()
@@ -711,7 +662,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         isTimelineAtNewestWindow = true
         areTimelineFiltersSuspended = false
         relayStatusRevision &+= 1
-        phase = .idle
         account = nil
         scheduleRelayRuntimeTermination(cancellationGeneration: cancellationGeneration)
     }
@@ -839,7 +789,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .loadingHome
+            applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
             await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
@@ -852,12 +802,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             else { return }
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
         } catch {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .failed("Home timeline failed: \(error.localizedDescription)")
+            applyActivityTransition(
+                activityCoordinator.setPhase(.failed("Home timeline failed: \(error.localizedDescription)"))
+            )
         }
     }
 
@@ -874,7 +826,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
         } else {
-            phase = .resolvingRelays
+            applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
         }
 
         do {
@@ -890,7 +842,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .loadingHome
+            applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
             await relayStatusCoordinator.persistFetchedEvents(bootstrapState.relaySyncEvents)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
@@ -904,7 +856,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             else { return }
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
         } catch {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
@@ -916,16 +868,18 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: "bootstrap refresh failed: \(error.localizedDescription)"
             )
             if hadCachedBootstrap {
-                phase = .loaded
+                applyActivityTransition(activityCoordinator.setPhase(.loaded))
             } else if !resolvedRelays.isEmpty {
                 applyContentSnapshot(
                     contentCoordinator.replaceFollowedPubkeys([account.pubkey])
                 )
                 lifecycleCoordinator.setRuntimeBootstrapCompleted(true, for: lifecycle)
                 await configureRelayRuntime(account: account)
-                phase = .loaded
+                applyActivityTransition(activityCoordinator.setPhase(.loaded))
             } else {
-                phase = .failed("Home timeline failed: \(error.localizedDescription)")
+                applyActivityTransition(
+                    activityCoordinator.setPhase(.failed("Home timeline failed: \(error.localizedDescription)"))
+                )
             }
         }
     }
@@ -946,11 +900,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         else { return }
         switch stage {
         case .resolvingRelayList:
-            phase = .resolvingRelays
+            applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
         case .resolvingContactList:
-            phase = .resolvingContacts
+            applyActivityTransition(activityCoordinator.setPhase(.resolvingContacts))
         case .loadingTimeline:
-            phase = .loadingHome
+            applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
         }
     }
 
@@ -958,17 +912,17 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        guard !isRefreshing else { return }
         guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
         guard !noteEvents.isEmpty else {
             start(account: account)
             return
         }
 
-        isRefreshing = true
+        guard let activityTransition = activityCoordinator.beginRefresh() else { return }
+        applyActivityTransition(activityTransition)
         defer {
             if lifecycleCoordinator.isCurrent(lifecycle) {
-                isRefreshing = false
+                applyActivityTransition(activityCoordinator.endRefresh())
             }
         }
 
@@ -977,7 +931,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
             return
         }
 
@@ -998,12 +952,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             else { return }
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
         } catch {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .failed("Refresh failed: \(error.localizedDescription)")
+            applyActivityTransition(
+                activityCoordinator.setPhase(.failed("Refresh failed: \(error.localizedDescription)"))
+            )
         }
     }
 
@@ -1012,10 +968,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         lifecycle: HomeTimelineLifecycleToken
     ) async {
         guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-        isLoadingOlder = true
+        guard let activityTransition = activityCoordinator.beginLoadingOlder() else { return }
+        applyActivityTransition(activityTransition)
         defer {
             if lifecycleCoordinator.isCurrent(lifecycle) {
-                isLoadingOlder = false
+                applyActivityTransition(activityCoordinator.endLoadingOlder())
             }
         }
 
@@ -1024,7 +981,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
             return
         }
 
@@ -1055,12 +1012,14 @@ final class NostrHomeTimelineStore: ObservableObject {
             else { return }
             await configureRelayRuntime(account: account)
             guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
         } catch {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            phase = .failed("Older notes failed: \(error.localizedDescription)")
+            applyActivityTransition(
+                activityCoordinator.setPhase(.failed("Older notes failed: \(error.localizedDescription)"))
+            )
         }
     }
 
@@ -1380,7 +1339,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         materializeEntries()
         scheduleLinkPreviewResolution()
         if !entries.isEmpty {
-            phase = .loaded
+            applyActivityTransition(activityCoordinator.setPhase(.loaded))
         }
     }
 
@@ -1580,8 +1539,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func publishHomeTimelineRealtimeState(_ nextIsRealtime: Bool) {
-        guard isHomeTimelineRealtime != nextIsRealtime else { return }
-        isHomeTimelineRealtime = nextIsRealtime
+        applyActivityTransition(
+            activityCoordinator.setRealtime(nextIsRealtime)
+        )
     }
 
     private func applyFeedSyncTransition(_ transition: HomeTimelineFeedSyncTransition) {
@@ -1619,7 +1579,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await timelineCoordinator.handleRuntimePacket(
             packet,
             handlers: HomeTimelineRuntimePacketHandlers(
-                shouldHandle: { self.phase != .idle },
+                shouldHandle: { self.activityCoordinator.snapshot.phase != .idle },
                 stateChanged: { relayURL, state in
                     self.handleRuntimeStateChange(relayURL: relayURL, state: state)
                 },
@@ -1748,7 +1708,7 @@ final class NostrHomeTimelineStore: ObservableObject {
               let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        let receivedWhileRealtime = isHomeTimelineRealtime
+        let receivedWhileRealtime = activityCoordinator.snapshot.isRealtime
         let accountID = account.pubkey
 
         let requestID = feedSyncCoordinator.requestID(
