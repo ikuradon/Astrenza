@@ -93,7 +93,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let runtimeEventPump: HomeTimelineRuntimeEventPump
     private let relayRuntimeConfigurator: HomeTimelineRelayRuntimeConfigurator
     private let relayRuntimeTerminator: HomeTimelineRelayRuntimeTerminator
-    private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
+    private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let syncPlanner: HomeTimelineSyncPlanner
@@ -123,12 +123,32 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func updateRelayStatusCounts() {
-        setRelayStatusCountsIfNeeded(
-            relayDiagnostics.statusCounts(
-                resolvedRelays: resolvedRelays,
-                runtimeStates: relayRuntimeStates
-            )
+        applyRelayStatusSnapshot(
+            relayStatusCoordinator.snapshot(resolvedRelays: resolvedRelays)
         )
+    }
+
+    private func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
+        if relayRuntimeStates != snapshot.runtimeStates {
+            relayRuntimeStates = snapshot.runtimeStates
+        }
+        setRelayStatusCountsIfNeeded((
+            connected: snapshot.connectedRelayCount,
+            planned: snapshot.plannedRelayCount
+        ))
+    }
+
+    private func applyRelayStatusTransition(
+        _ transition: HomeTimelineRelayStatusTransition?
+    ) {
+        guard let transition else { return }
+        applyRelayStatusSnapshot(transition.snapshot)
+        if let relayURL = transition.invalidatedRealtimeRelayURL {
+            invalidateHomeTimelineRealtime(relayURL: relayURL)
+        }
+        if transition.publishesStatusChange {
+            relayStatusRevision &+= 1
+        }
     }
 
     private func setRelayStatusCountsIfNeeded(_ counts: (connected: Int, planned: Int)) {
@@ -263,9 +283,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             syncPlanner: syncPlanner
         )
         self.relayRuntimeTerminator = HomeTimelineRelayRuntimeTerminator()
-        self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
-            eventStore: eventStore,
-            persistenceWorker: persistenceWorker
+        self.relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
+            diagnostics: HomeTimelineRelayDiagnosticsLedger(
+                eventStore: eventStore,
+                persistenceWorker: persistenceWorker
+            )
         )
         self.linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
             eventStore: eventStore,
@@ -627,7 +649,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func cancel() {
         readStateCoordinator.endSession(flushing: homeFeedReadBoundaryWrite())
-        relayDiagnostics.flushTraffic()
+        relayStatusCoordinator.flushTraffic()
         let cancellationGeneration = lifecycleCoordinator.cancel()
         runtimeEventPump.cancel()
         linkPreviewCoordinator.reset()
@@ -644,7 +666,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayRuntimeConfigurator.reset()
         resetHomeTimelineRealtime()
         feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
-        relayRuntimeStates = [:]
         entries = []
         resolvedRelays = []
         followedPubkeys = []
@@ -652,7 +673,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         metadataEvents = []
         relayListEvent = nil
         contactListEvent = nil
-        relayDiagnostics.reset()
+        applyRelayStatusSnapshot(
+            relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
+        )
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
         unreadState.reset()
@@ -660,7 +683,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
         areTimelineFiltersSuspended = false
-        updateRelayStatusCounts()
         relayStatusRevision &+= 1
         phase = .idle
         account = nil
@@ -791,7 +813,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .loadingHome
-            await relayDiagnostics.persistFetchedEvents(state.relaySyncEvents)
+            await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
@@ -842,7 +864,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
             phase = .loadingHome
-            await relayDiagnostics.persistFetchedEvents(bootstrapState.relaySyncEvents)
+            await relayStatusCoordinator.persistFetchedEvents(bootstrapState.relaySyncEvents)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
@@ -956,7 +978,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            await relayDiagnostics.persistFetchedEvents(state.relaySyncEvents)
+            await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
@@ -1009,7 +1031,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            await relayDiagnostics.persistFetchedEvents(state.relaySyncEvents)
+            await relayStatusCoordinator.persistFetchedEvents(state.relaySyncEvents)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
@@ -1133,14 +1155,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         entries = []
         materializationScheduler.replaceRenderFingerprint([])
         resolvedRelays = []
-        updateRelayStatusCounts()
         followedPubkeys = []
         noteEvents = []
         metadataEvents = []
         relayListEvent = nil
         contactListEvent = nil
         dependencyCoordinator.replaceNIP05Resolutions([:])
-        relayDiagnostics.reset()
+        applyRelayStatusSnapshot(
+            relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
+        )
         hasMoreOlder = true
         filterStatus = TimelineFilterStatus()
         clearPendingNewEvents()
@@ -1650,27 +1673,26 @@ final class NostrHomeTimelineStore: ObservableObject {
                     self.handleBackwardCompletion(completion)
                 },
                 traffic: { delta in
-                    self.relayDiagnostics.recordTraffic(delta)
+                    self.relayStatusCoordinator.recordTraffic(delta)
                 },
                 notice: { relayURL, message in
-                    self.recordRuntimeSyncEvent(
-                        relayURL: relayURL,
-                        kind: message.lowercased().contains("timeout") ? .timeout : .partialFailure,
-                        subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
-                        message: message
+                    self.applyRelayStatusTransition(
+                        self.relayStatusCoordinator.handleNotice(
+                            accountID: self.account?.pubkey,
+                            resolvedRelays: self.resolvedRelays,
+                            relayURL: relayURL,
+                            message: message
+                        )
                     )
                 },
                 auth: { relayURL, challenge in
-                    guard !self.hasRecentRuntimeSyncEvent(
-                        relayURL: relayURL,
-                        kind: .authRequired,
-                        message: challenge
-                    ) else { return }
-                    self.recordRuntimeSyncEvent(
-                        relayURL: relayURL,
-                        kind: .authRequired,
-                        subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
-                        message: challenge
+                    self.applyRelayStatusTransition(
+                        self.relayStatusCoordinator.handleAuthenticationChallenge(
+                            accountID: self.account?.pubkey,
+                            resolvedRelays: self.resolvedRelays,
+                            relayURL: relayURL,
+                            challenge: challenge
+                        )
                     )
                 }
             )
@@ -1678,27 +1700,14 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleRuntimeStateChange(relayURL: String, state: NostrRelayConnectionState) {
-        guard resolvedRelays.contains(relayURL) else { return }
-        relayRuntimeStates[relayURL] = state
-        updateRelayStatusCounts()
-        switch state {
-        case .connected:
-            recordRuntimeSyncEvent(relayURL: relayURL, kind: .connected, subscriptionID: nil, message: "connected")
-        case .waitingForRetry, .retrying:
-            invalidateHomeTimelineRealtime(relayURL: relayURL)
-            recordRuntimeSyncEvent(relayURL: relayURL, kind: .reconnect, subscriptionID: nil, message: state.rawValue)
-        case .error:
-            invalidateHomeTimelineRealtime(relayURL: relayURL)
-            recordRuntimeSyncEvent(relayURL: relayURL, kind: .partialFailure, subscriptionID: nil, message: state.rawValue)
-        case .rejected:
-            invalidateHomeTimelineRealtime(relayURL: relayURL)
-            recordRuntimeSyncEvent(relayURL: relayURL, kind: .rejected, subscriptionID: nil, message: state.rawValue)
-        case .suspended:
-            invalidateHomeTimelineRealtime(relayURL: relayURL)
-            recordRuntimeSyncEvent(relayURL: relayURL, kind: .suspended, subscriptionID: nil, message: state.rawValue)
-        case .initialized, .connecting, .dormant, .terminated:
-            invalidateHomeTimelineRealtime(relayURL: relayURL)
-        }
+        applyRelayStatusTransition(
+            relayStatusCoordinator.handleRuntimeStateChange(
+                accountID: account?.pubkey,
+                resolvedRelays: resolvedRelays,
+                relayURL: relayURL,
+                state: state
+            )
+        )
     }
 
     private static func isHomeForwardSubscription(_ subscriptionID: String) -> Bool {
@@ -2198,25 +2207,22 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventCount: Int = 0,
         newestCreatedAt: Int? = nil,
         oldestCreatedAt: Int? = nil,
-        message: String?,
-        publishesStatusChange: Bool = true
+        message: String?
     ) {
         guard let account else { return }
-        relayDiagnostics.record(
-            accountID: account.pubkey,
-            relayURL: relayURL,
-            kind: kind,
-            occurredAt: Int(Date().timeIntervalSince1970),
-            subscriptionID: subscriptionID,
-            eventCount: eventCount,
-            newestCreatedAt: newestCreatedAt,
-            oldestCreatedAt: oldestCreatedAt,
-            message: message
+        applyRelayStatusTransition(
+            relayStatusCoordinator.record(
+                accountID: account.pubkey,
+                resolvedRelays: resolvedRelays,
+                relayURL: relayURL,
+                kind: kind,
+                subscriptionID: subscriptionID,
+                eventCount: eventCount,
+                newestCreatedAt: newestCreatedAt,
+                oldestCreatedAt: oldestCreatedAt,
+                message: message
+            )
         )
-        updateRelayStatusCounts()
-        if publishesStatusChange {
-            relayStatusRevision &+= 1
-        }
     }
 
     private func handleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) {
@@ -2236,14 +2242,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 message: "feed sync request save failed: \(failureMessage)"
             )
         }
-    }
-
-    private func hasRecentRuntimeSyncEvent(
-        relayURL: String,
-        kind: NostrRelaySyncEventKind,
-        message: String?
-    ) -> Bool {
-        relayDiagnostics.hasRecentEvent(relayURL: relayURL, kind: kind, message: message)
     }
 
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
@@ -2548,7 +2546,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             contactListEvent: contactListEvent,
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
-            relaySyncEvents: relayDiagnostics.events
+            relaySyncEvents: relayStatusCoordinator.events
         )
     }
 
@@ -2588,11 +2586,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         relayListEvent = effectiveRelayListEvent
         contactListEvent = effectiveContactListEvent
         dependencyCoordinator.replaceNIP05Resolutions(state.nip05Resolutions)
-        relayDiagnostics.replaceEvents(state.relaySyncEvents)
+        applyRelayStatusSnapshot(
+            relayStatusCoordinator.replaceEvents(
+                state.relaySyncEvents,
+                resolvedRelays: resolvedRelays
+            )
+        )
         hasMoreOlder = state.hasMoreOlder
         homeFeedProjection.clearWindow()
         invalidateListEntries()
-        updateRelayStatusCounts()
     }
 
     private func effectiveReadRelays(
