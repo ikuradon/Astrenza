@@ -84,6 +84,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let materializationScheduler: HomeTimelineMaterializationScheduler
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
+    private let runtimeEventPump: HomeTimelineRuntimeEventPump
     private let relayDiagnostics: HomeTimelineRelayDiagnosticsLedger
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -98,7 +99,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var syncPolicy: NostrSyncPolicy
     private var loadTask: Task<Void, Never>?
     private var paginationTask: Task<Void, Never>?
-    private var runtimeTask: Task<Void, Never>?
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
@@ -114,8 +114,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var hasCompletedRuntimeBootstrap = false
     private var runtimeLifecycleGeneration: UInt64 = 0
     private var relayRuntimeConfigurationSequence: UInt64 = 0
-    private var isRuntimeEventPumpReady = false
-    private var runtimeEventPumpReadyWaiters: [CheckedContinuation<Bool, Never>] = []
     private var relayRuntimeTerminationSequence: UInt64 = 0
     private var relayRuntimeTerminationTask: Task<Void, Never>?
 
@@ -250,6 +248,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = HomeTimelineListProjectionCache()
         self.materializationScheduler = HomeTimelineMaterializationScheduler()
         self.pendingEventBuffer = HomeTimelinePendingEventBuffer()
+        self.runtimeEventPump = HomeTimelineRuntimeEventPump()
         self.relayDiagnostics = HomeTimelineRelayDiagnosticsLedger(
             eventStore: eventStore,
             persistenceWorker: persistenceWorker
@@ -612,15 +611,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         let cancellationGeneration = runtimeLifecycleGeneration
         loadTask?.cancel()
         paginationTask?.cancel()
-        runtimeTask?.cancel()
-        resolveRuntimeEventPumpReadiness(false)
+        runtimeEventPump.cancel()
         linkPreviewCoordinator.reset()
         materializationScheduler.reset()
         realtimeFollowSourceRevision = materializationScheduler.realtimeFollowSourceRevision
         outboxCoordinator.cancel()
         loadTask = nil
         paginationTask = nil
-        runtimeTask = nil
         dependencyCoordinator.reset()
         pendingBackwardRequests.removeAll()
         pendingGapReconciliationIDs.removeAll()
@@ -674,9 +671,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                   let account = self.account
             else { return }
 
-            self.runtimeTask?.cancel()
-            self.runtimeTask = nil
-            self.resolveRuntimeEventPumpReadiness(false)
+            self.runtimeEventPump.cancel()
             self.installedHomeForwardPackets = []
             self.resetHomeTimelineRealtime()
             self.startRuntimeEventPump()
@@ -1385,35 +1380,19 @@ final class NostrHomeTimelineStore: ObservableObject {
         startProfileDirectoryEventPump()
         guard let relayRuntime,
               relayRuntimeTerminationTask == nil,
-              runtimeTask == nil,
               let accountID = account?.pubkey
         else { return }
         let lifecycleGeneration = runtimeLifecycleGeneration
-        resolveRuntimeEventPumpReadiness(false)
-        runtimeTask = Task { [weak self] in
-            let stream = await relayRuntime.events()
-            guard !Task.isCancelled,
-                  self?.runtimeLifecycleGeneration == lifecycleGeneration,
-                  self?.account?.pubkey == accountID
-            else {
-                self?.resolveRuntimeEventPumpReadiness(
-                    false,
-                    lifecycleGeneration: lifecycleGeneration
-                )
-                return
-            }
-            self?.resolveRuntimeEventPumpReadiness(
-                true,
-                lifecycleGeneration: lifecycleGeneration
-            )
-            for await packet in stream {
-                guard !Task.isCancelled,
-                      self?.runtimeLifecycleGeneration == lifecycleGeneration,
-                      self?.account?.pubkey == accountID
-                else { break }
+        runtimeEventPump.start(
+            stream: { await relayRuntime.events() },
+            isSourceCurrent: { [weak self] in
+                self?.runtimeLifecycleGeneration == lifecycleGeneration &&
+                    self?.account?.pubkey == accountID
+            },
+            onPacket: { [weak self] packet in
                 await self?.handleRuntimePacket(packet)
             }
-        }
+        )
     }
 
     private func startProfileDirectoryEventPump() {
@@ -1435,37 +1414,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         if !update.states.isEmpty || !update.metadataEvents.isEmpty {
             invalidateListEntries()
             scheduleMaterializeEntries()
-        }
-    }
-
-    private func waitForRuntimeEventPumpReady() async -> Bool {
-        if isRuntimeEventPumpReady { return true }
-        guard runtimeTask != nil, !Task.isCancelled else { return false }
-        let isReady = await withCheckedContinuation { continuation in
-            if isRuntimeEventPumpReady {
-                continuation.resume(returning: true)
-            } else if runtimeTask != nil {
-                runtimeEventPumpReadyWaiters.append(continuation)
-            } else {
-                continuation.resume(returning: false)
-            }
-        }
-        return isReady && !Task.isCancelled
-    }
-
-    private func resolveRuntimeEventPumpReadiness(
-        _ isReady: Bool,
-        lifecycleGeneration: UInt64? = nil
-    ) {
-        if let lifecycleGeneration,
-           lifecycleGeneration != runtimeLifecycleGeneration {
-            return
-        }
-        isRuntimeEventPumpReady = isReady
-        let waiters = runtimeEventPumpReadyWaiters
-        runtimeEventPumpReadyWaiters.removeAll(keepingCapacity: true)
-        for waiter in waiters {
-            waiter.resume(returning: isReady)
         }
     }
 
@@ -1525,7 +1473,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
 
         do {
-            guard await waitForRuntimeEventPumpReady() else { return }
+            guard await runtimeEventPump.waitUntilReady() else { return }
             guard remainsCurrent() else { return }
             await relayRuntime.setTrafficContext(
                 accountID: account.pubkey,
