@@ -143,6 +143,99 @@ struct HomeTimelineRelayDiagnosticsLedgerTests {
         #expect(dependencyHistory.first?.oldestCreatedAt == nil)
     }
 
+    @Test("Relay traffic flushes at batch and elapsed-time thresholds")
+    @MainActor
+    func relayTrafficUsesBatchAndTimeThresholds() {
+        let writer = RelayTrafficWriterRecorder()
+        let ledger = HomeTimelineRelayDiagnosticsLedger(
+            eventStore: nil,
+            trafficBatchSize: 3,
+            trafficFlushIntervalSeconds: 5,
+            relayTrafficWriter: { deltas in
+                try writer.write(deltas)
+            }
+        )
+
+        ledger.recordTraffic(trafficDelta(occurredAt: 100, receivedBytes: 1))
+        ledger.recordTraffic(trafficDelta(occurredAt: 102, receivedBytes: 2))
+        ledger.recordTraffic(trafficDelta(occurredAt: 103, receivedBytes: 3))
+        ledger.recordTraffic(trafficDelta(occurredAt: 104, receivedBytes: 4))
+        ledger.recordTraffic(trafficDelta(occurredAt: 108, receivedBytes: 5))
+        ledger.recordTraffic(trafficDelta(occurredAt: 109, receivedBytes: 6))
+
+        #expect(writer.attempts.map { $0.map(\.receivedBytes) } == [
+            [1],
+            [2, 3, 4],
+            [5, 6]
+        ])
+        #expect(ledger.pendingRelayTrafficDeltaCount == 0)
+    }
+
+    @Test("A failed relay traffic write restores the batch in original order")
+    @MainActor
+    func failedRelayTrafficWriteRestoresBatch() {
+        let writer = RelayTrafficWriterRecorder(failuresRemaining: 1)
+        let ledger = HomeTimelineRelayDiagnosticsLedger(
+            eventStore: nil,
+            trafficBatchSize: 2,
+            trafficFlushIntervalSeconds: 5,
+            relayTrafficWriter: { deltas in
+                try writer.write(deltas)
+            }
+        )
+
+        ledger.recordTraffic(trafficDelta(occurredAt: 100, receivedBytes: 1))
+        #expect(ledger.pendingRelayTrafficDeltaCount == 1)
+
+        ledger.recordTraffic(trafficDelta(occurredAt: 101, receivedBytes: 2))
+
+        #expect(writer.attempts.map { $0.map(\.receivedBytes) } == [
+            [1],
+            [1, 2]
+        ])
+        #expect(ledger.pendingRelayTrafficDeltaCount == 0)
+    }
+
+    @Test("Relay traffic uses the event store as its default writer")
+    @MainActor
+    func relayTrafficUsesEventStoreWriter() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let ledger = HomeTimelineRelayDiagnosticsLedger(eventStore: eventStore)
+
+        ledger.recordTraffic(trafficDelta(occurredAt: 100, receivedBytes: 7))
+
+        let totals = try eventStore.relayTrafficTotals(
+            accountID: String(repeating: "a", count: 64),
+            start: 0,
+            end: 200
+        )
+        #expect(totals.receivedBytes == 7)
+        #expect(totals.receivedMessages == 1)
+    }
+
+    @Test("Session shutdown flushes subthreshold relay traffic before reset")
+    @MainActor
+    func sessionShutdownFlushesPendingTraffic() {
+        let writer = RelayTrafficWriterRecorder()
+        let ledger = HomeTimelineRelayDiagnosticsLedger(
+            eventStore: nil,
+            trafficBatchSize: 50,
+            trafficFlushIntervalSeconds: 5,
+            relayTrafficWriter: { deltas in
+                try writer.write(deltas)
+            }
+        )
+        ledger.recordTraffic(trafficDelta(occurredAt: 100, receivedBytes: 1))
+        ledger.recordTraffic(trafficDelta(occurredAt: 101, receivedBytes: 2))
+        #expect(ledger.pendingRelayTrafficDeltaCount == 1)
+
+        ledger.flushTraffic(now: 102)
+        ledger.reset()
+
+        #expect(writer.attempts.map { $0.map(\.receivedBytes) } == [[1], [2]])
+        #expect(ledger.pendingRelayTrafficDeltaCount == 0)
+    }
+
     private func event(
         relayURL: String,
         kind: NostrRelaySyncEventKind,
@@ -164,4 +257,42 @@ struct HomeTimelineRelayDiagnosticsLedgerTests {
             message: "event"
         )
     }
+
+    private func trafficDelta(
+        occurredAt: Int,
+        receivedBytes: Int
+    ) -> NostrRelayTrafficDelta {
+        NostrRelayTrafficDelta(
+            accountID: String(repeating: "a", count: 64),
+            relayURL: "wss://relay.example",
+            occurredAt: occurredAt,
+            networkType: .wifi,
+            syncMode: .ownRelayList,
+            receivedBytes: receivedBytes,
+            sentBytes: 0,
+            receivedMessages: 1,
+            sentMessages: 0
+        )
+    }
+}
+
+@MainActor
+private final class RelayTrafficWriterRecorder {
+    private(set) var attempts: [[NostrRelayTrafficDelta]] = []
+    private var failuresRemaining: Int
+
+    init(failuresRemaining: Int = 0) {
+        self.failuresRemaining = failuresRemaining
+    }
+
+    func write(_ deltas: [NostrRelayTrafficDelta]) throws {
+        attempts.append(deltas)
+        guard failuresRemaining > 0 else { return }
+        failuresRemaining -= 1
+        throw RelayTrafficWriterRecorderError.writeFailed
+    }
+}
+
+private enum RelayTrafficWriterRecorderError: Error {
+    case writeFailed
 }

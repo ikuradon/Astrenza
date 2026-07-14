@@ -3,24 +3,50 @@ import Foundation
 
 @MainActor
 final class HomeTimelineRelayDiagnosticsLedger {
+    typealias RelayTrafficWriter = @MainActor (_ deltas: [NostrRelayTrafficDelta]) throws -> Void
+
     private let eventStore: NostrEventStore?
     private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let eventLimit: Int
+    private let trafficBatchSize: Int
+    private let trafficFlushIntervalSeconds: Int
+    private let relayTrafficWriter: RelayTrafficWriter?
 
     private(set) var events: [NostrRelaySyncEventRecord] = []
+    private var pendingRelayTrafficDeltas: [NostrRelayTrafficDelta] = []
+    private var lastRelayTrafficFlushAt = 0
+
+    var pendingRelayTrafficDeltaCount: Int {
+        pendingRelayTrafficDeltas.count
+    }
 
     init(
         eventStore: NostrEventStore?,
         persistenceWorker: HomeTimelinePersistenceWorker? = nil,
-        eventLimit: Int = 500
+        eventLimit: Int = 500,
+        trafficBatchSize: Int = 50,
+        trafficFlushIntervalSeconds: Int = 5,
+        relayTrafficWriter: RelayTrafficWriter? = nil
     ) {
         self.eventStore = eventStore
         self.persistenceWorker = persistenceWorker
         self.eventLimit = eventLimit
+        self.trafficBatchSize = max(1, trafficBatchSize)
+        self.trafficFlushIntervalSeconds = max(0, trafficFlushIntervalSeconds)
+        if let relayTrafficWriter {
+            self.relayTrafficWriter = relayTrafficWriter
+        } else if let eventStore {
+            self.relayTrafficWriter = { deltas in
+                try eventStore.recordRelayTraffic(deltas)
+            }
+        } else {
+            self.relayTrafficWriter = nil
+        }
     }
 
     func reset() {
         events.removeAll(keepingCapacity: true)
+        pendingRelayTrafficDeltas.removeAll(keepingCapacity: true)
     }
 
     func replaceEvents(_ events: [NostrRelaySyncEventRecord]) {
@@ -62,6 +88,27 @@ final class HomeTimelineRelayDiagnosticsLedger {
         guard !events.isEmpty, let persistenceWorker else { return }
         let normalizedEvents = events.map(Self.normalizeFetchedEvent)
         try? await persistenceWorker.saveRelaySyncEvents(normalizedEvents)
+    }
+
+    func recordTraffic(_ delta: NostrRelayTrafficDelta) {
+        pendingRelayTrafficDeltas.append(delta)
+        let now = delta.occurredAt
+        guard pendingRelayTrafficDeltas.count >= trafficBatchSize ||
+            now - lastRelayTrafficFlushAt >= trafficFlushIntervalSeconds
+        else { return }
+        flushTraffic(now: now)
+    }
+
+    func flushTraffic(now: Int = Int(Date().timeIntervalSince1970)) {
+        guard !pendingRelayTrafficDeltas.isEmpty, let relayTrafficWriter else { return }
+        let deltas = pendingRelayTrafficDeltas
+        pendingRelayTrafficDeltas = []
+        lastRelayTrafficFlushAt = now
+        do {
+            try relayTrafficWriter(deltas)
+        } catch {
+            pendingRelayTrafficDeltas.insert(contentsOf: deltas, at: 0)
+        }
     }
 
     func hasRecentEvent(

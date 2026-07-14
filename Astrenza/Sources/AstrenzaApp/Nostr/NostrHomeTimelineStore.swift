@@ -103,8 +103,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private var pendingBackwardRequests: [String: PendingBackwardRequest] = [:]
     private var pendingGapReconciliationIDs = Set<String>()
     private var feedSyncLifecycle: HomeTimelineFeedSyncLifecycle
-    private var pendingRelayTrafficDeltas: [NostrRelayTrafficDelta] = []
-    private var lastRelayTrafficFlushAt = 0
     private var dependencyFlushTask: Task<Void, Never>?
     private var installedHomeForwardPackets: [NostrREQPacket] = []
     private var noteEvents: [NostrEvent] = []
@@ -617,7 +615,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func cancel() {
         readStateCoordinator.endSession(flushing: homeFeedReadBoundaryWrite())
-        flushRelayTrafficDeltas()
+        relayDiagnostics.flushTraffic()
         runtimeLifecycleGeneration &+= 1
         let cancellationGeneration = runtimeLifecycleGeneration
         loadTask?.cancel()
@@ -651,7 +649,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         resetHomeTimelineRealtime()
         finishActiveFeedSyncRequests(reason: .cancelled)
         feedSyncLifecycle.reset()
-        pendingRelayTrafficDeltas.removeAll()
         relayRuntimeStates = [:]
         entries = []
         resolvedRelays = []
@@ -1773,7 +1770,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                     self.handleBackwardCompletion(completion)
                 },
                 traffic: { delta in
-                    self.handleRelayTraffic(delta)
+                    self.relayDiagnostics.recordTraffic(delta)
                 },
                 notice: { relayURL, message in
                     self.recordRuntimeSyncEvent(
@@ -1798,27 +1795,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 }
             )
         )
-    }
-
-    private func handleRelayTraffic(_ delta: NostrRelayTrafficDelta) {
-        pendingRelayTrafficDeltas.append(delta)
-        let now = delta.occurredAt
-        guard pendingRelayTrafficDeltas.count >= 50 || now - lastRelayTrafficFlushAt >= 5 else {
-            return
-        }
-        flushRelayTrafficDeltas(now: now)
-    }
-
-    private func flushRelayTrafficDeltas(now: Int = Int(Date().timeIntervalSince1970)) {
-        guard !pendingRelayTrafficDeltas.isEmpty, let eventStore else { return }
-        let deltas = pendingRelayTrafficDeltas
-        pendingRelayTrafficDeltas = []
-        lastRelayTrafficFlushAt = now
-        do {
-            try eventStore.recordRelayTraffic(deltas)
-        } catch {
-            pendingRelayTrafficDeltas.insert(contentsOf: deltas, at: 0)
-        }
     }
 
     private func handleRuntimeStateChange(relayURL: String, state: NostrRelayConnectionState) {
