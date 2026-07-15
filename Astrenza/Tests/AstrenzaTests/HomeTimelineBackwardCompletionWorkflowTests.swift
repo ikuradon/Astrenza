@@ -147,10 +147,8 @@ struct HomeBackwardCompletionWorkflowTests {
 
         #expect(!resolved)
         #expect(probe.dependencyEvents == [recoveredEvent])
-        let receivedContext = try #require(probe.dependencyContexts.first)
-        #expect(receivedContext.account == account)
-        #expect(receivedContext.lifecycle == token)
-        #expect(receivedContext.feedContext == feedContext)
+        #expect(probe.dependencyAccounts == [account])
+        #expect(probe.dependencyLifecycles == [token])
         #expect(gapReconciliation.cancelCount == 1)
     }
 

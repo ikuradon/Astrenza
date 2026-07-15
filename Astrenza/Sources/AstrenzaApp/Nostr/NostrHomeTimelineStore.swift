@@ -1320,43 +1320,46 @@ final class NostrHomeTimelineStore: ObservableObject {
                 completion: completion,
                 account: account
             ),
-            effects: backwardCompletionEffects()
+            effects: backwardCompletionAppEffects()
         )
     }
 
-    private func backwardCompletionEffects() -> HomeTimelineBackwardCompletionEffects {
-        HomeTimelineBackwardCompletionEffects(
+    private func backwardCompletionAppEffects() -> HomeTimelineBackwardCompletionAppEffects {
+        HomeTimelineBackwardCompletionAppEffects(
             applyContentSnapshot: { [weak self] snapshot in
                 self?.applyContentSnapshot(snapshot)
             },
-            recordDiagnostic: { [weak self] relayURL, subscriptionID, message in
+            recordDiagnostic: { [weak self] diagnostic in
                 self?.recordRuntimeSyncEvent(
-                    relayURL: relayURL,
+                    relayURL: diagnostic.relayURL,
                     kind: .partialFailure,
-                    subscriptionID: subscriptionID,
-                    message: message
+                    subscriptionID: diagnostic.subscriptionID,
+                    message: diagnostic.message
                 )
             },
             reloadProjection: { [weak self] account, anchorEventID, mergingWithCurrentWindow in
-                guard let self else { return }
-                reloadProjectionWindow(
+                self?.reloadProjectionWindow(
                     account: account,
                     around: anchorEventID,
                     mergingWithCurrentWindow: mergingWithCurrentWindow
                 )
-                materializeEntries()
-                scheduleLinkPreviewResolution()
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
+            },
+            scheduleLinkPreviewResolution: { [weak self] in
+                self?.scheduleLinkPreviewResolution()
             },
             incrementRelayStatusRevision: { [weak self] in
                 self?.relayStatusRevision &+= 1
             },
-            resolveDependencies: { [weak self] event, context in
+            resolveDependencies: { [weak self] event, account, lifecycle in
                 guard let self else { return false }
                 return await runtimeEventWorkflow.enqueueDependencies(
                     for: event,
                     context: runtimeEventApplicationContext(
-                        account: context.account,
-                        lifecycle: context.lifecycle
+                        account: account,
+                        lifecycle: lifecycle
                     ),
                     effects: runtimeApplicationEffects()
                 )

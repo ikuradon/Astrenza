@@ -32,31 +32,38 @@ struct HomeTimelineBackwardCompletionInput: Equatable, Sendable {
     let account: NostrAccount?
 }
 
-struct HomeTimelineBackwardCompletionEffects: Sendable {
-    typealias ContentSnapshotHandler = @MainActor @Sendable (
+struct HomeTimelineBackwardAppDiagnostic: Equatable, Sendable {
+    let relayURL: String
+    let subscriptionID: String?
+    let message: String
+}
+
+struct HomeTimelineBackwardCompletionAppEffects: Sendable {
+    typealias ContentSnapshotEffect = @MainActor @Sendable (
         _ snapshot: HomeTimelineContentSnapshot
     ) -> Void
-    typealias DiagnosticHandler = @MainActor @Sendable (
-        _ relayURL: String,
-        _ subscriptionID: String?,
-        _ message: String
+    typealias DiagnosticEffect = @MainActor @Sendable (
+        _ diagnostic: HomeTimelineBackwardAppDiagnostic
     ) -> Void
-    typealias ProjectionReloader = @MainActor @Sendable (
+    typealias ProjectionEffect = @MainActor @Sendable (
         _ account: NostrAccount,
         _ anchorEventID: String?,
         _ mergingWithCurrentWindow: Bool
     ) -> Void
-    typealias RelayStatusRevisionHandler = @MainActor @Sendable () -> Void
-    typealias DependencyResolver = @MainActor @Sendable (
+    typealias VoidEffect = @MainActor @Sendable () -> Void
+    typealias DependencyEffect = @MainActor @Sendable (
         _ event: NostrEvent,
-        _ context: HomeTimelineGapReconciliationApplicationContext
+        _ account: NostrAccount,
+        _ lifecycle: HomeTimelineLifecycleToken
     ) async -> Bool
 
-    let applyContentSnapshot: ContentSnapshotHandler
-    let recordDiagnostic: DiagnosticHandler
-    let reloadProjection: ProjectionReloader
-    let incrementRelayStatusRevision: RelayStatusRevisionHandler
-    let resolveDependencies: DependencyResolver
+    let applyContentSnapshot: ContentSnapshotEffect
+    let recordDiagnostic: DiagnosticEffect
+    let reloadProjection: ProjectionEffect
+    let materializeEntries: VoidEffect
+    let scheduleLinkPreviewResolution: VoidEffect
+    let incrementRelayStatusRevision: VoidEffect
+    let resolveDependencies: DependencyEffect
 }
 
 @MainActor
@@ -74,7 +81,7 @@ final class HomeTimelineBackwardCompletionWorkflow {
 
     func handle(
         _ input: HomeTimelineBackwardCompletionInput,
-        effects: HomeTimelineBackwardCompletionEffects
+        effects: HomeTimelineBackwardCompletionAppEffects
     ) {
         let commands = completionCoordinator.handle(
             input.completion,
@@ -92,19 +99,26 @@ final class HomeTimelineBackwardCompletionWorkflow {
     private func apply(
         _ command: HomeTimelineBackwardCompletionCommand,
         account: NostrAccount?,
-        effects: HomeTimelineBackwardCompletionEffects
+        effects: HomeTimelineBackwardCompletionAppEffects
     ) {
         switch command {
         case .applyContentSnapshot(let snapshot):
             effects.applyContentSnapshot(snapshot)
         case .recordDiagnostic(let diagnostic):
-            effects.recordDiagnostic(diagnostic.relayURL, nil, diagnostic.message)
+            effects.recordDiagnostic(
+                HomeTimelineBackwardAppDiagnostic(
+                    relayURL: diagnostic.relayURL,
+                    subscriptionID: nil,
+                    message: diagnostic.message
+                )
+            )
         case .reloadProjection(let anchorEventID, let mergingWithCurrentWindow):
             guard let account else { return }
-            effects.reloadProjection(
+            applyProjectionReload(
                 account,
                 anchorEventID,
-                mergingWithCurrentWindow
+                mergingWithCurrentWindow,
+                effects: effects
             )
         case .reconcileGap(let gap, let context):
             guard let account else { return }
@@ -121,32 +135,60 @@ final class HomeTimelineBackwardCompletionWorkflow {
 
     private func gapHandlers(
         account: NostrAccount,
-        effects: HomeTimelineBackwardCompletionEffects
+        effects: HomeTimelineBackwardCompletionAppEffects
     ) -> HomeTimelineGapReconciliationApplicationHandlers {
         HomeTimelineGapReconciliationApplicationHandlers(
             perform: { [weak self] command in
                 self?.apply(command, account: account, effects: effects)
             },
-            resolveDependencies: effects.resolveDependencies
+            resolveDependencies: { event, context in
+                await effects.resolveDependencies(
+                    event,
+                    context.account,
+                    context.lifecycle
+                )
+            }
         )
     }
 
     private func apply(
         _ command: HomeTimelineGapReconciliationApplicationCommand,
         account: NostrAccount,
-        effects: HomeTimelineBackwardCompletionEffects
+        effects: HomeTimelineBackwardCompletionAppEffects
     ) {
         switch command {
         case .incrementRelayStatusRevision:
             effects.incrementRelayStatusRevision()
         case .recordDiagnostic(let diagnostic):
             effects.recordDiagnostic(
-                diagnostic.relayURL,
-                diagnostic.subscriptionID,
-                diagnostic.message
+                HomeTimelineBackwardAppDiagnostic(
+                    relayURL: diagnostic.relayURL,
+                    subscriptionID: diagnostic.subscriptionID,
+                    message: diagnostic.message
+                )
             )
         case .reloadProjection(let anchorEventID):
-            effects.reloadProjection(account, anchorEventID, false)
+            applyProjectionReload(
+                account,
+                anchorEventID,
+                false,
+                effects: effects
+            )
         }
+    }
+
+    private func applyProjectionReload(
+        _ account: NostrAccount,
+        _ anchorEventID: String?,
+        _ mergingWithCurrentWindow: Bool,
+        effects: HomeTimelineBackwardCompletionAppEffects
+    ) {
+        effects.reloadProjection(
+            account,
+            anchorEventID,
+            mergingWithCurrentWindow
+        )
+        effects.materializeEntries()
+        effects.scheduleLinkPreviewResolution()
     }
 }

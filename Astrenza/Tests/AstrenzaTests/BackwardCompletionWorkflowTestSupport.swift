@@ -72,19 +72,16 @@ final class BackwardCompletionWorkflowEffectProbe {
     var dependencyResult = true
     private(set) var receivedEffects: [BackwardCompletionWorkflowEffect] = []
     private(set) var dependencyEvents: [NostrEvent] = []
-    private(set) var dependencyContexts: [HomeTimelineGapReconciliationApplicationContext] = []
+    private(set) var dependencyAccounts: [NostrAccount] = []
+    private(set) var dependencyLifecycles: [HomeTimelineLifecycleToken] = []
 
-    var effects: HomeTimelineBackwardCompletionEffects {
-        HomeTimelineBackwardCompletionEffects(
+    var effects: HomeTimelineBackwardCompletionAppEffects {
+        HomeTimelineBackwardCompletionAppEffects(
             applyContentSnapshot: { [self] snapshot in
                 receivedEffects.append(.applyContentSnapshot(snapshot))
             },
-            recordDiagnostic: { [self] relayURL, subscriptionID, message in
-                receivedEffects.append(.recordDiagnostic(
-                    relayURL: relayURL,
-                    subscriptionID: subscriptionID,
-                    message: message
-                ))
+            recordDiagnostic: { [self] diagnostic in
+                receivedEffects.append(.recordDiagnostic(diagnostic))
             },
             reloadProjection: { [self] account, anchorEventID, mergingWithCurrentWindow in
                 receivedEffects.append(.reloadProjection(
@@ -93,12 +90,19 @@ final class BackwardCompletionWorkflowEffectProbe {
                     mergingWithCurrentWindow: mergingWithCurrentWindow
                 ))
             },
+            materializeEntries: { [self] in
+                receivedEffects.append(.materializeEntries)
+            },
+            scheduleLinkPreviewResolution: { [self] in
+                receivedEffects.append(.scheduleLinkPreviewResolution)
+            },
             incrementRelayStatusRevision: { [self] in
                 receivedEffects.append(.incrementRelayStatusRevision)
             },
-            resolveDependencies: { [self] event, context in
+            resolveDependencies: { [self] event, account, lifecycle in
                 dependencyEvents.append(event)
-                dependencyContexts.append(context)
+                dependencyAccounts.append(account)
+                dependencyLifecycles.append(lifecycle)
                 return dependencyResult
             }
         )
@@ -107,16 +111,14 @@ final class BackwardCompletionWorkflowEffectProbe {
 
 enum BackwardCompletionWorkflowEffect: Equatable, Sendable {
     case applyContentSnapshot(HomeTimelineContentSnapshot)
-    case recordDiagnostic(
-        relayURL: String,
-        subscriptionID: String?,
-        message: String
-    )
+    case recordDiagnostic(HomeTimelineBackwardAppDiagnostic)
     case reloadProjection(
         account: NostrAccount,
         anchorEventID: String?,
         mergingWithCurrentWindow: Bool
     )
+    case materializeEntries
+    case scheduleLinkPreviewResolution
     case incrementRelayStatusRevision
 }
 
@@ -193,16 +195,18 @@ func backwardCompletionWorkflowEffects(
 ) -> [BackwardCompletionWorkflowEffect] {
     [
         .applyContentSnapshot(.initial),
-        .recordDiagnostic(
+        .recordDiagnostic(HomeTimelineBackwardAppDiagnostic(
             relayURL: diagnostic.relayURL,
             subscriptionID: nil,
             message: diagnostic.message
-        ),
+        )),
         .reloadProjection(
             account: account,
             anchorEventID: "anchor",
             mergingWithCurrentWindow: true
         ),
+        .materializeEntries,
+        .scheduleLinkPreviewResolution,
         .incrementRelayStatusRevision
     ]
 }
@@ -214,15 +218,17 @@ func gapReconciliationWorkflowEffects(
 ) -> [BackwardCompletionWorkflowEffect] {
     [
         .incrementRelayStatusRevision,
-        .recordDiagnostic(
+        .recordDiagnostic(HomeTimelineBackwardAppDiagnostic(
             relayURL: diagnostic.relayURL,
             subscriptionID: diagnostic.subscriptionID,
             message: diagnostic.message
-        ),
+        )),
         .reloadProjection(
             account: account,
             anchorEventID: gap.stableAnchorPostID,
             mergingWithCurrentWindow: false
-        )
+        ),
+        .materializeEntries,
+        .scheduleLinkPreviewResolution
     ]
 }
