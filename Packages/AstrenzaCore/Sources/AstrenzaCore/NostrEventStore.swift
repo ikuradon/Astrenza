@@ -2406,40 +2406,6 @@ public final class NostrEventStore: Sendable {
         }
     }
 
-    /// viewport anchorだけを更新し、既存のread boundaryは保持します。
-    public func saveFeedViewportState(
-        feedID: String,
-        viewportAnchorEventID: String?,
-        viewportAnchorOffset: Double,
-        updatedAt: Int = Int(Date().timeIntervalSince1970)
-    ) throws {
-        try database.write { db in
-            try db.execute(
-                sql: """
-                INSERT INTO feed_read_state (
-                    feed_id, viewport_anchor_event_id, viewport_anchor_offset,
-                    read_sort_ts, read_event_id, updated_at,
-                    viewport_updated_at, read_updated_at
-                ) VALUES (?, ?, ?, NULL, NULL, ?, ?, 0)
-                ON CONFLICT(feed_id) DO UPDATE SET
-                    viewport_anchor_event_id = excluded.viewport_anchor_event_id,
-                    viewport_anchor_offset = excluded.viewport_anchor_offset,
-                    viewport_updated_at = excluded.viewport_updated_at,
-                    updated_at = MAX(feed_read_state.updated_at, excluded.updated_at)
-                WHERE excluded.viewport_updated_at >= feed_read_state.viewport_updated_at
-                """,
-                arguments: [
-                    feedID,
-                    viewportAnchorEventID,
-                    viewportAnchorOffset,
-                    updatedAt,
-                    updatedAt
-                ]
-            )
-        }
-    }
-
-    /// read boundaryだけを更新し、既存のviewport anchorは保持します。
     public func saveFeedReadBoundary(
         feedID: String,
         readBoundary: NostrTimelineEntryCursor?,
@@ -2449,22 +2415,18 @@ public final class NostrEventStore: Sendable {
             try db.execute(
                 sql: """
                 INSERT INTO feed_read_state (
-                    feed_id, viewport_anchor_event_id, viewport_anchor_offset,
-                    read_sort_ts, read_event_id, updated_at,
-                    viewport_updated_at, read_updated_at
-                ) VALUES (?, NULL, 0, ?, ?, ?, 0, ?)
+                    feed_id, read_sort_ts, read_event_id, updated_at
+                ) VALUES (?, ?, ?, ?)
                 ON CONFLICT(feed_id) DO UPDATE SET
                     read_sort_ts = excluded.read_sort_ts,
                     read_event_id = excluded.read_event_id,
-                    read_updated_at = excluded.read_updated_at,
-                    updated_at = MAX(feed_read_state.updated_at, excluded.updated_at)
-                WHERE excluded.read_updated_at >= feed_read_state.read_updated_at
+                    updated_at = excluded.updated_at
+                WHERE excluded.updated_at >= feed_read_state.updated_at
                 """,
                 arguments: [
                     feedID,
                     readBoundary?.sortTimestamp,
                     readBoundary?.eventID,
-                    updatedAt,
                     updatedAt
                 ]
             )
@@ -2476,9 +2438,7 @@ public final class NostrEventStore: Sendable {
             try Row.fetchOne(
                 db,
                 sql: """
-                SELECT feed_id, viewport_anchor_event_id, viewport_anchor_offset,
-                    read_sort_ts, read_event_id, updated_at,
-                    viewport_updated_at, read_updated_at
+                SELECT feed_id, read_sort_ts, read_event_id, updated_at
                 FROM feed_read_state
                 WHERE feed_id = ?
                 """,
@@ -3865,6 +3825,39 @@ public final class NostrEventStore: Sendable {
             )
         }
 
+        migrator.registerMigration("reduceFeedReadStateToBoundaryV9") { db in
+            try db.rename(
+                table: "feed_read_state",
+                to: "feed_read_state_before_v9"
+            )
+            try db.create(table: "feed_read_state") { table in
+                table.column("feed_id", .text)
+                    .primaryKey()
+                    .references(
+                        "feed_definitions",
+                        column: "feed_id",
+                        onDelete: .cascade
+                    )
+                table.column("read_sort_ts", .integer)
+                table.column("read_event_id", .text)
+                table.column("updated_at", .integer).notNull()
+                table.check(
+                    sql: "(read_sort_ts IS NULL) = (read_event_id IS NULL)"
+                )
+            }
+            try db.execute(
+                sql: """
+                INSERT INTO feed_read_state (
+                    feed_id, read_sort_ts, read_event_id, updated_at
+                )
+                SELECT feed_id, read_sort_ts, read_event_id, read_updated_at
+                FROM feed_read_state_before_v9
+                WHERE read_updated_at > 0
+                """
+            )
+            try db.drop(table: "feed_read_state_before_v9")
+        }
+
         try migrator.migrate(database)
     }
 
@@ -5224,50 +5217,19 @@ public final class NostrEventStore: Sendable {
         try db.execute(
             sql: """
             INSERT INTO feed_read_state (
-                feed_id, viewport_anchor_event_id, viewport_anchor_offset,
-                read_sort_ts, read_event_id, updated_at,
-                viewport_updated_at, read_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                feed_id, read_sort_ts, read_event_id, updated_at
+            ) VALUES (?, ?, ?, ?)
             ON CONFLICT(feed_id) DO UPDATE SET
-                viewport_anchor_event_id = CASE
-                    WHEN excluded.viewport_updated_at >= feed_read_state.viewport_updated_at
-                    THEN excluded.viewport_anchor_event_id
-                    ELSE feed_read_state.viewport_anchor_event_id
-                END,
-                viewport_anchor_offset = CASE
-                    WHEN excluded.viewport_updated_at >= feed_read_state.viewport_updated_at
-                    THEN excluded.viewport_anchor_offset
-                    ELSE feed_read_state.viewport_anchor_offset
-                END,
-                read_sort_ts = CASE
-                    WHEN excluded.read_updated_at >= feed_read_state.read_updated_at
-                    THEN excluded.read_sort_ts
-                    ELSE feed_read_state.read_sort_ts
-                END,
-                read_event_id = CASE
-                    WHEN excluded.read_updated_at >= feed_read_state.read_updated_at
-                    THEN excluded.read_event_id
-                    ELSE feed_read_state.read_event_id
-                END,
-                viewport_updated_at = MAX(
-                    feed_read_state.viewport_updated_at,
-                    excluded.viewport_updated_at
-                ),
-                read_updated_at = MAX(
-                    feed_read_state.read_updated_at,
-                    excluded.read_updated_at
-                ),
-                updated_at = MAX(feed_read_state.updated_at, excluded.updated_at)
+                read_sort_ts = excluded.read_sort_ts,
+                read_event_id = excluded.read_event_id,
+                updated_at = excluded.updated_at
+            WHERE excluded.updated_at >= feed_read_state.updated_at
             """,
             arguments: [
                 state.feedID,
-                state.viewportAnchorEventID,
-                state.viewportAnchorOffset,
                 state.readBoundary?.sortTimestamp,
                 state.readBoundary?.eventID,
-                state.updatedAt,
-                state.viewportUpdatedAt,
-                state.readUpdatedAt
+                state.updatedAt
             ]
         )
     }
@@ -5994,14 +5956,11 @@ public final class NostrEventStore: Sendable {
         let readEventID: String? = row["read_event_id"]
         return NostrFeedReadStateRecord(
             feedID: row["feed_id"],
-            viewportAnchorEventID: row["viewport_anchor_event_id"],
-            viewportAnchorOffset: row["viewport_anchor_offset"],
             readBoundary: optionalTimelineCursor(
                 sortTimestamp: readSortTimestamp,
                 eventID: readEventID
             ),
-            viewportUpdatedAt: row["viewport_updated_at"],
-            readUpdatedAt: row["read_updated_at"]
+            updatedAt: row["updated_at"]
         )
     }
 

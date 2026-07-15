@@ -452,110 +452,16 @@ public struct NostrFeedSyncCheckpointRecord: Codable, Equatable, Sendable {
 
 public struct NostrFeedReadStateRecord: Codable, Equatable, Sendable {
     public let feedID: String
-    public let viewportAnchorEventID: String?
-    public let viewportAnchorOffset: Double
     public let readBoundary: NostrTimelineEntryCursor?
     public let updatedAt: Int
-    public let viewportUpdatedAt: Int
-    public let readUpdatedAt: Int
 
     public init(
         feedID: String,
-        viewportAnchorEventID: String?,
-        viewportAnchorOffset: Double,
         readBoundary: NostrTimelineEntryCursor?,
         updatedAt: Int
     ) {
         self.feedID = feedID
-        self.viewportAnchorEventID = viewportAnchorEventID
-        self.viewportAnchorOffset = viewportAnchorOffset
         self.readBoundary = readBoundary
         self.updatedAt = updatedAt
-        viewportUpdatedAt = updatedAt
-        readUpdatedAt = updatedAt
-    }
-
-    public init(
-        feedID: String,
-        viewportAnchorEventID: String?,
-        viewportAnchorOffset: Double,
-        readBoundary: NostrTimelineEntryCursor?,
-        viewportUpdatedAt: Int,
-        readUpdatedAt: Int
-    ) {
-        self.feedID = feedID
-        self.viewportAnchorEventID = viewportAnchorEventID
-        self.viewportAnchorOffset = viewportAnchorOffset
-        self.readBoundary = readBoundary
-        self.viewportUpdatedAt = viewportUpdatedAt
-        self.readUpdatedAt = readUpdatedAt
-        updatedAt = max(viewportUpdatedAt, readUpdatedAt)
-    }
-
-    /// V3以前のcall siteを段階移行するための互換initializerです。
-    public init(
-        feedID: String,
-        anchorEventID: String?,
-        anchorOffset: Double,
-        readPosition: NostrTimelineEntryCursor?,
-        updatedAt: Int
-    ) {
-        self.init(
-            feedID: feedID,
-            viewportAnchorEventID: anchorEventID,
-            viewportAnchorOffset: anchorOffset,
-            readBoundary: readPosition,
-            updatedAt: updatedAt
-        )
-    }
-
-    public var anchorEventID: String? { viewportAnchorEventID }
-    public var anchorOffset: Double { viewportAnchorOffset }
-    public var readPosition: NostrTimelineEntryCursor? { readBoundary }
-
-    private enum CodingKeys: String, CodingKey {
-        case feedID
-        case viewportAnchorEventID
-        case viewportAnchorOffset
-        case readBoundary
-        case updatedAt
-        case viewportUpdatedAt
-        case readUpdatedAt
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacyUpdatedAt = try container.decode(Int.self, forKey: .updatedAt)
-        self.init(
-            feedID: try container.decode(String.self, forKey: .feedID),
-            viewportAnchorEventID: try container.decodeIfPresent(
-                String.self,
-                forKey: .viewportAnchorEventID
-            ),
-            viewportAnchorOffset: try container.decode(Double.self, forKey: .viewportAnchorOffset),
-            readBoundary: try container.decodeIfPresent(
-                NostrTimelineEntryCursor.self,
-                forKey: .readBoundary
-            ),
-            viewportUpdatedAt: try container.decodeIfPresent(
-                Int.self,
-                forKey: .viewportUpdatedAt
-            ) ?? legacyUpdatedAt,
-            readUpdatedAt: try container.decodeIfPresent(
-                Int.self,
-                forKey: .readUpdatedAt
-            ) ?? legacyUpdatedAt
-        )
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(feedID, forKey: .feedID)
-        try container.encodeIfPresent(viewportAnchorEventID, forKey: .viewportAnchorEventID)
-        try container.encode(viewportAnchorOffset, forKey: .viewportAnchorOffset)
-        try container.encodeIfPresent(readBoundary, forKey: .readBoundary)
-        try container.encode(updatedAt, forKey: .updatedAt)
-        try container.encode(viewportUpdatedAt, forKey: .viewportUpdatedAt)
-        try container.encode(readUpdatedAt, forKey: .readUpdatedAt)
     }
 }

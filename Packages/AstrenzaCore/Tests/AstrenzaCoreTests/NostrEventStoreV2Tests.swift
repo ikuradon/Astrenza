@@ -44,8 +44,8 @@ struct NostrEventStoreV2Tests {
         )
     }
 
-    @Test("V6 replays stored deletion requests and V7 backfills feed read-state clocks")
-    func deletionReplayAndFeedReadStateClockMigrations() throws {
+    @Test("V6 replays deletions and V9 reduces feed read state to its boundary")
+    func deletionReplayAndFeedReadStateBoundaryMigration() throws {
         let database = try DatabaseQueue()
         try preparePreV6Schema(database)
         try markPreV6MigrationsApplied(database)
@@ -118,9 +118,17 @@ struct NostrEventStoreV2Tests {
         #expect(try store.events(kind: 1, limit: 10, now: 300).isEmpty)
         #expect(try deletedAt(eventID: pendingTarget.id, database: database) == deletion.createdAt)
         let readState = try #require(try store.feedReadState(feedID: "fixture-feed"))
-        #expect(readState.viewportUpdatedAt == 77)
-        #expect(readState.readUpdatedAt == 77)
+        #expect(readState.readBoundary == NostrTimelineEntryCursor(
+            sortTimestamp: 90,
+            eventID: "read"
+        ))
         #expect(readState.updatedAt == 77)
+        #expect(try feedReadStateColumnNames(database) == [
+            "feed_id",
+            "read_sort_ts",
+            "read_event_id",
+            "updated_at"
+        ])
     }
 
     @Test("Re-saving an event only advances received_at and preserves canonical derived rows")
@@ -476,9 +484,7 @@ struct NostrEventStoreV2Tests {
         )
         let readState = NostrFeedReadStateRecord(
             feedID: definition.feedID,
-            anchorEventID: first.eventID,
-            anchorOffset: 14.5,
-            readPosition: NostrTimelineEntryCursor(
+            readBoundary: NostrTimelineEntryCursor(
                 sortTimestamp: first.sortTimestamp,
                 eventID: first.eventID
             ),
@@ -1855,8 +1861,8 @@ struct NostrEventStoreV2Tests {
         #expect(restored.noteEvents.map(\.id) == [visibleNewest.id])
     }
 
-    @Test("Feed state stores viewport anchor separately from the read boundary")
-    func feedStateSeparatesViewportAndReadBoundary() throws {
+    @Test("Feed read state persists its boundary")
+    func feedReadStatePersistsBoundary() throws {
         let store = try NostrEventStore.inMemory()
         let definition = NostrFeedDefinitionRecord(
             feedID: "account:state:v4",
@@ -1872,8 +1878,6 @@ struct NostrEventStoreV2Tests {
         let readBoundary = NostrTimelineEntryCursor(sortTimestamp: 150, eventID: "read-event")
         let state = NostrFeedReadStateRecord(
             feedID: definition.feedID,
-            viewportAnchorEventID: "viewport-event",
-            viewportAnchorOffset: 17.25,
             readBoundary: readBoundary,
             updatedAt: 100
         )
@@ -1882,100 +1886,53 @@ struct NostrEventStoreV2Tests {
 
         let restored = try #require(try store.feedReadState(feedID: definition.feedID))
         #expect(restored == state)
-        #expect(restored.viewportAnchorEventID == "viewport-event")
         #expect(restored.readBoundary == readBoundary)
-        #expect(restored.anchorEventID == restored.viewportAnchorEventID)
-        #expect(restored.readPosition == restored.readBoundary)
+        #expect(restored.updatedAt == 100)
     }
 
-    @Test("Partial feed read-state writes preserve the other half and keep updated_at monotonic")
-    func partialFeedReadStateWritesPreserveOtherHalf() throws {
+    @Test("Feed read state ignores stale boundaries and accepts newer clears")
+    func feedReadStateKeepsMonotonicBoundary() throws {
         let store = try NostrEventStore.inMemory()
-        let readFirstDefinition = feedDefinition(feedID: "account:read-first")
-        let viewportFirstDefinition = feedDefinition(feedID: "account:viewport-first")
-        try store.saveFeedDefinition(readFirstDefinition)
-        try store.saveFeedDefinition(viewportFirstDefinition)
+        let definition = feedDefinition(feedID: "account:read-state")
+        try store.saveFeedDefinition(definition)
         let firstBoundary = NostrTimelineEntryCursor(sortTimestamp: 150, eventID: "read-first")
+        let staleBoundary = NostrTimelineEntryCursor(sortTimestamp: 50, eventID: "read-stale")
+        let latestBoundary = NostrTimelineEntryCursor(sortTimestamp: 250, eventID: "read-latest")
 
         try store.saveFeedReadBoundary(
-            feedID: readFirstDefinition.feedID,
+            feedID: definition.feedID,
             readBoundary: firstBoundary,
             updatedAt: 100
         )
-        try store.saveFeedViewportState(
-            feedID: readFirstDefinition.feedID,
-            viewportAnchorEventID: "viewport-second",
-            viewportAnchorOffset: 12.5,
+        try store.saveFeedReadBoundary(
+            feedID: definition.feedID,
+            readBoundary: staleBoundary,
             updatedAt: 90
         )
-        try store.saveFeedViewportState(
-            feedID: readFirstDefinition.feedID,
-            viewportAnchorEventID: "viewport-newest",
-            viewportAnchorOffset: 13.5,
+        #expect(try store.feedReadState(feedID: definition.feedID)?.readBoundary == firstBoundary)
+
+        try store.saveFeedReadState(NostrFeedReadStateRecord(
+            feedID: definition.feedID,
+            readBoundary: latestBoundary,
             updatedAt: 120
-        )
-        try store.saveFeedViewportState(
-            feedID: readFirstDefinition.feedID,
-            viewportAnchorEventID: "viewport-stale",
-            viewportAnchorOffset: 99,
+        ))
+        try store.saveFeedReadState(NostrFeedReadStateRecord(
+            feedID: definition.feedID,
+            readBoundary: staleBoundary,
             updatedAt: 110
-        )
+        ))
+        let latest = try #require(try store.feedReadState(feedID: definition.feedID))
+        #expect(latest.readBoundary == latestBoundary)
+        #expect(latest.updatedAt == 120)
 
-        let readFirst = try #require(try store.feedReadState(feedID: readFirstDefinition.feedID))
-        #expect(readFirst.viewportAnchorEventID == "viewport-newest")
-        #expect(readFirst.viewportAnchorOffset == 13.5)
-        #expect(readFirst.readBoundary == firstBoundary)
-        #expect(readFirst.viewportUpdatedAt == 120)
-        #expect(readFirst.readUpdatedAt == 100)
-        #expect(readFirst.updatedAt == 120)
-        let fullStateWithMixedClocks = NostrFeedReadStateRecord(
-            feedID: readFirstDefinition.feedID,
-            viewportAnchorEventID: "viewport-stale-full-save",
-            viewportAnchorOffset: 999,
-            readBoundary: NostrTimelineEntryCursor(sortTimestamp: 300, eventID: "read-newest"),
-            viewportUpdatedAt: 110,
-            readUpdatedAt: 130
-        )
-
-        try store.saveFeedReadState(fullStateWithMixedClocks)
-
-        let afterFullSave = try #require(
-            try store.feedReadState(feedID: readFirstDefinition.feedID)
-        )
-        #expect(afterFullSave.viewportAnchorEventID == "viewport-newest")
-        #expect(afterFullSave.viewportAnchorOffset == 13.5)
-        #expect(afterFullSave.readBoundary?.eventID == "read-newest")
-        #expect(afterFullSave.viewportUpdatedAt == 120)
-        #expect(afterFullSave.readUpdatedAt == 130)
-        #expect(afterFullSave.updatedAt == 130)
-
-        let secondBoundary = NostrTimelineEntryCursor(sortTimestamp: 250, eventID: "read-second")
-        try store.saveFeedViewportState(
-            feedID: viewportFirstDefinition.feedID,
-            viewportAnchorEventID: "viewport-first",
-            viewportAnchorOffset: 21.25,
-            updatedAt: 200
-        )
         try store.saveFeedReadBoundary(
-            feedID: viewportFirstDefinition.feedID,
-            readBoundary: secondBoundary,
-            updatedAt: 190
+            feedID: definition.feedID,
+            readBoundary: nil,
+            updatedAt: 130
         )
-        try store.saveFeedReadBoundary(
-            feedID: viewportFirstDefinition.feedID,
-            readBoundary: NostrTimelineEntryCursor(sortTimestamp: 999, eventID: "read-stale"),
-            updatedAt: 180
-        )
-
-        let viewportFirst = try #require(
-            try store.feedReadState(feedID: viewportFirstDefinition.feedID)
-        )
-        #expect(viewportFirst.viewportAnchorEventID == "viewport-first")
-        #expect(viewportFirst.viewportAnchorOffset == 21.25)
-        #expect(viewportFirst.readBoundary == secondBoundary)
-        #expect(viewportFirst.viewportUpdatedAt == 200)
-        #expect(viewportFirst.readUpdatedAt == 190)
-        #expect(viewportFirst.updatedAt == 200)
+        let cleared = try #require(try store.feedReadState(feedID: definition.feedID))
+        #expect(cleared.readBoundary == nil)
+        #expect(cleared.updatedAt == 130)
     }
 
     @Test("Timeline metadata can update without rewriting events or projection")
@@ -2107,8 +2064,6 @@ struct NostrEventStoreV2Tests {
         )
         let readState = NostrFeedReadStateRecord(
             feedID: definition.feedID,
-            viewportAnchorEventID: "last-visible-event",
-            viewportAnchorOffset: 12.5,
             readBoundary: NostrTimelineEntryCursor(sortTimestamp: 250, eventID: "last-read-event"),
             updatedAt: 302
         )
@@ -2218,8 +2173,6 @@ struct NostrEventStoreV2Tests {
         )
         let readState = NostrFeedReadStateRecord(
             feedID: definition.feedID,
-            viewportAnchorEventID: persistedCandidate.id,
-            viewportAnchorOffset: 4,
             readBoundary: nil,
             updatedAt: 410
         )
@@ -2332,15 +2285,39 @@ struct NostrEventStoreV2Tests {
                 table.column("deleted_at", .integer).notNull()
                 table.primaryKey(["kind", "pubkey", "d_tag"])
             }
-            try db.create(table: "feed_read_state") { table in
-                table.column("feed_id", .text).primaryKey()
-                table.column("viewport_anchor_event_id", .text)
-                table.column("viewport_anchor_offset", .double).notNull().defaults(to: 0)
-                table.column("read_sort_ts", .integer)
-                table.column("read_event_id", .text)
-                table.column("updated_at", .integer).notNull()
-                table.check(sql: "(read_sort_ts IS NULL) = (read_event_id IS NULL)")
-            }
+            try preparePreV6FeedReadStateSchema(db)
+        }
+    }
+
+    private func preparePreV6FeedReadStateSchema(
+        _ databaseConnection: Database
+    ) throws {
+        try databaseConnection.create(table: "feed_definitions") { table in
+            table.column("feed_id", .text).primaryKey()
+        }
+        try databaseConnection.execute(
+            sql: "INSERT INTO feed_definitions (feed_id) VALUES (?)",
+            arguments: ["fixture-feed"]
+        )
+        try databaseConnection.create(table: "feed_read_state") { table in
+            table.column("feed_id", .text).primaryKey()
+            table.column("viewport_anchor_event_id", .text)
+            table.column("viewport_anchor_offset", .double).notNull().defaults(to: 0)
+            table.column("read_sort_ts", .integer)
+            table.column("read_event_id", .text)
+            table.column("updated_at", .integer).notNull()
+            table.check(sql: "(read_sort_ts IS NULL) = (read_event_id IS NULL)")
+        }
+    }
+
+    private func feedReadStateColumnNames(
+        _ database: DatabaseQueue
+    ) throws -> [String] {
+        try database.read { databaseConnection in
+            try Row.fetchAll(
+                databaseConnection,
+                sql: "PRAGMA table_info(feed_read_state)"
+            ).map { row -> String in row["name"] }
         }
     }
 

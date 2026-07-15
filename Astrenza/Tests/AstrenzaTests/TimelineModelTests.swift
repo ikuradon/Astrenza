@@ -1845,19 +1845,11 @@ struct TimelineModelTests {
             metadataEvents: [],
             hasMoreOlder: false
         )
-        let readState = NostrFeedReadStateRecord(
-            feedID: definition.feedID,
-            viewportAnchorEventID: "empty-feed-anchor",
-            viewportAnchorOffset: 18,
-            readBoundary: nil,
-            updatedAt: 101
-        )
         try eventStore.saveHomeFeedState(
             state,
             accountID: account.pubkey,
             definition: definition,
             memberships: [],
-            readState: readState,
             savedAt: 101
         )
         let suiteName = "HomeTimelineEmptyFeedRestoreTests.\(UUID().uuidString)"
@@ -8281,8 +8273,6 @@ private func saveCachedReadBoundaryFeed(
         ),
         readState: NostrFeedReadStateRecord(
             feedID: plan.definition.feedID,
-            viewportAnchorEventID: nil,
-            viewportAnchorOffset: 0,
             readBoundary: NostrTimelineEntryCursor(
                 sortTimestamp: boundary.createdAt,
                 eventID: boundary.id
