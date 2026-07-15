@@ -25,6 +25,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineStateContextProjector()
     private let storeApplicationDispatcher =
         HomeTimelineStoreApplicationDispatcher()
+    private let accountApplicationDispatcher =
+        HomeTimelineAccountApplicationDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -55,6 +57,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let relayRuntime: NostrRelayRuntime?
     private lazy var storeApplicationEffects =
         makeStoreApplicationEffects()
+    private lazy var accountApplicationEffects =
+        makeAccountApplicationEffects()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -1238,58 +1242,32 @@ private extension NostrHomeTimelineStore {
                     currentAccount: { [weak self] in self?.account }
                 ),
                 apply: { [weak self] action in
-                    self?.applyAccountResetAction(action)
+                    self?.dispatchAccountApplication(action)
                 },
                 perform: { [weak self] action in
                     guard let self else { return }
-                    await performAccountResetAsyncAction(action)
+                    await performAccountApplication(action)
                 }
             )
         )
     }
 
-    func applyAccountResetAction(
+    func dispatchAccountApplication(
         _ action: HomeTimelineAccountResetStoreAction
     ) {
-        switch action {
-        case .applyPresentationTransition(let transition):
-            applyPresentationTransition(transition)
-        case .clearPendingEvents:
-            clearPendingNewEvents()
-        case .applyActivityTransition(let transition):
-            applyActivityTransition(transition)
-        case .invalidateListEntries:
-            invalidateListEntries()
-        case .resetRealtimeState:
-            resetHomeTimelineRealtime()
-        case .applyContentSnapshot(let snapshot):
-            applyContentSnapshot(snapshot)
-        case .applyRelayStatusSnapshot(let snapshot):
-            applyRelayStatusSnapshot(snapshot)
-        case .applyProjectionViewportTransition(let transition):
-            applyProjectionViewportTransition(transition)
-        case .publishRelayStatusChange:
-            publishRelayStatusChange()
-        case .applyAccountContextTransition(let transition):
-            applyAccountContextTransition(transition)
-        }
+        accountApplicationDispatcher.apply(
+            action,
+            effects: accountApplicationEffects
+        )
     }
 
-    func performAccountResetAsyncAction(
+    func performAccountApplication(
         _ action: HomeTimelineAccountResetAsyncAction
     ) async {
-        switch action {
-        case .resetRuntimeState:
-            runtimeInteractionWorkflow.resetSetup()
-            resetHomeTimelineRealtime()
-        case .startRuntimeSession:
-            startRuntimeSession()
-        case .configureRuntime(let account, let forceInstall):
-            await configureRelayRuntime(
-                account: account,
-                forceInstall: forceInstall
-            )
-        }
+        await accountApplicationDispatcher.perform(
+            action,
+            effects: accountApplicationEffects
+        )
     }
 
     func accountStartInteractionContext(
@@ -1332,7 +1310,7 @@ private extension NostrHomeTimelineStore {
                     }
                 ),
                 apply: { [weak self] action in
-                    self?.applyAccountStartAction(action)
+                    self?.dispatchAccountApplication(action)
                 },
                 load: { [weak self] request in
                     guard let self else { return }
@@ -1345,67 +1323,84 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    func applyAccountStartAction(
+    func dispatchAccountApplication(
         _ action: HomeTimelineAccountStartStoreAction
     ) {
-        switch action {
-        case .applyProjectionViewportTransition,
-             .reloadNewestProjectionWindow,
-             .materializeEntries,
-             .applyRestoreProjectionAnchor:
-            applyAccountStartProjectionAction(action)
-        default:
-            applyAccountStartAccountAction(action)
-        }
+        accountApplicationDispatcher.apply(
+            action,
+            effects: accountApplicationEffects
+        )
     }
 
-    func applyAccountStartAccountAction(
-        _ action: HomeTimelineAccountStartStoreAction
-    ) {
-        switch action {
-        case .cancelCurrentAccount:
-            cancel()
-        case .applyAccountContextTransition(let transition):
-            applyAccountContextTransition(transition)
-        case .startRuntimeSession:
-            startRuntimeSession()
-        case .prepareHomeFeedDefinition(let account):
-            prepareHomeFeedDefinition(account: account)
-        case .installProvisionalRuntimeBootstrap(let account):
-            installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        case .setPhase(let phase):
-            applyActivityIntent(.setPhase(phase))
-        case .publishOutboxRelayResults:
-            publishRelayStatusChange()
-        case .applyProjectionViewportTransition,
-             .reloadNewestProjectionWindow,
-             .materializeEntries,
-             .applyRestoreProjectionAnchor:
-            assertionFailure("Projection action reached the account router")
-        }
-    }
-
-    func applyAccountStartProjectionAction(
-        _ action: HomeTimelineAccountStartStoreAction
-    ) {
-        switch action {
-        case .applyProjectionViewportTransition(let transition):
-            applyProjectionViewportTransition(transition)
-        case .reloadNewestProjectionWindow(let account):
-            reloadNewestProjectionWindow(account: account)
-        case .materializeEntries:
-            materializeEntries()
-        case .applyRestoreProjectionAnchor(let account):
-            applyRestoreProjectionAnchorIfPossible(account: account)
-        case .cancelCurrentAccount,
-             .applyAccountContextTransition,
-             .startRuntimeSession,
-             .prepareHomeFeedDefinition,
-             .installProvisionalRuntimeBootstrap,
-             .setPhase,
-             .publishOutboxRelayResults:
-            assertionFailure("Account action reached the projection router")
-        }
+    func makeAccountApplicationEffects(
+    ) -> HomeTimelineAccountApplicationEffects {
+        HomeTimelineAccountApplicationEffects(
+            cancelCurrentAccount: { [weak self] in
+                self?.cancel()
+            },
+            applyAccountContextTransition: { [weak self] transition in
+                self?.applyAccountContextTransition(transition)
+            },
+            startRuntimeSession: { [weak self] in
+                self?.startRuntimeSession()
+            },
+            prepareHomeFeedDefinition: { [weak self] account in
+                self?.prepareHomeFeedDefinition(account: account)
+            },
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
+            },
+            reloadNewestProjectionWindow: { [weak self] account in
+                self?.reloadNewestProjectionWindow(account: account)
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
+            },
+            applyRestoreProjectionAnchor: { [weak self] account in
+                self?.applyRestoreProjectionAnchorIfPossible(account: account)
+            },
+            installProvisionalRuntimeBootstrap: { [weak self] account in
+                self?.installProvisionalRuntimeBootstrapIfNeeded(
+                    account: account
+                )
+            },
+            setPhase: { [weak self] phase in
+                self?.applyActivityIntent(.setPhase(phase))
+            },
+            publishRelayStatusChange: { [weak self] in
+                self?.publishRelayStatusChange()
+            },
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
+            },
+            clearPendingEvents: { [weak self] in
+                self?.clearPendingNewEvents()
+            },
+            applyActivityTransition: { [weak self] transition in
+                self?.applyActivityTransition(transition)
+            },
+            invalidateListEntries: { [weak self] in
+                self?.invalidateListEntries()
+            },
+            resetRealtimeState: { [weak self] in
+                self?.resetHomeTimelineRealtime()
+            },
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            applyRelayStatusSnapshot: { [weak self] snapshot in
+                self?.applyRelayStatusSnapshot(snapshot)
+            },
+            resetRuntimeSetup: { [weak self] in
+                self?.runtimeInteractionWorkflow.resetSetup()
+            },
+            configureRuntime: { [weak self] account, forceInstall in
+                await self?.configureRelayRuntime(
+                    account: account,
+                    forceInstall: forceInstall
+                )
+            }
+        )
     }
 
     func backwardInteractionContext(

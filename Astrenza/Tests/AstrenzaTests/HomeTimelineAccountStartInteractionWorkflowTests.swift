@@ -71,22 +71,22 @@ struct HomeTimelineAccountStartInteractionTests {
         application.publishOutboxRelayResults()
 
         #expect(fixture.probe.actions == [
-            .cancelCurrentAccount,
-            .applyAccountContextTransition(.activate(
+            .account(.cancelCurrentAccount),
+            .account(.applyAccountContextTransition(.activate(
                 fixture.account,
                 syncPolicy: fixture.syncPolicy
-            )),
-            .startRuntimeSession,
-            .prepareHomeFeedDefinition(fixture.account),
-            .applyProjectionViewportTransition(.restoreViewport(
+            ))),
+            .account(.startRuntimeSession),
+            .account(.prepareHomeFeedDefinition(fixture.account)),
+            .projection(.applyProjectionViewportTransition(.restoreViewport(
                 anchorEventID: "anchor"
-            )),
-            .reloadNewestProjectionWindow(fixture.account),
-            .materializeEntries,
-            .applyRestoreProjectionAnchor(fixture.account),
-            .installProvisionalRuntimeBootstrap(fixture.account),
-            .setPhase(.resolvingRelays),
-            .publishOutboxRelayResults
+            ))),
+            .projection(.reloadNewestProjectionWindow(fixture.account)),
+            .projection(.materializeEntries),
+            .projection(.applyRestoreProjectionAnchor(fixture.account)),
+            .account(.installProvisionalRuntimeBootstrap(fixture.account)),
+            .account(.setPhase(.resolvingRelays)),
+            .account(.publishOutboxRelayResults)
         ])
     }
 }

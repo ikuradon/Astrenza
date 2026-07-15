@@ -22,20 +22,28 @@ struct HomeTimelineAccountStartStoreState: Equatable, Sendable {
     let hasResolvedRelays: Bool
 }
 
-enum HomeTimelineAccountStartStoreAction: Equatable, Sendable {
+enum HomeTimelineAccountStartAccountAction: Equatable, Sendable {
     case cancelCurrentAccount
     case applyAccountContextTransition(HomeTimelineAccountContextTransition)
     case startRuntimeSession
     case prepareHomeFeedDefinition(NostrAccount)
+    case installProvisionalRuntimeBootstrap(NostrAccount)
+    case setPhase(NostrHomeTimelinePhase)
+    case publishOutboxRelayResults
+}
+
+enum HomeTimelineAccountStartProjectionAction: Equatable, Sendable {
     case applyProjectionViewportTransition(
         HomeTimelineProjectionViewportTransition
     )
     case reloadNewestProjectionWindow(NostrAccount)
     case materializeEntries
     case applyRestoreProjectionAnchor(NostrAccount)
-    case installProvisionalRuntimeBootstrap(NostrAccount)
-    case setPhase(NostrHomeTimelinePhase)
-    case publishOutboxRelayResults
+}
+
+enum HomeTimelineAccountStartStoreAction: Equatable, Sendable {
+    case account(HomeTimelineAccountStartAccountAction)
+    case projection(HomeTimelineAccountStartProjectionAction)
 }
 
 struct HomeTimelineAccountStartLoadRequest: Equatable, Sendable {
@@ -139,37 +147,47 @@ final class HomeAccountStartInteractionWorkflow {
     ) -> HomeTimelineAccountStartAppEffects {
         HomeTimelineAccountStartAppEffects(
             cancelCurrentAccount: {
-                effects.apply(.cancelCurrentAccount)
+                effects.apply(.account(.cancelCurrentAccount))
             },
             applyAccountContextTransition: { transition in
-                effects.apply(.applyAccountContextTransition(transition))
+                effects.apply(.account(
+                    .applyAccountContextTransition(transition)
+                ))
             },
             startRuntimeSession: {
-                effects.apply(.startRuntimeSession)
+                effects.apply(.account(.startRuntimeSession))
             },
             prepareHomeFeedDefinition: { account in
-                effects.apply(.prepareHomeFeedDefinition(account))
+                effects.apply(.account(.prepareHomeFeedDefinition(account)))
             },
             applyProjectionViewportTransition: { transition in
-                effects.apply(.applyProjectionViewportTransition(transition))
+                effects.apply(.projection(
+                    .applyProjectionViewportTransition(transition)
+                ))
             },
             reloadNewestProjectionWindow: { account in
-                effects.apply(.reloadNewestProjectionWindow(account))
+                effects.apply(.projection(
+                    .reloadNewestProjectionWindow(account)
+                ))
             },
             materializeEntries: {
-                effects.apply(.materializeEntries)
+                effects.apply(.projection(.materializeEntries))
             },
             applyRestoreProjectionAnchor: { account in
-                effects.apply(.applyRestoreProjectionAnchor(account))
+                effects.apply(.projection(
+                    .applyRestoreProjectionAnchor(account)
+                ))
             },
             installProvisionalRuntimeBootstrap: { account in
-                effects.apply(.installProvisionalRuntimeBootstrap(account))
+                effects.apply(.account(
+                    .installProvisionalRuntimeBootstrap(account)
+                ))
             },
             setPhase: { phase in
-                effects.apply(.setPhase(phase))
+                effects.apply(.account(.setPhase(phase)))
             },
             publishOutboxRelayResults: {
-                effects.apply(.publishOutboxRelayResults)
+                effects.apply(.account(.publishOutboxRelayResults))
             }
         )
     }
