@@ -6,7 +6,7 @@ struct HomeFeedSpecification: Codable, Sendable {
     let kinds: [Int]
 }
 
-struct HomeFeedDefinitionPlan {
+struct HomeFeedDefinitionPlan: Equatable, Sendable {
     let definition: NostrFeedDefinitionRecord
     let sourceAuthors: [String]
     let authors: [String]
@@ -136,18 +136,9 @@ enum HomeFeedProjectionBuilder {
               current.definition.revision == loaded.definition.revision
         else { return loaded }
 
-        var membershipsByEventID = Dictionary(
-            uniqueKeysWithValues: current.memberships.map { ($0.eventID, $0) }
-        )
-        loaded.memberships.forEach { membershipsByEventID[$0.eventID] = $0 }
-        let orderedMemberships = membershipsByEventID.values.sorted { lhs, rhs in
-            if lhs.sortTimestamp != rhs.sortTimestamp {
-                return lhs.sortTimestamp > rhs.sortTimestamp
-            }
-            return lhs.eventID < rhs.eventID
-        }
-        let retainedMemberships = retainedMemberships(
-            orderedMemberships,
+        let retainedMemberships = mergedMemberships(
+            current.memberships,
+            loaded.memberships,
             centeredOn: anchorEventID,
             limit: retainedLimit
         )
@@ -156,53 +147,94 @@ enum HomeFeedProjectionBuilder {
         var eventsByID = Dictionary(uniqueKeysWithValues: current.events.map { ($0.id, $0) })
         loaded.events.forEach { eventsByID[$0.id] = $0 }
 
-        var deletedItemsByTarget = Dictionary(
-            uniqueKeysWithValues: current.deletedItems.map { ($0.targetEventID, $0) }
+        return NostrFeedWindow(
+            definition: loaded.definition,
+            memberships: retainedMemberships,
+            events: retainedMemberships.compactMap { eventsByID[$0.eventID] },
+            deletedItems: mergedDeletedItems(
+                current.deletedItems,
+                loaded.deletedItems,
+                retainedEventIDs: retainedEventIDs
+            ),
+            gaps: mergedGaps(
+                current.gaps,
+                loaded.gaps,
+                retainedEventIDs: retainedEventIDs
+            )
         )
-        loaded.deletedItems.forEach { item in
-            if let existing = deletedItemsByTarget[item.targetEventID],
+    }
+
+    private static func mergedMemberships(
+        _ current: [NostrFeedMembershipRecord],
+        _ loaded: [NostrFeedMembershipRecord],
+        centeredOn anchorEventID: String,
+        limit: Int
+    ) -> [NostrFeedMembershipRecord] {
+        var membershipsByEventID = Dictionary(
+            uniqueKeysWithValues: current.map { ($0.eventID, $0) }
+        )
+        loaded.forEach { membershipsByEventID[$0.eventID] = $0 }
+        let ordered = membershipsByEventID.values.sorted { lhs, rhs in
+            if lhs.sortTimestamp != rhs.sortTimestamp {
+                return lhs.sortTimestamp > rhs.sortTimestamp
+            }
+            return lhs.eventID < rhs.eventID
+        }
+        return retainedMemberships(ordered, centeredOn: anchorEventID, limit: limit)
+    }
+
+    private static func mergedDeletedItems(
+        _ current: [NostrDeletedFeedItemRecord],
+        _ loaded: [NostrDeletedFeedItemRecord],
+        retainedEventIDs: Set<String>
+    ) -> [NostrDeletedFeedItemRecord] {
+        var itemsByTarget = Dictionary(
+            uniqueKeysWithValues: current.map { ($0.targetEventID, $0) }
+        )
+        loaded.forEach { item in
+            if let existing = itemsByTarget[item.targetEventID],
                existing.deletedAt > item.deletedAt {
                 return
             }
-            deletedItemsByTarget[item.targetEventID] = item
+            itemsByTarget[item.targetEventID] = item
         }
+        return itemsByTarget.values
+            .filter { retainedEventIDs.contains($0.targetEventID) }
+            .sorted { lhs, rhs in
+                if lhs.sortTimestamp != rhs.sortTimestamp {
+                    return lhs.sortTimestamp > rhs.sortTimestamp
+                }
+                return lhs.targetEventID < rhs.targetEventID
+            }
+    }
 
+    private static func mergedGaps(
+        _ current: [NostrFeedGapRecord],
+        _ loaded: [NostrFeedGapRecord],
+        retainedEventIDs: Set<String>
+    ) -> [NostrFeedGapRecord] {
         var gapsByBoundary: [String: NostrFeedGapRecord] = [:]
-        (current.gaps + loaded.gaps).forEach { gap in
+        (current + loaded).forEach { gap in
             let key = "\(gap.newerEventID)\u{0}\(gap.olderEventID)"
             if let existing = gapsByBoundary[key], existing.updatedAt > gap.updatedAt {
                 return
             }
             gapsByBoundary[key] = gap
         }
-
-        return NostrFeedWindow(
-            definition: loaded.definition,
-            memberships: retainedMemberships,
-            events: retainedMemberships.compactMap { eventsByID[$0.eventID] },
-            deletedItems: deletedItemsByTarget.values
-                .filter { retainedEventIDs.contains($0.targetEventID) }
-                .sorted { lhs, rhs in
-                    if lhs.sortTimestamp != rhs.sortTimestamp {
-                        return lhs.sortTimestamp > rhs.sortTimestamp
-                    }
-                    return lhs.targetEventID < rhs.targetEventID
-                },
-            gaps: gapsByBoundary.values
-                .filter {
-                    retainedEventIDs.contains($0.newerEventID) &&
-                        retainedEventIDs.contains($0.olderEventID)
+        return gapsByBoundary.values
+            .filter {
+                retainedEventIDs.contains($0.newerEventID) &&
+                    retainedEventIDs.contains($0.olderEventID)
+            }
+            .sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
                 }
-                .sorted { lhs, rhs in
-                    if lhs.updatedAt != rhs.updatedAt {
-                        return lhs.updatedAt > rhs.updatedAt
-                    }
-                    if lhs.newerEventID != rhs.newerEventID {
-                        return lhs.newerEventID < rhs.newerEventID
-                    }
-                    return lhs.olderEventID < rhs.olderEventID
+                if lhs.newerEventID != rhs.newerEventID {
+                    return lhs.newerEventID < rhs.newerEventID
                 }
-        )
+                return lhs.olderEventID < rhs.olderEventID
+            }
     }
 
     private static func stableSpecificationHash(_ data: Data) -> String {
@@ -227,310 +259,5 @@ enum HomeFeedProjectionBuilder {
         let preferredStart = max(0, anchorIndex - limit / 2)
         let start = min(preferredStart, memberships.count - limit)
         return Array(memberships[start..<(start + limit)])
-    }
-}
-
-@MainActor
-final class HomeFeedProjectionController {
-    let windowLimit: Int
-    let retainedWindowLimit: Int
-    let anchorLeadingLimit: Int
-    let anchorTrailingLimit: Int
-
-    private let eventStore: NostrEventStore?
-    private let windowLoader: any HomeFeedWindowLoading
-    private(set) var definition: NostrFeedDefinitionRecord?
-    private(set) var window: NostrFeedWindow?
-    private(set) var generation: UInt64 = 0
-    private(set) var sourceAuthors: [String]?
-
-    init(
-        eventStore: NostrEventStore?,
-        windowLimit: Int = 240,
-        retainedWindowLimit: Int = HomeTimelinePersistenceProjection.retainedEventLimit,
-        anchorLeadingLimit: Int = 80,
-        anchorTrailingLimit: Int = 160,
-        windowLoader: (any HomeFeedWindowLoading)? = nil
-    ) {
-        self.eventStore = eventStore
-        self.windowLoader = windowLoader ?? HomeFeedWindowLoader(
-            eventStore: eventStore
-        )
-        self.windowLimit = windowLimit
-        self.retainedWindowLimit = retainedWindowLimit
-        self.anchorLeadingLimit = anchorLeadingLimit
-        self.anchorTrailingLimit = anchorTrailingLimit
-    }
-
-    func reset() {
-        definition = nil
-        window = nil
-        sourceAuthors = nil
-        generation &+= 1
-    }
-
-    func clearWindow() {
-        window = nil
-        generation &+= 1
-    }
-
-    func definitionPlan(
-        accountID: String,
-        followedPubkeys: [String],
-        now: Int
-    ) -> HomeFeedDefinitionPlan? {
-        guard let eventStore else { return nil }
-        let feedID = HomeFeedProjectionBuilder.feedID(accountID: accountID)
-        return HomeFeedProjectionBuilder.definitionPlan(
-            accountID: accountID,
-            followedPubkeys: followedPubkeys,
-            existingDefinition: try? eventStore.feedDefinition(feedID: feedID),
-            now: now
-        )
-    }
-
-    func ensureDefinition(
-        accountID: String,
-        followedPubkeys: [String],
-        liveEvents: [NostrEvent],
-        now: Int = Int(Date().timeIntervalSince1970)
-    ) {
-        guard let eventStore else { return }
-        let nextSourceAuthors = followedPubkeys.isEmpty ? [accountID] : followedPubkeys
-        if definition?.accountID == accountID, sourceAuthors == nextSourceAuthors {
-            return
-        }
-        guard let plan = definitionPlan(
-            accountID: accountID,
-            followedPubkeys: followedPubkeys,
-            now: now
-        ) else { return }
-        if !plan.requiresProjectionReplacement {
-            definition = plan.definition
-            sourceAuthors = nextSourceAuthors
-            repairProjectionIfNeeded(
-                definition: plan.definition,
-                allowedAuthors: Set(plan.authors),
-                liveEvents: liveEvents
-            )
-            return
-        }
-
-        do {
-            let projectionEvents = cachedProjectionEvents(
-                allowedAuthors: Set(plan.authors),
-                liveEvents: liveEvents
-            )
-            let memberships = HomeFeedProjectionBuilder.memberships(
-                events: projectionEvents,
-                feedID: plan.definition.feedID,
-                feedRevision: plan.definition.revision,
-                reason: "projection-rebuild",
-                insertedAt: now
-            )
-            try eventStore.replaceFeedProjection(
-                plan.definition,
-                memberships: memberships,
-                sources: HomeFeedProjectionBuilder.membershipSources(
-                    events: projectionEvents,
-                    feedID: plan.definition.feedID,
-                    feedRevision: plan.definition.revision,
-                    reason: "projection-rebuild",
-                    insertedAt: now
-                )
-            )
-            activate(
-                definition: plan.definition,
-                window: try? eventStore.feedWindow(
-                    feedID: plan.definition.feedID,
-                    revision: plan.definition.revision,
-                    limit: windowLimit
-                ),
-                sourceAuthors: plan.sourceAuthors
-            )
-        } catch {
-            reset()
-        }
-    }
-
-    @discardableResult
-    func reloadNewest(
-        accountID: String,
-        followedPubkeys: [String],
-        liveEvents: [NostrEvent]
-    ) async -> NostrFeedWindow? {
-        ensureDefinition(
-            accountID: accountID,
-            followedPubkeys: followedPubkeys,
-            liveEvents: liveEvents
-        )
-        guard let definition else { return nil }
-        let loadGeneration = beginWindowLoad()
-        guard let loaded = await windowLoader.load(
-            HomeFeedWindowLoadRequest(
-                definition: definition,
-                selection: .newest(limit: windowLimit),
-                currentWindow: nil
-            )
-        ), canApplyWindow(
-            generation: loadGeneration,
-            definition: definition
-        ) else { return nil }
-        window = loaded
-        return loaded
-    }
-
-    @discardableResult
-    func reload(
-        accountID: String,
-        followedPubkeys: [String],
-        liveEvents: [NostrEvent],
-        around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool
-    ) async -> NostrFeedWindow? {
-        ensureDefinition(
-            accountID: accountID,
-            followedPubkeys: followedPubkeys,
-            liveEvents: liveEvents
-        )
-        guard let definition else { return nil }
-        let selection: HomeFeedWindowSelection
-        let currentWindow: NostrFeedWindow?
-        if let anchorEventID {
-            selection = .anchored(
-                eventID: anchorEventID,
-                leadingLimit: anchorLeadingLimit,
-                trailingLimit: anchorTrailingLimit,
-                retainedLimit: retainedWindowLimit
-            )
-            currentWindow = mergingWithCurrentWindow ? window : nil
-        } else {
-            selection = .newest(limit: windowLimit)
-            currentWindow = nil
-        }
-        let loadGeneration = beginWindowLoad()
-        guard let loaded = await windowLoader.load(
-            HomeFeedWindowLoadRequest(
-                definition: definition,
-                selection: selection,
-                currentWindow: currentWindow
-            )
-        ), canApplyWindow(
-            generation: loadGeneration,
-            definition: definition
-        ) else { return nil }
-        window = loaded
-        return loaded
-    }
-
-    func activate(
-        definition: NostrFeedDefinitionRecord,
-        window: NostrFeedWindow?,
-        sourceAuthors: [String]
-    ) {
-        self.definition = definition
-        self.window = window
-        self.sourceAuthors = sourceAuthors
-        generation &+= 1
-    }
-
-    func activateStoredProjection(
-        definition: NostrFeedDefinitionRecord,
-        sourceAuthors: [String]
-    ) async {
-        let activationGeneration = beginWindowLoad()
-        let storedWindow = await windowLoader.load(
-            HomeFeedWindowLoadRequest(
-                definition: definition,
-                selection: .newest(limit: windowLimit),
-                currentWindow: nil
-            )
-        )
-        guard !Task.isCancelled,
-              generation == activationGeneration
-        else { return }
-        self.definition = definition
-        self.window = storedWindow
-        self.sourceAuthors = sourceAuthors
-    }
-
-    func runtimeContext() -> HomeFeedRuntimeContext? {
-        definition.map(HomeFeedRuntimeContext.init)
-    }
-
-    func isCurrent(_ context: HomeFeedRuntimeContext?, accountID: String?) -> Bool {
-        guard let context else { return false }
-        return context.matches(definition) && accountID == context.accountID
-    }
-
-    private func beginWindowLoad() -> UInt64 {
-        generation &+= 1
-        return generation
-    }
-
-    private func canApplyWindow(
-        generation loadGeneration: UInt64,
-        definition loadedDefinition: NostrFeedDefinitionRecord
-    ) -> Bool {
-        !Task.isCancelled &&
-            generation == loadGeneration &&
-            definition == loadedDefinition
-    }
-
-    private func repairProjectionIfNeeded(
-        definition: NostrFeedDefinitionRecord,
-        allowedAuthors: Set<String>,
-        liveEvents: [NostrEvent]
-    ) {
-        guard let eventStore else { return }
-        let existingMemberships = (try? eventStore.feedMemberships(
-            feedID: definition.feedID,
-            revision: definition.revision,
-            limit: 1
-        )) ?? []
-        guard existingMemberships.isEmpty else { return }
-        let currentEvents = cachedProjectionEvents(
-            allowedAuthors: allowedAuthors,
-            liveEvents: liveEvents
-        )
-        guard !currentEvents.isEmpty else { return }
-        let now = Int(Date().timeIntervalSince1970)
-        try? eventStore.replaceFeedProjection(
-            definition,
-            memberships: HomeFeedProjectionBuilder.memberships(
-                events: currentEvents,
-                feedID: definition.feedID,
-                feedRevision: definition.revision,
-                reason: "projection-repair",
-                insertedAt: now
-            ),
-            sources: HomeFeedProjectionBuilder.membershipSources(
-                events: currentEvents,
-                feedID: definition.feedID,
-                feedRevision: definition.revision,
-                reason: "projection-repair",
-                insertedAt: now
-            )
-        )
-    }
-
-    private func cachedProjectionEvents(
-        allowedAuthors: Set<String>,
-        liveEvents: [NostrEvent]
-    ) -> [NostrEvent] {
-        guard let eventStore, !allowedAuthors.isEmpty else {
-            return liveEvents.filter { event in
-                (event.kind == 1 || event.kind == 6) && allowedAuthors.contains(event.pubkey)
-            }
-        }
-        let authors = Array(allowedAuthors)
-        let storedNotes = (try? eventStore.events(kind: 1, authors: authors, limit: 10_000)) ?? []
-        let storedReposts = (try? eventStore.events(kind: 6, authors: authors, limit: 10_000)) ?? []
-        var eventsByID: [String: NostrEvent] = [:]
-        for event in liveEvents + storedNotes + storedReposts
-        where (event.kind == 1 || event.kind == 6) && allowedAuthors.contains(event.pubkey) {
-            eventsByID[event.id] = event
-        }
-        return Array(eventsByID.values)
     }
 }

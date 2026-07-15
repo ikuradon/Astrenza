@@ -57,7 +57,7 @@ struct HomeTimelineAccountStartWorkflowTests {
             .cancelCurrentAccount,
             .setAccount(account, syncPolicy: syncPolicy),
             .startRuntimeSession,
-            .ensureHomeFeedDefinition(account),
+            .prepareHomeFeedDefinition(account),
             .applyRestoredViewport(viewport),
             .reloadNewestProjectionWindow(account),
             .materializeEntries,
@@ -167,8 +167,8 @@ private final class AccountStartWorkflowEffectProbe {
             startRuntimeSession: { [self] in
                 applications.append(.startRuntimeSession)
             },
-            ensureHomeFeedDefinition: { [self] account in
-                applications.append(.ensureHomeFeedDefinition(account))
+            prepareHomeFeedDefinition: { [self] account in
+                applications.append(.prepareHomeFeedDefinition(account))
             },
             applyProjectionViewportTransition: { [self] transition in
                 applications.append(.applyProjectionViewportTransition(transition))
@@ -202,7 +202,7 @@ private enum AccountStartWorkflowApplication: Equatable, Sendable {
     case cancelCurrentAccount
     case applyAccountContextTransition(HomeTimelineAccountContextTransition)
     case startRuntimeSession
-    case ensureHomeFeedDefinition(NostrAccount)
+    case prepareHomeFeedDefinition(NostrAccount)
     case applyProjectionViewportTransition(
         HomeTimelineProjectionViewportTransition
     )
@@ -252,7 +252,7 @@ private func accountStartWorkflowApplications(
             syncPolicy: syncPolicy
         )),
         .startRuntimeSession,
-        .ensureHomeFeedDefinition(account),
+        .prepareHomeFeedDefinition(account),
         .applyProjectionViewportTransition(.restoreViewport(
             anchorEventID: viewport.anchorEventID
         )),

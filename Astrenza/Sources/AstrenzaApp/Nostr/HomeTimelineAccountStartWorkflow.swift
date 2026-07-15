@@ -31,7 +31,7 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     let cancelCurrentAccount: VoidEffect
     let applyAccountContextTransition: AccountContextTransitionHandler
     let startRuntimeSession: VoidEffect
-    let ensureHomeFeedDefinition: AccountEffect
+    let prepareHomeFeedDefinition: AccountEffect
     let applyProjectionViewportTransition: ProjectionViewportTransitionHandler
     let reloadNewestProjectionWindow: AccountEffect
     let materializeEntries: VoidEffect
@@ -119,8 +119,8 @@ final class HomeTimelineAccountStartWorkflow {
             ))
         case .startRuntimeSession:
             effects.startRuntimeSession()
-        case .ensureHomeFeedDefinition(let account):
-            effects.ensureHomeFeedDefinition(account)
+        case .prepareHomeFeedDefinition(let account):
+            effects.prepareHomeFeedDefinition(account)
         case .installProvisionalRuntimeBootstrap(let account):
             effects.installProvisionalRuntimeBootstrap(account)
         case .restoreHomeFeedReadState(let account):
@@ -158,7 +158,7 @@ final class HomeTimelineAccountStartWorkflow {
         case .cancelCurrentAccount,
              .setAccount,
              .startRuntimeSession,
-             .ensureHomeFeedDefinition,
+             .prepareHomeFeedDefinition,
              .installProvisionalRuntimeBootstrap,
              .restoreHomeFeedReadState,
              .setPhase,

@@ -18,7 +18,7 @@ struct RuntimeEventProcessingHandlers: Sendable {
     typealias PresentationStateProvider = @MainActor @Sendable () -> HomeTimelineRuntimeEventPresentationState
 
     let forwardPresentationState: PresentationStateProvider
-    let ensureFeedDefinition: @MainActor @Sendable () -> Void
+    let ensureFeedDefinition: @MainActor @Sendable () async -> Void
     let activeFeedContext: @MainActor @Sendable () -> HomeFeedRuntimeContext?
 }
 
@@ -185,7 +185,7 @@ final class HomeTimelineRuntimeEventCoordinator {
                     handlers.presentationState(request.receivedWhileRealtime)
                 },
                 ensureFeedDefinition: { [weak self] in
-                    self?.ensureFeedDefinition(accountID: account.pubkey)
+                    await self?.ensureFeedDefinition(accountID: account.pubkey)
                 },
                 activeFeedContext: { [weak self] in
                     self?.projectionController.runtimeContext()
@@ -260,9 +260,9 @@ final class HomeTimelineRuntimeEventCoordinator {
         )
     }
 
-    private func ensureFeedDefinition(accountID: String) {
+    private func ensureFeedDefinition(accountID: String) async {
         let content = contentCoordinator.snapshot
-        projectionController.ensureDefinition(
+        await projectionController.ensureDefinition(
             accountID: accountID,
             followedPubkeys: content.followedPubkeys,
             liveEvents: content.noteEvents

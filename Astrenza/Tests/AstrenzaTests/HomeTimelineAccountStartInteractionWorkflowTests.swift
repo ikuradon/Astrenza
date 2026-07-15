@@ -55,7 +55,7 @@ struct HomeTimelineAccountStartInteractionTests {
             syncPolicy: fixture.syncPolicy
         ))
         application.startRuntimeSession()
-        application.ensureHomeFeedDefinition(fixture.account)
+        application.prepareHomeFeedDefinition(fixture.account)
         application.applyProjectionViewportTransition(.restoreViewport(
             anchorEventID: "anchor"
         ))
@@ -74,7 +74,7 @@ struct HomeTimelineAccountStartInteractionTests {
                 syncPolicy: fixture.syncPolicy
             )),
             .startRuntimeSession,
-            .ensureHomeFeedDefinition(fixture.account),
+            .prepareHomeFeedDefinition(fixture.account),
             .applyProjectionViewportTransition(.restoreViewport(
                 anchorEventID: "anchor"
             )),

@@ -61,7 +61,7 @@ protocol HomeTimelinePublishProjectionManaging: AnyObject {
         accountID: String,
         followedPubkeys: [String],
         liveEvents: [NostrEvent]
-    )
+    ) async
 }
 
 extension HomeFeedProjectionController: HomeTimelinePublishProjectionManaging {
@@ -69,8 +69,8 @@ extension HomeFeedProjectionController: HomeTimelinePublishProjectionManaging {
         accountID: String,
         followedPubkeys: [String],
         liveEvents: [NostrEvent]
-    ) {
-        ensureDefinition(
+    ) async {
+        await ensureDefinition(
             accountID: accountID,
             followedPubkeys: followedPubkeys,
             liveEvents: liveEvents
@@ -144,11 +144,14 @@ final class HomeTimelinePublishWorkflow {
         }
 
         let content = contentManager.snapshot
-        projectionManager.ensurePublishDefinition(
+        await projectionManager.ensurePublishDefinition(
             accountID: request.account.pubkey,
             followedPubkeys: content.followedPubkeys,
             liveEvents: content.noteEvents
         )
+        guard effects.currentAccountID() == publish.accountID else {
+            return false
+        }
         let event = try publisher.persistPublish(
             publish,
             feedDefinition: projectionManager.definition

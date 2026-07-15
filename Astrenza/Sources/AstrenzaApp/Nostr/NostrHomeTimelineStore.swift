@@ -599,14 +599,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func ensureHomeFeedDefinition(account: NostrAccount) {
-        projectionInteractionWorkflow.ensureDefinition(
-            account: account,
-            followedPubkeys: followedPubkeys,
-            liveEvents: noteEvents
-        )
-    }
-
     private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
         projectionInteractionWorkflow.isCurrent(
             context,
@@ -650,6 +642,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         return boundaryID.flatMap(timelineEvent(id:)).map {
             NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
         }
+    }
+
+    private func prepareHomeFeedDefinition(account: NostrAccount) {
+        projectionInteractionWorkflow.prepareDefinition(
+            account: account,
+            followedPubkeys: followedPubkeys,
+            liveEvents: noteEvents
+        )
     }
 
     private func reloadNewestProjectionWindow(account: NostrAccount) {
@@ -1353,8 +1353,8 @@ private extension NostrHomeTimelineStore {
             applyAccountContextTransition(transition)
         case .startRuntimeSession:
             startRuntimeSession()
-        case .ensureHomeFeedDefinition(let account):
-            ensureHomeFeedDefinition(account: account)
+        case .prepareHomeFeedDefinition(let account):
+            prepareHomeFeedDefinition(account: account)
         case .installProvisionalRuntimeBootstrap(let account):
             installProvisionalRuntimeBootstrapIfNeeded(account: account)
         case .restoreHomeFeedReadState(let account):
@@ -1386,7 +1386,7 @@ private extension NostrHomeTimelineStore {
         case .cancelCurrentAccount,
              .applyAccountContextTransition,
              .startRuntimeSession,
-             .ensureHomeFeedDefinition,
+             .prepareHomeFeedDefinition,
              .installProvisionalRuntimeBootstrap,
              .restoreHomeFeedReadState,
              .setPhase,

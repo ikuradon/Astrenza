@@ -26,7 +26,7 @@ enum HomeTimelineAccountStartStoreAction: Equatable, Sendable {
     case cancelCurrentAccount
     case applyAccountContextTransition(HomeTimelineAccountContextTransition)
     case startRuntimeSession
-    case ensureHomeFeedDefinition(NostrAccount)
+    case prepareHomeFeedDefinition(NostrAccount)
     case applyProjectionViewportTransition(
         HomeTimelineProjectionViewportTransition
     )
@@ -138,8 +138,8 @@ final class HomeAccountStartInteractionWorkflow {
             startRuntimeSession: {
                 effects.apply(.startRuntimeSession)
             },
-            ensureHomeFeedDefinition: { account in
-                effects.apply(.ensureHomeFeedDefinition(account))
+            prepareHomeFeedDefinition: { account in
+                effects.apply(.prepareHomeFeedDefinition(account))
             },
             applyProjectionViewportTransition: { transition in
                 effects.apply(.applyProjectionViewportTransition(transition))

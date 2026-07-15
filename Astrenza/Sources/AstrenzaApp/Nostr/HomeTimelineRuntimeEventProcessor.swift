@@ -54,7 +54,7 @@ final class HomeTimelineRuntimeEventProcessor {
         subscriptionID: String,
         event: NostrEvent,
         forwardPresentationState: () -> HomeTimelineRuntimeEventPresentationState,
-        ensureFeedDefinition: () -> Void,
+        ensureFeedDefinition: () async -> Void,
         activeFeedContext: () -> HomeFeedRuntimeContext?
     ) async -> HomeTimelineRuntimeEventProcessingOutcome {
         if HomeTimelineSyncPlanner.isHomeForwardSubscription(subscriptionID) {
@@ -82,14 +82,14 @@ final class HomeTimelineRuntimeEventProcessor {
         subscriptionID: String,
         event: NostrEvent,
         presentationState: () -> HomeTimelineRuntimeEventPresentationState,
-        ensureFeedDefinition: () -> Void,
+        ensureFeedDefinition: () async -> Void,
         activeFeedContext: () -> HomeFeedRuntimeContext?
     ) async -> HomeTimelineRuntimeEventProcessingOutcome {
         guard event.kind == 1 || event.kind == 5 || event.kind == 6 else {
             return .ignored
         }
 
-        ensureFeedDefinition()
+        await ensureFeedDefinition()
         let requestID = feedSyncCoordinator.requestID(
             relayURL: relayURL,
             subscriptionID: subscriptionID
@@ -134,7 +134,7 @@ final class HomeTimelineRuntimeEventProcessor {
         relayURL: String,
         subscriptionID: String,
         event: NostrEvent,
-        ensureFeedDefinition: () -> Void,
+        ensureFeedDefinition: () async -> Void,
         activeFeedContext: () -> HomeFeedRuntimeContext?
     ) async -> HomeTimelineRuntimeEventProcessingOutcome {
         let requestKey = backwardRequestRegistry.key(for: subscriptionID)
@@ -148,7 +148,7 @@ final class HomeTimelineRuntimeEventProcessor {
         }
         let isTimelineBackfill = projectionReason != nil
         if isTimelineBackfill {
-            ensureFeedDefinition()
+            await ensureFeedDefinition()
         }
 
         let sourceRequestID = feedSyncCoordinator.requestID(

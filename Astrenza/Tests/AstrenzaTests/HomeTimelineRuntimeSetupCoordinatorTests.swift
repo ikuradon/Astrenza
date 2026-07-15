@@ -41,7 +41,7 @@ struct HomeTimelineRuntimeSetupCoordinatorTests {
 
         #expect(handlers.currentIdentity() == system.configurator.requests[0].identity)
         await handlers.prepareDependencies()
-        let preparation = try #require(handlers.prepareFeed())
+        let preparation = try #require(await handlers.prepareFeed())
         #expect(preparation.context == system.feedContext)
         #expect(preparation.newestCreatedAt == 30)
         #expect(preparation.initialCreatedAt == 10)

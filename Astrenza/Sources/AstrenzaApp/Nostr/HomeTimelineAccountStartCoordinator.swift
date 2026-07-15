@@ -43,7 +43,7 @@ enum HomeTimelineAccountStartCommand: Equatable, Sendable {
     case cancelCurrentAccount
     case setAccount(NostrAccount, syncPolicy: NostrSyncPolicy)
     case startRuntimeSession
-    case ensureHomeFeedDefinition(NostrAccount)
+    case prepareHomeFeedDefinition(NostrAccount)
     case applyRestoredViewport(HomeTimelineRestoredViewport)
     case reloadNewestProjectionWindow(NostrAccount)
     case materializeEntries
@@ -122,7 +122,7 @@ final class HomeTimelineAccountStartCoordinator {
             handlers.restoreCachedSnapshot(request.account),
             for: lifecycle
         )
-        handlers.perform(.ensureHomeFeedDefinition(request.account))
+        handlers.perform(.prepareHomeFeedDefinition(request.account))
         restoreViewportIfNeeded(accountID: request.account.pubkey, handlers: handlers)
         restoreProjectionWindow(account: request.account, handlers: handlers)
         handlers.perform(.installProvisionalRuntimeBootstrap(request.account))

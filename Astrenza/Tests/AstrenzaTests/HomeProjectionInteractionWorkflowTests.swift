@@ -113,7 +113,7 @@ struct HomeProjectionInteractionWorkflowTests {
             allowsRealtimeFollow: true
         )
 
-        workflow.ensureDefinition(
+        workflow.prepareDefinition(
             account: account,
             followedPubkeys: [account.pubkey],
             liveEvents: [liveEvent]
@@ -122,10 +122,10 @@ struct HomeProjectionInteractionWorkflowTests {
         routeProjectionReloads(through: workflow, account: account, probe: reloadProbe)
         workflow.materialize(request) { _ in }
 
-        #expect(projection.ensuredAccountID == account.pubkey)
-        #expect(projection.ensuredFollowedPubkeys == [account.pubkey])
-        #expect(projection.ensuredLiveEventIDs == [liveEvent.id])
-        #expect(projection.ensuredAt == 654)
+        #expect(projection.prewarmedAccountID == account.pubkey)
+        #expect(projection.prewarmedFollowedPubkeys == [account.pubkey])
+        #expect(projection.prewarmedLiveEventIDs == [liveEvent.id])
+        #expect(projection.prewarmedAt == 654)
         #expect(projection.currentContext == context)
         #expect(projection.currentAccountID == account.pubkey)
         #expect(materialization.newestAccountID == account.pubkey)
@@ -194,8 +194,7 @@ struct HomeProjectionInteractionWorkflowTests {
             specificationJSON: Data(),
             specificationHash: "projection-interaction",
             revision: 1,
-            createdAt: 1,
-            updatedAt: 1
+            createdAt: 1, updatedAt: 1
         )
     }
 
@@ -204,23 +203,20 @@ struct HomeProjectionInteractionWorkflowTests {
             accountID: accountID,
             timelineKey: "home",
             anchorPostID: "anchor",
-            anchorOffset: 12,
-            contentOffset: 120,
+            anchorOffset: 12, contentOffset: 120,
             updatedAt: Date(timeIntervalSince1970: 100)
         )
     }
 
     private func event(accountID: String) -> NostrEvent {
         NostrEvent(
-            id: String(repeating: "1", count: 64),
-            pubkey: accountID,
-            createdAt: 100,
-            kind: 1,
-            tags: [],
-            content: "note",
+            id: String(repeating: "1", count: 64), pubkey: accountID,
+            createdAt: 100, kind: 1,
+            tags: [], content: "note",
             sig: String(repeating: "0", count: 128)
         )
     }
+
 }
 
 @MainActor
@@ -228,10 +224,10 @@ private final class ProjectionInteractionSpy: HomeFeedProjectionControlling {
     let retainedWindowLimit = 320
     var definition: NostrFeedDefinitionRecord?
     private let isCurrentResult: Bool
-    private(set) var ensuredAccountID: String?
-    private(set) var ensuredFollowedPubkeys: [String] = []
-    private(set) var ensuredLiveEventIDs: [String] = []
-    private(set) var ensuredAt: Int?
+    private(set) var prewarmedAccountID: String?
+    private(set) var prewarmedFollowedPubkeys: [String] = []
+    private(set) var prewarmedLiveEventIDs: [String] = []
+    private(set) var prewarmedAt: Int?
     private(set) var currentContext: HomeFeedRuntimeContext?
     private(set) var currentAccountID: String?
     private(set) var activatedDefinition: NostrFeedDefinitionRecord?
@@ -245,16 +241,23 @@ private final class ProjectionInteractionSpy: HomeFeedProjectionControlling {
         self.isCurrentResult = isCurrentResult
     }
 
-    func ensureDefinition(
+    func prewarmDefinition(
         accountID: String,
         followedPubkeys: [String],
         liveEvents: [NostrEvent],
         now: Int
     ) {
-        ensuredAccountID = accountID
-        ensuredFollowedPubkeys = followedPubkeys
-        ensuredLiveEventIDs = liveEvents.map(\.id)
-        ensuredAt = now
+        prewarmedAccountID = accountID
+        prewarmedFollowedPubkeys = followedPubkeys
+        prewarmedLiveEventIDs = liveEvents.map(\.id)
+        prewarmedAt = now
+    }
+
+    func feedID(accountID: String) -> String? {
+        guard definition?.accountID == accountID || prewarmedAccountID == accountID else {
+            return nil
+        }
+        return HomeFeedProjectionBuilder.feedID(accountID: accountID)
     }
 
     func isCurrent(
@@ -265,7 +268,6 @@ private final class ProjectionInteractionSpy: HomeFeedProjectionControlling {
         currentAccountID = accountID
         return isCurrentResult
     }
-
     func activateStoredProjection(
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]

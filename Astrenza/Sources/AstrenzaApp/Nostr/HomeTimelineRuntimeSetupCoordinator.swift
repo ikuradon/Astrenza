@@ -117,7 +117,7 @@ final class HomeTimelineRuntimeSetupCoordinator {
                 )
             },
             prepareFeed: { [weak self] in
-                self?.prepareFeed(account: account)
+                await self?.prepareFeed(account: account)
             },
             prepareInstall: { [weak self] packets, runtimeKeys, context in
                 self?.prepareInstall(
@@ -158,25 +158,26 @@ final class HomeTimelineRuntimeSetupCoordinator {
 
     private func prepareFeed(
         account: NostrAccount
-    ) -> HomeTimelineRelayRuntimeFeedPreparation? {
+    ) async -> HomeTimelineRelayRuntimeFeedPreparation? {
         let content = contentCoordinator.snapshot
-        projectionController.ensureDefinition(
+        guard await projectionController.ensureDefinition(
             accountID: account.pubkey,
             followedPubkeys: content.followedPubkeys,
             liveEvents: content.noteEvents
-        )
+        ) else { return nil }
+        let currentContent = contentCoordinator.snapshot
         guard let context = projectionController.runtimeContext() else {
             return nil
         }
         return HomeTimelineRelayRuntimeFeedPreparation(
             context: context,
-            newestCreatedAt: content.noteEvents.map(\.createdAt).max(),
+            newestCreatedAt: currentContent.noteEvents.map(\.createdAt).max(),
             newestCreatedAtByRelay: timelineRepository.newestCreatedAtByRelay(
                 accountID: account.pubkey,
                 timelineKey: "home",
-                relayURLs: content.resolvedRelays
+                relayURLs: currentContent.resolvedRelays
             ),
-            initialCreatedAt: content.noteEvents.map(\.createdAt).min()
+            initialCreatedAt: currentContent.noteEvents.map(\.createdAt).min()
         )
     }
 

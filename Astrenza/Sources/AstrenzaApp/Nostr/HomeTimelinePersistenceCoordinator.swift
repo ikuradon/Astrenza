@@ -18,7 +18,7 @@ protocol HomeTimelineSnapshotPersisting: AnyObject {
         _ receipt: HomeTimelineSnapshotSaveReceipt,
         accountID: String,
         followedPubkeys: [String]
-    ) -> Bool
+    ) async -> Bool
 
     func saveMetadata(_ snapshot: HomeTimelineMetadataSnapshot) async -> Bool
 }
@@ -34,8 +34,8 @@ extension HomeTimelineSnapshotCoordinator: HomeTimelineSnapshotPersisting {
         _ receipt: HomeTimelineSnapshotSaveReceipt,
         accountID: String,
         followedPubkeys: [String]
-    ) -> Bool {
-        activatePersistedSnapshot(
+    ) async -> Bool {
+        await activatePersistedSnapshot(
             receipt,
             accountID: accountID,
             followedPubkeys: followedPubkeys
@@ -98,7 +98,7 @@ final class HomeTimelinePersistenceCoordinator {
 
         let state = handlers.state()
         guard state.accountID == input.accountID,
-              snapshotPersistence.activateSnapshot(
+              await snapshotPersistence.activateSnapshot(
                 receipt,
                 accountID: input.accountID,
                 followedPubkeys: state.followedPubkeys

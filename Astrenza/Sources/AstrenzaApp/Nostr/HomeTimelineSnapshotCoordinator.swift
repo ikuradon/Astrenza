@@ -60,13 +60,39 @@ final class HomeTimelineSnapshotCoordinator {
         savedAt: Int = Int(Date().timeIntervalSince1970)
     ) async -> HomeTimelineSnapshotSaveReceipt? {
         guard let persistenceWorker,
-              let plan = projectionController.definitionPlan(
+              let plan = await projectionController.definitionPlan(
                 accountID: input.accountID,
                 followedPubkeys: input.followedPubkeys,
                 now: savedAt
-              )
+        )
         else { return nil }
 
+        let snapshot = persistenceSnapshot(
+            input: input,
+            plan: plan,
+            savedAt: savedAt
+        )
+        let projectionGeneration = projectionController.generation
+
+        do {
+            let window = try await persistenceWorker.saveFeedSnapshot(snapshot)
+            return HomeTimelineSnapshotSaveReceipt(
+                definition: plan.definition,
+                sourceAuthors: plan.sourceAuthors,
+                projectionGeneration: projectionGeneration,
+                window: window,
+                savedAt: savedAt
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    private func persistenceSnapshot(
+        input: HomeTimelineSnapshotInput,
+        plan: HomeFeedDefinitionPlan,
+        savedAt: Int
+    ) -> HomeTimelineFeedPersistenceSnapshot {
         let projectionEvents = HomeTimelinePersistenceProjection.boundedEvents(
             from: input.noteEvents,
             allowedAuthors: Set(plan.authors)
@@ -97,30 +123,15 @@ final class HomeTimelineSnapshotCoordinator {
             reason: "state",
             insertedAt: savedAt
         )
-        let projectionGeneration = projectionController.generation
-
-        do {
-            let window = try await persistenceWorker.saveFeedSnapshot(
-                HomeTimelineFeedPersistenceSnapshot(
-                    state: state,
-                    accountID: input.accountID,
-                    definition: plan.definition,
-                    memberships: memberships,
-                    membershipSources: membershipSources,
-                    savedAt: savedAt,
-                    windowLimit: projectionController.windowLimit
-                )
-            )
-            return HomeTimelineSnapshotSaveReceipt(
-                definition: plan.definition,
-                sourceAuthors: plan.sourceAuthors,
-                projectionGeneration: projectionGeneration,
-                window: window,
-                savedAt: savedAt
-            )
-        } catch {
-            return nil
-        }
+        return HomeTimelineFeedPersistenceSnapshot(
+            state: state,
+            accountID: input.accountID,
+            definition: plan.definition,
+            memberships: memberships,
+            membershipSources: membershipSources,
+            savedAt: savedAt,
+            windowLimit: projectionController.windowLimit
+        )
     }
 
     @discardableResult
@@ -128,16 +139,17 @@ final class HomeTimelineSnapshotCoordinator {
         _ receipt: HomeTimelineSnapshotSaveReceipt,
         accountID: String,
         followedPubkeys: [String]
-    ) -> Bool {
+    ) async -> Bool {
         let currentSourceAuthors = followedPubkeys.isEmpty ? [accountID] : followedPubkeys
         guard receipt.definition.accountID == accountID,
-              projectionController.generation == receipt.projectionGeneration,
-              currentSourceAuthors == receipt.sourceAuthors,
-              let currentPlan = projectionController.definitionPlan(
-                accountID: accountID,
-                followedPubkeys: followedPubkeys,
-                now: receipt.savedAt
-              ),
+              currentSourceAuthors == receipt.sourceAuthors
+        else { return false }
+        guard let currentPlan = await projectionController.definitionPlan(
+            accountID: accountID,
+            followedPubkeys: followedPubkeys,
+            now: receipt.savedAt
+        ) else { return false }
+        guard projectionController.generation == receipt.projectionGeneration,
               currentPlan.definition.revision == receipt.definition.revision,
               currentPlan.definition.specificationHash == receipt.definition.specificationHash
         else { return false }

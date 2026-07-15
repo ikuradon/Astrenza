@@ -37,7 +37,7 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .command(.startRuntimeSession),
             .restoreCachedSnapshot(account),
             .setRuntimeBootstrapCompleted(false, lifecycle),
-            .command(.ensureHomeFeedDefinition(account)),
+            .command(.prepareHomeFeedDefinition(account)),
             .restoreViewport(account.pubkey),
             .command(.reloadNewestProjectionWindow(account)),
             .command(.materializeEntries),
@@ -80,7 +80,7 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .command(.startRuntimeSession),
             .restoreCachedSnapshot(account),
             .setRuntimeBootstrapCompleted(true, lifecycle),
-            .command(.ensureHomeFeedDefinition(account)),
+            .command(.prepareHomeFeedDefinition(account)),
             .restoreViewport(account.pubkey),
             .command(.applyRestoredViewport(viewport)),
             .command(.applyRestoreProjectionAnchor(account)),
@@ -242,7 +242,7 @@ private final class HomeTimelineAccountStartProbe {
         case .applyRestoredViewport(let viewport):
             restoreProjectionAnchorEventID = viewport.anchorEventID
         case .startRuntimeSession,
-             .ensureHomeFeedDefinition,
+             .prepareHomeFeedDefinition,
              .reloadNewestProjectionWindow,
              .materializeEntries,
              .applyRestoreProjectionAnchor,

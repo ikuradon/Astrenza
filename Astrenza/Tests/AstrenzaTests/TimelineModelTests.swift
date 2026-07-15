@@ -4393,11 +4393,13 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await waitForRelayProcessing(in: store, isProcessing: false)
 
-        #expect(store.entries.map(\.id) == [
+        let expectedEntryIDs = [
             newer.id,
             "gap-\(newer.id)-\(older.id)",
             older.id
-        ])
+        ]
+        try await waitForTimelineEntryIDs(in: store, ids: expectedEntryIDs)
+        #expect(store.entries.map(\.id) == expectedEntryIDs)
         let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
         #expect(gaps.count == 1)
         #expect(gaps.first?.newerEventID == newer.id)
@@ -4497,11 +4499,13 @@ struct TimelineModelTests {
         )
         try await waitForRelayProcessing(in: store, isProcessing: false)
 
-        #expect(store.entries.map(\.id) == [
+        let expectedEntryIDs = [
             initialNote.id,
             "gap-\(initialNote.id)-\(olderNote.id)",
             olderNote.id
-        ])
+        ]
+        try await waitForTimelineEntryIDs(in: store, ids: expectedEntryIDs)
+        #expect(store.entries.map(\.id) == expectedEntryIDs)
         #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [initialNote.id, olderNote.id])
         let gaps = try homeFeedGaps(in: eventStore, accountID: account.pubkey)
         #expect(gaps.count == 1)
@@ -4605,7 +4609,9 @@ struct TimelineModelTests {
         try await relayRuntime.receiveNext(relayURL: "wss://slow.example")
         try await waitForRelayProcessing(in: store, isProcessing: false)
 
-        #expect(store.entries.map(\.id) == [initialNote.id, olderNote.id])
+        let expectedEntryIDs = [initialNote.id, olderNote.id]
+        try await waitForTimelineEntryIDs(in: store, ids: expectedEntryIDs)
+        #expect(store.entries.map(\.id) == expectedEntryIDs)
         #expect(try homeFeedMemberships(in: eventStore, accountID: account.pubkey).map(\.eventID) == [initialNote.id, olderNote.id])
         #expect(try homeFeedGaps(in: eventStore, accountID: account.pubkey).isEmpty)
     }

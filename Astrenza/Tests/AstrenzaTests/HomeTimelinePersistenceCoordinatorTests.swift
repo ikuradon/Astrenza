@@ -357,7 +357,7 @@ private final class PersistenceProbe:
         _ receipt: HomeTimelineSnapshotSaveReceipt,
         accountID: String,
         followedPubkeys: [String]
-    ) -> Bool {
+    ) async -> Bool {
         _ = receipt
         events.append(.activateSnapshot(
             accountID: accountID,

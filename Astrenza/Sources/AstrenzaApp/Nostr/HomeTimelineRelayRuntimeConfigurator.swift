@@ -28,7 +28,8 @@ struct HomeTimelineRelayRuntimeFeedPreparation {
 struct HomeTimelineRelayRuntimeConfigurationHandlers {
     typealias CurrentIdentity = @MainActor @Sendable () -> HomeTimelineRelayRuntimeConfigurationIdentity?
     typealias DependencyPreparation = @MainActor @Sendable () async -> Void
-    typealias FeedPreparation = @MainActor @Sendable () -> HomeTimelineRelayRuntimeFeedPreparation?
+    typealias FeedPreparation = @MainActor @Sendable (
+    ) async -> HomeTimelineRelayRuntimeFeedPreparation?
     typealias InstallPreparation = @MainActor @Sendable (
         _ packets: [NostrREQPacket],
         _ runtimeKeys: Set<RuntimeSubscriptionKey>,
@@ -138,7 +139,7 @@ final class HomeTimelineRelayRuntimeConfigurator {
             guard remainsCurrent() else { return }
             await handlers.prepareDependencies()
             guard remainsCurrent(),
-                  let preparation = handlers.prepareFeed()
+                  let preparation = await handlers.prepareFeed()
             else { return }
 
             let plan = syncPlanner.forwardPlan(

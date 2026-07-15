@@ -90,7 +90,7 @@ struct HomeTimelineSnapshotCoordinatorTests {
         #expect(try eventStore.event(id: accountMetadata.id) == accountMetadata)
         #expect(try eventStore.event(id: excludedMetadata.id) == nil)
         #expect(receipt.sourceAuthors == [followed])
-        #expect(coordinator.activatePersistedSnapshot(
+        #expect(await coordinator.activatePersistedSnapshot(
             receipt,
             accountID: accountID,
             followedPubkeys: [followed]
@@ -116,11 +116,11 @@ struct HomeTimelineSnapshotCoordinatorTests {
 
         projectionController.clearWindow()
 
-        #expect(!coordinator.activatePersistedSnapshot(
+        #expect(await coordinator.activatePersistedSnapshot(
             receipt,
             accountID: accountID,
             followedPubkeys: []
-        ))
+        ) == false)
         #expect(projectionController.definition == nil)
         #expect(projectionController.window == nil)
     }
@@ -142,11 +142,11 @@ struct HomeTimelineSnapshotCoordinatorTests {
             savedAt: 100
         ))
 
-        #expect(!coordinator.activatePersistedSnapshot(
+        #expect(await coordinator.activatePersistedSnapshot(
             receipt,
             accountID: accountID,
             followedPubkeys: [replacementFollow]
-        ))
+        ) == false)
         #expect(projectionController.definition == nil)
         #expect(projectionController.window == nil)
     }

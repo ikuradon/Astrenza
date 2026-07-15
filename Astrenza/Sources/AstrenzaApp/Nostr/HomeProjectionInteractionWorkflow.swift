@@ -6,12 +6,14 @@ protocol HomeFeedProjectionControlling: AnyObject {
     var definition: NostrFeedDefinitionRecord? { get }
     var retainedWindowLimit: Int { get }
 
-    func ensureDefinition(
+    func prewarmDefinition(
         accountID: String,
         followedPubkeys: [String],
         liveEvents: [NostrEvent],
         now: Int
     )
+
+    func feedID(accountID: String) -> String?
 
     func isCurrent(
         _ context: HomeFeedRuntimeContext?,
@@ -110,24 +112,24 @@ final class HomeProjectionInteractionWorkflow {
         self.timestamp = timestamp
     }
 
-    func ensureDefinition(
-        account: NostrAccount,
-        followedPubkeys: [String],
-        liveEvents: [NostrEvent]
-    ) {
-        projection.ensureDefinition(
-            accountID: account.pubkey,
-            followedPubkeys: followedPubkeys,
-            liveEvents: liveEvents,
-            now: timestamp()
-        )
-    }
-
     func isCurrent(
         _ context: HomeFeedRuntimeContext?,
         accountID: String?
     ) -> Bool {
         projection.isCurrent(context, accountID: accountID)
+    }
+
+    func prepareDefinition(
+        account: NostrAccount,
+        followedPubkeys: [String],
+        liveEvents: [NostrEvent]
+    ) {
+        projection.prewarmDefinition(
+            accountID: account.pubkey,
+            followedPubkeys: followedPubkeys,
+            liveEvents: liveEvents,
+            now: timestamp()
+        )
     }
 
     func restoredViewportState(
@@ -263,9 +265,6 @@ final class HomeProjectionInteractionWorkflow {
     #endif
 
     private func activeFeedID(accountID: String) -> String? {
-        guard let definition = projection.definition,
-              definition.accountID == accountID
-        else { return nil }
-        return definition.feedID
+        projection.feedID(accountID: accountID)
     }
 }

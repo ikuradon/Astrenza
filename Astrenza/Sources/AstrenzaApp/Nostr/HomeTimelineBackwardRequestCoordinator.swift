@@ -46,15 +46,22 @@ final class HomeTimelineBackwardRequestCoordinator {
         account: NostrAccount
     ) async -> HomeTimelineBackwardRequestOutcome {
         guard packetInstaller != nil else { return .unavailable }
+        let definitionContent = contentCoordinator.snapshot
+        guard let feed = await currentFeed(
+            account: account,
+            content: definitionContent
+        )
+        else { return .unavailable }
         let content = contentCoordinator.snapshot
-        guard let oldestCreatedAt = content.noteEvents.map(\.createdAt).min(),
-              let feed = currentFeed(account: account, content: content),
-              let packet = syncPlanner.olderNotesPacket(
-                account: account,
-                followedPubkeys: content.followedPubkeys,
-                oldestCreatedAt: oldestCreatedAt,
-                relayURLs: content.resolvedRelays
-              )
+        guard content.followedPubkeys == definitionContent.followedPubkeys,
+              let oldestCreatedAt = content.noteEvents.map(\.createdAt).min()
+        else { return .unavailable }
+        guard let packet = syncPlanner.olderNotesPacket(
+            account: account,
+            followedPubkeys: content.followedPubkeys,
+            oldestCreatedAt: oldestCreatedAt,
+            relayURLs: content.resolvedRelays
+        )
         else { return .unavailable }
 
         return await install(
@@ -77,17 +84,23 @@ final class HomeTimelineBackwardRequestCoordinator {
         direction: TimelineGapFillDirection
     ) async -> HomeTimelineBackwardRequestOutcome {
         guard packetInstaller != nil else { return .unavailable }
+        let definitionContent = contentCoordinator.snapshot
+        guard let feed = await currentFeed(
+            account: account,
+            content: definitionContent
+        )
+        else { return .unavailable }
         let content = contentCoordinator.snapshot
-        guard let newerEvent = timelineEvent(
+        guard content.followedPubkeys == definitionContent.followedPubkeys,
+              let newerEvent = timelineEvent(
             id: gap.newerPostID,
             inMemoryEvents: content.noteEvents
         ),
         let olderEvent = timelineEvent(
             id: gap.olderPostID,
             inMemoryEvents: content.noteEvents
-        ),
-        let feed = currentFeed(account: account, content: content),
-        let packet = syncPlanner.gapNotesPacket(
+        ) else { return .unavailable }
+        guard let packet = syncPlanner.gapNotesPacket(
             account: account,
             followedPubkeys: content.followedPubkeys,
             newerEvent: newerEvent,
@@ -115,12 +128,12 @@ final class HomeTimelineBackwardRequestCoordinator {
     private func currentFeed(
         account: NostrAccount,
         content: HomeTimelineContentSnapshot
-    ) -> (definition: NostrFeedDefinitionRecord, context: HomeFeedRuntimeContext)? {
-        projectionController.ensureDefinition(
+    ) async -> (definition: NostrFeedDefinitionRecord, context: HomeFeedRuntimeContext)? {
+        guard await projectionController.ensureDefinition(
             accountID: account.pubkey,
             followedPubkeys: content.followedPubkeys,
             liveEvents: content.noteEvents
-        )
+        ) else { return nil }
         guard let definition = projectionController.definition,
               let context = projectionController.runtimeContext(),
               projectionController.isCurrent(context, accountID: account.pubkey)
