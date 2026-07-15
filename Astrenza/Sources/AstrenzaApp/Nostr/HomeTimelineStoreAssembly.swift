@@ -18,7 +18,7 @@ struct HomeTimelineStoreComponents {
     let contentCoordinator: HomeTimelineContentCoordinator
     let runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow
     let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
-    let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
+    let backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     let filterCoordinator: HomeTimelineFilterCoordinator
     let listProjectionCache: HomeTimelineListProjectionCache
@@ -170,7 +170,9 @@ enum HomeTimelineStoreAssembly {
                 events: graph.runtimeEvents.runtimeEventWorkflow
             ),
             gapBackfillWorkflow: graph.coordination.gapBackfillWorkflow,
-            backwardCompletionWorkflow: graph.runtimeEvents.backwardCompletionWorkflow,
+            backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow(
+                backward: graph.runtimeEvents.backwardCompletionWorkflow
+            ),
             dependencyCoordinator: graph.coordination.dependencyCoordinator,
             filterCoordinator: graph.persistence.filterCoordinator,
             listProjectionCache: graph.coordination.listProjectionCache,

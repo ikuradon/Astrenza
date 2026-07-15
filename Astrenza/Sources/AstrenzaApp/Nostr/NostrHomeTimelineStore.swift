@@ -30,7 +30,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let runtimeInteractionWorkflow:
         HomeTimelineRuntimeInteractionWorkflow
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
-    private let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
+    private let backwardInteractionWorkflow:
+        HomeTimelineBackwardInteractionWorkflow
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
@@ -178,7 +179,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.contentCoordinator = components.contentCoordinator
         self.runtimeInteractionWorkflow = components.runtimeInteractionWorkflow
         self.gapBackfillWorkflow = components.gapBackfillWorkflow
-        self.backwardCompletionWorkflow = components.backwardCompletionWorkflow
+        self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.dependencyCoordinator = components.dependencyCoordinator
         self.filterCoordinator = components.filterCoordinator
         self.listProjectionCache = components.listProjectionCache
@@ -1283,55 +1284,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        backwardCompletionWorkflow.handle(
-            HomeTimelineBackwardCompletionInput(
-                completion: completion,
-                account: account
-            ),
-            effects: backwardCompletionAppEffects()
-        )
-    }
-
-    private func backwardCompletionAppEffects() -> HomeTimelineBackwardCompletionAppEffects {
-        HomeTimelineBackwardCompletionAppEffects(
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            recordDiagnostic: { [weak self] diagnostic in
-                self?.recordRuntimeSyncEvent(
-                    relayURL: diagnostic.relayURL,
-                    kind: .partialFailure,
-                    subscriptionID: diagnostic.subscriptionID,
-                    message: diagnostic.message
-                )
-            },
-            reloadProjection: { [weak self] account, anchorEventID, mergingWithCurrentWindow in
-                self?.reloadProjectionWindow(
-                    account: account,
-                    around: anchorEventID,
-                    mergingWithCurrentWindow: mergingWithCurrentWindow
-                )
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            scheduleLinkPreviewResolution: { [weak self] in
-                self?.scheduleLinkPreviewResolution()
-            },
-            incrementRelayStatusRevision: { [weak self] in
-                self?.publishRelayStatusChange()
-            },
-            resolveDependencies: { [weak self] event, account, lifecycle in
-                guard let self else { return false }
-                return await runtimeInteractionWorkflow.enqueueDependencies(
-                    for: event,
-                    context: runtimeEventApplicationContext(
-                        account: account,
-                        lifecycle: lifecycle
-                    ),
-                    application: runtimeApplicationEffects()
-                )
-            }
+        backwardInteractionWorkflow.handle(
+            completion,
+            context: backwardInteractionContext()
         )
     }
 
@@ -1443,6 +1398,67 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func backwardInteractionContext(
+    ) -> HomeTimelineBackwardInteractionContext {
+        HomeTimelineBackwardInteractionContext(
+            state: HomeTimelineBackwardInteractionState(account: account),
+            effects: HomeTimelineBackwardInteractionEffects(
+                apply: { [weak self] action in
+                    self?.applyBackwardInteractionAction(action)
+                },
+                resolveDependencies: { [weak self] request in
+                    guard let self else { return false }
+                    return await resolveBackwardDependencies(request)
+                }
+            )
+        )
+    }
+
+    func applyBackwardInteractionAction(
+        _ action: HomeTimelineBackwardStoreAction
+    ) {
+        switch action {
+        case .applyContentSnapshot(let snapshot):
+            applyContentSnapshot(snapshot)
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        case .reloadProjection(
+            let account,
+            let anchorEventID,
+            let mergingWithCurrentWindow
+        ):
+            reloadProjectionWindow(
+                account: account,
+                around: anchorEventID,
+                mergingWithCurrentWindow: mergingWithCurrentWindow
+            )
+        case .materializeEntries:
+            materializeEntries()
+        case .scheduleLinkPreviewResolution:
+            scheduleLinkPreviewResolution()
+        case .incrementRelayStatusRevision:
+            publishRelayStatusChange()
+        }
+    }
+
+    func resolveBackwardDependencies(
+        _ request: HomeTimelineBackwardDependencyRequest
+    ) async -> Bool {
+        await runtimeInteractionWorkflow.enqueueDependencies(
+            for: request.event,
+            context: runtimeEventApplicationContext(
+                account: request.account,
+                lifecycle: request.lifecycle
+            ),
+            application: runtimeApplicationEffects()
+        )
+    }
+
     var syncPolicy: NostrSyncPolicy {
         publishedAccountContextState.syncPolicy
     }
