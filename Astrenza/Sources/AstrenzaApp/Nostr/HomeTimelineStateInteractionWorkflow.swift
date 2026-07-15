@@ -6,7 +6,7 @@ protocol HomeTimelineStateRouting: AnyObject {
     func restoreCachedState(
         accountID: String,
         effects: HomeTimelineStateWorkflowEffects
-    ) -> Bool
+    ) async -> Bool
 
     func replace(
         _ state: NostrHomeTimelineState,
@@ -86,8 +86,8 @@ final class HomeTimelineStateInteractionWorkflow {
     func restoreCachedState(
         accountID: String,
         context: HomeTimelineStateInteractionContext
-    ) -> Bool {
-        stateWorkflow.restoreCachedState(
+    ) async -> Bool {
+        await stateWorkflow.restoreCachedState(
             accountID: accountID,
             effects: stateEffects(for: context.effects)
         )

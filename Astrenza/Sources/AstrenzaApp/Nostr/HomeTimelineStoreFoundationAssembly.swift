@@ -31,7 +31,6 @@ extension HomeTimelineStoreAssembly {
         )
         let homeFeedProjection = HomeFeedProjectionController(eventStore: input.eventStore)
         let snapshotCoordinator = HomeTimelineSnapshotCoordinator(
-            eventStore: input.eventStore,
             persistenceWorker: persistenceWorker,
             projectionController: homeFeedProjection
         )

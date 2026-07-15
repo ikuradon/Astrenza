@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct HomeTimelineSnapshotCoordinatorTests {
     @Test("Restore prefers Generic Feed and falls back to the legacy migration snapshot")
-    func restorePrefersGenericFeedAndFallsBackToLegacy() throws {
+    func restorePrefersGenericFeedAndFallsBackToLegacy() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let accountID = String(repeating: "a", count: 64)
         let legacyNote = event(id: "1", pubkey: accountID, content: "legacy")
@@ -22,7 +22,9 @@ struct HomeTimelineSnapshotCoordinatorTests {
         )
         let (coordinator, _) = makeCoordinator(eventStore: eventStore)
 
-        let legacy = try #require(coordinator.restoredState(accountID: accountID))
+        let legacy = try #require(await coordinator.restoredState(
+            accountID: accountID
+        ))
 
         #expect(legacy.relays == ["wss://legacy.example"])
         #expect(legacy.noteEvents == [legacyNote])
@@ -54,7 +56,9 @@ struct HomeTimelineSnapshotCoordinatorTests {
             savedAt: genericSavedAt
         )
 
-        let generic = try #require(coordinator.restoredState(accountID: accountID))
+        let generic = try #require(await coordinator.restoredState(
+            accountID: accountID
+        ))
 
         #expect(generic.relays == ["wss://generic.example"])
         #expect(generic.noteEvents == [genericNote])
@@ -190,7 +194,6 @@ struct HomeTimelineSnapshotCoordinatorTests {
         let projectionController = HomeFeedProjectionController(eventStore: eventStore)
         return (
             HomeTimelineSnapshotCoordinator(
-                eventStore: eventStore,
                 persistenceWorker: HomeTimelinePersistenceWorker(eventStore: eventStore),
                 projectionController: projectionController
             ),

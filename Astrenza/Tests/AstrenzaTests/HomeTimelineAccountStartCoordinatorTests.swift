@@ -34,16 +34,6 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .beginLifecycle(account.pubkey),
             .resolveSyncPolicy(account.pubkey, fallback: probe.fallbackSyncPolicy),
             .command(.setAccount(account, syncPolicy: probe.resolvedSyncPolicy)),
-            .command(.startRuntimeSession),
-            .restoreCachedSnapshot(account),
-            .setRuntimeBootstrapCompleted(false, lifecycle),
-            .command(.prepareHomeFeedDefinition(account)),
-            .restoreViewport(account.pubkey),
-            .command(.reloadNewestProjectionWindow(account)),
-            .command(.materializeEntries),
-            .command(.installProvisionalRuntimeBootstrap(account)),
-            .command(.restoreHomeFeedReadState(account)),
-            .command(.setPhase(.resolvingRelays)),
             .scheduleLoad(lifecycle),
             .command(.activateOutbox(accountID: account.pubkey))
         ])
@@ -53,12 +43,30 @@ struct HomeTimelineAccountStartCoordinatorTests {
 
         await probe.lifecycle.runScheduledLoad()
 
+        #expect(probe.events == [
+            .beginLifecycle(account.pubkey),
+            .resolveSyncPolicy(account.pubkey, fallback: probe.fallbackSyncPolicy),
+            .command(.setAccount(account, syncPolicy: probe.resolvedSyncPolicy)),
+            .scheduleLoad(lifecycle),
+            .command(.activateOutbox(accountID: account.pubkey)),
+            .restoreCachedSnapshot(account),
+            .setRuntimeBootstrapCompleted(false, lifecycle),
+            .command(.prepareHomeFeedDefinition(account)),
+            .restoreViewport(account.pubkey),
+            .command(.reloadNewestProjectionWindow(account)),
+            .command(.materializeEntries),
+            .command(.installProvisionalRuntimeBootstrap(account)),
+            .command(.restoreHomeFeedReadState(account)),
+            .command(.setPhase(.resolvingRelays)),
+            .waitForCachedPresentation,
+            .command(.startRuntimeSession)
+        ])
         #expect(probe.loadedAccount == account)
         #expect(probe.loadedLifecycle == lifecycle)
     }
 
     @Test("An account switch cancels first and restores the persisted viewport anchor")
-    func switchesAccountAndRestoresViewport() {
+    func switchesAccountAndRestoresViewport() async {
         let account = HomeTimelineAccountStartProbe.account()
         let viewport = HomeTimelineRestoredViewport(anchorEventID: "restore-anchor")
         let probe = HomeTimelineAccountStartProbe(
@@ -77,7 +85,19 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .beginLifecycle(account.pubkey),
             .resolveSyncPolicy(account.pubkey, fallback: probe.fallbackSyncPolicy),
             .command(.setAccount(account, syncPolicy: probe.resolvedSyncPolicy)),
-            .command(.startRuntimeSession),
+            .scheduleLoad(lifecycle),
+            .command(.activateOutbox(accountID: account.pubkey))
+        ])
+
+        await probe.lifecycle.runScheduledLoad()
+
+        #expect(probe.events == [
+            .command(.cancelCurrentAccount),
+            .beginLifecycle(account.pubkey),
+            .resolveSyncPolicy(account.pubkey, fallback: probe.fallbackSyncPolicy),
+            .command(.setAccount(account, syncPolicy: probe.resolvedSyncPolicy)),
+            .scheduleLoad(lifecycle),
+            .command(.activateOutbox(accountID: account.pubkey)),
             .restoreCachedSnapshot(account),
             .setRuntimeBootstrapCompleted(true, lifecycle),
             .command(.prepareHomeFeedDefinition(account)),
@@ -87,15 +107,15 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .command(.installProvisionalRuntimeBootstrap(account)),
             .command(.restoreHomeFeedReadState(account)),
             .command(.setPhase(.loaded)),
-            .scheduleLoad(lifecycle),
-            .command(.activateOutbox(accountID: account.pubkey))
+            .waitForCachedPresentation,
+            .command(.startRuntimeSession)
         ])
         #expect(probe.restoreProjectionAnchorEventID == viewport.anchorEventID)
         #expect(probe.lifecycle.scheduledLoadCount == 1)
     }
 
     @Test("Cached offline entries preserve the current phase")
-    func cachedOfflineEntriesDoNotReplacePhase() {
+    func cachedOfflineEntriesDoNotReplacePhase() async {
         let account = HomeTimelineAccountStartProbe.account()
         let probe = HomeTimelineAccountStartProbe(
             cachedSnapshotFound: true,
@@ -104,12 +124,34 @@ struct HomeTimelineAccountStartCoordinatorTests {
         )
 
         probe.start(account: account, hasRelayRuntime: false)
+        await probe.lifecycle.runScheduledLoad()
 
         #expect(!probe.commands.contains { command in
             if case .setPhase = command { return true }
             return false
         })
         #expect(probe.lifecycle.scheduledLoadCount == 1)
+    }
+
+    @Test("A stale lifecycle cannot finish startup after cache restoration")
+    func staleLifecycleDoesNotFinishStartup() async {
+        let account = HomeTimelineAccountStartProbe.account()
+        let probe = HomeTimelineAccountStartProbe(cachedSnapshotFound: true)
+
+        probe.start(account: account, hasRelayRuntime: true)
+        probe.lifecycle.invalidateCurrentToken()
+        await probe.lifecycle.runScheduledLoad()
+
+        let lifecycle = probe.lifecycle.token(accountID: account.pubkey)
+        #expect(probe.events == [
+            .beginLifecycle(account.pubkey),
+            .resolveSyncPolicy(account.pubkey, fallback: probe.fallbackSyncPolicy),
+            .command(.setAccount(account, syncPolicy: probe.resolvedSyncPolicy)),
+            .scheduleLoad(lifecycle),
+            .command(.activateOutbox(accountID: account.pubkey)),
+            .restoreCachedSnapshot(account)
+        ])
+        #expect(probe.loadedAccount == nil)
     }
 }
 
@@ -122,6 +164,7 @@ private final class HomeTimelineAccountStartProbe {
         case restoreCachedSnapshot(NostrAccount)
         case setRuntimeBootstrapCompleted(Bool, HomeTimelineLifecycleToken)
         case restoreViewport(String)
+        case waitForCachedPresentation
         case scheduleLoad(HomeTimelineLifecycleToken)
     }
 
@@ -141,6 +184,7 @@ private final class HomeTimelineAccountStartProbe {
     private(set) var loadedAccount: NostrAccount?
     private(set) var loadedLifecycle: HomeTimelineLifecycleToken?
 
+    private var coordinator: HomeTimelineAccountStartCoordinator?
     private let cachedSnapshotFound: Bool
     private let restoredSnapshotHasEntries: Bool
     private let restoredSnapshotHasRelays: Bool
@@ -176,15 +220,17 @@ private final class HomeTimelineAccountStartProbe {
     }
 
     func start(account: NostrAccount, hasRelayRuntime: Bool) {
-        let coordinator = HomeTimelineAccountStartCoordinator(
-            lifecycleCoordinator: lifecycle,
-            resolveSyncPolicy: { [weak self] accountID, fallback in
-                guard let self else { return fallback }
-                events.append(.resolveSyncPolicy(accountID, fallback: fallback))
-                return resolvedSyncPolicy
-            }
-        )
-        coordinator.start(
+        if coordinator == nil {
+            coordinator = HomeTimelineAccountStartCoordinator(
+                lifecycleCoordinator: lifecycle,
+                resolveSyncPolicy: { [weak self] accountID, fallback in
+                    guard let self else { return fallback }
+                    events.append(.resolveSyncPolicy(accountID, fallback: fallback))
+                    return resolvedSyncPolicy
+                }
+            )
+        }
+        coordinator?.start(
             HomeTimelineAccountStartRequest(
                 account: account,
                 hasRelayRuntime: hasRelayRuntime
@@ -210,6 +256,9 @@ private final class HomeTimelineAccountStartProbe {
                 guard let self else { return nil }
                 events.append(.restoreViewport(accountID))
                 return viewport
+            },
+            waitForCachedPresentation: { [weak self] in
+                self?.events.append(.waitForCachedPresentation)
             },
             load: { [weak self] account, lifecycle in
                 self?.loadedAccount = account
@@ -285,6 +334,10 @@ private final class HomeTimelineAccountStartLifecycleProbe:
         return token
     }
 
+    func isCurrent(_ token: HomeTimelineLifecycleToken) -> Bool {
+        currentToken == token
+    }
+
     func setRuntimeBootstrapCompleted(
         _ isCompleted: Bool,
         for token: HomeTimelineLifecycleToken
@@ -305,6 +358,11 @@ private final class HomeTimelineAccountStartLifecycleProbe:
     }
 
     func runScheduledLoad() async {
-        await scheduledLoad?()
+        guard let scheduledLoad else { return }
+        await scheduledLoad()
+    }
+
+    func invalidateCurrentToken() {
+        currentToken = nil
     }
 }

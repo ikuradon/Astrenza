@@ -1847,6 +1847,7 @@ struct TimelineModelTests {
         )
         store.start(account: account)
         defer { store.cancel() }
+        try #require(await waitForTimelineState { store.phase != .idle })
 
         func viewport(anchor: String, updatedAt: TimeInterval) -> TimelineViewportState {
             TimelineViewportState(
@@ -1887,7 +1888,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store restores metadata and viewport from an empty Generic Feed")
     @MainActor
-    func homeTimelineStoreRestoresEmptyGenericFeedMetadata() throws {
+    func homeTimelineStoreRestoresEmptyGenericFeedMetadata() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "a", count: 64),
@@ -1927,15 +1928,14 @@ struct TimelineModelTests {
             readState: readState,
             savedAt: 101
         )
-        let store = NostrHomeTimelineStore(
-            timelineLoader: NostrHomeTimelineLoader(
-                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
-                bootstrapRelays: []
-            ),
-            eventStore: eventStore
+        let (store, relayClient) = makeGatedHomeStore(
+            eventStore: eventStore,
+            bootstrapRelays: state.relays
         )
 
         store.start(account: account)
+        defer { store.cancel() }
+        try await relayClient.waitUntilBootstrapFetchStarts()
 
         #expect(store.entries.isEmpty)
         #expect(store.resolvedRelays == state.relays)
@@ -1947,7 +1947,7 @@ struct TimelineModelTests {
         ))
         #expect(viewport.anchorPostID == "empty-feed-anchor")
         #expect(viewport.anchorOffset == 18)
-        store.cancel()
+        await relayClient.releaseBootstrap()
     }
 
     @Test("Home timeline store confines legacy timeline restore to migration and creates Generic Feed")
@@ -1984,6 +1984,7 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
+        defer { store.cancel() }
         try #require(await waitForTimelineState {
             store.entries.compactMap(\.post?.id) == [note.id]
         })
@@ -1991,7 +1992,6 @@ struct TimelineModelTests {
         #expect(store.entries.compactMap(\.post?.id) == [note.id])
         #expect(try eventStore.feedDefinition(feedID: "feed:home:\(account.pubkey)") != nil)
         #expect(try eventStore.homeFeedState(accountID: account.pubkey)?.noteEvents == [note])
-        store.cancel()
     }
 
     @Test("Home timeline store restores live gap rows from database timeline entries")
@@ -2170,7 +2170,7 @@ struct TimelineModelTests {
 
     @Test("Home relay pill counts reachable relays from runtime history")
     @MainActor
-    func homeRelayPillCountsReachableRelaysFromRuntimeHistory() throws {
+    func homeRelayPillCountsReachableRelaysFromRuntimeHistory() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "c", count: 64),
@@ -2220,14 +2220,13 @@ struct TimelineModelTests {
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.start(account: account)
-
-        #expect(store.relayStatusCounts.connected == 1)
-        #expect(store.relayStatusCounts.planned == 2)
+        defer { store.cancel() }
+        try await waitForRelayStatusCounts(in: store, connected: 1, planned: 2)
     }
 
     @Test("Home relay pill does not count stale relay history as connected")
     @MainActor
-    func homeRelayPillIgnoresStaleReachableHistory() throws {
+    func homeRelayPillIgnoresStaleReachableHistory() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "d", count: 64),
@@ -2266,6 +2265,10 @@ struct TimelineModelTests {
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.start(account: account)
+        defer { store.cancel() }
+        try #require(await waitForTimelineState {
+            store.resolvedRelays == ["wss://old.example"]
+        })
 
         #expect(store.relayStatusCounts.connected == 0)
         #expect(store.relayStatusCounts.planned == 1)
@@ -2335,9 +2338,9 @@ struct TimelineModelTests {
         try await waitForRelayStatusCounts(in: store, connected: 0, planned: 1)
     }
 
-    @Test("Home timeline exposes discovery relays without starting a provisional Home feed")
+    @Test("Home timeline exposes discovery relays after local cache restoration")
     @MainActor
-    func homeTimelineRuntimeExposesProvisionalBootstrapRelaysImmediately() throws {
+    func homeTimelineRuntimeExposesProvisionalBootstrapRelaysImmediately() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "e", count: 64),
@@ -2352,9 +2355,10 @@ struct TimelineModelTests {
             retryPolicy: NostrRelayRuntimeRetryPolicy(maxAttempts: 0, initialDelayMilliseconds: 0, delayStepMilliseconds: 0),
             heartbeatPolicy: .disabled
         )
+        let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [:])
         let store = NostrHomeTimelineStore(
             timelineLoader: NostrHomeTimelineLoader(
-                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
+                relayClient: relayClient,
                 bootstrapRelays: ["wss://bootstrap.example", "wss://fallback.example"],
                 pageLimit: 20
             ),
@@ -2363,6 +2367,8 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
+        defer { store.cancel() }
+        try await relayClient.waitUntilBootstrapFetchStarts()
 
         #expect(store.resolvedRelays == [
             "wss://hint.example",
@@ -2372,6 +2378,7 @@ struct TimelineModelTests {
         #expect(store.followedPubkeys.isEmpty)
         #expect(store.relayStatusCounts.planned == 3)
         #expect(store.phase == .resolvingRelays)
+        await relayClient.releaseBootstrap()
     }
 
     @Test("Fresh Home runtime waits for kind 10002 and kind 3 before installing forward REQ")
@@ -8217,6 +8224,22 @@ struct TimelineModelTests {
         state.markVisiblePostsRead(["new-2"])
         #expect(state.readBoundaryPostID == "new-1")
     }
+}
+
+@MainActor
+private func makeGatedHomeStore(
+    eventStore: NostrEventStore,
+    bootstrapRelays: [String]
+) -> (store: NostrHomeTimelineStore, relayClient: GatedStoreRelayClient) {
+    let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [:])
+    let store = NostrHomeTimelineStore(
+        timelineLoader: NostrHomeTimelineLoader(
+            relayClient: relayClient,
+            bootstrapRelays: bootstrapRelays
+        ),
+        eventStore: eventStore
+    )
+    return (store, relayClient)
 }
 
 @MainActor

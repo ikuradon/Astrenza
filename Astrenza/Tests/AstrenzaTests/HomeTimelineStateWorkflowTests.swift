@@ -6,10 +6,10 @@ import Testing
 @MainActor
 struct HomeTimelineStateWorkflowTests {
     @Test("Restore and replacement stay behind the state effect boundary")
-    func stateApplicationRoutesEffects() {
+    func stateApplicationRoutesEffects() async {
         let fixture = StateWorkflowFixture()
 
-        let didRestore = fixture.workflow.restoreCachedState(
+        let didRestore = await fixture.workflow.restoreCachedState(
             accountID: "account",
             effects: fixture.effects
         )
@@ -78,7 +78,7 @@ private final class StateApplicationSpy: HomeTimelineStateApplying {
     func restoreCachedState(
         accountID: String,
         handlers: HomeTimelineStateApplicationHandlers
-    ) -> Bool {
+    ) async -> Bool {
         restoredAccountID = accountID
         handlers.applyPresentationTransition(presentationTransition)
         handlers.applyContentSnapshot(contentSnapshot)

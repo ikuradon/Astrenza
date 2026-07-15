@@ -44,6 +44,17 @@ actor HomeTimelinePersistenceWorker {
         self.eventStore = eventStore
     }
 
+    func restoredState(accountID: String) -> NostrHomeTimelineState? {
+        if let state = try? eventStore.homeFeedState(accountID: accountID) {
+            return state
+        }
+
+        // V4以前の開発用DBだけをGeneric Feedへ移行するcompatibility pathです。
+        return try? eventStore.legacyHomeTimelineStateForMigration(
+            accountID: accountID
+        )
+    }
+
     func saveFeedSnapshot(
         _ snapshot: HomeTimelineFeedPersistenceSnapshot
     ) throws -> NostrFeedWindow? {

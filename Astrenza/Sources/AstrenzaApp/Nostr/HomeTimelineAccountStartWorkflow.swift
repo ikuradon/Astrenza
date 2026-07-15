@@ -47,6 +47,8 @@ struct HomeTimelineAccountStartEffects: Sendable {
     let application: HomeTimelineAccountStartAppEffects
     let restoreCachedSnapshot: HomeTimelineAccountStartHandlers.CachedSnapshotRestorer
     let restoredViewport: HomeTimelineAccountStartHandlers.ViewportRestorer
+    let waitForCachedPresentation:
+        HomeTimelineAccountStartHandlers.CachedPresentationWaiter
     let load: HomeTimelineAccountStartHandlers.LoadHandler
 }
 
@@ -86,6 +88,7 @@ final class HomeTimelineAccountStartWorkflow {
             },
             restoreCachedSnapshot: effects.restoreCachedSnapshot,
             restoredViewport: effects.restoredViewport,
+            waitForCachedPresentation: effects.waitForCachedPresentation,
             load: effects.load
         )
     }

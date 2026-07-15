@@ -49,14 +49,16 @@ struct HomeTimelineAccountStartEnvironment: Sendable {
     ) -> HomeTimelineAccountStartStoreState
     typealias CachedSnapshotRestorer = @MainActor @Sendable (
         _ account: NostrAccount
-    ) -> Bool
+    ) async -> Bool
     typealias ViewportRestorer = @MainActor @Sendable (
         _ accountID: String
     ) -> HomeTimelineRestoredViewport?
+    typealias CachedPresentationWaiter = @MainActor @Sendable () async -> Void
 
     let state: StateProvider
     let restoreCachedSnapshot: CachedSnapshotRestorer
     let restoredViewport: ViewportRestorer
+    let waitForCachedPresentation: CachedPresentationWaiter
 }
 
 struct HomeAccountStartInteractionEffects: Sendable {
@@ -116,6 +118,8 @@ final class HomeAccountStartInteractionWorkflow {
             application: applicationEffects(for: effects),
             restoreCachedSnapshot: effects.environment.restoreCachedSnapshot,
             restoredViewport: effects.environment.restoredViewport,
+            waitForCachedPresentation:
+                effects.environment.waitForCachedPresentation,
             load: { account, lifecycle in
                 await effects.load(HomeTimelineAccountStartLoadRequest(
                     account: account,

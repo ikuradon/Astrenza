@@ -27,7 +27,7 @@ struct HomeTimelineStateApplicationHandlers: Sendable {
 struct HomeTimelineStateApplicationDependencies: Sendable {
     typealias StateRestorer = @MainActor @Sendable (
         _ accountID: String
-    ) -> NostrHomeTimelineState?
+    ) async -> NostrHomeTimelineState?
     typealias PresentationReset = @MainActor @Sendable () -> HomeTimelinePresentationTransition
     typealias ContentReplacement = @MainActor @Sendable (
         _ state: NostrHomeTimelineState,
@@ -80,7 +80,7 @@ final class HomeTimelineStateApplicationCoordinator {
     ) {
         self.init(dependencies: HomeTimelineStateApplicationDependencies(
             restoredState: { accountID in
-                snapshotCoordinator.restoredState(accountID: accountID)
+                await snapshotCoordinator.restoredState(accountID: accountID)
             },
             resetPresentation: presentationCoordinator.reset,
             replaceContent: { state, accountID in
@@ -115,8 +115,10 @@ final class HomeTimelineStateApplicationCoordinator {
     func restoreCachedState(
         accountID: String,
         handlers: HomeTimelineStateApplicationHandlers
-    ) -> Bool {
-        guard let state = dependencies.restoredState(accountID) else {
+    ) async -> Bool {
+        let state = await dependencies.restoredState(accountID)
+        guard !Task.isCancelled else { return false }
+        guard let state else {
             resetMissingCachedState(handlers: handlers)
             return false
         }

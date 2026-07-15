@@ -163,7 +163,7 @@ struct HomeTimelinePublishCoordinatorTests {
         let signer = SuspendedSigner()
         store.start(account: firstAccount)
         defer { store.cancel() }
-        #expect(store.resolvedRelays == ["wss://relay.example"])
+        try #require(await waitUntil { store.resolvedRelays == ["wss://relay.example"] })
 
         let publishTask = Task {
             try await store.enqueuePublish(.post(content: "stale"), signer: signer)
@@ -175,6 +175,17 @@ struct HomeTimelinePublishCoordinatorTests {
 
         #expect(try eventStore.outboxEvents(accountID: firstAccount.pubkey).isEmpty)
         #expect(try eventStore.outboxEvents(accountID: secondAccount.pubkey).isEmpty)
+    }
+
+    @MainActor
+    private func waitUntil(
+        _ predicate: @escaping @MainActor @Sendable () async -> Bool
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if await predicate() { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return false
     }
 }
 

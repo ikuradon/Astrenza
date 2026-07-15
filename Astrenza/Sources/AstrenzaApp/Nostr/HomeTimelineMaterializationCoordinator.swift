@@ -105,6 +105,15 @@ final class HomeTimelineMaterializationCoordinator {
         presentationCoordinator.cancelMaterialization()
     }
 
+    func waitForPendingPresentation() async {
+        if let projectionTask {
+            _ = await projectionTask.value
+        }
+        if let materializationTask {
+            await materializationTask.value
+        }
+    }
+
     private func startMaterialization(
         _ request: HomeTimelineMaterializationRequest,
         pass: HomeTimelineMaterializationPass,

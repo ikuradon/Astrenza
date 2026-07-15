@@ -23,16 +23,18 @@ struct HomeTimelineAccountStartInteractionTests {
 
         fixture.probe.state = fixture.replacementState
         #expect(effects.state() == fixture.expectedReplacementState)
-        #expect(effects.restoreCachedSnapshot(fixture.account))
+        #expect(await effects.restoreCachedSnapshot(fixture.account))
         #expect(
             effects.restoredViewport(fixture.account.pubkey)
                 == fixture.restoredViewport
         )
+        await effects.waitForCachedPresentation()
         await effects.load(fixture.account, fixture.lifecycle)
 
         #expect(fixture.probe.dependencies == [
             .restoreCachedSnapshot(fixture.account),
             .restoreViewport(fixture.account.pubkey),
+            .waitForCachedPresentation,
             .load(HomeTimelineAccountStartLoadRequest(
                 account: fixture.account,
                 lifecycle: fixture.lifecycle
@@ -130,6 +132,9 @@ private final class AccountStartInteractionProbe {
                 restoredViewport: { [self] accountID in
                     dependencies.append(.restoreViewport(accountID))
                     return restoredViewport
+                },
+                waitForCachedPresentation: { [self] in
+                    dependencies.append(.waitForCachedPresentation)
                 }
             ),
             apply: { [self] action in
@@ -145,6 +150,7 @@ private final class AccountStartInteractionProbe {
 private enum AccountStartInteractionDependency: Equatable, Sendable {
     case restoreCachedSnapshot(NostrAccount)
     case restoreViewport(String)
+    case waitForCachedPresentation
     case load(HomeTimelineAccountStartLoadRequest)
 }
 

@@ -35,12 +35,14 @@ struct HomeTimelineAccountStartWorkflowTests {
         )])
         let handlers = try #require(coordinator.handlers)
         #expect(handlers.state() == probe.state)
-        #expect(handlers.restoreCachedSnapshot(account))
+        #expect(await handlers.restoreCachedSnapshot(account))
         #expect(handlers.restoredViewport(account.pubkey) == viewport)
+        await handlers.waitForCachedPresentation()
         await handlers.load(account, lifecycle)
         #expect(probe.dependencies == [
             .restoreCachedSnapshot(account),
             .restoreViewport(account.pubkey),
+            .waitForCachedPresentation,
             .load(account, lifecycle)
         ])
     }
@@ -150,6 +152,9 @@ private final class AccountStartWorkflowEffectProbe {
                 dependencies.append(.restoreViewport(accountID))
                 return viewport
             },
+            waitForCachedPresentation: { [self] in
+                dependencies.append(.waitForCachedPresentation)
+            },
             load: { [self] account, lifecycle in
                 dependencies.append(.load(account, lifecycle))
             }
@@ -237,6 +242,7 @@ private final class AccountStartWorkflowOutboxSpy:
 private enum AccountStartWorkflowDependency: Equatable, Sendable {
     case restoreCachedSnapshot(NostrAccount)
     case restoreViewport(String)
+    case waitForCachedPresentation
     case load(NostrAccount, HomeTimelineLifecycleToken)
 }
 

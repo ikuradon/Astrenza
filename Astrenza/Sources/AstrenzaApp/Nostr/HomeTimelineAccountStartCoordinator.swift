@@ -8,6 +8,8 @@ protocol HomeTimelineAccountLifecycleCoordinating: AnyObject {
 
     func begin(accountID: String) -> HomeTimelineLifecycleToken
 
+    func isCurrent(_ token: HomeTimelineLifecycleToken) -> Bool
+
     @discardableResult
     func setRuntimeBootstrapCompleted(
         _ isCompleted: Bool,
@@ -61,10 +63,11 @@ struct HomeTimelineAccountStartHandlers: Sendable {
     ) -> Void
     typealias CachedSnapshotRestorer = @MainActor @Sendable (
         _ account: NostrAccount
-    ) -> Bool
+    ) async -> Bool
     typealias ViewportRestorer = @MainActor @Sendable (
         _ accountID: String
     ) -> HomeTimelineRestoredViewport?
+    typealias CachedPresentationWaiter = @MainActor @Sendable () async -> Void
     typealias LoadHandler = @MainActor @Sendable (
         _ account: NostrAccount,
         _ lifecycle: HomeTimelineLifecycleToken
@@ -74,6 +77,7 @@ struct HomeTimelineAccountStartHandlers: Sendable {
     let perform: CommandHandler
     let restoreCachedSnapshot: CachedSnapshotRestorer
     let restoredViewport: ViewportRestorer
+    let waitForCachedPresentation: CachedPresentationWaiter
     let load: LoadHandler
 }
 
@@ -116,30 +120,55 @@ final class HomeTimelineAccountStartCoordinator {
             handlers.state().syncPolicy
         )
         handlers.perform(.setAccount(request.account, syncPolicy: syncPolicy))
-        handlers.perform(.startRuntimeSession)
+        let load = handlers.load
+        lifecycleCoordinator.startLoad(for: lifecycle) { [weak self] in
+            guard let self else { return }
+            let didRestore = await handlers.restoreCachedSnapshot(
+                request.account
+            )
+            guard !Task.isCancelled,
+                  lifecycleCoordinator.isCurrent(lifecycle)
+            else { return }
+            completeCachedStartup(
+                request,
+                lifecycle: lifecycle,
+                didRestore: didRestore,
+                handlers: handlers
+            )
+            await handlers.waitForCachedPresentation()
+            guard !Task.isCancelled,
+                  lifecycleCoordinator.isCurrent(lifecycle)
+            else { return }
+            handlers.perform(.startRuntimeSession)
+            await load(request.account, lifecycle)
+        }
+        handlers.perform(.activateOutbox(accountID: request.account.pubkey))
+    }
 
-        lifecycleCoordinator.setRuntimeBootstrapCompleted(
-            handlers.restoreCachedSnapshot(request.account),
+    private func completeCachedStartup(
+        _ request: HomeTimelineAccountStartRequest,
+        lifecycle: HomeTimelineLifecycleToken,
+        didRestore: Bool,
+        handlers: HomeTimelineAccountStartHandlers
+    ) {
+        guard lifecycleCoordinator.setRuntimeBootstrapCompleted(
+            didRestore,
             for: lifecycle
-        )
+        ) else { return }
         handlers.perform(.prepareHomeFeedDefinition(request.account))
-        restoreViewportIfNeeded(accountID: request.account.pubkey, handlers: handlers)
+        restoreViewportIfNeeded(
+            accountID: request.account.pubkey,
+            handlers: handlers
+        )
         restoreProjectionWindow(account: request.account, handlers: handlers)
         handlers.perform(.installProvisionalRuntimeBootstrap(request.account))
         handlers.perform(.restoreHomeFeedReadState(request.account))
-
         if let phase = initialPhase(
             hasRelayRuntime: request.hasRelayRuntime,
             state: handlers.state()
         ) {
             handlers.perform(.setPhase(phase))
         }
-
-        let load = handlers.load
-        lifecycleCoordinator.startLoad(for: lifecycle) {
-            await load(request.account, lifecycle)
-        }
-        handlers.perform(.activateOutbox(accountID: request.account.pubkey))
     }
 
     private func restoreViewportIfNeeded(

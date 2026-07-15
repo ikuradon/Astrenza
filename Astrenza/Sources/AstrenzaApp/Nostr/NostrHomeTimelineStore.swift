@@ -520,8 +520,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     @discardableResult
-    private func restoreCachedSnapshot(account: NostrAccount) -> Bool {
-        stateInteractionWorkflow.restoreCachedState(
+    private func restoreCachedSnapshot(account: NostrAccount) async -> Bool {
+        await stateInteractionWorkflow.restoreCachedState(
             accountID: account.pubkey,
             context: stateInteractionContext()
         )
@@ -1302,7 +1302,7 @@ private extension NostrHomeTimelineStore {
                         )
                     },
                     restoreCachedSnapshot: { [weak self] account in
-                        self?.restoreCachedSnapshot(account: account) ?? false
+                        await self?.restoreCachedSnapshot(account: account) ?? false
                     },
                     restoredViewport: { [weak self] accountID in
                         self?.restoredViewportState(
@@ -1313,6 +1313,10 @@ private extension NostrHomeTimelineStore {
                                 anchorEventID: $0.anchorPostID
                             )
                         }
+                    },
+                    waitForCachedPresentation: { [weak self] in
+                        await self?.projectionInteractionWorkflow
+                            .waitForPendingPresentation()
                     }
                 ),
                 apply: { [weak self] action in

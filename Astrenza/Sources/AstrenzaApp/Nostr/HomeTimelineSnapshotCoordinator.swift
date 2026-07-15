@@ -31,28 +31,20 @@ struct HomeTimelineSnapshotSaveReceipt: Sendable {
 
 @MainActor
 final class HomeTimelineSnapshotCoordinator {
-    private let eventStore: NostrEventStore?
     private let persistenceWorker: HomeTimelinePersistenceWorker?
     private let projectionController: HomeFeedProjectionController
 
     init(
-        eventStore: NostrEventStore?,
         persistenceWorker: HomeTimelinePersistenceWorker?,
         projectionController: HomeFeedProjectionController
     ) {
-        self.eventStore = eventStore
         self.persistenceWorker = persistenceWorker
         self.projectionController = projectionController
     }
 
-    func restoredState(accountID: String) -> NostrHomeTimelineState? {
-        guard let eventStore else { return nil }
-        if let state = try? eventStore.homeFeedState(accountID: accountID) {
-            return state
-        }
-
-        // V4以前の開発用DBだけをGeneric Feedへ移行するcompatibility pathです。
-        return try? eventStore.legacyHomeTimelineStateForMigration(accountID: accountID)
+    func restoredState(accountID: String) async -> NostrHomeTimelineState? {
+        guard let persistenceWorker else { return nil }
+        return await persistenceWorker.restoredState(accountID: accountID)
     }
 
     func persistSnapshot(

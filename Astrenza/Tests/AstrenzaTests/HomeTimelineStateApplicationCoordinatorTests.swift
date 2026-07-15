@@ -6,14 +6,14 @@ import Testing
 @MainActor
 struct HomeTimelineStateApplicationTests {
     @Test("Cached state is restored through the shared replacement transaction")
-    func cachedStateUsesSharedReplacementTransaction() {
+    func cachedStateUsesSharedReplacementTransaction() async {
         let state = timelineState(relays: ["wss://incoming.example"])
         let probe = Probe(cachedState: state)
         let coordinator = HomeTimelineStateApplicationCoordinator(
             dependencies: probe.dependencies()
         )
 
-        let didRestore = coordinator.restoreCachedState(
+        let didRestore = await coordinator.restoreCachedState(
             accountID: "account",
             handlers: probe.handlers()
         )
@@ -36,7 +36,7 @@ struct HomeTimelineStateApplicationTests {
     }
 
     @Test("Missing cache resets only the stale presentation and cached state surfaces")
-    func missingCacheResetsCachedStateSurfaces() {
+    func missingCacheResetsCachedStateSurfaces() async {
         let probe = Probe(
             cachedState: nil,
             resetContentRelays: ["wss://reset-effective.example"]
@@ -45,7 +45,7 @@ struct HomeTimelineStateApplicationTests {
             dependencies: probe.dependencies()
         )
 
-        let didRestore = coordinator.restoreCachedState(
+        let didRestore = await coordinator.restoreCachedState(
             accountID: "account",
             handlers: probe.handlers()
         )
@@ -91,6 +91,32 @@ struct HomeTimelineStateApplicationTests {
             .invalidateListProjection,
             .applyListProjectionInvalidation(41)
         ])
+    }
+
+    @Test("A canceled cache read cannot apply stale state")
+    func canceledCacheReadDoesNotApplyState() async {
+        let state = timelineState(relays: ["wss://stale.example"])
+        let gate = HomeTimelineCachedStateRestoreGate()
+        let probe = Probe(cachedState: nil)
+        let coordinator = HomeTimelineStateApplicationCoordinator(
+            dependencies: probe.dependencies(restoredState: { _ in
+                await gate.suspend()
+                return state
+            })
+        )
+
+        let restoreTask = Task { @MainActor in
+            await coordinator.restoreCachedState(
+                accountID: "stale-account",
+                handlers: probe.handlers()
+            )
+        }
+        await gate.waitUntilSuspended()
+        restoreTask.cancel()
+        await gate.resume()
+
+        #expect(await restoreTask.value == false)
+        #expect(probe.events.isEmpty)
     }
 
     private func timelineState(relays: [String]) -> NostrHomeTimelineState {
@@ -139,12 +165,15 @@ private final class Probe {
         self.resetContentRelays = resetContentRelays
     }
 
-    func dependencies() -> HomeTimelineStateApplicationDependencies {
-        HomeTimelineStateApplicationDependencies(
-            restoredState: { [self] accountID in
-                events.append(.restoreState(accountID))
-                return cachedState
-            },
+    func dependencies(
+        restoredState: HomeTimelineStateApplicationDependencies.StateRestorer? = nil
+    ) -> HomeTimelineStateApplicationDependencies {
+        let restore = restoredState ?? { [self] accountID in
+            events.append(.restoreState(accountID))
+            return cachedState
+        }
+        return HomeTimelineStateApplicationDependencies(
+            restoredState: restore,
             resetPresentation: { [self] in
                 events.append(.resetPresentation)
                 return presentationCoordinator.reset()
@@ -233,5 +262,32 @@ private final class Probe {
             connectedRelayCount: 0,
             plannedRelayCount: relays.count
         )
+    }
+}
+
+private actor HomeTimelineCachedStateRestoreGate {
+    private var didSuspend = false
+    private var suspendedWaiter: CheckedContinuation<Void, Never>?
+    private var resumeWaiter: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        didSuspend = true
+        suspendedWaiter?.resume()
+        suspendedWaiter = nil
+        await withCheckedContinuation { continuation in
+            resumeWaiter = continuation
+        }
+    }
+
+    func waitUntilSuspended() async {
+        guard !didSuspend else { return }
+        await withCheckedContinuation { continuation in
+            suspendedWaiter = continuation
+        }
+    }
+
+    func resume() {
+        resumeWaiter?.resume()
+        resumeWaiter = nil
     }
 }

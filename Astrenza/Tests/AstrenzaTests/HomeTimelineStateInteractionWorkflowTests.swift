@@ -9,7 +9,7 @@ struct HomeTimelineStateInteractionTests {
     func routesStateOperations() async {
         let fixture = StateInteractionFixture()
 
-        let didRestore = fixture.workflow.restoreCachedState(
+        let didRestore = await fixture.workflow.restoreCachedState(
             accountID: fixture.account.pubkey,
             context: fixture.context
         )
@@ -32,7 +32,7 @@ struct HomeTimelineStateInteractionTests {
     }
 
     @Test("State providers remain dynamic behind the interaction boundary")
-    func forwardsDynamicStateProviders() {
+    func forwardsDynamicStateProviders() async {
         let fixture = StateInteractionFixture()
         let context = fixture.context
         fixture.router.readsEnvironment = true
@@ -42,7 +42,7 @@ struct HomeTimelineStateInteractionTests {
         )
         fixture.probe.hasPendingEvents = false
 
-        _ = fixture.workflow.restoreCachedState(
+        _ = await fixture.workflow.restoreCachedState(
             accountID: fixture.account.pubkey,
             context: context
         )
@@ -57,11 +57,11 @@ struct HomeTimelineStateInteractionTests {
     }
 
     @Test("State and runtime applications share one typed application boundary")
-    func routesApplications() {
+    func routesApplications() async {
         let fixture = StateInteractionFixture()
         fixture.router.appliesEffects = true
 
-        _ = fixture.workflow.restoreCachedState(
+        _ = await fixture.workflow.restoreCachedState(
             accountID: fixture.account.pubkey,
             context: fixture.context
         )
@@ -128,7 +128,7 @@ private final class StateInteractionRouterSpy: HomeTimelineStateRouting {
     func restoreCachedState(
         accountID: String,
         effects: HomeTimelineStateWorkflowEffects
-    ) -> Bool {
+    ) async -> Bool {
         restoredAccountID = accountID
         if readsEnvironment {
             persistenceState = effects.persistenceState()
