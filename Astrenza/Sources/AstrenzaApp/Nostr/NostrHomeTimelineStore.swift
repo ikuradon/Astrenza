@@ -36,7 +36,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
-    private let listProjectionCache: HomeTimelineListProjectionCache
+    private let queryInteractionWorkflow:
+        HomeTimelineQueryInteractionWorkflow
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
     private let materializationCoordinator: HomeTimelineMaterializationCoordinator
@@ -52,7 +53,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
-    private let timelineRepository: HomeTimelineRepository
     private let homeFeedProjection: HomeFeedProjectionController
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private let publishInteractionWorkflow:
@@ -193,7 +193,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.dependencyCoordinator = components.dependencyCoordinator
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
-        self.listProjectionCache = components.listProjectionCache
+        self.queryInteractionWorkflow = components.queryInteractionWorkflow
         self.activityCoordinator = components.activityCoordinator
         self.presentationCoordinator = components.presentationCoordinator
         self.materializationCoordinator = components.materializationCoordinator
@@ -209,7 +209,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.relayStatusCoordinator = components.relayStatusCoordinator
         self.linkPreviewCoordinator = components.linkPreviewCoordinator
         self.readStateCoordinator = components.readStateCoordinator
-        self.timelineRepository = components.timelineRepository
         self.homeFeedProjection = components.homeFeedProjection
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
@@ -429,71 +428,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    func isBookmarked(_ post: TimelinePost) -> Bool {
-        timelineRepository.isBookmarked(
-            eventID: post.id,
-            accountID: account?.pubkey
-        )
-    }
-
-    func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
-        guard let account else { return [] }
-        let cacheKey = HomeTimelineListProjectionCache.Key(
-            accountID: account.pubkey,
-            limit: limit,
-            homeContentRevision: resolvedContentRevision
-        )
-        let readContext = timelineReadContext(applyingHomeFilters: false)
-        return listProjectionCache.entries(for: cacheKey) {
-            timelineRepository.listEntries(
-                limit: limit,
-                context: readContext
-            )
-        }
-    }
-
     func cancel() {
         accountResetInteractionWorkflow.reset(
             context: accountResetInteractionContext()
-        )
-    }
-
-    func post(eventID: String) -> TimelinePost? {
-        timelineRepository.post(
-            eventID: eventID,
-            context: timelineReadContext()
-        )
-    }
-
-    func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
-        timelineRepository.profile(
-            pubkey: pubkey,
-            isCurrentUser: isCurrentUser,
-            context: timelineReadContext()
-        )
-    }
-
-    func profilePosts(pubkey: String, limit: Int = 80) -> [TimelinePost] {
-        timelineRepository.profilePosts(
-            pubkey: pubkey,
-            limit: limit,
-            context: timelineReadContext()
-        )
-    }
-
-    func replyAncestors(for post: TimelinePost, limit: Int = 8) -> [TimelinePost] {
-        timelineRepository.replyAncestors(
-            for: post,
-            limit: limit,
-            context: timelineReadContext()
-        )
-    }
-
-    func replies(for post: TimelinePost, limit: Int = 24) -> [TimelinePost] {
-        timelineRepository.replies(
-            for: post,
-            limit: limit,
-            context: timelineReadContext()
         )
     }
 
@@ -637,7 +574,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func timelineEvent(id: String) -> NostrEvent? {
-        noteEvents.first { $0.id == id } ?? timelineRepository.event(id: id)
+        queryInteractionWorkflow.event(
+            id: id,
+            preferring: noteEvents
+        )
     }
 
     @discardableResult
@@ -1109,11 +1049,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
-        timelineRepository.olderBackfillEvents(
-            accountID: account.pubkey,
-            followedPubkeys: current.followedPubkeys,
-            currentEvents: current.noteEvents,
-            limit: 1_000
+        queryInteractionWorkflow.olderBackfillEvents(
+            HomeTimelineOlderBackfillQuery(
+                accountID: account.pubkey,
+                followedPubkeys: current.followedPubkeys,
+                currentEvents: current.noteEvents,
+                limit: 1_000
+            )
         )
     }
 
@@ -1655,7 +1597,9 @@ private extension NostrHomeTimelineStore {
     }
 
     func invalidateListEntries() {
-        applyListProjectionInvalidation(listProjectionCache.invalidate())
+        applyListProjectionInvalidation(
+            queryInteractionWorkflow.invalidateListEntries()
+        )
     }
 
     func applyListProjectionInvalidation(
@@ -1665,6 +1609,69 @@ private extension NostrHomeTimelineStore {
             return
         }
         publishedListProjectionState = next
+    }
+}
+
+extension NostrHomeTimelineStore {
+    func isBookmarked(_ post: TimelinePost) -> Bool {
+        queryInteractionWorkflow.isBookmarked(
+            eventID: post.id,
+            accountID: account?.pubkey
+        )
+    }
+
+    func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
+        guard let account else { return [] }
+        return queryInteractionWorkflow.listEntries(
+            HomeTimelineListProjectionQuery(
+                accountID: account.pubkey,
+                limit: limit,
+                homeContentRevision: resolvedContentRevision,
+                context: timelineReadContext(applyingHomeFilters: false)
+            )
+        )
+    }
+
+    func post(eventID: String) -> TimelinePost? {
+        queryInteractionWorkflow.post(
+            eventID: eventID,
+            context: timelineReadContext()
+        )
+    }
+
+    func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
+        queryInteractionWorkflow.profile(
+            pubkey: pubkey,
+            isCurrentUser: isCurrentUser,
+            context: timelineReadContext()
+        )
+    }
+
+    func profilePosts(pubkey: String, limit: Int = 80) -> [TimelinePost] {
+        queryInteractionWorkflow.profilePosts(
+            pubkey: pubkey,
+            limit: limit,
+            context: timelineReadContext()
+        )
+    }
+
+    func replyAncestors(
+        for post: TimelinePost,
+        limit: Int = 8
+    ) -> [TimelinePost] {
+        queryInteractionWorkflow.replyAncestors(
+            for: post,
+            limit: limit,
+            context: timelineReadContext()
+        )
+    }
+
+    func replies(for post: TimelinePost, limit: Int = 24) -> [TimelinePost] {
+        queryInteractionWorkflow.replies(
+            for: post,
+            limit: limit,
+            context: timelineReadContext()
+        )
     }
 }
 

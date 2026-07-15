@@ -23,7 +23,8 @@ struct HomeTimelineStoreComponents {
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
-    let listProjectionCache: HomeTimelineListProjectionCache
+    let queryInteractionWorkflow:
+        HomeTimelineQueryInteractionWorkflow
     let activityCoordinator: HomeTimelineActivityCoordinator
     let presentationCoordinator: HomeTimelinePresentationCoordinator
     let materializationCoordinator: HomeTimelineMaterializationCoordinator
@@ -39,7 +40,6 @@ struct HomeTimelineStoreComponents {
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let readStateCoordinator: HomeTimelineReadStateCoordinator
-    let timelineRepository: HomeTimelineRepository
     let homeFeedProjection: HomeFeedProjectionController
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let publishInteractionWorkflow: HomeTimelinePublishInteractionWorkflow?
@@ -181,7 +181,7 @@ enum HomeTimelineStoreAssembly {
             ),
             dependencyCoordinator: graph.coordination.dependencyCoordinator,
             filterInteractionWorkflow: makeFilterInteraction(from: graph),
-            listProjectionCache: graph.coordination.listProjectionCache,
+            queryInteractionWorkflow: makeQueryInteraction(from: graph),
             activityCoordinator: graph.coordination.activityCoordinator,
             presentationCoordinator: graph.coordination.presentationCoordinator,
             materializationCoordinator: graph.coordination.materializationCoordinator,
@@ -200,7 +200,6 @@ enum HomeTimelineStoreAssembly {
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
             readStateCoordinator: graph.features.readStateCoordinator,
-            timelineRepository: graph.persistence.timelineRepository,
             homeFeedProjection: graph.persistence.homeFeedProjection,
             stateInteractionWorkflow: graph.features.stateInteractionWorkflow,
             publishInteractionWorkflow: graph.features.publishWorkflow.map {
@@ -233,6 +232,15 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineFilterInteractionWorkflow {
         HomeTimelineFilterInteractionWorkflow(
             filter: graph.persistence.filterCoordinator
+        )
+    }
+
+    private static func makeQueryInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeTimelineQueryInteractionWorkflow {
+        HomeTimelineQueryInteractionWorkflow(
+            repository: graph.persistence.timelineRepository,
+            listProjectionCache: graph.coordination.listProjectionCache
         )
     }
 

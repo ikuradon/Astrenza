@@ -24,6 +24,14 @@ struct HomeTimelineStoreAssemblyTests {
                 accountID: nil
             ) == nil
         )
+        #expect(!components.queryInteractionWorkflow.isBookmarked(
+            eventID: "missing",
+            accountID: nil
+        ))
+        #expect(components.queryInteractionWorkflow.event(
+            id: "missing",
+            preferring: []
+        ) == nil)
     }
 
     @Test("An event store enables publishing and database-backed local mutations")
