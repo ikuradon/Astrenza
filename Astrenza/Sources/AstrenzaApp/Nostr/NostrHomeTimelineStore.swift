@@ -403,32 +403,27 @@ final class NostrHomeTimelineStore: ObservableObject {
                 gap: gap,
                 direction: direction
             ),
-            handlers: gapBackfillHandlers()
+            effects: gapBackfillEffects()
         )
     }
 
-    private func gapBackfillHandlers() -> HomeTimelineGapBackfillHandlers {
-        HomeTimelineGapBackfillHandlers { [weak self] command in
-            self?.applyGapBackfillCommand(command)
-        }
-    }
-
-    private func applyGapBackfillCommand(
-        _ command: HomeTimelineGapBackfillCommand
-    ) {
-        switch command {
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
-        case .reloadProjection(let account, let anchorEventID):
-            _ = reloadProjectionWindow(account: account, around: anchorEventID)
-        case .materializeEntries:
-            materializeEntries()
-        }
+    private func gapBackfillEffects() -> HomeTimelineGapBackfillEffects {
+        HomeTimelineGapBackfillEffects(
+            recordDiagnostic: { [weak self] diagnostic in
+                self?.recordRuntimeSyncEvent(
+                    relayURL: diagnostic.relayURL,
+                    kind: .partialFailure,
+                    subscriptionID: diagnostic.subscriptionID,
+                    message: diagnostic.message
+                )
+            },
+            reloadProjection: { [weak self] account, anchorEventID in
+                self?.reloadProjectionWindow(account: account, around: anchorEventID)
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
+            }
+        )
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
@@ -441,37 +436,33 @@ final class NostrHomeTimelineStore: ObservableObject {
                 fallbackRelays: resolvedRelays
             ),
             signer: signer,
-            handlers: publishHandlers()
+            effects: publishEffects()
         )
     }
 
-    private func publishHandlers() -> HomeTimelinePublishHandlers {
-        HomeTimelinePublishHandlers(
+    private func publishEffects() -> HomeTimelinePublishEffects {
+        HomeTimelinePublishEffects(
             currentAccountID: { [weak self] in self?.account?.pubkey },
-            perform: { [weak self] command in
-                self?.applyPublishCommand(command)
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            reloadNewestProjectionWindow: { [weak self] account in
+                self?.reloadNewestProjectionWindow(account: account)
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
             },
             persistDatabase: { [weak self] account in
                 await self?.persistDatabase(account: account)
+            },
+            setPhase: { [weak self] phase in
+                guard let self else { return }
+                applyActivityTransition(activityCoordinator.setPhase(phase))
+            },
+            requestImmediateOutboxDrain: { [weak self] in
+                self?.outboxCoordinator.requestImmediateDrain()
             }
         )
-    }
-
-    private func applyPublishCommand(
-        _ command: HomeTimelinePublishCommand
-    ) {
-        switch command {
-        case .applyContentSnapshot(let snapshot):
-            applyContentSnapshot(snapshot)
-        case .reloadNewestProjectionWindow(let account):
-            reloadNewestProjectionWindow(account: account)
-        case .materializeEntries:
-            materializeEntries()
-        case .setPhase(let phase):
-            applyActivityTransition(activityCoordinator.setPhase(phase))
-        case .requestImmediateOutboxDrain:
-            outboxCoordinator.requestImmediateDrain()
-        }
     }
 
     private func activateOutbox(accountID: String) {

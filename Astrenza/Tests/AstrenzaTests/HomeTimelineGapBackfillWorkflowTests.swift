@@ -17,7 +17,7 @@ struct HomeTimelineGapBackfillWorkflowTests {
 
         let didStart = await fixture.workflow.backfill(
             scenario.request(from: fixture),
-            handlers: fixture.probe.handlers()
+            effects: fixture.probe.effects()
         )
 
         #expect(!didStart)
@@ -48,7 +48,7 @@ struct HomeTimelineGapBackfillWorkflowTests {
         #expect(!didStart)
         #expect(fixture.probe.events == [
             fixture.requestEvent,
-            .command(.recordDiagnostic(diagnostic))
+            .recordDiagnostic(diagnostic)
         ])
     }
 
@@ -143,11 +143,11 @@ private struct GapBackfillFixture {
                 olderEventID: gap.olderPostID,
                 feedID: definition.feedID
             ),
-            .command(.reloadProjection(
-                account: account,
+            .reloadProjection(
+                accountID: account.pubkey,
                 anchorEventID: gap.newerPostID
-            )),
-            .command(.materializeEntries)
+            ),
+            .materializeEntries
         ]
     }
 
@@ -193,7 +193,7 @@ private struct GapBackfillFixture {
     func run() async -> Bool {
         await workflow.backfill(
             request,
-            handlers: probe.handlers()
+            effects: probe.effects()
         )
     }
 }
@@ -213,7 +213,9 @@ private final class GapBackfillProbe:
             olderEventID: String,
             feedID: String
         )
-        case command(HomeTimelineGapBackfillCommand)
+        case recordDiagnostic(HomeTimelineBackwardRequestDiagnostic)
+        case reloadProjection(accountID: String, anchorEventID: String)
+        case materializeEntries
     }
 
     private let outcome: HomeTimelineBackwardRequestOutcome
@@ -228,10 +230,21 @@ private final class GapBackfillProbe:
         self.markError = markError
     }
 
-    func handlers() -> HomeTimelineGapBackfillHandlers {
-        HomeTimelineGapBackfillHandlers { [weak self] command in
-            self?.events.append(.command(command))
-        }
+    func effects() -> HomeTimelineGapBackfillEffects {
+        HomeTimelineGapBackfillEffects(
+            recordDiagnostic: { [weak self] diagnostic in
+                self?.events.append(.recordDiagnostic(diagnostic))
+            },
+            reloadProjection: { [weak self] account, anchorEventID in
+                self?.events.append(.reloadProjection(
+                    accountID: account.pubkey,
+                    anchorEventID: anchorEventID
+                ))
+            },
+            materializeEntries: { [weak self] in
+                self?.events.append(.materializeEntries)
+            }
+        )
     }
 
     func requestGap(

@@ -85,26 +85,27 @@ struct HomeTimelinePublishRequest: Equatable, Sendable {
     let fallbackRelays: [String]
 }
 
-enum HomeTimelinePublishCommand: Equatable, Sendable {
-    case applyContentSnapshot(HomeTimelineContentSnapshot)
-    case reloadNewestProjectionWindow(NostrAccount)
-    case materializeEntries
-    case setPhase(NostrHomeTimelinePhase)
-    case requestImmediateOutboxDrain
-}
-
-struct HomeTimelinePublishHandlers: Sendable {
+struct HomeTimelinePublishEffects: Sendable {
     typealias AccountIDProvider = @MainActor @Sendable () -> String?
-    typealias CommandHandler = @MainActor @Sendable (
-        _ command: HomeTimelinePublishCommand
+    typealias ContentEffect = @MainActor @Sendable (
+        _ snapshot: HomeTimelineContentSnapshot
     ) -> Void
-    typealias PersistenceHandler = @MainActor @Sendable (
+    typealias AccountEffect = @MainActor @Sendable (_ account: NostrAccount) -> Void
+    typealias VoidEffect = @MainActor @Sendable () -> Void
+    typealias PhaseEffect = @MainActor @Sendable (
+        _ phase: NostrHomeTimelinePhase
+    ) -> Void
+    typealias PersistenceEffect = @MainActor @Sendable (
         _ account: NostrAccount
     ) async -> Void
 
     let currentAccountID: AccountIDProvider
-    let perform: CommandHandler
-    let persistDatabase: PersistenceHandler
+    let applyContentSnapshot: ContentEffect
+    let reloadNewestProjectionWindow: AccountEffect
+    let materializeEntries: VoidEffect
+    let persistDatabase: PersistenceEffect
+    let setPhase: PhaseEffect
+    let requestImmediateOutboxDrain: VoidEffect
 }
 
 @MainActor
@@ -127,7 +128,7 @@ final class HomeTimelinePublishWorkflow {
     func enqueue(
         _ request: HomeTimelinePublishRequest,
         signer: any NostrEventSigning,
-        handlers: HomeTimelinePublishHandlers
+        effects: HomeTimelinePublishEffects
     ) async throws -> Bool {
         let publish = try await publisher.preparePublish(
             request.input,
@@ -136,7 +137,7 @@ final class HomeTimelinePublishWorkflow {
             fallbackRelays: request.fallbackRelays,
             signer: signer
         )
-        guard handlers.currentAccountID() == publish.accountID else {
+        guard effects.currentAccountID() == publish.accountID else {
             return false
         }
 
@@ -150,17 +151,15 @@ final class HomeTimelinePublishWorkflow {
             publish,
             feedDefinition: projectionManager.definition
         )
-        handlers.perform(.applyContentSnapshot(
-            contentManager.insertOutboxEvent(
-                event,
-                accountID: request.account.pubkey
-            )
+        effects.applyContentSnapshot(contentManager.insertOutboxEvent(
+            event,
+            accountID: request.account.pubkey
         ))
-        handlers.perform(.reloadNewestProjectionWindow(request.account))
-        handlers.perform(.materializeEntries)
-        await handlers.persistDatabase(request.account)
-        handlers.perform(.setPhase(.loaded))
-        handlers.perform(.requestImmediateOutboxDrain)
+        effects.reloadNewestProjectionWindow(request.account)
+        effects.materializeEntries()
+        await effects.persistDatabase(request.account)
+        effects.setPhase(.loaded)
+        effects.requestImmediateOutboxDrain()
         return true
     }
 }

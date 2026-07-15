@@ -15,7 +15,7 @@ struct HomeTimelinePublishWorkflowTests {
             try await fixture.workflow.enqueue(
                 fixture.request,
                 signer: fixture.signer,
-                handlers: fixture.probe.handlers()
+                effects: fixture.probe.effects()
             )
         }
 
@@ -30,7 +30,7 @@ struct HomeTimelinePublishWorkflowTests {
         let didEnqueue = try await fixture.workflow.enqueue(
             fixture.request,
             signer: fixture.signer,
-            handlers: fixture.probe.handlers()
+            effects: fixture.probe.effects()
         )
 
         #expect(!didEnqueue)
@@ -49,7 +49,7 @@ struct HomeTimelinePublishWorkflowTests {
             try await fixture.workflow.enqueue(
                 fixture.request,
                 signer: fixture.signer,
-                handlers: fixture.probe.handlers()
+                effects: fixture.probe.effects()
             )
         }
 
@@ -63,7 +63,7 @@ struct HomeTimelinePublishWorkflowTests {
         let didEnqueue = try await fixture.workflow.enqueue(
             fixture.request,
             signer: fixture.signer,
-            handlers: fixture.probe.handlers()
+            effects: fixture.probe.effects()
         )
 
         #expect(didEnqueue)
@@ -131,12 +131,12 @@ private final class Fixture {
                 eventID: publishedEvent.id,
                 accountID: account.pubkey
             ),
-            .command(.applyContentSnapshot(insertedContent)),
-            .command(.reloadNewestProjectionWindow(account)),
-            .command(.materializeEntries),
+            .applyContentSnapshot(insertedContent),
+            .reloadNewestProjectionWindow(account),
+            .materializeEntries,
             .persistDatabase(account.pubkey),
-            .command(.setPhase(.loaded)),
-            .command(.requestImmediateOutboxDrain)
+            .setPhase(.loaded),
+            .requestImmediateOutboxDrain
         ]
     }
 
@@ -250,8 +250,12 @@ private final class PublishWorkflowProbe:
         case readDefinition
         case persistPublish(eventID: String, feedID: String?)
         case insertOutboxEvent(eventID: String, accountID: String)
-        case command(HomeTimelinePublishCommand)
+        case applyContentSnapshot(HomeTimelineContentSnapshot)
+        case reloadNewestProjectionWindow(NostrAccount)
+        case materializeEntries
         case persistDatabase(String)
+        case setPhase(NostrHomeTimelinePhase)
+        case requestImmediateOutboxDrain
     }
 
     var currentAccountID: String?
@@ -347,17 +351,29 @@ private final class PublishWorkflowProbe:
         return insertedContent
     }
 
-    func handlers() -> HomeTimelinePublishHandlers {
-        HomeTimelinePublishHandlers(
+    func effects() -> HomeTimelinePublishEffects {
+        HomeTimelinePublishEffects(
             currentAccountID: { [self] in
                 events.append(.currentAccountID)
                 return currentAccountID
             },
-            perform: { [self] command in
-                events.append(.command(command))
+            applyContentSnapshot: { [self] snapshot in
+                events.append(.applyContentSnapshot(snapshot))
+            },
+            reloadNewestProjectionWindow: { [self] account in
+                events.append(.reloadNewestProjectionWindow(account))
+            },
+            materializeEntries: { [self] in
+                events.append(.materializeEntries)
             },
             persistDatabase: { [self] account in
                 events.append(.persistDatabase(account.pubkey))
+            },
+            setPhase: { [self] phase in
+                events.append(.setPhase(phase))
+            },
+            requestImmediateOutboxDrain: { [self] in
+                events.append(.requestImmediateOutboxDrain)
             }
         )
     }
