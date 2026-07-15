@@ -189,7 +189,7 @@ final class HomeTimelineStateInteractionWorkflow {
         effects: HomeTimelineStateInteractionEffects
     ) {
         guard let state = effects.environment.runtimeApplicationState(),
-              let transition = relayStatus.recordPartialFailure(
+              let transition = relayStatus.recordDiagnostic(
                   diagnostic,
                   accountID: state.account?.pubkey,
                   resolvedRelays: state.resolvedRelays

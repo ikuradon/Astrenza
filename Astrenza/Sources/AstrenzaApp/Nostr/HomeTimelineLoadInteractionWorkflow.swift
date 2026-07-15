@@ -42,14 +42,13 @@ struct HomeTimelineLoadEnvironment: Sendable {
 
 enum HomeTimelineLoadApplication: Equatable, Sendable {
     case applyActivityTransition(HomeTimelineActivityTransition)
+    case applyRelayStatusTransition(HomeTimelineRelayStatusTransition)
     case installProvisionalRuntimeBootstrap(NostrAccount)
     case restartAccount(NostrAccount)
-    case recordBackwardDiagnostic(HomeTimelineBackwardRequestDiagnostic)
     case replaceTimelineState(NostrHomeTimelineState)
     case replaceRuntimeBootstrapState(NostrHomeTimelineState)
     case replaceFollowedPubkeys([String])
     case materializeEntries
-    case recordLoadDiagnostic(HomeTimelineLoadDiagnostic)
     case setPhase(NostrHomeTimelinePhase)
 }
 
@@ -79,9 +78,14 @@ struct HomeTimelineLoadInteractionContext: Sendable {
 @MainActor
 final class HomeTimelineLoadInteractionWorkflow {
     private let loadWorkflow: any HomeTimelineLoadRouting
+    private let relayStatus: any HomeTimelineRelayStatusRecording
 
-    init(loadWorkflow: any HomeTimelineLoadRouting) {
+    init(
+        loadWorkflow: any HomeTimelineLoadRouting,
+        relayStatus: any HomeTimelineRelayStatusRecording
+    ) {
         self.loadWorkflow = loadWorkflow
+        self.relayStatus = relayStatus
     }
 
     func loadInitial(
@@ -95,7 +99,7 @@ final class HomeTimelineLoadInteractionWorkflow {
                 lifecycle: lifecycle,
                 hasRelayRuntime: context.state.hasRelayRuntime
             ),
-            effects: loadEffects(for: context.effects)
+            effects: loadEffects(account: account, for: context.effects)
         )
     }
 
@@ -111,7 +115,7 @@ final class HomeTimelineLoadInteractionWorkflow {
                 hasTimelineEvents: context.state.hasTimelineEvents,
                 hasRelayRuntime: context.state.hasRelayRuntime
             ),
-            effects: loadEffects(for: context.effects)
+            effects: loadEffects(account: account, for: context.effects)
         )
     }
 
@@ -126,11 +130,12 @@ final class HomeTimelineLoadInteractionWorkflow {
                 lifecycle: lifecycle,
                 hasRelayRuntime: context.state.hasRelayRuntime
             ),
-            effects: loadEffects(for: context.effects)
+            effects: loadEffects(account: account, for: context.effects)
         )
     }
 
     private func loadEffects(
+        account: NostrAccount,
         for effects: HomeTimelineLoadInteractionEffects
     ) -> HomeTimelineLoadEffects {
         HomeTimelineLoadEffects(
@@ -140,11 +145,15 @@ final class HomeTimelineLoadInteractionWorkflow {
                 localBackfillEvents: effects.environment.localBackfillEvents,
                 resolvedRelays: effects.environment.resolvedRelays
             ),
-            application: applicationEffects(for: effects)
+            application: applicationEffects(
+                accountID: account.pubkey,
+                for: effects
+            )
         )
     }
 
     private func applicationEffects(
+        accountID: String,
         for effects: HomeTimelineLoadInteractionEffects
     ) -> HomeTimelineLoadAppEffects {
         HomeTimelineLoadAppEffects(
@@ -161,7 +170,11 @@ final class HomeTimelineLoadInteractionWorkflow {
                 effects.apply(.restartAccount(account))
             },
             recordBackwardDiagnostic: { diagnostic in
-                effects.apply(.recordBackwardDiagnostic(diagnostic))
+                self.recordDiagnostic(
+                    diagnostic,
+                    accountID: accountID,
+                    effects: effects
+                )
             },
             replaceTimelineState: { state in
                 effects.apply(.replaceTimelineState(state))
@@ -179,11 +192,28 @@ final class HomeTimelineLoadInteractionWorkflow {
                 await effects.perform(.persistDatabase(account))
             },
             recordLoadDiagnostic: { diagnostic in
-                effects.apply(.recordLoadDiagnostic(diagnostic))
+                self.recordDiagnostic(
+                    diagnostic,
+                    accountID: accountID,
+                    effects: effects
+                )
             },
             setPhase: { phase in
                 effects.apply(.setPhase(phase))
             }
         )
+    }
+
+    private func recordDiagnostic<Diagnostic>(
+        _ diagnostic: Diagnostic,
+        accountID: String,
+        effects: HomeTimelineLoadInteractionEffects
+    ) where Diagnostic: HomeTimelineRelayStatusDiagnostic {
+        guard let transition = relayStatus.recordDiagnostic(
+            diagnostic,
+            accountID: accountID,
+            resolvedRelays: effects.environment.resolvedRelays()
+        ) else { return }
+        effects.apply(.applyRelayStatusTransition(transition))
     }
 }

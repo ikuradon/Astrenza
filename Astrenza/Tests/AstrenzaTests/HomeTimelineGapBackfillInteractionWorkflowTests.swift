@@ -39,13 +39,14 @@ struct HomeTimelineGapInteractionTests {
         effects.materializeEntries()
 
         #expect(fixture.probe.actions == [
-            .recordDiagnostic(fixture.diagnostic),
+            .applyRelayStatusTransition(fixture.relayStatus.transition),
             .reloadProjection(
                 account: fixture.account,
                 anchorEventID: fixture.gap.newerPostID
             ),
             .materializeEntries
         ])
+        #expect(fixture.relayStatus.records == [fixture.diagnosticRecord])
     }
 }
 
@@ -99,12 +100,17 @@ private struct GapBackfillInteractionFixture {
         state: .needsBackfill,
         backfilledPosts: []
     )
+    let resolvedRelays = [
+        "wss://failed.example",
+        "wss://relay.example"
+    ]
     let diagnostic = HomeTimelineBackwardRequestDiagnostic(
         relayURL: "wss://failed.example",
         subscriptionID: "astrenza-gap-notes",
         message: "gap enqueue failed"
     )
     let probe = GapBackfillInteractionProbe()
+    let relayStatus = RelayStatusRecordingSpy()
     let handler: GapBackfillInteractionHandlerSpy
     let workflow: HomeGapBackfillInteractionWorkflow
 
@@ -114,7 +120,22 @@ private struct GapBackfillInteractionFixture {
         )
         self.handler = handler
         workflow = HomeGapBackfillInteractionWorkflow(
-            gapBackfill: handler
+            gapBackfill: handler,
+            relayStatus: relayStatus
+        )
+    }
+
+    var diagnosticRecord: HomeTimelineRelayStatusRecord {
+        HomeTimelineRelayStatusRecord(
+            accountID: account.pubkey,
+            resolvedRelays: resolvedRelays,
+            relayURL: diagnostic.relayURL,
+            kind: .partialFailure,
+            subscriptionID: diagnostic.subscriptionID,
+            eventCount: 0,
+            newestCreatedAt: nil,
+            oldestCreatedAt: nil,
+            message: diagnostic.message
         )
     }
 
@@ -123,7 +144,7 @@ private struct GapBackfillInteractionFixture {
             state: HomeTimelineGapBackfillInteractionState(
                 account: account,
                 hasRelayRuntime: true,
-                resolvedRelayCount: 2
+                resolvedRelays: resolvedRelays
             ),
             effects: probe.effects
         )

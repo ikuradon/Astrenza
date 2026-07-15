@@ -27,6 +27,8 @@ struct HomeTimelineStoreComponents {
     let activityInteractionWorkflow:
         HomeTimelineActivityInteractionWorkflow
     let presentationWorkflow: HomeTimelinePresentationWorkflow
+    let linkPreviewInteractionWorkflow:
+        HomeLinkPreviewInteractionWorkflow
     let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
     let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
@@ -86,6 +88,8 @@ struct HomeTimelineStoreFeatureGraph {
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let presentationWorkflow: HomeTimelinePresentationWorkflow
+    let linkPreviewInteractionWorkflow:
+        HomeLinkPreviewInteractionWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
@@ -172,13 +176,16 @@ enum HomeTimelineStoreAssembly {
             ),
             gapBackfillInteractionWorkflow: makeGapBackfillInteraction(from: graph),
             backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow(
-                backward: graph.runtimeEvents.backwardCompletionWorkflow
+                backward: graph.runtimeEvents.backwardCompletionWorkflow,
+                relayStatus: graph.relayRuntime.relayStatusCoordinator
             ),
             filterInteractionWorkflow: makeFilterInteraction(from: graph),
             queryInteractionWorkflow: makeQueryInteraction(from: graph),
             activityInteractionWorkflow:
                 makeActivityInteraction(from: graph),
             presentationWorkflow: graph.features.presentationWorkflow,
+            linkPreviewInteractionWorkflow:
+                graph.features.linkPreviewInteractionWorkflow,
             projectionInteractionWorkflow:
                 makeProjectionInteraction(from: graph),
             syncInteractionWorkflow: makeSyncInteraction(from: graph),
@@ -203,7 +210,8 @@ enum HomeTimelineStoreAssembly {
         from graph: HomeTimelineStoreAssemblyGraph
     ) -> HomeGapBackfillInteractionWorkflow {
         HomeGapBackfillInteractionWorkflow(
-            gapBackfill: graph.coordination.gapBackfillWorkflow
+            gapBackfill: graph.coordination.gapBackfillWorkflow,
+            relayStatus: graph.relayRuntime.relayStatusCoordinator
         )
     }
 

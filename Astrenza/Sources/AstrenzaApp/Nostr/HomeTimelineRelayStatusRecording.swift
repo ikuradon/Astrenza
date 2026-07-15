@@ -21,11 +21,13 @@ protocol HomeTimelineRelayStatusRecording: AnyObject {
 
 protocol HomeTimelineRelayStatusDiagnostic: Sendable {
     var relayURL: String { get }
+    var kind: NostrRelaySyncEventKind { get }
     var subscriptionID: String? { get }
     var message: String { get }
 }
 
 extension HomeTimelineRelayStatusDiagnostic {
+    var kind: NostrRelaySyncEventKind { .partialFailure }
     var subscriptionID: String? { nil }
 }
 
@@ -35,9 +37,15 @@ extension HomeTimelineRuntimeEventDiagnostic:
     HomeTimelineRelayStatusDiagnostic {}
 extension HomeTimelineRuntimeApplicationDiagnostic:
     HomeTimelineRelayStatusDiagnostic {}
+extension HomeTimelineLoadDiagnostic:
+    HomeTimelineRelayStatusDiagnostic {}
+extension HomeTimelineBackwardRequestDiagnostic:
+    HomeTimelineRelayStatusDiagnostic {}
+extension HomeTimelineBackwardAppDiagnostic:
+    HomeTimelineRelayStatusDiagnostic {}
 
 extension HomeTimelineRelayStatusRecording {
-    func recordPartialFailure<Diagnostic>(
+    func recordDiagnostic<Diagnostic>(
         _ diagnostic: Diagnostic,
         accountID: String?,
         resolvedRelays: [String]
@@ -48,7 +56,7 @@ extension HomeTimelineRelayStatusRecording {
             accountID: accountID,
             resolvedRelays: resolvedRelays,
             relayURL: diagnostic.relayURL,
-            kind: .partialFailure,
+            kind: diagnostic.kind,
             subscriptionID: diagnostic.subscriptionID,
             eventCount: 0,
             newestCreatedAt: nil,

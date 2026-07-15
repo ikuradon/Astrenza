@@ -46,6 +46,11 @@ extension HomeTimelineStoreAssembly {
             stateInteractionWorkflow: applications.stateInteractionWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
             presentationWorkflow: applications.presentationWorkflow,
+            linkPreviewInteractionWorkflow:
+                HomeLinkPreviewInteractionWorkflow(
+                    linkPreviews: peripherals.linkPreviewCoordinator,
+                    relayStatus: relayRuntime.relayStatusCoordinator
+                ),
             viewportInteractionWorkflow:
                 applications.viewportInteractionWorkflow,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
@@ -125,8 +130,7 @@ extension HomeTimelineStoreAssembly {
             pendingEventBuffer: coordination.pendingEventBuffer
         )
         let presentationWorkflow = HomeTimelinePresentationWorkflow(
-            coordinator: coordination.presentationCoordinator,
-            linkPreviews: peripherals.linkPreviewCoordinator
+            coordinator: coordination.presentationCoordinator
         )
         let pendingEventsWorkflow = HomeTimelinePendingEventsWorkflow(
             buffer: coordination.pendingEventBuffer
@@ -209,7 +213,8 @@ extension HomeTimelineStoreAssembly {
         return HomeTimelineStoreLoadFeatures(
             remoteLoadCoordinator: remoteLoadCoordinator,
             loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow(
-                loadWorkflow: loadWorkflow
+                loadWorkflow: loadWorkflow,
+                relayStatus: relayRuntime.relayStatusCoordinator
             )
         )
     }

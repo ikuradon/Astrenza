@@ -84,13 +84,17 @@ struct HomeTimelineLoadInteractionTests {
             .applyActivityTransition(fixture.activityTransition),
             .installProvisionalRuntimeBootstrap(fixture.account),
             .restartAccount(fixture.account),
-            .recordBackwardDiagnostic(fixture.backwardDiagnostic),
+            .applyRelayStatusTransition(fixture.relayStatus.transition),
             .replaceTimelineState(fixture.timelineState),
             .replaceRuntimeBootstrapState(fixture.timelineState),
             .replaceFollowedPubkeys([fixture.account.pubkey]),
             .materializeEntries,
-            .recordLoadDiagnostic(fixture.loadDiagnostic),
+            .applyRelayStatusTransition(fixture.relayStatus.transition),
             .setPhase(.loaded)
+        ])
+        #expect(fixture.relayStatus.records == [
+            fixture.backwardDiagnosticRecord,
+            fixture.loadDiagnosticRecord
         ])
         #expect(fixture.probe.asyncApplications == [
             .configureRuntime(fixture.account),
@@ -211,6 +215,7 @@ private struct LoadInteractionFixture {
     let state: HomeTimelineLoadInteractionState
     let router = LoadInteractionRouterSpy()
     let probe = LoadInteractionProbe()
+    let relayStatus = RelayStatusRecordingSpy()
     let workflow: HomeTimelineLoadInteractionWorkflow
 
     init(
@@ -240,7 +245,8 @@ private struct LoadInteractionFixture {
         )
         self.state = state
         self.workflow = HomeTimelineLoadInteractionWorkflow(
-            loadWorkflow: router
+            loadWorkflow: router,
+            relayStatus: relayStatus
         )
     }
 
@@ -251,6 +257,43 @@ private struct LoadInteractionFixture {
             activityTransition: activityTransition,
             backwardDiagnostic: backwardDiagnostic,
             loadDiagnostic: loadDiagnostic
+        )
+    }
+
+    var backwardDiagnosticRecord: HomeTimelineRelayStatusRecord {
+        relayStatusRecord(
+            relayURL: backwardDiagnostic.relayURL,
+            kind: .partialFailure,
+            subscriptionID: backwardDiagnostic.subscriptionID,
+            message: backwardDiagnostic.message
+        )
+    }
+
+    var loadDiagnosticRecord: HomeTimelineRelayStatusRecord {
+        relayStatusRecord(
+            relayURL: loadDiagnostic.relayURL,
+            kind: loadDiagnostic.kind,
+            subscriptionID: loadDiagnostic.subscriptionID,
+            message: loadDiagnostic.message
+        )
+    }
+
+    private func relayStatusRecord(
+        relayURL: String,
+        kind: NostrRelaySyncEventKind,
+        subscriptionID: String?,
+        message: String
+    ) -> HomeTimelineRelayStatusRecord {
+        HomeTimelineRelayStatusRecord(
+            accountID: account.pubkey,
+            resolvedRelays: resolvedRelays,
+            relayURL: relayURL,
+            kind: kind,
+            subscriptionID: subscriptionID,
+            eventCount: 0,
+            newestCreatedAt: nil,
+            oldestCreatedAt: nil,
+            message: message
         )
     }
 

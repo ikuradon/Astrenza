@@ -13,11 +13,11 @@ extension HomeTimelineGapBackfillWorkflow: HomeTimelineGapBackfillHandling {}
 struct HomeTimelineGapBackfillInteractionState: Sendable {
     let account: NostrAccount?
     let hasRelayRuntime: Bool
-    let resolvedRelayCount: Int
+    let resolvedRelays: [String]
 }
 
 enum HomeTimelineGapBackfillStoreAction: Equatable, Sendable {
-    case recordDiagnostic(HomeTimelineBackwardRequestDiagnostic)
+    case applyRelayStatusTransition(HomeTimelineRelayStatusTransition)
     case reloadProjection(account: NostrAccount, anchorEventID: String)
     case materializeEntries
 }
@@ -38,9 +38,14 @@ struct HomeGapBackfillInteractionContext: Sendable {
 @MainActor
 final class HomeGapBackfillInteractionWorkflow {
     private let gapBackfill: any HomeTimelineGapBackfillHandling
+    private let relayStatus: any HomeTimelineRelayStatusRecording
 
-    init(gapBackfill: any HomeTimelineGapBackfillHandling) {
+    init(
+        gapBackfill: any HomeTimelineGapBackfillHandling,
+        relayStatus: any HomeTimelineRelayStatusRecording
+    ) {
         self.gapBackfill = gapBackfill
+        self.relayStatus = relayStatus
     }
 
     func backfill(
@@ -52,20 +57,26 @@ final class HomeGapBackfillInteractionWorkflow {
             HomeTimelineGapBackfillRequest(
                 account: context.state.account,
                 hasRelayRuntime: context.state.hasRelayRuntime,
-                resolvedRelayCount: context.state.resolvedRelayCount,
+                resolvedRelayCount: context.state.resolvedRelays.count,
                 gap: gap,
                 direction: direction
             ),
-            effects: gapBackfillEffects(for: context.effects)
+            effects: gapBackfillEffects(for: context)
         )
     }
 
     private func gapBackfillEffects(
-        for effects: HomeGapBackfillInteractionEffects
+        for context: HomeGapBackfillInteractionContext
     ) -> HomeTimelineGapBackfillEffects {
-        HomeTimelineGapBackfillEffects(
+        let effects = context.effects
+        return HomeTimelineGapBackfillEffects(
             recordDiagnostic: { diagnostic in
-                effects.apply(.recordDiagnostic(diagnostic))
+                guard let transition = self.relayStatus.recordDiagnostic(
+                    diagnostic,
+                    accountID: context.state.account?.pubkey,
+                    resolvedRelays: context.state.resolvedRelays
+                ) else { return }
+                effects.apply(.applyRelayStatusTransition(transition))
             },
             reloadProjection: { account, anchorEventID in
                 effects.apply(.reloadProjection(

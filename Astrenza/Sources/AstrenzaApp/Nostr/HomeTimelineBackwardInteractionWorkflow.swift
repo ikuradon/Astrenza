@@ -15,11 +15,12 @@ extension HomeTimelineBackwardCompletionWorkflow:
 
 struct HomeTimelineBackwardInteractionState: Equatable, Sendable {
     let account: NostrAccount?
+    let resolvedRelays: [String]
 }
 
 enum HomeTimelineBackwardStoreAction: Equatable, Sendable {
     case applyContentSnapshot(HomeTimelineContentSnapshot)
-    case recordDiagnostic(HomeTimelineBackwardAppDiagnostic)
+    case applyRelayStatusTransition(HomeTimelineRelayStatusTransition)
     case reloadProjection(
         account: NostrAccount,
         anchorEventID: String?,
@@ -56,9 +57,14 @@ struct HomeTimelineBackwardInteractionContext: Sendable {
 @MainActor
 final class HomeTimelineBackwardInteractionWorkflow {
     private let backward: any HomeTimelineBackwardCompletionHandling
+    private let relayStatus: any HomeTimelineRelayStatusRecording
 
-    init(backward: any HomeTimelineBackwardCompletionHandling) {
+    init(
+        backward: any HomeTimelineBackwardCompletionHandling,
+        relayStatus: any HomeTimelineRelayStatusRecording
+    ) {
         self.backward = backward
+        self.relayStatus = relayStatus
     }
 
     func handle(
@@ -70,7 +76,7 @@ final class HomeTimelineBackwardInteractionWorkflow {
                 completion: completion,
                 account: context.state.account
             ),
-            effects: completionEffects(for: context.effects)
+            effects: completionEffects(for: context)
         )
     }
 
@@ -79,14 +85,20 @@ final class HomeTimelineBackwardInteractionWorkflow {
     }
 
     private func completionEffects(
-        for effects: HomeTimelineBackwardInteractionEffects
+        for context: HomeTimelineBackwardInteractionContext
     ) -> HomeTimelineBackwardCompletionAppEffects {
-        HomeTimelineBackwardCompletionAppEffects(
+        let effects = context.effects
+        return HomeTimelineBackwardCompletionAppEffects(
             applyContentSnapshot: { snapshot in
                 effects.apply(.applyContentSnapshot(snapshot))
             },
             recordDiagnostic: { diagnostic in
-                effects.apply(.recordDiagnostic(diagnostic))
+                guard let transition = self.relayStatus.recordDiagnostic(
+                    diagnostic,
+                    accountID: context.state.account?.pubkey,
+                    resolvedRelays: context.state.resolvedRelays
+                ) else { return }
+                effects.apply(.applyRelayStatusTransition(transition))
             },
             reloadProjection: { account, anchorEventID, merging in
                 effects.apply(.reloadProjection(

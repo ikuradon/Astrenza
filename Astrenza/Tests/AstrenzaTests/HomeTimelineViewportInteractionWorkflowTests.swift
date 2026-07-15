@@ -131,8 +131,7 @@ private struct ViewportInteractionFixture {
         self.hasPendingProjectionReload = hasPendingProjectionReload
         workflow = HomeTimelineViewportInteractionWorkflow(
             presentation: HomeTimelinePresentationWorkflow(
-                coordinator: presentationProbe,
-                linkPreviews: PresentationLinkPreviewSpy()
+                coordinator: presentationProbe
             ),
             pendingEvents: HomeTimelinePendingEventsWorkflow(
                 buffer: pendingEventBuffer

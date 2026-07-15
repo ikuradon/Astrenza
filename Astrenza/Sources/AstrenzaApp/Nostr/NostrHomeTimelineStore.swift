@@ -40,6 +40,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let activityInteractionWorkflow:
         HomeTimelineActivityInteractionWorkflow
     private let presentationWorkflow: HomeTimelinePresentationWorkflow
+    private let linkPreviewInteractionWorkflow:
+        HomeLinkPreviewInteractionWorkflow
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
@@ -203,6 +205,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.activityInteractionWorkflow =
             components.activityInteractionWorkflow
         self.presentationWorkflow = components.presentationWorkflow
+        self.linkPreviewInteractionWorkflow =
+            components.linkPreviewInteractionWorkflow
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
@@ -497,12 +501,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         switch application {
         case .applyActivityTransition(let transition):
             applyActivityTransition(transition)
+        case .applyRelayStatusTransition(let transition):
+            applyRelayStatusTransition(transition)
         case .installProvisionalRuntimeBootstrap(let account):
             installProvisionalRuntimeBootstrapIfNeeded(account: account)
         case .restartAccount(let account):
             start(account: account)
-        case .recordBackwardDiagnostic(let diagnostic):
-            recordBackwardLoadDiagnostic(diagnostic)
         case .replaceTimelineState(let state):
             replaceTimelineState(state)
         case .replaceRuntimeBootstrapState(let state):
@@ -511,8 +515,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             replaceFollowedPubkeys(pubkeys)
         case .materializeEntries:
             materializeEntries()
-        case .recordLoadDiagnostic(let diagnostic):
-            recordLoadDiagnostic(diagnostic)
         case .setPhase(let phase):
             applyActivityIntent(.setPhase(phase))
         }
@@ -527,26 +529,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .persistDatabase(let account):
             await persistDatabase(account: account)
         }
-    }
-
-    private func recordBackwardLoadDiagnostic(
-        _ diagnostic: HomeTimelineBackwardRequestDiagnostic
-    ) {
-        recordRuntimeSyncEvent(
-            relayURL: diagnostic.relayURL,
-            kind: .partialFailure,
-            subscriptionID: diagnostic.subscriptionID,
-            message: diagnostic.message
-        )
-    }
-
-    private func recordLoadDiagnostic(_ diagnostic: HomeTimelineLoadDiagnostic) {
-        recordRuntimeSyncEvent(
-            relayURL: diagnostic.relayURL,
-            kind: diagnostic.kind,
-            subscriptionID: diagnostic.subscriptionID,
-            message: diagnostic.message
-        )
     }
 
     private func replaceRuntimeBootstrapState(
@@ -966,53 +948,31 @@ private extension NostrHomeTimelineStore {
     }
 
     private func scheduleLinkPreviewResolution() {
-        presentationWorkflow.scheduleLinkPreviewResolution(
+        linkPreviewInteractionWorkflow.schedule(
             state: HomeTimelineLinkPreviewInteractionState(
                 accountID: account?.pubkey,
+                resolvedRelays: resolvedRelays,
                 policy: syncPolicy
             ),
-            effects: HomeTimelineLinkPreviewEffects(
+            effects: HomeLinkPreviewInteractionEffects(
                 didUpdate: { [weak self] in
                     self?.invalidateListEntries()
                     self?.scheduleMaterializeEntries()
                 },
-                didFail: { [weak self] message in
-                    self?.recordRuntimeSyncEvent(
-                        relayURL: "link-preview",
-                        kind: .partialFailure,
-                        subscriptionID: nil,
-                        message: "link preview save failed: \(message)"
-                    )
+                apply: { [weak self] action in
+                    self?.applyLinkPreviewAction(action)
                 }
             )
         )
     }
 
-    private func recordRuntimeSyncEvent(
-        relayURL: String,
-        kind: NostrRelaySyncEventKind,
-        subscriptionID: String?,
-        eventCount: Int = 0,
-        newestCreatedAt: Int? = nil,
-        oldestCreatedAt: Int? = nil,
-        message: String?
+    private func applyLinkPreviewAction(
+        _ action: HomeTimelineLinkPreviewStoreAction
     ) {
-        guard let account else { return }
-        applyRelayStatusTransition(
-            syncInteractionWorkflow.recordRelayStatus(
-                HomeTimelineRelayStatusRecord(
-                    accountID: account.pubkey,
-                    resolvedRelays: resolvedRelays,
-                    relayURL: relayURL,
-                    kind: kind,
-                    subscriptionID: subscriptionID,
-                    eventCount: eventCount,
-                    newestCreatedAt: newestCreatedAt,
-                    oldestCreatedAt: oldestCreatedAt,
-                    message: message
-                )
-            )
-        )
+        switch action {
+        case .applyRelayStatusTransition(let transition):
+            applyRelayStatusTransition(transition)
+        }
     }
 
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
@@ -1196,7 +1156,7 @@ private extension NostrHomeTimelineStore {
             state: HomeTimelineGapBackfillInteractionState(
                 account: account,
                 hasRelayRuntime: relayRuntime != nil,
-                resolvedRelayCount: resolvedRelays.count
+                resolvedRelays: resolvedRelays
             ),
             effects: HomeGapBackfillInteractionEffects(
                 apply: { [weak self] action in
@@ -1210,13 +1170,8 @@ private extension NostrHomeTimelineStore {
         _ action: HomeTimelineGapBackfillStoreAction
     ) {
         switch action {
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
+        case .applyRelayStatusTransition(let transition):
+            applyRelayStatusTransition(transition)
         case .reloadProjection(let account, let anchorEventID):
             reloadProjectionWindow(
                 account: account,
@@ -1455,7 +1410,10 @@ private extension NostrHomeTimelineStore {
     func backwardInteractionContext(
     ) -> HomeTimelineBackwardInteractionContext {
         HomeTimelineBackwardInteractionContext(
-            state: HomeTimelineBackwardInteractionState(account: account),
+            state: HomeTimelineBackwardInteractionState(
+                account: account,
+                resolvedRelays: resolvedRelays
+            ),
             effects: HomeTimelineBackwardInteractionEffects(
                 apply: { [weak self] action in
                     self?.applyBackwardInteractionAction(action)
@@ -1474,13 +1432,8 @@ private extension NostrHomeTimelineStore {
         switch action {
         case .applyContentSnapshot(let snapshot):
             applyContentSnapshot(snapshot)
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
+        case .applyRelayStatusTransition(let transition):
+            applyRelayStatusTransition(transition)
         case .reloadProjection(
             let account,
             let anchorEventID,

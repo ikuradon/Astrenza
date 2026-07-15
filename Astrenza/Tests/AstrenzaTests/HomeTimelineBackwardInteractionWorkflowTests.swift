@@ -28,7 +28,7 @@ struct HomeTimelineBackwardInteractionTests {
         ])
         #expect(fixture.probe.actions == [
             .applyContentSnapshot(.initial),
-            .recordDiagnostic(fixture.diagnostic),
+            .applyRelayStatusTransition(fixture.relayStatus.transition),
             .reloadProjection(
                 account: fixture.account,
                 anchorEventID: "anchor",
@@ -38,6 +38,7 @@ struct HomeTimelineBackwardInteractionTests {
             .scheduleLinkPreviewResolution,
             .incrementRelayStatusRevision
         ])
+        #expect(fixture.relayStatus.records == [fixture.diagnosticRecord])
         #expect(fixture.probe.dependencyRequests == [
             HomeTimelineBackwardDependencyRequest(
                 event: fixture.event,
@@ -111,6 +112,7 @@ private final class BackwardInteractionProbe {
 @MainActor
 private struct BackwardInteractionFixture {
     let account = backwardCompletionWorkflowAccount()
+    let resolvedRelays = ["wss://backward.example"]
     let completion = backwardCompletionWorkflowCompletion()
     let event = backwardCompletionWorkflowEvent()
     let lifecycle: HomeTimelineLifecycleToken
@@ -121,6 +123,7 @@ private struct BackwardInteractionFixture {
     )
     let backward: BackwardInteractionHandlerSpy
     let probe = BackwardInteractionProbe()
+    let relayStatus = RelayStatusRecordingSpy()
     let workflow: HomeTimelineBackwardInteractionWorkflow
 
     init() {
@@ -129,13 +132,31 @@ private struct BackwardInteractionFixture {
         let backward = BackwardInteractionHandlerSpy(diagnostic: diagnostic)
         self.backward = backward
         workflow = HomeTimelineBackwardInteractionWorkflow(
-            backward: backward
+            backward: backward,
+            relayStatus: relayStatus
+        )
+    }
+
+    var diagnosticRecord: HomeTimelineRelayStatusRecord {
+        HomeTimelineRelayStatusRecord(
+            accountID: account.pubkey,
+            resolvedRelays: resolvedRelays,
+            relayURL: diagnostic.relayURL,
+            kind: .partialFailure,
+            subscriptionID: diagnostic.subscriptionID,
+            eventCount: 0,
+            newestCreatedAt: nil,
+            oldestCreatedAt: nil,
+            message: diagnostic.message
         )
     }
 
     var context: HomeTimelineBackwardInteractionContext {
         HomeTimelineBackwardInteractionContext(
-            state: HomeTimelineBackwardInteractionState(account: account),
+            state: HomeTimelineBackwardInteractionState(
+                account: account,
+                resolvedRelays: resolvedRelays
+            ),
             effects: probe.effects
         )
     }

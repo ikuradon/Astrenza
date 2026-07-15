@@ -276,7 +276,7 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             },
             recordDiagnostic: { diagnostic in
                 effects.apply(.applyRelayStatusTransition(
-                    self.relayStatus.recordPartialFailure(
+                    self.relayStatus.recordDiagnostic(
                         diagnostic,
                         accountID: state.account?.pubkey,
                         resolvedRelays: state.resolvedRelays
@@ -296,7 +296,7 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             application: effects.runtimeApplication,
             recordDiagnostic: { diagnostic in
                 effects.apply(.applyRelayStatusTransition(
-                    self.relayStatus.recordPartialFailure(
+                    self.relayStatus.recordDiagnostic(
                         diagnostic,
                         accountID: state.account?.pubkey,
                         resolvedRelays: state.resolvedRelays
