@@ -767,19 +767,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func persistTimelineMetadata(account: NostrAccount) async {
-        await stateWorkflow.persistMetadata(
-            HomeTimelineMetadataSnapshot(
-                accountID: account.pubkey,
-                relays: resolvedRelays,
-                followedPubkeys: followedPubkeys,
-                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-                hasMoreOlder: hasMoreOlder
-            ),
-            effects: stateWorkflowEffects()
-        )
-    }
-
     private func stateWorkflowEffects() -> HomeTimelineStateWorkflowEffects {
         HomeTimelineStateWorkflowEffects(
             applyPresentationTransition: { [weak self] transition in
@@ -1256,49 +1243,53 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func runtimeApplicationEffects() -> HomeTimelineRuntimeApplicationEffects {
-        HomeTimelineRuntimeApplicationEffects(
-            listRevisionChanged: { [weak self] revision in
-                self?.listContentRevision = revision
+        stateWorkflow.runtimeApplicationEffects(
+            state: { [weak self] in
+                self?.runtimeApplicationState()
             },
-            pendingCountChanged: { [weak self] count in
-                self?.setUnmaterializedNewCount(count)
+            actions: runtimeApplicationActions(),
+            effects: stateWorkflowEffects()
+        )
+    }
+
+    private func runtimeApplicationState() -> HomeTimelineRuntimeApplicationState {
+        HomeTimelineRuntimeApplicationState(
+            account: account,
+            resolvedRelays: resolvedRelays,
+            followedPubkeys: followedPubkeys,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+            hasMoreOlder: hasMoreOlder,
+            deferredMaterializationDelayNanoseconds:
+                presentationCoordinator.defaultDelayNanoseconds * 2
+        )
+    }
+
+    private func runtimeApplicationActions() -> HomeTimelineRuntimeApplicationActions {
+        HomeTimelineRuntimeApplicationActions(
+            reloadProjection: { [weak self] account, anchorEventID in
+                self?.reloadProjectionWindow(
+                    account: account,
+                    around: anchorEventID
+                )
             },
-            reloadProjection: { [weak self] anchorEventID, materialization in
-                guard let self, let account else { return }
-                _ = reloadProjectionWindow(account: account, around: anchorEventID)
-                switch materialization {
-                case .scheduled(let allowsRealtimeFollow):
-                    scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-                case .immediate:
-                    materializeEntries()
-                }
+            requestNewestProjectionReload: { [weak self] in
+                self?.presentationCoordinator.requestNewestProjectionReload()
             },
-            reloadNewestProjection: { [weak self] allowsRealtimeFollow in
-                guard let self else { return }
-                presentationCoordinator.requestNewestProjectionReload()
-                scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+            scheduleMaterialization: { [weak self] delay, allowsRealtimeFollow in
+                self?.scheduleMaterializeEntries(
+                    delayNanoseconds: delay,
+                    allowsRealtimeFollow: allowsRealtimeFollow
+                )
             },
-            scheduleMaterialization: { [weak self] schedule in
-                guard let self else { return }
-                switch schedule {
-                case .standard:
-                    scheduleMaterializeEntries()
-                case .deferredDependencies:
-                    scheduleMaterializeEntries(
-                        delayNanoseconds: presentationCoordinator.defaultDelayNanoseconds * 2
-                    )
-                }
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
             },
-            persistTimelineMetadata: { [weak self] account in
-                await self?.persistTimelineMetadata(account: account)
-            },
-            sourceInstallFailed: { [weak self] message in
-                guard let self else { return }
-                recordRuntimeSyncEvent(
-                    relayURL: resolvedRelays.first ?? "runtime",
+            recordDiagnostic: { [weak self] diagnostic in
+                self?.recordRuntimeSyncEvent(
+                    relayURL: diagnostic.relayURL,
                     kind: .partialFailure,
                     subscriptionID: nil,
-                    message: "backward enqueue failed: \(message)"
+                    message: diagnostic.message
                 )
             }
         )

@@ -60,6 +60,43 @@ struct HomeTimelineStateWorkflowEffects: Sendable {
     let materializeEntries: Action
 }
 
+struct HomeTimelineRuntimeApplicationState: Sendable {
+    typealias Provider = @MainActor @Sendable () -> HomeTimelineRuntimeApplicationState?
+
+    let account: NostrAccount?
+    let resolvedRelays: [String]
+    let followedPubkeys: [String]
+    let nip05Resolutions: [String: NostrNIP05Resolution]
+    let hasMoreOlder: Bool
+    let deferredMaterializationDelayNanoseconds: UInt64
+}
+
+struct HomeTimelineRuntimeApplicationDiagnostic: Equatable, Sendable {
+    let relayURL: String
+    let message: String
+}
+
+struct HomeTimelineRuntimeApplicationActions: Sendable {
+    typealias ProjectionReload = @MainActor @Sendable (
+        _ account: NostrAccount,
+        _ anchorEventID: String?
+    ) -> Void
+    typealias Action = @MainActor @Sendable () -> Void
+    typealias MaterializationSchedule = @MainActor @Sendable (
+        _ delayNanoseconds: UInt64?,
+        _ allowsRealtimeFollow: Bool?
+    ) -> Void
+    typealias Diagnostic = @MainActor @Sendable (
+        _ diagnostic: HomeTimelineRuntimeApplicationDiagnostic
+    ) -> Void
+
+    let reloadProjection: ProjectionReload
+    let requestNewestProjectionReload: Action
+    let scheduleMaterialization: MaterializationSchedule
+    let materializeEntries: Action
+    let recordDiagnostic: Diagnostic
+}
+
 @MainActor
 final class HomeTimelineStateWorkflow {
     private let stateApplication: any HomeTimelineStateApplying
@@ -118,6 +155,50 @@ final class HomeTimelineStateWorkflow {
         )
     }
 
+    func runtimeApplicationEffects(
+        state: @escaping HomeTimelineRuntimeApplicationState.Provider,
+        actions: HomeTimelineRuntimeApplicationActions,
+        effects: HomeTimelineStateWorkflowEffects
+    ) -> HomeTimelineRuntimeApplicationEffects {
+        HomeTimelineRuntimeApplicationEffects(
+            listRevisionChanged: effects.listRevisionChanged,
+            pendingCountChanged: effects.pendingCountChanged,
+            reloadProjection: { [weak self] anchorEventID, materialization in
+                self?.reloadProjection(
+                    anchorEventID: anchorEventID,
+                    materialization: materialization,
+                    state: state,
+                    actions: actions
+                )
+            },
+            reloadNewestProjection: { allowsRealtimeFollow in
+                actions.requestNewestProjectionReload()
+                actions.scheduleMaterialization(nil, allowsRealtimeFollow)
+            },
+            scheduleMaterialization: { [weak self] schedule in
+                self?.scheduleMaterialization(
+                    schedule,
+                    state: state,
+                    actions: actions
+                )
+            },
+            persistTimelineMetadata: { [weak self] account in
+                await self?.persistTimelineMetadata(
+                    account: account,
+                    state: state,
+                    effects: effects
+                )
+            },
+            sourceInstallFailed: { [weak self] message in
+                self?.recordSourceInstallFailure(
+                    message,
+                    state: state,
+                    actions: actions
+                )
+            }
+        )
+    }
+
     private func applicationHandlers(
         effects: HomeTimelineStateWorkflowEffects
     ) -> HomeTimelineStateApplicationHandlers {
@@ -150,5 +231,68 @@ final class HomeTimelineStateWorkflow {
         case .materializeEntries:
             effects.materializeEntries()
         }
+    }
+
+    private func reloadProjection(
+        anchorEventID: String?,
+        materialization: HomeTimelineRuntimeEventApplicationPlan.DeletionMaterialization,
+        state: HomeTimelineRuntimeApplicationState.Provider,
+        actions: HomeTimelineRuntimeApplicationActions
+    ) {
+        guard let account = state()?.account else { return }
+        actions.reloadProjection(account, anchorEventID)
+        switch materialization {
+        case .scheduled(let allowsRealtimeFollow):
+            actions.scheduleMaterialization(nil, allowsRealtimeFollow)
+        case .immediate:
+            actions.materializeEntries()
+        }
+    }
+
+    private func scheduleMaterialization(
+        _ schedule: HomeTimelineRuntimeEventApplicationPlan.MaterializationSchedule,
+        state: HomeTimelineRuntimeApplicationState.Provider,
+        actions: HomeTimelineRuntimeApplicationActions
+    ) {
+        switch schedule {
+        case .standard:
+            actions.scheduleMaterialization(nil, nil)
+        case .deferredDependencies:
+            guard let state = state() else { return }
+            actions.scheduleMaterialization(
+                state.deferredMaterializationDelayNanoseconds,
+                nil
+            )
+        }
+    }
+
+    private func persistTimelineMetadata(
+        account: NostrAccount,
+        state: HomeTimelineRuntimeApplicationState.Provider,
+        effects: HomeTimelineStateWorkflowEffects
+    ) async {
+        guard let state = state() else { return }
+        await persistMetadata(
+            HomeTimelineMetadataSnapshot(
+                accountID: account.pubkey,
+                relays: state.resolvedRelays,
+                followedPubkeys: state.followedPubkeys,
+                nip05Resolutions: state.nip05Resolutions,
+                hasMoreOlder: state.hasMoreOlder
+            ),
+            effects: effects
+        )
+    }
+
+    private func recordSourceInstallFailure(
+        _ message: String,
+        state: HomeTimelineRuntimeApplicationState.Provider,
+        actions: HomeTimelineRuntimeApplicationActions
+    ) {
+        guard let state = state() else { return }
+        actions.recordDiagnostic(HomeTimelineRuntimeApplicationDiagnostic(
+            relayURL: state.resolvedRelays.first ?? "runtime",
+            message: "backward enqueue failed: \(message)"
+        ))
     }
 }
