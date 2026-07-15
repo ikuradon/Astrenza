@@ -13,9 +13,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishedActivityState()
     @Published private var publishedContentState =
         HomeTimelinePublishedContentState()
-    @Published private(set) var relayStatusRevision = 0
-    @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
-    @Published private(set) var relayStatusCounts: (connected: Int, planned: Int) = (connected: 0, planned: 1)
+    @Published private var publishedRelayStatusState =
+        HomeTimelinePublishedRelayStatusState()
     @Published private(set) var unmaterializedNewCount = 0
     @Published private(set) var listContentRevision = 0
 
@@ -124,50 +123,35 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
-        if relayRuntimeStates != snapshot.runtimeStates {
-            relayRuntimeStates = snapshot.runtimeStates
-        }
-        setRelayStatusCountsIfNeeded((
-            connected: snapshot.connectedRelayCount,
-            planned: snapshot.plannedRelayCount
-        ))
+        applyPublishedRelayStatus(snapshot)
     }
 
     private func applyRelayStatusTransition(
         _ transition: HomeTimelineRelayStatusTransition?
     ) {
         guard let transition else { return }
-        applyRelayStatusSnapshot(transition.snapshot)
+        applyPublishedRelayStatus(
+            transition.snapshot,
+            publishingStatusChange: transition.publishesStatusChange
+        )
         if let relayURL = transition.invalidatedRealtimeRelayURL {
             invalidateHomeTimelineRealtime(relayURL: relayURL)
         }
-        if transition.publishesStatusChange {
-            relayStatusRevision &+= 1
-        }
     }
 
-    private func setRelayStatusCountsIfNeeded(_ counts: (connected: Int, planned: Int)) {
-        guard relayStatusCounts.connected != counts.connected ||
-            relayStatusCounts.planned != counts.planned
-        else { return }
-        relayStatusCounts = counts
+    private func applyPublishedRelayStatus(
+        _ snapshot: HomeTimelineRelayStatusSnapshot,
+        publishingStatusChange: Bool = false
+    ) {
+        guard let next = publishedRelayStatusState.applying(
+            snapshot,
+            publishingStatusChange: publishingStatusChange
+        ) else { return }
+        publishedRelayStatusState = next
     }
 
-    var activityStatus: NostrTimelineActivityStatus? {
-        activityCoordinator.activityStatus(
-            context: HomeTimelineActivityContext(
-                connectedRelayCount: relayStatusCounts.connected,
-                plannedRelayCount: relayStatusCounts.planned,
-                hasOlderPageRequest: backwardRequestRegistry.hasOlderPageRequest,
-                hasGapWork: backwardRequestRegistry.hasGapWork,
-                hasBackwardRequests: backwardRequestRegistry.hasRequests,
-                hasPendingDependencyWork: dependencyCoordinator.hasPendingWork
-            )
-        )
-    }
-
-    var isRelayProcessing: Bool {
-        activityStatus != nil
+    private func publishRelayStatusChange() {
+        publishedRelayStatusState = publishedRelayStatusState.publishingStatusChange()
     }
 
     init(
@@ -497,7 +481,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func activateOutbox(accountID: String) {
         outboxCoordinator.activate(accountID: accountID) { [weak self] in
-            self?.relayStatusRevision &+= 1
+            self?.publishRelayStatusChange()
         }
     }
 
@@ -1084,7 +1068,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func clearPublishedAccountState() {
-        relayStatusRevision &+= 1
+        publishRelayStatusChange()
         account = nil
     }
 
@@ -1381,7 +1365,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self?.scheduleLinkPreviewResolution()
             },
             incrementRelayStatusRevision: { [weak self] in
-                self?.relayStatusRevision &+= 1
+                self?.publishRelayStatusChange()
             },
             resolveDependencies: { [weak self] event, account, lifecycle in
                 guard let self else { return false }
@@ -1522,6 +1506,38 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 extension NostrHomeTimelineStore {
+    var relayStatusRevision: Int {
+        publishedRelayStatusState.revision
+    }
+
+    var relayRuntimeStates: [String: NostrRelayConnectionState] {
+        publishedRelayStatusState.snapshot.runtimeStates
+    }
+
+    var relayStatusCounts: (connected: Int, planned: Int) {
+        (
+            connected: publishedRelayStatusState.snapshot.connectedRelayCount,
+            planned: publishedRelayStatusState.snapshot.plannedRelayCount
+        )
+    }
+
+    var activityStatus: NostrTimelineActivityStatus? {
+        activityCoordinator.activityStatus(
+            context: HomeTimelineActivityContext(
+                connectedRelayCount: relayStatusCounts.connected,
+                plannedRelayCount: relayStatusCounts.planned,
+                hasOlderPageRequest: backwardRequestRegistry.hasOlderPageRequest,
+                hasGapWork: backwardRequestRegistry.hasGapWork,
+                hasBackwardRequests: backwardRequestRegistry.hasRequests,
+                hasPendingDependencyWork: dependencyCoordinator.hasPendingWork
+            )
+        )
+    }
+
+    var isRelayProcessing: Bool {
+        activityStatus != nil
+    }
+
     var phase: Phase {
         publishedActivityState.phase
     }
@@ -1583,6 +1599,18 @@ extension NostrHomeTimelineStore {
 
     func testingApplyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
         applyContentSnapshot(snapshot)
+    }
+
+    func testingApplyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
+        applyRelayStatusSnapshot(snapshot)
+    }
+
+    func testingApplyRelayStatusTransition(_ transition: HomeTimelineRelayStatusTransition?) {
+        applyRelayStatusTransition(transition)
+    }
+
+    func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
+        publishHomeTimelineRealtimeState(isRealtime)
     }
 
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
