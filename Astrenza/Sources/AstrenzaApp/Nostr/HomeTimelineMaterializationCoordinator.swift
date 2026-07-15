@@ -1,4 +1,5 @@
 import AstrenzaCore
+import Foundation
 
 struct HomeTimelineMaterializationRequest: Sendable {
     let account: NostrAccount?
@@ -10,24 +11,31 @@ struct HomeTimelineMaterializationRequest: Sendable {
 
 @MainActor
 final class HomeTimelineMaterializationCoordinator {
+    typealias TransitionHandler = @MainActor @Sendable (
+        _ transition: HomeTimelinePresentationTransition
+    ) -> Void
+
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
     private let projectionController: HomeFeedProjectionController
-    private let repository: HomeTimelineRepository
+    private let worker: any HomeTimelineMaterializationWorking
+
+    private var materializationTask: Task<Void, Never>?
+    private var materializationGeneration: UInt64 = 0
 
     init(
         contentCoordinator: HomeTimelineContentCoordinator,
         filterCoordinator: HomeTimelineFilterCoordinator,
         presentationCoordinator: HomeTimelinePresentationCoordinator,
         projectionController: HomeFeedProjectionController,
-        repository: HomeTimelineRepository
+        worker: any HomeTimelineMaterializationWorking
     ) {
         self.contentCoordinator = contentCoordinator
         self.filterCoordinator = filterCoordinator
         self.presentationCoordinator = presentationCoordinator
         self.projectionController = projectionController
-        self.repository = repository
+        self.worker = worker
     }
 
     @discardableResult
@@ -61,38 +69,85 @@ final class HomeTimelineMaterializationCoordinator {
     }
 
     func materialize(
-        _ request: HomeTimelineMaterializationRequest
-    ) -> HomeTimelinePresentationTransition? {
+        _ request: HomeTimelineMaterializationRequest,
+        onTransition: @escaping TransitionHandler
+    ) {
         guard let pass = presentationCoordinator.beginMaterialization(
             allowsRealtimeFollow: request.allowsRealtimeFollow
-        ) else { return nil }
+        ) else {
+            cancelTask()
+            return
+        }
         if pass.shouldReloadNewestProjection, let account = request.account {
             reloadNewestProjection(account: account)
             presentationCoordinator.clearNewestProjectionReload()
         }
 
         let content = contentCoordinator.snapshot
-        let filterProjection = filterCoordinator.projection(
-            accountID: request.account?.pubkey,
-            events: content.noteEvents
-        )
-        let contextEvents = repository.contextEvents(for: content.noteEvents)
-        let materialized = repository.materialize(
-            HomeTimelineRenderInput(
+        startMaterialization(
+            HomeTimelineMaterializationInput(
+                accountID: request.account?.pubkey,
                 noteEvents: content.noteEvents,
                 feedWindow: projectionController.window,
-                contextEvents: contextEvents,
                 metadataEvents: content.metadataEvents,
                 nip05Resolutions: request.nip05Resolutions,
                 profileResolutionStates: request.profileResolutionStates,
                 followedPubkeys: content.followedPubkeys,
                 resolvedRelayCount: content.resolvedRelays.count,
-                filterRules: filterProjection.effectiveRuleSet,
-                filterStatus: filterProjection.status,
-                timeline: .home,
+                filtersSuspended: filterCoordinator.filtersSuspended,
+                filterTimestamp: Int(Date().timeIntervalSince1970),
                 policy: request.policy
-            )
+            ),
+            pass: pass,
+            onTransition: onTransition
         )
-        return presentationCoordinator.apply(materialized, pass: pass)
+    }
+
+    func cancel() {
+        cancelTask()
+        presentationCoordinator.cancelMaterialization()
+    }
+
+    private func startMaterialization(
+        _ input: HomeTimelineMaterializationInput,
+        pass: HomeTimelineMaterializationPass,
+        onTransition: @escaping TransitionHandler
+    ) {
+        cancelTask()
+        let generation = materializationGeneration
+        let worker = worker
+        materializationTask = Task { [weak self] in
+            guard let materialized = await worker.materialize(input),
+                  !Task.isCancelled,
+                  let self
+            else { return }
+            finishMaterialization(
+                materialized,
+                pass: pass,
+                generation: generation,
+                onTransition: onTransition
+            )
+        }
+    }
+
+    private func finishMaterialization(
+        _ materialized: HomeTimelineMaterializedSnapshot,
+        pass: HomeTimelineMaterializationPass,
+        generation: UInt64,
+        onTransition: TransitionHandler
+    ) {
+        guard generation == materializationGeneration else { return }
+        materializationTask = nil
+        guard let transition = presentationCoordinator.apply(
+            materialized,
+            pass: pass
+        ) else { return }
+        onTransition(transition)
+    }
+
+    private func cancelTask() {
+        materializationGeneration &+= 1
+        materializationTask?.cancel()
+        materializationTask = nil
     }
 }

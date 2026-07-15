@@ -124,7 +124,7 @@ struct HomeProjectionInteractionWorkflowTests {
             around: "anchor",
             mergingWithCurrentWindow: true
         ))
-        #expect(workflow.materialize(request) == nil)
+        workflow.materialize(request) { _ in }
 
         #expect(projection.ensuredAccountID == account.pubkey)
         #expect(projection.ensuredFollowedPubkeys == [account.pubkey])
@@ -138,6 +138,19 @@ struct HomeProjectionInteractionWorkflowTests {
         #expect(materialization.reloadMergesCurrentWindow)
         #expect(materialization.materializationAccountID == account.pubkey)
         #expect(materialization.allowsRealtimeFollow)
+    }
+
+    @Test("Materialization cancellation crosses the interaction boundary")
+    func routesMaterializationCancellation() {
+        let materialization = MaterializationInteractionSpy()
+        let workflow = makeWorkflow(
+            projection: ProjectionInteractionSpy(definition: nil),
+            materialization: materialization
+        )
+
+        workflow.cancelMaterialization()
+
+        #expect(materialization.cancelCount == 1)
     }
 
     private func makeWorkflow(
@@ -330,6 +343,7 @@ private final class MaterializationInteractionSpy:
     private(set) var reloadMergesCurrentWindow = false
     private(set) var materializationAccountID: String?
     private(set) var allowsRealtimeFollow = false
+    private(set) var cancelCount = 0
 
     init(
         reloadNewestResult: Bool = false,
@@ -356,10 +370,14 @@ private final class MaterializationInteractionSpy:
     }
 
     func materialize(
-        _ request: HomeTimelineMaterializationRequest
-    ) -> HomeTimelinePresentationTransition? {
+        _ request: HomeTimelineMaterializationRequest,
+        onTransition: @escaping TransitionHandler
+    ) {
         materializationAccountID = request.account?.pubkey
         allowsRealtimeFollow = request.allowsRealtimeFollow
-        return nil
+    }
+
+    func cancel() {
+        cancelCount += 1
     }
 }

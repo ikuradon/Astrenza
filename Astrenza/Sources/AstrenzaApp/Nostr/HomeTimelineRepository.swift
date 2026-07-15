@@ -34,7 +34,7 @@ struct HomeTimelineReadContext {
     let syncPolicy: NostrSyncPolicy
 }
 
-struct HomeTimelineRepository {
+struct HomeTimelineRepository: Sendable {
     let eventStore: NostrEventStore?
 
     func event(id: String) -> NostrEvent? {

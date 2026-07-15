@@ -388,6 +388,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func cancel() {
+        projectionInteractionWorkflow.cancelMaterialization()
         accountResetInteractionWorkflow.reset(
             context: accountResetInteractionContext()
         )
@@ -954,7 +955,7 @@ private extension NostrHomeTimelineStore {
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
         let dependencies = dataInteractionWorkflow.dependencyResolutionState
-        guard let transition = projectionInteractionWorkflow.materialize(
+        projectionInteractionWorkflow.materialize(
             HomeTimelineMaterializationRequest(
                 account: account,
                 nip05Resolutions: dependencies.nip05Resolutions,
@@ -962,8 +963,9 @@ private extension NostrHomeTimelineStore {
                 policy: syncPolicy,
                 allowsRealtimeFollow: allowsRealtimeFollow
             )
-        ) else { return }
-        applyPresentationTransition(transition)
+        ) { [weak self] transition in
+            self?.applyPresentationTransition(transition)
+        }
     }
 
     private func scheduleMaterializeEntries(

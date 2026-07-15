@@ -1,6 +1,7 @@
 import Foundation
 
-struct HomeTimelineMaterializationPass: Equatable {
+struct HomeTimelineMaterializationPass: Equatable, Sendable {
+    let generation: UInt64
     let allowsRealtimeFollow: Bool
     let shouldReloadNewestProjection: Bool
 }
@@ -17,6 +18,8 @@ final class HomeTimelineMaterializationScheduler {
     private var followState = HomeTimelineMaterializationFollowState()
     private var renderFingerprint: [Int] = []
     private var needsNewestProjectionReload = false
+    private var materializationGeneration: UInt64 = 0
+    private var isMaterializationInFlight = false
 
     init(defaultDelayNanoseconds: UInt64 = 16_000_000) {
         self.defaultDelayNanoseconds = defaultDelayNanoseconds
@@ -31,7 +34,9 @@ final class HomeTimelineMaterializationScheduler {
     }
 
     var hasPendingMaterialization: Bool {
-        scheduledTask != nil || needsMaterializationAfterScroll
+        scheduledTask != nil ||
+            needsMaterializationAfterScroll ||
+            isMaterializationInFlight
     }
 
     func reset(renderFingerprint: [Int] = []) {
@@ -42,16 +47,20 @@ final class HomeTimelineMaterializationScheduler {
         followState.reset()
         self.renderFingerprint = renderFingerprint
         needsNewestProjectionReload = false
+        invalidateMaterialization()
     }
 
     func setScrollActive(_ isActive: Bool, materialize: @escaping MaterializeHandler) {
         guard isScrollActive != isActive else { return }
         isScrollActive = isActive
         if isActive {
-            guard scheduledTask != nil else { return }
+            guard scheduledTask != nil || isMaterializationInFlight else {
+                return
+            }
             needsMaterializationAfterScroll = true
             scheduledTask?.cancel()
             scheduledTask = nil
+            invalidateMaterialization()
         } else if needsMaterializationAfterScroll {
             schedule(materialize: materialize)
         }
@@ -73,11 +82,15 @@ final class HomeTimelineMaterializationScheduler {
         guard !isScrollActive else {
             needsMaterializationAfterScroll = true
             followState.enqueue(allowsRealtimeFollow: allowsRealtimeFollow)
+            invalidateMaterialization()
             return nil
         }
         followState.clearPendingPermission()
         needsMaterializationAfterScroll = false
+        materializationGeneration &+= 1
+        isMaterializationInFlight = true
         return HomeTimelineMaterializationPass(
+            generation: materializationGeneration,
             allowsRealtimeFollow: allowsRealtimeFollow,
             shouldReloadNewestProjection: needsNewestProjectionReload
         )
@@ -91,6 +104,9 @@ final class HomeTimelineMaterializationScheduler {
         if let allowsRealtimeFollow {
             followState.enqueue(allowsRealtimeFollow: allowsRealtimeFollow)
         }
+        if isMaterializationInFlight {
+            invalidateMaterialization()
+        }
         needsMaterializationAfterScroll = true
         guard !isScrollActive, scheduledTask == nil else { return }
         let delay = delayNanoseconds ?? defaultDelayNanoseconds
@@ -102,6 +118,25 @@ final class HomeTimelineMaterializationScheduler {
             self.needsMaterializationAfterScroll = false
             materialize(allowsRealtimeFollow)
         }
+    }
+
+    func completeMaterialization(
+        _ pass: HomeTimelineMaterializationPass
+    ) -> Bool {
+        guard isMaterializationInFlight,
+              !isScrollActive,
+              pass.generation == materializationGeneration
+        else { return false }
+        isMaterializationInFlight = false
+        return true
+    }
+
+    func cancelMaterialization() {
+        scheduledTask?.cancel()
+        scheduledTask = nil
+        needsMaterializationAfterScroll = false
+        followState.clearPendingPermission()
+        invalidateMaterialization()
     }
 
     func shouldPublish(renderFingerprint: [Int]) -> Bool {
@@ -119,6 +154,11 @@ final class HomeTimelineMaterializationScheduler {
             revision: revision,
             allowsRealtimeFollow: allowsRealtimeFollow
         )
+    }
+
+    private func invalidateMaterialization() {
+        materializationGeneration &+= 1
+        isMaterializationInFlight = false
     }
 }
 

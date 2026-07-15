@@ -1396,7 +1396,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store exposes active filter status")
     @MainActor
-    func homeTimelineStoreExposesActiveFilterStatus() throws {
+    func homeTimelineStoreExposesActiveFilterStatus() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "a", count: 64),
@@ -1439,6 +1439,9 @@ struct TimelineModelTests {
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.start(account: account)
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post).map(\.id) == [matching.id, other.id]
+        })
 
         #expect(store.filterStatus.activeRuleCount == 1)
         #expect(store.filterStatus.warningMatchCount == 1)
@@ -1949,7 +1952,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store confines legacy timeline restore to migration and creates Generic Feed")
     @MainActor
-    func homeTimelineStoreMigratesLegacyTimelineSnapshot() throws {
+    func homeTimelineStoreMigratesLegacyTimelineSnapshot() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "c", count: 64),
@@ -1981,6 +1984,9 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post?.id) == [note.id]
+        })
 
         #expect(store.entries.compactMap(\.post?.id) == [note.id])
         #expect(try eventStore.feedDefinition(feedID: "feed:home:\(account.pubkey)") != nil)
@@ -1990,7 +1996,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store restores live gap rows from database timeline entries")
     @MainActor
-    func homeTimelineStoreRestoresLiveGapRowsFromDatabaseEntries() throws {
+    func homeTimelineStoreRestoresLiveGapRowsFromDatabaseEntries() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "b", count: 64),
@@ -2020,8 +2026,16 @@ struct TimelineModelTests {
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.start(account: account)
+        let expectedIDs = [
+            newer.id,
+            "gap-\(newer.id)-\(older.id)",
+            older.id
+        ]
+        try #require(await waitForTimelineState {
+            store.entries.map(\.id) == expectedIDs
+        })
 
-        #expect(store.entries.map(\.id) == [newer.id, "gap-\(newer.id)-\(older.id)", older.id])
+        #expect(store.entries.map(\.id) == expectedIDs)
         guard case .gap(let gap) = store.entries[1] else {
             Issue.record("Expected restored live gap row")
             return
@@ -2031,7 +2045,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store projects saved restore anchor from database window")
     @MainActor
-    func homeTimelineStoreProjectsSavedRestoreAnchorFromDatabaseWindow() throws {
+    func homeTimelineStoreProjectsSavedRestoreAnchorFromDatabaseWindow() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "b", count: 64),
@@ -2069,6 +2083,9 @@ struct TimelineModelTests {
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.setRestoreProjectionAnchor(anchor.id)
         store.start(account: account)
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post).contains { $0.id == anchor.id }
+        })
 
         let postIDs = store.entries.compactMap(\.post).map(\.id)
         #expect(postIDs.contains(anchor.id))
@@ -2077,7 +2094,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store can temporarily suspend and resume filters")
     @MainActor
-    func homeTimelineStoreSuspendsAndResumesFilters() throws {
+    func homeTimelineStoreSuspendsAndResumesFilters() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "b", count: 64),
@@ -2121,17 +2138,30 @@ struct TimelineModelTests {
 
         let store = NostrHomeTimelineStore(eventStore: eventStore)
         store.start(account: account)
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post).map(\.id) == [visible.id] &&
+                store.filterStatus.hiddenMatchCount == 1
+        })
 
         #expect(store.entries.compactMap(\.post).map(\.id) == [visible.id])
         #expect(store.filterStatus.hiddenMatchCount == 1)
 
         store.suspendTimelineFilters()
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post).map(\.id) == [hidden.id, visible.id] &&
+                store.filterStatus.isSuspended
+        })
 
         #expect(store.entries.compactMap(\.post).map(\.id) == [hidden.id, visible.id])
         #expect(store.filterStatus.isSuspended)
         #expect(store.filterStatus.hiddenMatchCount == 0)
 
         store.resumeTimelineFilters()
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post).map(\.id) == [visible.id] &&
+                !store.filterStatus.isSuspended &&
+                store.filterStatus.hiddenMatchCount == 1
+        })
 
         #expect(store.entries.compactMap(\.post).map(\.id) == [visible.id])
         #expect(store.filterStatus.isSuspended == false)
@@ -3180,7 +3210,7 @@ struct TimelineModelTests {
 
     @Test("Home timeline store resets account-scoped projection state on direct account switch")
     @MainActor
-    func homeTimelineStoreResetsStateOnDirectAccountSwitch() throws {
+    func homeTimelineStoreResetsStateOnDirectAccountSwitch() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let firstAccount = NostrAccount(
             pubkey: String(repeating: "a", count: 64),
@@ -3224,16 +3254,22 @@ struct TimelineModelTests {
         )
         let store = NostrHomeTimelineStore(
             timelineLoader: NostrHomeTimelineLoader(
-                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
-                bootstrapRelays: []
+                relayClient: CancellableStoreRelayClient(),
+                bootstrapRelays: ["wss://relay.example"]
             ),
             eventStore: eventStore
         )
 
         store.start(account: firstAccount)
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post?.id) == [firstNote.id]
+        })
         #expect(store.entries.compactMap(\.post?.id) == [firstNote.id])
 
         store.start(account: secondAccount)
+        try #require(await waitForTimelineState {
+            store.entries.compactMap(\.post?.id) == [secondNote.id]
+        })
 
         #expect(store.account?.pubkey == secondAccount.pubkey)
         #expect(store.followedPubkeys == [secondAccount.pubkey])
@@ -4891,6 +4927,10 @@ struct TimelineModelTests {
 
         #expect(didApplyPendingNewEvents)
         #expect(requestCountAfterApplying == requestCountBeforeApplying)
+        try await waitForTimelinePostIDs(
+            in: store,
+            ids: [liveEvent.id, initialEvent.id]
+        )
         #expect(store.unmaterializedNewCount == 0)
         #expect(store.entries.compactMap(\.post).map(\.id) == [liveEvent.id, initialEvent.id])
     }
@@ -8173,6 +8213,21 @@ struct TimelineModelTests {
     }
 }
 
+@MainActor
+private func waitForTimelineState(
+    timeoutNanoseconds: UInt64 = 2_000_000_000,
+    _ predicate: @escaping @MainActor () -> Bool
+) async throws -> Bool {
+    let startedAt = DispatchTime.now().uptimeNanoseconds
+    while !predicate() {
+        guard DispatchTime.now().uptimeNanoseconds - startedAt < timeoutNanoseconds else {
+            return false
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return true
+}
+
 private func timelineEvent(
     idSeed: String,
     id: String? = nil,
@@ -8814,6 +8869,25 @@ private actor GatedStoreRelayClient: NostrRelayFetching {
 
     func fetchSubscriptionIDs() -> [String] {
         fetchCalls
+    }
+}
+
+private actor CancellableStoreRelayClient: NostrRelayFetching {
+    func fetch(
+        relayURL: String,
+        request: NostrRelayRequest
+    ) async throws -> [NostrEvent] {
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+        return []
+    }
+
+    func fetchMissingEventIDs(
+        relayURL: String,
+        filter: NostrRelayFilter,
+        localEvents: [NostrEvent],
+        subscriptionID: String
+    ) async throws -> [String] {
+        []
     }
 }
 

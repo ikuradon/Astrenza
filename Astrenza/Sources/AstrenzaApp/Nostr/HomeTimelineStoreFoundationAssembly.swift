@@ -87,7 +87,12 @@ extension HomeTimelineStoreAssembly {
                 filterCoordinator: persistence.filterCoordinator,
                 presentationCoordinator: presentationCoordinator,
                 projectionController: persistence.homeFeedProjection,
-                repository: persistence.timelineRepository
+                worker: HomeTimelineMaterializationWorker(
+                    repository: persistence.timelineRepository,
+                    filterProjector: HomeTimelineFilterProjector(
+                        eventStore: input.eventStore
+                    )
+                )
             ),
             pendingEventBuffer: HomeTimelinePendingEventBuffer(),
             lifecycleCoordinator: lifecycleCoordinator

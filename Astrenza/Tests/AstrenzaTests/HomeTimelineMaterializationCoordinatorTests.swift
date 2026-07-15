@@ -6,18 +6,20 @@ import Testing
 @MainActor
 struct HomeTimelineMaterializationCoordinatorTests {
     @Test("Materialization publishes one transition and skips an unchanged render")
-    func materializesAndSkipsUnchangedRender() throws {
+    func materializesAndSkipsUnchangedRender() async throws {
         let account = account()
         let note = event(idCharacter: "1", pubkey: account.pubkey, createdAt: 100)
         let system = makeSystem(eventStore: nil)
         installContent([note], account: account, in: system)
 
-        let first = try #require(system.coordinator.materialize(
-            request(account: account, allowsRealtimeFollow: true)
-        ))
-        let duplicate = try #require(system.coordinator.materialize(
-            request(account: account, allowsRealtimeFollow: false)
-        ))
+        let first = await materialize(
+            request(account: account, allowsRealtimeFollow: true),
+            in: system
+        )
+        let duplicate = await materialize(
+            request(account: account, allowsRealtimeFollow: false),
+            in: system
+        )
 
         #expect(first.snapshot.entries.compactMap(\.post?.id) == [note.id])
         #expect(first.changes.contains(.entries))
@@ -29,7 +31,7 @@ struct HomeTimelineMaterializationCoordinatorTests {
     }
 
     @Test("Materialization applies the current Home filter projection")
-    func materializesWithFilterProjection() throws {
+    func materializesWithFilterProjection() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = account()
         try eventStore.saveFilterRule(NostrFilterRuleRecord(
@@ -51,9 +53,10 @@ struct HomeTimelineMaterializationCoordinatorTests {
         let system = makeSystem(eventStore: eventStore)
         installContent([note], account: account, in: system)
 
-        let transition = try #require(system.coordinator.materialize(
-            request(account: account)
-        ))
+        let transition = await materialize(
+            request(account: account),
+            in: system
+        )
 
         #expect(transition.snapshot.filterStatus.activeRuleCount == 1)
         #expect(transition.snapshot.filterStatus.warningMatchCount == 1)
@@ -62,7 +65,7 @@ struct HomeTimelineMaterializationCoordinatorTests {
     }
 
     @Test("A requested newest projection reload completes before rendering")
-    func reloadsNewestProjectionBeforeRendering() throws {
+    func reloadsNewestProjectionBeforeRendering() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = account()
         let note = event(idCharacter: "3", pubkey: account.pubkey, createdAt: 300)
@@ -70,9 +73,10 @@ struct HomeTimelineMaterializationCoordinatorTests {
         try installPersistedProjection([note], account: account, in: system)
         system.presentation.requestNewestProjectionReload()
 
-        let transition = try #require(system.coordinator.materialize(
-            request(account: account)
-        ))
+        let transition = await materialize(
+            request(account: account),
+            in: system
+        )
 
         #expect(system.projection.window?.events.map(\.id) == [note.id])
         #expect(system.content.noteEvents.map(\.id) == [note.id])
@@ -131,13 +135,29 @@ struct HomeTimelineMaterializationCoordinatorTests {
                 filterCoordinator: filter,
                 presentationCoordinator: presentation,
                 projectionController: projection,
-                repository: repository
+                worker: HomeTimelineMaterializationWorker(
+                    repository: repository,
+                    filterProjector: HomeTimelineFilterProjector(
+                        eventStore: eventStore
+                    )
+                )
             ),
             content: content,
             presentation: presentation,
             projection: projection,
             eventStore: eventStore
         )
+    }
+
+    private func materialize(
+        _ request: HomeTimelineMaterializationRequest,
+        in system: System
+    ) async -> HomeTimelinePresentationTransition {
+        await withCheckedContinuation { continuation in
+            system.coordinator.materialize(request) { transition in
+                continuation.resume(returning: transition)
+            }
+        }
     }
 
     private func installContent(

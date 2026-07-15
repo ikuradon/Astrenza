@@ -57,6 +57,10 @@ extension HomeTimelineReadStateCoordinator: HomeTimelineReadStateCoordinating {}
 
 @MainActor
 protocol HomeTimelineMaterializationCoordinating: AnyObject {
+    typealias TransitionHandler = @MainActor @Sendable (
+        _ transition: HomeTimelinePresentationTransition
+    ) -> Void
+
     @discardableResult
     func reloadNewestProjection(account: NostrAccount) -> Bool
 
@@ -68,8 +72,11 @@ protocol HomeTimelineMaterializationCoordinating: AnyObject {
     ) -> Bool
 
     func materialize(
-        _ request: HomeTimelineMaterializationRequest
-    ) -> HomeTimelinePresentationTransition?
+        _ request: HomeTimelineMaterializationRequest,
+        onTransition: @escaping TransitionHandler
+    )
+
+    func cancel()
 }
 
 extension HomeTimelineMaterializationCoordinator:
@@ -203,9 +210,18 @@ final class HomeProjectionInteractionWorkflow {
     }
 
     func materialize(
-        _ request: HomeTimelineMaterializationRequest
-    ) -> HomeTimelinePresentationTransition? {
-        materialization.materialize(request)
+        _ request: HomeTimelineMaterializationRequest,
+        onTransition: @escaping HomeTimelineMaterializationCoordinating
+            .TransitionHandler
+    ) {
+        materialization.materialize(
+            request,
+            onTransition: onTransition
+        )
+    }
+
+    func cancelMaterialization() {
+        materialization.cancel()
     }
 
     #if DEBUG

@@ -12,14 +12,14 @@ struct HomeTimelinePresentationCoordinatorTests {
         let second = entry("second")
         let filterStatus = TimelineFilterStatus(activeRuleCount: 2, warningMatchCount: 1)
 
-        let transition = coordinator.apply(
+        let transition = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [first, second],
                 filterStatus: filterStatus,
                 renderFingerprint: [1, 2]
             ),
             pass: pass
-        )
+        ))
 
         #expect(transition.changes.contains(.entries))
         #expect(transition.changes.contains(.filterStatus))
@@ -42,10 +42,13 @@ struct HomeTimelinePresentationCoordinatorTests {
             renderFingerprint: [1]
         )
         let firstPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
-        _ = coordinator.apply(materialized, pass: firstPass)
+        _ = try #require(coordinator.apply(materialized, pass: firstPass))
         let secondPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: true))
 
-        let duplicate = coordinator.apply(materialized, pass: secondPass)
+        let duplicate = try #require(coordinator.apply(
+            materialized,
+            pass: secondPass
+        ))
 
         #expect(duplicate.changes.isEmpty)
         #expect(duplicate.snapshot.resolvedContentRevision == 1)
@@ -56,24 +59,24 @@ struct HomeTimelinePresentationCoordinatorTests {
     func filterOnlyUpdateAdvancesRevisionAndRevokesFollow() throws {
         let coordinator = HomeTimelinePresentationCoordinator()
         let firstPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: true))
-        _ = coordinator.apply(
+        _ = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("first")],
                 filterStatus: TimelineFilterStatus(),
                 renderFingerprint: [1]
             ),
             pass: firstPass
-        )
+        ))
         let secondPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
 
-        let transition = coordinator.apply(
+        let transition = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("first")],
                 filterStatus: TimelineFilterStatus(activeRuleCount: 1),
                 renderFingerprint: [1]
             ),
             pass: secondPass
-        )
+        ))
 
         #expect(!transition.changes.contains(.entries))
         #expect(transition.changes.contains(.filterStatus))
@@ -87,23 +90,23 @@ struct HomeTimelinePresentationCoordinatorTests {
     func unreadActionsRemainGenerationScoped() throws {
         let coordinator = HomeTimelinePresentationCoordinator()
         let initialPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
-        _ = coordinator.apply(
+        _ = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("old")],
                 filterStatus: TimelineFilterStatus(),
                 renderFingerprint: [1]
             ),
             pass: initialPass
-        )
+        ))
         let newPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
-        let firstUnread = coordinator.apply(
+        let firstUnread = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("new-1"), entry("old")],
                 filterStatus: TimelineFilterStatus(),
                 renderFingerprint: [2, 1]
             ),
             pass: newPass
-        )
+        ))
         #expect(firstUnread.snapshot.materializedUnreadCount == 1)
         #expect(firstUnread.snapshot.visibleUnreadBadgeCount == 1)
 
@@ -112,14 +115,14 @@ struct HomeTimelinePresentationCoordinatorTests {
         #expect(dismissed.snapshot.visibleUnreadBadgeCount == 0)
 
         let nextPass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
-        let secondUnread = coordinator.apply(
+        let secondUnread = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("new-2"), entry("new-1"), entry("old")],
                 filterStatus: TimelineFilterStatus(),
                 renderFingerprint: [3, 2, 1]
             ),
             pass: nextPass
-        )
+        ))
         #expect(secondUnread.snapshot.materializedUnreadCount == 2)
         #expect(secondUnread.snapshot.visibleUnreadBadgeCount == 2)
 
@@ -137,14 +140,14 @@ struct HomeTimelinePresentationCoordinatorTests {
     func restoredReadBoundaryDrivesLaterMutations() throws {
         let coordinator = HomeTimelinePresentationCoordinator()
         let pass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
-        _ = coordinator.apply(
+        _ = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("new-1"), entry("new-2"), entry("old")],
                 filterStatus: TimelineFilterStatus(),
                 renderFingerprint: [1, 2, 3]
             ),
             pass: pass
-        )
+        ))
 
         let restored = coordinator.restoreReadBoundary(postID: "old")
         #expect(restored.snapshot.materializedUnreadCount == 2)
@@ -163,14 +166,14 @@ struct HomeTimelinePresentationCoordinatorTests {
         )
         let coordinator = HomeTimelinePresentationCoordinator(scheduler: scheduler)
         let pass = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: true))
-        _ = coordinator.apply(
+        _ = try #require(coordinator.apply(
             HomeTimelineMaterializedSnapshot(
                 entries: [entry("first")],
                 filterStatus: TimelineFilterStatus(activeRuleCount: 1),
                 renderFingerprint: [1]
             ),
             pass: pass
-        )
+        ))
         coordinator.schedule(materialize: { _ in })
         #expect(coordinator.hasPendingMaterialization)
 
@@ -196,6 +199,36 @@ struct HomeTimelinePresentationCoordinatorTests {
         coordinator.clearNewestProjectionReload()
         let second = try #require(coordinator.beginMaterialization(allowsRealtimeFollow: false))
         #expect(!second.shouldReloadNewestProjection)
+    }
+
+    @Test("A superseded materialization pass cannot publish stale entries")
+    func supersededPassCannotPublish() throws {
+        let coordinator = HomeTimelinePresentationCoordinator()
+        let stalePass = try #require(coordinator.beginMaterialization(
+            allowsRealtimeFollow: true
+        ))
+        let currentPass = try #require(coordinator.beginMaterialization(
+            allowsRealtimeFollow: false
+        ))
+        let staleSnapshot = HomeTimelineMaterializedSnapshot(
+            entries: [entry("stale")],
+            filterStatus: TimelineFilterStatus(),
+            renderFingerprint: [1]
+        )
+        let currentSnapshot = HomeTimelineMaterializedSnapshot(
+            entries: [entry("current")],
+            filterStatus: TimelineFilterStatus(),
+            renderFingerprint: [2]
+        )
+
+        #expect(coordinator.apply(staleSnapshot, pass: stalePass) == nil)
+        let applied = try #require(coordinator.apply(
+            currentSnapshot,
+            pass: currentPass
+        ))
+
+        #expect(applied.snapshot.entries.map(\.id) == ["current"])
+        #expect(applied.snapshot.realtimeFollowSourceRevision == nil)
     }
 
     private func entry(_ id: String) -> TimelineFeedEntry {

@@ -70,6 +70,44 @@ struct HomeTimelineMaterializationSchedulerTests {
         #expect(scheduler.realtimeFollowSourceRevision == nil)
         #expect(scheduler.shouldPublish(renderFingerprint: [1, 2]))
     }
+
+    @Test("A scheduled update invalidates the in-flight materialization pass")
+    @MainActor
+    func scheduledUpdateInvalidatesInFlightPass() throws {
+        let scheduler = HomeTimelineMaterializationScheduler(
+            defaultDelayNanoseconds: 1_000_000_000
+        )
+        let pass = try #require(scheduler.beginMaterialization(
+            allowsRealtimeFollow: true
+        ))
+
+        scheduler.schedule(
+            allowsRealtimeFollow: false,
+            materialize: { _ in }
+        )
+
+        #expect(!scheduler.completeMaterialization(pass))
+        #expect(scheduler.hasPendingMaterialization)
+        scheduler.cancelMaterialization()
+        #expect(!scheduler.hasPendingMaterialization)
+    }
+
+    @Test("Scrolling invalidates in-flight work and defers one replacement")
+    @MainActor
+    func scrollingInvalidatesInFlightPass() throws {
+        let scheduler = HomeTimelineMaterializationScheduler(
+            defaultDelayNanoseconds: 1_000_000_000
+        )
+        let pass = try #require(scheduler.beginMaterialization(
+            allowsRealtimeFollow: false
+        ))
+
+        scheduler.setScrollActive(true, materialize: { _ in })
+
+        #expect(!scheduler.completeMaterialization(pass))
+        #expect(scheduler.hasPendingMaterialization)
+        scheduler.cancelMaterialization()
+    }
 }
 
 @Suite("Home timeline pending event buffer")

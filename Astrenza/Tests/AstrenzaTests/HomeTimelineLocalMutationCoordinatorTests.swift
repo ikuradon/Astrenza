@@ -130,7 +130,7 @@ struct HomeTimelineLocalMutationCoordinatorTests {
 
     @Test("Store exposes bookmarks and rematerializes muted authors")
     @MainActor
-    func storeAppliesSuccessfulMutations() throws {
+    func storeAppliesSuccessfulMutations() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "b", count: 64),
@@ -174,26 +174,45 @@ struct HomeTimelineLocalMutationCoordinatorTests {
         )
         let store = NostrHomeTimelineStore(
             timelineLoader: NostrHomeTimelineLoader(
-                relayClient: EmptyLocalMutationRelayFetcher(),
-                bootstrapRelays: []
+                relayClient: CancellableLocalMutationRelayFetcher(),
+                bootstrapRelays: ["wss://relay.example"]
             ),
             eventStore: eventStore
         )
         store.start(account: account)
         defer { store.cancel() }
-        let post = try #require(store.entries.compactMap(\.post).first)
+        let post = try await waitForPost(in: store) {
+            $0.bodyPresentation.collapseReason == nil
+        }
         #expect(post.bodyPresentation.collapseReason == nil)
 
         store.bookmark(post)
         #expect(store.isBookmarked(post))
 
         store.muteAuthor(of: post)
-        let mutedPost = try #require(store.entries.compactMap(\.post).first)
+        let mutedPost = try await waitForPost(in: store) {
+            $0.bodyPresentation.collapseReason == .filtered
+        }
         #expect(mutedPost.id == post.id)
         #expect(mutedPost.bodyPresentation.collapseReason == .filtered)
         #expect(store.filterStatus.activeRuleCount == 1)
         #expect(store.filterStatus.warningMatchCount == 1)
     }
+}
+
+@MainActor
+private func waitForPost(
+    in store: NostrHomeTimelineStore,
+    matching predicate: (TimelinePost) -> Bool
+) async throws -> TimelinePost {
+    for _ in 0..<200 {
+        if let post = store.entries.compactMap(\.post).first,
+           predicate(post) {
+            return post
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return try #require(store.entries.compactMap(\.post).first)
 }
 
 private struct FailingLocalMutationPersistence: HomeTimelineLocalMutationPersisting {
@@ -214,9 +233,10 @@ private enum LocalMutationPersistenceError: LocalizedError, Equatable {
     }
 }
 
-private actor EmptyLocalMutationRelayFetcher: NostrRelayFetching {
+private actor CancellableLocalMutationRelayFetcher: NostrRelayFetching {
     func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
-        []
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+        return []
     }
 
     func fetchMissingEventIDs(

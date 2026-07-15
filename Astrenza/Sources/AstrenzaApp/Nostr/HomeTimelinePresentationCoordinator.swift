@@ -1,6 +1,6 @@
 import Foundation
 
-struct TimelineFilterStatus: Equatable {
+struct TimelineFilterStatus: Equatable, Sendable {
     var activeRuleCount = 0
     var warningMatchCount = 0
     var hiddenMatchCount = 0
@@ -118,6 +118,10 @@ final class HomeTimelinePresentationCoordinator {
         scheduler.clearNewestProjectionReload()
     }
 
+    func cancelMaterialization() {
+        scheduler.cancelMaterialization()
+    }
+
     func beginMaterialization(
         allowsRealtimeFollow: Bool
     ) -> HomeTimelineMaterializationPass? {
@@ -139,7 +143,8 @@ final class HomeTimelinePresentationCoordinator {
     func apply(
         _ materialized: HomeTimelineMaterializedSnapshot,
         pass: HomeTimelineMaterializationPass
-    ) -> HomeTimelinePresentationTransition {
+    ) -> HomeTimelinePresentationTransition? {
+        guard scheduler.completeMaterialization(pass) else { return nil }
         var changes: HomeTimelinePresentationChanges = []
         var didChangePublishedContent = false
         if scheduler.shouldPublish(renderFingerprint: materialized.renderFingerprint) {

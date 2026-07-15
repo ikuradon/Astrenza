@@ -1,15 +1,13 @@
 import AstrenzaCore
 import Foundation
 
-struct HomeTimelineFilterProjection: Equatable {
+struct HomeTimelineFilterProjection: Equatable, Sendable {
     let effectiveRuleSet: NostrFilterRuleSet?
     let status: TimelineFilterStatus
 }
 
-@MainActor
-final class HomeTimelineFilterCoordinator {
+nonisolated struct HomeTimelineFilterProjector: Sendable {
     private let eventStore: NostrEventStore?
-    private var isSuspended = false
 
     init(eventStore: NostrEventStore?) {
         self.eventStore = eventStore
@@ -18,7 +16,8 @@ final class HomeTimelineFilterCoordinator {
     func projection(
         accountID: String?,
         events: [NostrEvent],
-        now: Int = Int(Date().timeIntervalSince1970)
+        isSuspended: Bool,
+        now: Int
     ) -> HomeTimelineFilterProjection {
         let rules = homeRules(accountID: accountID, updatedAt: now)
         let configuredRuleSet = rules.isEmpty ? nil : NostrFilterRuleSet(rules: rules)
@@ -27,6 +26,7 @@ final class HomeTimelineFilterCoordinator {
             status: status(
                 configuredRuleSet: configuredRuleSet,
                 events: events,
+                isSuspended: isSuspended,
                 now: now
             )
         )
@@ -34,30 +34,13 @@ final class HomeTimelineFilterCoordinator {
 
     func effectiveRuleSet(
         accountID: String?,
-        now: Int = Int(Date().timeIntervalSince1970)
+        isSuspended: Bool,
+        now: Int
     ) -> NostrFilterRuleSet? {
         guard !isSuspended else { return nil }
         let rules = homeRules(accountID: accountID, updatedAt: now)
         guard !rules.isEmpty else { return nil }
         return NostrFilterRuleSet(rules: rules)
-    }
-
-    @discardableResult
-    func suspend() -> Bool {
-        guard !isSuspended else { return false }
-        isSuspended = true
-        return true
-    }
-
-    @discardableResult
-    func resume() -> Bool {
-        guard isSuspended else { return false }
-        isSuspended = false
-        return true
-    }
-
-    func reset() {
-        isSuspended = false
     }
 
     private func homeRules(
@@ -84,6 +67,7 @@ final class HomeTimelineFilterCoordinator {
     private func status(
         configuredRuleSet: NostrFilterRuleSet?,
         events: [NostrEvent],
+        isSuspended: Bool,
         now: Int
     ) -> TimelineFilterStatus {
         guard let configuredRuleSet else {
@@ -124,5 +108,59 @@ final class HomeTimelineFilterCoordinator {
             .flatMap { summary in
                 (try? eventStore.listItems(listID: summary.listID)) ?? []
             }
+    }
+}
+
+@MainActor
+final class HomeTimelineFilterCoordinator {
+    private let projector: HomeTimelineFilterProjector
+    private var isSuspended = false
+
+    init(eventStore: NostrEventStore?) {
+        projector = HomeTimelineFilterProjector(eventStore: eventStore)
+    }
+
+    var filtersSuspended: Bool { isSuspended }
+
+    func projection(
+        accountID: String?,
+        events: [NostrEvent],
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) -> HomeTimelineFilterProjection {
+        projector.projection(
+            accountID: accountID,
+            events: events,
+            isSuspended: isSuspended,
+            now: now
+        )
+    }
+
+    func effectiveRuleSet(
+        accountID: String?,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) -> NostrFilterRuleSet? {
+        projector.effectiveRuleSet(
+            accountID: accountID,
+            isSuspended: isSuspended,
+            now: now
+        )
+    }
+
+    @discardableResult
+    func suspend() -> Bool {
+        guard !isSuspended else { return false }
+        isSuspended = true
+        return true
+    }
+
+    @discardableResult
+    func resume() -> Bool {
+        guard isSuspended else { return false }
+        isSuspended = false
+        return true
+    }
+
+    func reset() {
+        isSuspended = false
     }
 }
