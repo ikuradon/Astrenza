@@ -32,8 +32,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventCoordinator: HomeTimelineRuntimeEventCoordinator
     private let backwardRequestCoordinator: HomeTimelineBackwardRequestCoordinator
+    private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
-    private let backfillPersistence: HomeTimelineBackfillPersistence
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
@@ -252,7 +252,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             backwardPacketInstaller = nil
         }
         let backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
-        self.backfillPersistence = backfillPersistence
         let timelineRepository = HomeTimelineRepository(eventStore: eventStore)
         self.timelineRepository = timelineRepository
         let gapReconciliationCoordinator = HomeTimelineGapReconciliationCoordinator(
@@ -281,13 +280,18 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
         let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
         self.backwardRequestRegistry = backwardRequestRegistry
-        self.backwardRequestCoordinator = HomeTimelineBackwardRequestCoordinator(
+        let backwardRequestCoordinator = HomeTimelineBackwardRequestCoordinator(
             contentCoordinator: contentCoordinator,
             timelineRepository: timelineRepository,
             projectionController: homeFeedProjection,
             backwardRequestRegistry: backwardRequestRegistry,
             syncPlanner: syncPlanner,
             packetInstaller: backwardPacketInstaller
+        )
+        self.backwardRequestCoordinator = backwardRequestCoordinator
+        self.gapBackfillWorkflow = HomeTimelineGapBackfillWorkflow(
+            requester: backwardRequestCoordinator,
+            persistence: backfillPersistence
         )
         let feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
             eventStore: eventStore,
@@ -616,27 +620,40 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
-        guard let account,
-              relayRuntime != nil,
-              !resolvedRelays.isEmpty
-        else { return false }
-
-        let outcome = await backwardRequestCoordinator.requestGap(
-            account: account,
-            gap: gap,
-            direction: direction
+        await gapBackfillWorkflow.backfill(
+            HomeTimelineGapBackfillRequest(
+                account: account,
+                hasRelayRuntime: relayRuntime != nil,
+                resolvedRelayCount: resolvedRelays.count,
+                gap: gap,
+                direction: direction
+            ),
+            handlers: gapBackfillHandlers()
         )
-        if let definition = applyBackwardRequestOutcome(outcome) {
-            try? backfillPersistence.markGapRequested(
-                newerEventID: gap.newerPostID,
-                olderEventID: gap.olderPostID,
-                definition: definition
-            )
-            _ = reloadProjectionWindow(account: account, around: gap.newerPostID)
-            materializeEntries()
-            return true
+    }
+
+    private func gapBackfillHandlers() -> HomeTimelineGapBackfillHandlers {
+        HomeTimelineGapBackfillHandlers { [weak self] command in
+            self?.applyGapBackfillCommand(command)
         }
-        return false
+    }
+
+    private func applyGapBackfillCommand(
+        _ command: HomeTimelineGapBackfillCommand
+    ) {
+        switch command {
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        case .reloadProjection(let account, let anchorEventID):
+            _ = reloadProjectionWindow(account: account, around: anchorEventID)
+        case .materializeEntries:
+            materializeEntries()
+        }
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
