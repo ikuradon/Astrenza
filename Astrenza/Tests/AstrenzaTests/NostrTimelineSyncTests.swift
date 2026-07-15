@@ -259,7 +259,7 @@ struct NostrTimelineSyncTests {
             packet: packet,
             startedAt: 20
         )
-        store.testingHandleFeedSyncRequestStarted(attempt)
+        await store.testingHandleFeedSyncRequestStarted(attempt)
         await store.testingHandleBackwardEvent(
             relayURL: attempt.relayURL,
             subscriptionID: packet.subscriptionID,
@@ -366,8 +366,8 @@ struct NostrTimelineSyncTests {
             packet: packet,
             startedAt: 30
         )
-        store.testingHandleFeedSyncRequestStarted(forwardAttempt)
-        store.testingHandleFeedSyncRequestStarted(attempt)
+        await store.testingHandleFeedSyncRequestStarted(forwardAttempt)
+        await store.testingHandleFeedSyncRequestStarted(attempt)
 
         try eventStore.replaceFeedProjection(revision2, memberships: [])
         store.testingActivateHomeFeed(account: account, definition: revision2, sourceAuthors: [newAuthor])

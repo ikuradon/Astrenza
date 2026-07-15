@@ -55,7 +55,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let timelineRepository: HomeTimelineRepository
-    private let runtimePacketCoordinator: HomeTimelineRuntimePacketCoordinator
+    private let runtimePacketWorkflow: HomeTimelineRuntimePacketWorkflow
     private let gapReconciliationApplicationCoordinator: HomeTimelineGapReconciliationApplicationCoordinator
     private let homeFeedProjection: HomeFeedProjectionController
     private let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
@@ -440,9 +440,12 @@ final class NostrHomeTimelineStore: ObservableObject {
             listProjectionCache: listProjectionCache,
             pendingEventBuffer: pendingEventBuffer
         )
-        self.runtimePacketCoordinator = HomeTimelineRuntimePacketCoordinator(
+        let runtimePacketCoordinator = HomeTimelineRuntimePacketCoordinator(
             feedSyncCoordinator: feedSyncCoordinator,
             relayStatusCoordinator: relayStatusCoordinator
+        )
+        self.runtimePacketWorkflow = HomeTimelineRuntimePacketWorkflow(
+            packetHandler: runtimePacketCoordinator
         )
         let remoteLoadCoordinator = HomeTimelineRemoteLoadCoordinator(
             loader: timelineLoader,
@@ -1477,26 +1480,31 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleRuntimePacket(_ packet: NostrRelayRuntimePacket) async {
-        let application = runtimePacketCoordinator.handle(
+        await runtimePacketWorkflow.handle(
             packet,
             context: runtimePacketContext(
                 isActive: activityCoordinator.snapshot.phase != .idle
-            )
+            ),
+            handlers: runtimePacketWorkflowHandlers()
         )
-        guard application.wasHandled else { return }
-        applyRuntimePacketState(application)
-        switch application.action {
-        case .event(let relayURL, let subscriptionID, let event):
-            await handleRuntimeEvent(
-                relayURL: relayURL,
-                subscriptionID: subscriptionID,
-                event: event
-            )
-        case .backwardCompleted(let completion):
-            handleBackwardCompletion(completion)
-        case nil:
-            break
-        }
+    }
+
+    private func runtimePacketWorkflowHandlers() -> HomeTimelineRuntimePacketHandlers {
+        HomeTimelineRuntimePacketHandlers(
+            applyState: { [weak self] application in
+                self?.applyRuntimePacketState(application)
+            },
+            handleEvent: { [weak self] relayURL, subscriptionID, event in
+                await self?.handleRuntimeEvent(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID,
+                    event: event
+                )
+            },
+            handleBackwardCompletion: { [weak self] completion in
+                self?.handleBackwardCompletion(completion)
+            }
+        )
     }
 
     private func runtimePacketContext(isActive: Bool) -> HomeTimelineRuntimePacketContext {
@@ -2002,12 +2010,12 @@ extension NostrHomeTimelineStore {
         )
     }
 
-    func testingHandleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) {
-        let application = runtimePacketCoordinator.handle(
+    func testingHandleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) async {
+        await runtimePacketWorkflow.handle(
             .requestStarted(attempt),
-            context: runtimePacketContext(isActive: true)
+            context: runtimePacketContext(isActive: true),
+            handlers: runtimePacketWorkflowHandlers()
         )
-        applyRuntimePacketState(application)
     }
 
     func testingHandleBackwardEvent(
