@@ -19,6 +19,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeInteractionWorkflow:
         HomeTimelineRuntimeInteractionWorkflow
+    private let runtimeContextProjector =
+        HomeTimelineRuntimeContextProjector()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -720,12 +722,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func runtimePacketContext(
         isActive: Bool? = nil
     ) -> HomeTimelineRuntimePacketContext {
-        HomeTimelineRuntimePacketContext(
-            isActive: isActive ?? (
-                activityInteractionWorkflow.state.phase != .idle
-            ),
-            accountID: account?.pubkey,
-            resolvedRelays: resolvedRelays,
+        runtimeContextProjector.packetContext(
+            from: runtimeStoreSnapshot(),
+            isActive: isActive,
             isCurrentFeedContext: { [weak self] context in
                 self?.isCurrentHomeFeedContext(context) == true
             }
@@ -742,7 +741,11 @@ final class NostrHomeTimelineStore: ObservableObject {
                         self?.runtimePacketContext(isActive: isActive)
                     },
                     isAccountCurrent: { [weak self] accountID in
-                        self?.account?.pubkey == accountID
+                        guard let self else { return false }
+                        return runtimeContextProjector.isAccountCurrent(
+                            accountID,
+                            in: runtimeStoreSnapshot()
+                        )
                     }
                 ),
                 runtimeApplication: runtimeApplicationEffects(),
@@ -758,41 +761,51 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func runtimeInteractionState(
     ) -> HomeTimelineRuntimeInteractionState {
-        HomeTimelineRuntimeInteractionState(
+        runtimeContextProjector.interactionState(
+            from: runtimeStoreSnapshot()
+        )
+    }
+
+    private func runtimeStoreSnapshot(
+    ) -> HomeTimelineRuntimeStoreSnapshot {
+        HomeTimelineRuntimeStoreSnapshot(
             account: account,
             resolvedRelays: resolvedRelays,
             bootstrapRelayURLs: remoteLoadCoordinator.bootstrapRelays,
             policy: syncPolicy,
             hasRelayRuntime: relayRuntime != nil,
             isTerminating:
-                accountResetInteractionWorkflow.isRuntimeTerminating
+                accountResetInteractionWorkflow.isRuntimeTerminating,
+            isRuntimeActive:
+                activityInteractionWorkflow.state.phase != .idle,
+            isRealtime: activityInteractionWorkflow.state.isRealtime,
+            hasRestoreProjectionAnchor:
+                restoreProjectionAnchorEventID != nil,
+            isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+            hasPendingEvents:
+                viewportInteractionWorkflow.hasBufferedEvents
         )
     }
 
     private func runtimeEventInteractionContext(
     ) -> HomeTimelineRuntimeEventContext {
         HomeTimelineRuntimeEventContext(
-            state: HomeTimelineRuntimeEventInteractionState(
-                account: account,
-                resolvedRelays: resolvedRelays,
-                hasRelayRuntime: relayRuntime != nil,
-                receivedWhileRealtime:
-                    activityInteractionWorkflow.state.isRealtime
+            state: runtimeContextProjector.eventState(
+                from: runtimeStoreSnapshot()
             ),
             effects: HomeTimelineRuntimeEventStoreEffects(
                 environment: HomeTimelineRuntimeEventEnvironment(
                     presentationState: { [self] receivedWhileRealtime in
-                        HomeTimelineRuntimeEventPresentationState(
-                            receivedWhileRealtime: receivedWhileRealtime,
-                            hasRestoreProjectionAnchor:
-                                restoreProjectionAnchorEventID != nil,
-                            isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-                            hasPendingEvents:
-                                viewportInteractionWorkflow.hasBufferedEvents
+                        runtimeContextProjector.eventPresentationState(
+                            from: runtimeStoreSnapshot(),
+                            receivedWhileRealtime: receivedWhileRealtime
                         )
                     },
                     isAccountCurrent: { [self] accountID in
-                        account?.pubkey == accountID
+                        runtimeContextProjector.isAccountCurrent(
+                            accountID,
+                            in: runtimeStoreSnapshot()
+                        )
                     }
                 ),
                 runtimeApplication: runtimeApplicationEffects(),
@@ -849,9 +862,8 @@ private extension NostrHomeTimelineStore {
     }
 
     private func runtimeDependencyState() -> HomeTimelineRuntimeDependencyState {
-        HomeTimelineRuntimeDependencyState(
-            account: account,
-            hasRelayRuntime: relayRuntime != nil
+        runtimeContextProjector.dependencyState(
+            from: runtimeStoreSnapshot()
         )
     }
 

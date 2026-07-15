@@ -112,6 +112,92 @@ struct HomeTimelineRuntimeRelayPlanner: Sendable {
     }
 }
 
+struct HomeTimelineRuntimeStoreSnapshot: Equatable, Sendable {
+    let account: NostrAccount?
+    let resolvedRelays: [String]
+    let bootstrapRelayURLs: [String]
+    let policy: NostrSyncPolicy
+    let hasRelayRuntime: Bool
+    let isTerminating: Bool
+    let isRuntimeActive: Bool
+    let isRealtime: Bool
+    let hasRestoreProjectionAnchor: Bool
+    let isTimelineAtNewestWindow: Bool
+    let hasPendingEvents: Bool
+}
+
+@MainActor
+struct HomeTimelineRuntimeContextProjector {
+    func interactionState(
+        from snapshot: HomeTimelineRuntimeStoreSnapshot
+    ) -> HomeTimelineRuntimeInteractionState {
+        HomeTimelineRuntimeInteractionState(
+            account: snapshot.account,
+            resolvedRelays: snapshot.resolvedRelays,
+            bootstrapRelayURLs: snapshot.bootstrapRelayURLs,
+            policy: snapshot.policy,
+            hasRelayRuntime: snapshot.hasRelayRuntime,
+            isTerminating: snapshot.isTerminating
+        )
+    }
+
+    func packetContext(
+        from snapshot: HomeTimelineRuntimeStoreSnapshot,
+        isActive: Bool?,
+        isCurrentFeedContext: @escaping @MainActor (
+            HomeFeedRuntimeContext
+        ) -> Bool
+    ) -> HomeTimelineRuntimePacketContext {
+        HomeTimelineRuntimePacketContext(
+            isActive: isActive ?? snapshot.isRuntimeActive,
+            accountID: snapshot.account?.pubkey,
+            resolvedRelays: snapshot.resolvedRelays,
+            isCurrentFeedContext: isCurrentFeedContext
+        )
+    }
+
+    func eventState(
+        from snapshot: HomeTimelineRuntimeStoreSnapshot
+    ) -> HomeTimelineRuntimeEventInteractionState {
+        HomeTimelineRuntimeEventInteractionState(
+            account: snapshot.account,
+            resolvedRelays: snapshot.resolvedRelays,
+            hasRelayRuntime: snapshot.hasRelayRuntime,
+            receivedWhileRealtime: snapshot.isRealtime
+        )
+    }
+
+    func eventPresentationState(
+        from snapshot: HomeTimelineRuntimeStoreSnapshot,
+        receivedWhileRealtime: Bool
+    ) -> HomeTimelineRuntimeEventPresentationState {
+        HomeTimelineRuntimeEventPresentationState(
+            receivedWhileRealtime: receivedWhileRealtime,
+            hasRestoreProjectionAnchor:
+                snapshot.hasRestoreProjectionAnchor,
+            isTimelineAtNewestWindow:
+                snapshot.isTimelineAtNewestWindow,
+            hasPendingEvents: snapshot.hasPendingEvents
+        )
+    }
+
+    func dependencyState(
+        from snapshot: HomeTimelineRuntimeStoreSnapshot
+    ) -> HomeTimelineRuntimeDependencyState {
+        HomeTimelineRuntimeDependencyState(
+            account: snapshot.account,
+            hasRelayRuntime: snapshot.hasRelayRuntime
+        )
+    }
+
+    func isAccountCurrent(
+        _ accountID: String,
+        in snapshot: HomeTimelineRuntimeStoreSnapshot
+    ) -> Bool {
+        snapshot.account?.pubkey == accountID
+    }
+}
+
 struct HomeTimelineRuntimeStoreEnvironment: Sendable {
     typealias PacketContextProvider = @MainActor @Sendable (
         _ isActive: Bool?
