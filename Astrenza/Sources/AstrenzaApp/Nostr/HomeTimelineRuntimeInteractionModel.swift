@@ -124,6 +124,22 @@ struct HomeTimelineRuntimeStoreSnapshot: Equatable, Sendable {
     let hasRestoreProjectionAnchor: Bool
     let isTimelineAtNewestWindow: Bool
     let hasPendingEvents: Bool
+
+    static var empty: Self {
+        HomeTimelineRuntimeStoreSnapshot(
+            account: nil,
+            resolvedRelays: [],
+            bootstrapRelayURLs: [],
+            policy: .default(),
+            hasRelayRuntime: false,
+            isTerminating: false,
+            isRuntimeActive: false,
+            isRealtime: false,
+            hasRestoreProjectionAnchor: false,
+            isTimelineAtNewestWindow: false,
+            hasPendingEvents: false
+        )
+    }
 }
 
 @MainActor

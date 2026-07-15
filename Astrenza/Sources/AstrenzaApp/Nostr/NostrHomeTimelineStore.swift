@@ -19,8 +19,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeInteractionWorkflow:
         HomeTimelineRuntimeInteractionWorkflow
-    private let runtimeContextProjector =
-        HomeTimelineRuntimeContextProjector()
     private let stateContextProjector =
         HomeTimelineStateContextProjector()
     private let storeApplicationDispatcher =
@@ -79,6 +77,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         stateInteractionWorkflow.runtimeApplicationEffects(
             context: stateContextFactory.context()
         )
+    private lazy var runtimeContextFactory =
+        makeRuntimeContextFactory()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -695,7 +695,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func startRuntimeSession() {
         runtimeInteractionWorkflow.startSession(
-            context: runtimeInteractionContext()
+            context: runtimeContextFactory.interactionContext()
         )
     }
 
@@ -703,7 +703,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let provisionalRelays = runtimeInteractionWorkflow
             .provisionalBootstrapRelayURLs(
                 account: account,
-                state: runtimeInteractionState()
+                state: runtimeContextFactory.interactionState()
             )
         else { return }
         applyContentSnapshot(
@@ -718,54 +718,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await runtimeInteractionWorkflow.configure(
             account: account,
             forceInstall: forceInstall,
-            context: runtimeInteractionContext()
-        )
-    }
-
-    private func runtimePacketContext(
-        isActive: Bool? = nil
-    ) -> HomeTimelineRuntimePacketContext {
-        runtimeContextProjector.packetContext(
-            from: runtimeStoreSnapshot(),
-            isActive: isActive,
-            isCurrentFeedContext: { [weak self] context in
-                self?.isCurrentHomeFeedContext(context) == true
-            }
-        )
-    }
-
-    private func runtimeInteractionContext(
-    ) -> HomeTimelineRuntimeInteractionContext {
-        HomeTimelineRuntimeInteractionContext(
-            state: runtimeInteractionState(),
-            effects: HomeTimelineRuntimeInteractionEffects(
-                environment: HomeTimelineRuntimeStoreEnvironment(
-                    packetContext: { [weak self] isActive in
-                        self?.runtimePacketContext(isActive: isActive)
-                    },
-                    isAccountCurrent: { [weak self] accountID in
-                        guard let self else { return false }
-                        return runtimeContextProjector.isAccountCurrent(
-                            accountID,
-                            in: runtimeStoreSnapshot()
-                        )
-                    }
-                ),
-                runtimeApplication: runtimeApplicationEffects,
-                apply: { [weak self] application in
-                    self?.dispatchStoreApplication(application)
-                },
-                perform: { [weak self] application in
-                    await self?.performStoreApplication(application)
-                }
-            )
-        )
-    }
-
-    private func runtimeInteractionState(
-    ) -> HomeTimelineRuntimeInteractionState {
-        runtimeContextProjector.interactionState(
-            from: runtimeStoreSnapshot()
+            context: runtimeContextFactory.interactionContext()
         )
     }
 
@@ -787,35 +740,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             isTimelineAtNewestWindow: isTimelineAtNewestWindow,
             hasPendingEvents:
                 viewportInteractionWorkflow.hasBufferedEvents
-        )
-    }
-
-    private func runtimeEventInteractionContext(
-    ) -> HomeTimelineRuntimeEventContext {
-        HomeTimelineRuntimeEventContext(
-            state: runtimeContextProjector.eventState(
-                from: runtimeStoreSnapshot()
-            ),
-            effects: HomeTimelineRuntimeEventStoreEffects(
-                environment: HomeTimelineRuntimeEventEnvironment(
-                    presentationState: { [self] receivedWhileRealtime in
-                        runtimeContextProjector.eventPresentationState(
-                            from: runtimeStoreSnapshot(),
-                            receivedWhileRealtime: receivedWhileRealtime
-                        )
-                    },
-                    isAccountCurrent: { [self] accountID in
-                        runtimeContextProjector.isAccountCurrent(
-                            accountID,
-                            in: runtimeStoreSnapshot()
-                        )
-                    }
-                ),
-                runtimeApplication: runtimeApplicationEffects,
-                apply: { [weak self] application in
-                    self?.dispatchStoreApplication(application)
-                }
-            )
         )
     }
 
@@ -993,14 +917,12 @@ private extension NostrHomeTimelineStore {
             relayURL: relayURL,
             subscriptionID: subscriptionID,
             event: event,
-            context: runtimeEventInteractionContext()
+            context: runtimeContextFactory.eventContext()
         )
     }
 
     private func runtimeDependencyState() -> HomeTimelineRuntimeDependencyState {
-        runtimeContextProjector.dependencyState(
-            from: runtimeStoreSnapshot()
-        )
+        runtimeContextFactory.dependencyState()
     }
 
     private func stateContextProjection() -> HomeTimelineStateContextProjection {
@@ -1141,6 +1063,26 @@ extension NostrHomeTimelineStore {
 }
 
 private extension NostrHomeTimelineStore {
+    func makeRuntimeContextFactory() -> HomeRuntimeContextFactory {
+        HomeRuntimeContextFactory(
+            environment: HomeRuntimeContextEnvironment(
+                snapshot: { [weak self] in
+                    self?.runtimeStoreSnapshot()
+                },
+                isCurrentFeedContext: { [weak self] context in
+                    self?.isCurrentHomeFeedContext(context) == true
+                },
+                runtimeApplication: runtimeApplicationEffects,
+                apply: { [weak self] application in
+                    self?.dispatchStoreApplication(application)
+                },
+                perform: { [weak self] application in
+                    await self?.performStoreApplication(application)
+                }
+            )
+        )
+    }
+
     func makeStateContextFactory() -> HomeStateContextFactory {
         HomeStateContextFactory(
             environment: HomeStateContextEnvironment(
@@ -1836,7 +1778,7 @@ extension NostrHomeTimelineStore {
         await runtimeInteractionWorkflow.handlePacket(
             .requestStarted(attempt),
             isActive: true,
-            context: runtimeInteractionContext()
+            context: runtimeContextFactory.interactionContext()
         )
     }
 
