@@ -11,9 +11,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishedPresentationState()
     @Published private var publishedActivityState =
         HomeTimelinePublishedActivityState()
-    @Published private(set) var resolvedRelays: [String] = []
-    @Published private(set) var followedPubkeys: [String] = []
-    @Published private(set) var hasMoreOlder = true
+    @Published private var publishedContentState =
+        HomeTimelinePublishedContentState()
     @Published private(set) var relayStatusRevision = 0
     @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
     @Published private(set) var relayStatusCounts: (connected: Int, planned: Int) = (connected: 0, planned: 1)
@@ -65,46 +64,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         syncPolicy
     }
 
-    var phase: Phase {
-        publishedActivityState.phase
-    }
-
-    var isRefreshing: Bool {
-        publishedActivityState.isRefreshing
-    }
-
-    var isLoadingOlder: Bool {
-        publishedActivityState.isLoadingOlder
-    }
-
-    var isHomeTimelineRealtime: Bool {
-        publishedActivityState.isRealtime
-    }
-
-    var entries: [TimelineFeedEntry] {
-        publishedPresentationState.entries
-    }
-
-    var filterStatus: TimelineFilterStatus {
-        publishedPresentationState.filterStatus
-    }
-
-    var materializedUnreadCount: Int {
-        publishedPresentationState.materializedUnreadCount
-    }
-
-    var visibleUnreadBadgeCount: Int {
-        publishedPresentationState.visibleUnreadBadgeCount
-    }
-
-    var resolvedContentRevision: Int {
-        publishedPresentationState.resolvedContentRevision
-    }
-
-    var realtimeFollowSourceRevision: Int? {
-        publishedPresentationState.realtimeFollowSourceRevision
-    }
-
     private var noteEvents: [NostrEvent] {
         contentCoordinator.noteEvents
     }
@@ -140,15 +99,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
-        if resolvedRelays != snapshot.resolvedRelays {
-            resolvedRelays = snapshot.resolvedRelays
-        }
-        if followedPubkeys != snapshot.followedPubkeys {
-            followedPubkeys = snapshot.followedPubkeys
-        }
-        if hasMoreOlder != snapshot.hasMoreOlder {
-            hasMoreOlder = snapshot.hasMoreOlder
-        }
+        guard let next = publishedContentState.applying(snapshot) else { return }
+        publishedContentState = next
     }
 
     private func applyActivityTransition(
@@ -1569,10 +1521,68 @@ final class NostrHomeTimelineStore: ObservableObject {
 
 }
 
+extension NostrHomeTimelineStore {
+    var phase: Phase {
+        publishedActivityState.phase
+    }
+
+    var isRefreshing: Bool {
+        publishedActivityState.isRefreshing
+    }
+
+    var isLoadingOlder: Bool {
+        publishedActivityState.isLoadingOlder
+    }
+
+    var isHomeTimelineRealtime: Bool {
+        publishedActivityState.isRealtime
+    }
+
+    var resolvedRelays: [String] {
+        publishedContentState.resolvedRelays
+    }
+
+    var followedPubkeys: [String] {
+        publishedContentState.followedPubkeys
+    }
+
+    var hasMoreOlder: Bool {
+        publishedContentState.hasMoreOlder
+    }
+
+    var entries: [TimelineFeedEntry] {
+        publishedPresentationState.entries
+    }
+
+    var filterStatus: TimelineFilterStatus {
+        publishedPresentationState.filterStatus
+    }
+
+    var materializedUnreadCount: Int {
+        publishedPresentationState.materializedUnreadCount
+    }
+
+    var visibleUnreadBadgeCount: Int {
+        publishedPresentationState.visibleUnreadBadgeCount
+    }
+
+    var resolvedContentRevision: Int {
+        publishedPresentationState.resolvedContentRevision
+    }
+
+    var realtimeFollowSourceRevision: Int? {
+        publishedPresentationState.realtimeFollowSourceRevision
+    }
+}
+
 #if DEBUG
 extension NostrHomeTimelineStore {
     func testingApplyActivityTransition(_ transition: HomeTimelineActivityTransition) {
         applyActivityTransition(transition)
+    }
+
+    func testingApplyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
+        applyContentSnapshot(snapshot)
     }
 
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
