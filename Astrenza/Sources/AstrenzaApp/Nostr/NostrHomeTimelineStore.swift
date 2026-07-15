@@ -71,6 +71,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeFeatureInteractionContextFactory()
     private lazy var accountContextFactory =
         makeAccountContextFactory()
+    private lazy var viewportContextFactory =
+        makeViewportContextFactory()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -233,7 +235,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
         viewportInteractionWorkflow.setRestoreProjectionAnchor(
             anchorEventID,
-            context: viewportInteractionContext()
+            context: viewportContextFactory.context()
         )
     }
 
@@ -246,97 +248,59 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func refresh() {
         viewportInteractionWorkflow.refresh(
-            viewportInteractionContext()
+            viewportContextFactory.context()
         )
     }
 
     func refreshLatest() async {
         await viewportInteractionWorkflow.refreshLatest(
-            viewportInteractionContext()
+            viewportContextFactory.context()
         )
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
         viewportInteractionWorkflow.setTimelineAtNewestWindow(
             isAtNewestWindow,
-            context: viewportInteractionContext()
+            context: viewportContextFactory.context()
         )
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
         viewportInteractionWorkflow.setTimelineScrollActive(
             isActive,
-            context: viewportInteractionContext()
+            context: viewportContextFactory.context()
         )
     }
 
     func dismissUnreadBadge() {
         viewportInteractionWorkflow.dismissUnreadBadge(
-            viewportInteractionContext()
+            viewportContextFactory.context()
         )
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
         viewportInteractionWorkflow.markMaterializedPostsRead(
             visiblePostIDs: visiblePostIDs,
-            context: viewportInteractionContext()
+            context: viewportContextFactory.context()
         )
     }
 
     func markNewestMaterializedWindowRead() {
         viewportInteractionWorkflow.markNewestMaterializedWindowRead(
-            viewportInteractionContext()
+            viewportContextFactory.context()
         )
     }
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
         viewportInteractionWorkflow.applyPendingNewEvents(
-            viewportInteractionContext()
+            viewportContextFactory.context()
         )
     }
 
     func loadOlder() {
         viewportInteractionWorkflow.loadOlder(
-            viewportInteractionContext()
-        )
-    }
-
-    private func viewportInteractionContext(
-    ) -> HomeTimelineViewportInteractionContext {
-        HomeTimelineViewportInteractionContext(
-            state: HomeTimelineViewportInteractionState(
-                presentation: HomeTimelinePresentationAppState(
-                    account: account,
-                    restoreProjectionAnchorEventID:
-                        restoreProjectionAnchorEventID
-                ),
-                pendingEvents: HomeTimelinePendingEventsState(
-                    account: account,
-                    hasPendingProjectionReload:
-                        presentationWorkflow.interactionState
-                            .hasPendingNewestProjectionReload
-                ),
-                pagination: HomeTimelinePaginationState(
-                    account: account,
-                    canBeginLoadingOlder:
-                        activityInteractionWorkflow.state
-                            .canBeginLoadingOlder,
-                    hasMoreOlder: hasMoreOlder,
-                    hasTimelineEvents: !noteEvents.isEmpty,
-                    hasResolvedRelays: !resolvedRelays.isEmpty,
-                    hasFollowedPubkeys: !followedPubkeys.isEmpty
-                )
-            ),
-            effects: HomeTimelineViewportInteractionEffects(
-                apply: { [weak self] application in
-                    self?.dispatchViewportApplication(application)
-                },
-                load: { [weak self] load in
-                    guard let self else { return }
-                    await performViewportApplication(load)
-                }
-            )
+            viewportContextFactory.context()
         )
     }
 
@@ -1333,6 +1297,41 @@ private extension NostrHomeTimelineStore {
         )
     }
 
+    func makeViewportContextFactory() -> HomeViewportContextFactory {
+        HomeViewportContextFactory(
+            environment: HomeViewportContextEnvironment(
+                snapshot: { [weak self] in
+                    self?.viewportStoreSnapshot()
+                },
+                effects: HomeTimelineViewportInteractionEffects(
+                    apply: { [weak self] application in
+                        self?.dispatchViewportApplication(application)
+                    },
+                    load: { [weak self] load in
+                        guard let self else { return }
+                        await performViewportApplication(load)
+                    }
+                )
+            )
+        )
+    }
+
+    func viewportStoreSnapshot() -> HomeViewportStoreSnapshot {
+        HomeViewportStoreSnapshot(
+            account: account,
+            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
+            hasPendingProjectionReload:
+                presentationWorkflow.interactionState
+                    .hasPendingNewestProjectionReload,
+            canBeginLoadingOlder:
+                activityInteractionWorkflow.state.canBeginLoadingOlder,
+            hasMoreOlder: hasMoreOlder,
+            hasTimelineEvents: !noteEvents.isEmpty,
+            hasResolvedRelays: !resolvedRelays.isEmpty,
+            hasFollowedPubkeys: !followedPubkeys.isEmpty
+        )
+    }
+
     func dispatchAccountApplication(
         _ action: HomeTimelineAccountResetStoreAction
     ) {
@@ -1475,7 +1474,7 @@ private extension NostrHomeTimelineStore {
     @discardableResult
     func clearPendingNewEvents() -> Bool {
         viewportInteractionWorkflow.clearPendingEvents(
-            viewportInteractionContext()
+            viewportContextFactory.context()
         )
     }
 
@@ -1760,7 +1759,7 @@ extension NostrHomeTimelineStore {
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
         viewportInteractionWorkflow.replacePendingEventIDs(
             ids,
-            context: viewportInteractionContext()
+            context: viewportContextFactory.context()
         )
     }
 

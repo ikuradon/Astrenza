@@ -41,7 +41,9 @@ struct HomeTimelineViewportInteractionEffects: Sendable {
 
 struct HomeTimelineViewportInteractionContext: Sendable {
     let state: HomeTimelineViewportInteractionState
-    let effects: HomeTimelineViewportInteractionEffects
+    let presentationEffects: HomeTimelinePresentationEffects
+    let pendingEventsEffects: HomeTimelinePendingEventsEffects
+    let paginationEffects: HomeTimelinePaginationEffects
 }
 
 @MainActor
@@ -71,14 +73,14 @@ final class HomeTimelineViewportInteractionWorkflow {
         presentation.setRestoreProjectionAnchor(
             anchorEventID,
             state: context.state.presentation,
-            effects: presentationEffects(for: context.effects)
+            effects: context.presentationEffects
         )
     }
 
     func refresh(_ context: HomeTimelineViewportInteractionContext) {
         pagination.refresh(
             context.state.pagination,
-            effects: paginationEffects(for: context.effects)
+            effects: context.paginationEffects
         )
     }
 
@@ -87,7 +89,7 @@ final class HomeTimelineViewportInteractionWorkflow {
     ) async {
         await pagination.refreshLatest(
             context.state.pagination,
-            effects: paginationEffects(for: context.effects)
+            effects: context.paginationEffects
         )
     }
 
@@ -98,7 +100,7 @@ final class HomeTimelineViewportInteractionWorkflow {
         presentation.setTimelineAtNewestWindow(
             isAtNewestWindow,
             state: context.state.presentation,
-            effects: presentationEffects(for: context.effects)
+            effects: context.presentationEffects
         )
     }
 
@@ -108,7 +110,7 @@ final class HomeTimelineViewportInteractionWorkflow {
     ) {
         presentation.setTimelineScrollActive(
             isActive,
-            effects: presentationEffects(for: context.effects)
+            effects: context.presentationEffects
         )
     }
 
@@ -116,7 +118,7 @@ final class HomeTimelineViewportInteractionWorkflow {
         _ context: HomeTimelineViewportInteractionContext
     ) {
         presentation.dismissUnreadBadge(
-            effects: presentationEffects(for: context.effects)
+            effects: context.presentationEffects
         )
     }
 
@@ -126,7 +128,7 @@ final class HomeTimelineViewportInteractionWorkflow {
     ) {
         presentation.markMaterializedPostsRead(
             visiblePostIDs: visiblePostIDs,
-            effects: presentationEffects(for: context.effects)
+            effects: context.presentationEffects
         )
     }
 
@@ -134,7 +136,7 @@ final class HomeTimelineViewportInteractionWorkflow {
         _ context: HomeTimelineViewportInteractionContext
     ) {
         presentation.markNewestMaterializedWindowRead(
-            effects: presentationEffects(for: context.effects)
+            effects: context.presentationEffects
         )
     }
 
@@ -144,7 +146,7 @@ final class HomeTimelineViewportInteractionWorkflow {
     ) -> Bool {
         pendingEvents.apply(
             context.state.pendingEvents,
-            effects: pendingEventsEffects(for: context.effects)
+            effects: context.pendingEventsEffects
         )
     }
 
@@ -153,82 +155,14 @@ final class HomeTimelineViewportInteractionWorkflow {
         _ context: HomeTimelineViewportInteractionContext
     ) -> Bool {
         pendingEvents.clear(
-            effects: pendingEventsEffects(for: context.effects)
+            effects: context.pendingEventsEffects
         )
     }
 
     func loadOlder(_ context: HomeTimelineViewportInteractionContext) {
         pagination.loadOlder(
             context.state.pagination,
-            effects: paginationEffects(for: context.effects)
-        )
-    }
-
-    private func presentationEffects(
-        for effects: HomeTimelineViewportInteractionEffects
-    ) -> HomeTimelinePresentationEffects {
-        HomeTimelinePresentationEffects(
-            applyProjectionViewportTransition: { transition in
-                effects.apply(.applyProjectionViewportTransition(transition))
-            },
-            reloadNewestProjectionWindow: { account in
-                effects.apply(.reloadNewestProjectionWindow(account))
-            },
-            materializeEntries: { allowsRealtimeFollow in
-                effects.apply(.materializeEntries(
-                    allowsRealtimeFollow: allowsRealtimeFollow
-                ))
-            },
-            applyRestoreProjectionAnchor: { account in
-                effects.apply(.applyRestoreProjectionAnchor(account))
-            },
-            applyPresentationTransition: { transition in
-                effects.apply(.applyPresentationTransition(transition))
-            },
-            scheduleReadStateSave: {
-                effects.apply(.scheduleReadStateSave)
-            }
-        )
-    }
-
-    private func pendingEventsEffects(
-        for effects: HomeTimelineViewportInteractionEffects
-    ) -> HomeTimelinePendingEventsEffects {
-        HomeTimelinePendingEventsEffects(
-            applyProjectionViewportTransition: { transition in
-                effects.apply(.applyProjectionViewportTransition(transition))
-            },
-            reloadNewestProjection: { account in
-                effects.apply(.reloadNewestProjectionWindow(account))
-            },
-            applyPendingEventCountPublication: { publication in
-                effects.apply(.applyPendingEventCountPublication(publication))
-            },
-            clearPendingProjectionReload: {
-                effects.apply(.clearPendingProjectionReload)
-            },
-            materializeEntries: {
-                effects.apply(.materializeEntries(allowsRealtimeFollow: false))
-            },
-            scheduleLinkPreviewResolution: {
-                effects.apply(.scheduleLinkPreviewResolution)
-            }
-        )
-    }
-
-    private func paginationEffects(
-        for effects: HomeTimelineViewportInteractionEffects
-    ) -> HomeTimelinePaginationEffects {
-        HomeTimelinePaginationEffects(
-            applyProjectionViewportTransition: { transition in
-                effects.apply(.applyProjectionViewportTransition(transition))
-            },
-            refreshLatest: { account, lifecycle in
-                await effects.load(.refreshLatest(account, lifecycle))
-            },
-            loadOlder: { account, lifecycle in
-                await effects.load(.loadOlder(account, lifecycle))
-            }
+            effects: context.paginationEffects
         )
     }
 }
@@ -241,7 +175,7 @@ extension HomeTimelineViewportInteractionWorkflow {
     ) {
         pendingEvents.replaceEventIDs(
             eventIDs,
-            effects: pendingEventsEffects(for: context.effects)
+            effects: context.pendingEventsEffects
         )
     }
 }

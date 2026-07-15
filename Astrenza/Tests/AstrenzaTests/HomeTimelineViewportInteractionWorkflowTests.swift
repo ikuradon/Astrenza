@@ -136,27 +136,25 @@ private struct ViewportInteractionFixture {
     }
 
     var context: HomeTimelineViewportInteractionContext {
-        HomeTimelineViewportInteractionContext(
-            state: HomeTimelineViewportInteractionState(
-                presentation: HomeTimelinePresentationAppState(
-                    account: account,
-                    restoreProjectionAnchorEventID: nil
-                ),
-                pendingEvents: HomeTimelinePendingEventsState(
-                    account: account,
-                    hasPendingProjectionReload: hasPendingProjectionReload
-                ),
-                pagination: HomeTimelinePaginationState(
-                    account: account,
-                    canBeginLoadingOlder: true,
-                    hasMoreOlder: true,
-                    hasTimelineEvents: true,
-                    hasResolvedRelays: true,
-                    hasFollowedPubkeys: true
-                )
-            ),
-            effects: applicationProbe.effects
+        HomeViewportContextFactory(
+            environment: HomeViewportContextEnvironment(
+                snapshot: { [self] in
+                    HomeViewportStoreSnapshot(
+                        account: account,
+                        restoreProjectionAnchorEventID: nil,
+                        hasPendingProjectionReload:
+                            hasPendingProjectionReload,
+                        canBeginLoadingOlder: true,
+                        hasMoreOlder: true,
+                        hasTimelineEvents: true,
+                        hasResolvedRelays: true,
+                        hasFollowedPubkeys: true
+                    )
+                },
+                effects: applicationProbe.effects
+            )
         )
+        .context()
     }
 }
 
