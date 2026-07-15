@@ -29,8 +29,9 @@ struct HomeTimelineRuntimeInteractionTests {
             .invalidateListEntries,
             .scheduleMaterialization,
             .setRealtime(false),
-            .recordSetupDiagnostic(fixture.setupDiagnostic)
+            .applyRelayStatusTransition(fixture.relayStatus.transition)
         ])
+        #expect(fixture.relayStatus.records == [fixture.setupDiagnosticRecord])
         #expect(fixture.probe.runtimeApplications == [
             .listProjectionInvalidation(5)
         ])
@@ -106,9 +107,10 @@ struct HomeTimelineRuntimeInteractionTests {
         #expect(fixture.events.presentationStates == [fixture.presentationState])
         #expect(fixture.events.accountValidity == [true])
         #expect(fixture.probe.applications == [
-            .recordEventDiagnostic(fixture.eventDiagnostic),
+            .applyRelayStatusTransition(fixture.relayStatus.transition),
             .scheduleLinkPreviewResolution
         ])
+        #expect(fixture.relayStatus.records == [fixture.eventDiagnosticRecord])
         #expect(remembered == fixture.events.replacementEvent)
         #expect(fixture.events.consultEventStoreValues == [false])
         try expectDependencyContexts(fixture)
@@ -210,4 +212,41 @@ private func expectDependencyContext(
     #expect(
         context.hasRelayRuntime == fixture.dependencyContext.hasRelayRuntime
     )
+}
+
+@MainActor
+private extension RuntimeInteractionFixture {
+    var setupDiagnosticRecord: HomeTimelineRelayStatusRecord {
+        relayStatusRecord(
+            relayURL: setupDiagnostic.relayURL,
+            subscriptionID: setupDiagnostic.subscriptionID,
+            message: setupDiagnostic.message
+        )
+    }
+
+    var eventDiagnosticRecord: HomeTimelineRelayStatusRecord {
+        relayStatusRecord(
+            relayURL: eventDiagnostic.relayURL,
+            subscriptionID: eventDiagnostic.subscriptionID,
+            message: eventDiagnostic.message
+        )
+    }
+
+    func relayStatusRecord(
+        relayURL: String,
+        subscriptionID: String?,
+        message: String
+    ) -> HomeTimelineRelayStatusRecord {
+        HomeTimelineRelayStatusRecord(
+            accountID: account.pubkey,
+            resolvedRelays: relayURLs,
+            relayURL: relayURL,
+            kind: .partialFailure,
+            subscriptionID: subscriptionID,
+            eventCount: 0,
+            newestCreatedAt: nil,
+            oldestCreatedAt: nil,
+            message: message
+        )
+    }
 }

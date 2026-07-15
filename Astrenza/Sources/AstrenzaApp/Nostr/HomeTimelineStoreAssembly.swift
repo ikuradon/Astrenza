@@ -167,7 +167,8 @@ enum HomeTimelineStoreAssembly {
                     packetRouter: graph.relayRuntime.runtimePacketWorkflow
                 ),
                 events: graph.runtimeEvents.runtimeEventWorkflow,
-                lifecycle: graph.coordination.lifecycleCoordinator
+                lifecycle: graph.coordination.lifecycleCoordinator,
+                relayStatus: graph.relayRuntime.relayStatusCoordinator
             ),
             gapBackfillInteractionWorkflow: makeGapBackfillInteraction(from: graph),
             backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow(

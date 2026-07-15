@@ -59,6 +59,34 @@ final class SyncInteractionRelayStatusSpy: HomeTimelineRelayStatusTracking {
 }
 
 @MainActor
+final class RelayStatusRecordingSpy: HomeTimelineRelayStatusRecording {
+    let transition: HomeTimelineRelayStatusTransition
+    private(set) var records: [HomeTimelineRelayStatusRecord] = []
+
+    init(
+        transition: HomeTimelineRelayStatusTransition =
+            HomeTimelineRelayStatusTransition(
+                snapshot: HomeTimelineRelayStatusSnapshot(
+                    runtimeStates: [:],
+                    connectedRelayCount: 0,
+                    plannedRelayCount: 1
+                ),
+                invalidatedRealtimeRelayURL: nil,
+                publishesStatusChange: true
+            )
+    ) {
+        self.transition = transition
+    }
+
+    func record(
+        _ record: HomeTimelineRelayStatusRecord
+    ) -> HomeTimelineRelayStatusTransition {
+        records.append(record)
+        return transition
+    }
+}
+
+@MainActor
 final class RelayStatusFeedSyncStub: HomeTimelineFeedSyncTracking {
     let isRealtime = false
     let activeRequestCount = 0

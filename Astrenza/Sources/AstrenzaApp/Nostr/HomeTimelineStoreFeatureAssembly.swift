@@ -140,7 +140,8 @@ extension HomeTimelineStoreAssembly {
         )
         return HomeTimelineStoreApplicationFeatures(
             stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow(
-                stateWorkflow: stateWorkflow
+                stateWorkflow: stateWorkflow,
+                relayStatus: relayRuntime.relayStatusCoordinator
             ),
             accountStartWorkflow: accountStartWorkflow,
             presentationWorkflow: presentationWorkflow,

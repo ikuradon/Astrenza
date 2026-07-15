@@ -63,106 +63,23 @@ protocol HomeTimelineRuntimeLifecycleTracking: AnyObject {
 extension HomeTimelineLifecycleCoordinator:
     HomeTimelineRuntimeLifecycleTracking {}
 
-struct HomeTimelineRuntimeInteractionState: Equatable, Sendable {
-    let account: NostrAccount?
-    let profileRelayURLs: [String]
-    let policy: NostrSyncPolicy
-    let hasRelayRuntime: Bool
-    let isTerminating: Bool
-}
-
-struct HomeTimelineRuntimeStoreEnvironment: Sendable {
-    typealias PacketContextProvider = @MainActor @Sendable (
-        _ isActive: Bool?
-    ) -> HomeTimelineRuntimePacketContext?
-    typealias AccountValidity = @MainActor @Sendable (
-        _ accountID: String
-    ) -> Bool
-
-    let packetContext: PacketContextProvider
-    let isAccountCurrent: AccountValidity
-}
-
-enum HomeTimelineRuntimeStoreAction: Equatable, Sendable {
-    case setRealtime(Bool)
-    case applyRelayStatusTransition(HomeTimelineRelayStatusTransition?)
-    case handleBackwardCompletion(NostrBackwardREQCompletion)
-    case invalidateListEntries
-    case scheduleMaterialization
-    case recordSetupDiagnostic(HomeTimelineRuntimeSetupDiagnostic)
-    case recordEventDiagnostic(HomeTimelineRuntimeEventDiagnostic)
-    case scheduleLinkPreviewResolution
-}
-
-enum HomeTimelineRuntimeStoreAsyncAction: Equatable, Sendable {
-    case handleEvent(
-        relayURL: String,
-        subscriptionID: String,
-        event: NostrEvent
-    )
-}
-
-struct HomeTimelineRuntimeInteractionEffects: Sendable {
-    typealias ApplicationEffect = @MainActor @Sendable (
-        _ application: HomeTimelineRuntimeStoreAction
-    ) -> Void
-    typealias AsyncApplicationEffect = @MainActor @Sendable (
-        _ application: HomeTimelineRuntimeStoreAsyncAction
-    ) async -> Void
-
-    let environment: HomeTimelineRuntimeStoreEnvironment
-    let runtimeApplication: HomeTimelineRuntimeApplicationEffects
-    let apply: ApplicationEffect
-    let perform: AsyncApplicationEffect
-}
-
-struct HomeTimelineRuntimeInteractionContext: Sendable {
-    let state: HomeTimelineRuntimeInteractionState
-    let effects: HomeTimelineRuntimeInteractionEffects
-}
-
-struct HomeTimelineRuntimeEventInteractionState: Equatable, Sendable {
-    let account: NostrAccount?
-    let hasRelayRuntime: Bool
-    let receivedWhileRealtime: Bool
-}
-
-struct HomeTimelineRuntimeEventEnvironment: Sendable {
-    let presentationState:
-        HomeTimelineRuntimeEventEffects.PresentationStateProvider
-    let isAccountCurrent: HomeTimelineRuntimeEventEffects.AccountValidity
-}
-
-struct HomeTimelineRuntimeEventStoreEffects: Sendable {
-    let environment: HomeTimelineRuntimeEventEnvironment
-    let runtimeApplication: HomeTimelineRuntimeApplicationEffects
-    let apply: HomeTimelineRuntimeInteractionEffects.ApplicationEffect
-}
-
-struct HomeTimelineRuntimeEventContext: Sendable {
-    let state: HomeTimelineRuntimeEventInteractionState
-    let effects: HomeTimelineRuntimeEventStoreEffects
-}
-
-struct HomeTimelineRuntimeDependencyState: Equatable, Sendable {
-    let account: NostrAccount?
-    let hasRelayRuntime: Bool
-}
-
 @MainActor
 final class HomeTimelineRuntimeInteractionWorkflow {
     private let runtime: any HomeTimelineRuntimeRouting
     private let events: any HomeTimelineRuntimeEventRouting
     private let lifecycle: any HomeTimelineRuntimeLifecycleTracking
+    private let relayStatus: any HomeTimelineRelayStatusRecording
 
     init(
         runtime: any HomeTimelineRuntimeRouting,
         events: any HomeTimelineRuntimeEventRouting,
-        lifecycle: any HomeTimelineRuntimeLifecycleTracking
+        lifecycle: any HomeTimelineRuntimeLifecycleTracking,
+        relayStatus: any HomeTimelineRelayStatusRecording
     ) {
         self.runtime = runtime
         self.events = events
         self.lifecycle = lifecycle
+        self.relayStatus = relayStatus
     }
 
     @discardableResult
@@ -195,7 +112,10 @@ final class HomeTimelineRuntimeInteractionWorkflow {
                 isTerminating: context.state.isTerminating,
                 forceInstall: forceInstall
             ),
-            effects: setupEffects(for: context.effects)
+            effects: setupEffects(
+                state: context.state,
+                for: context.effects
+            )
         )
     }
 
@@ -232,7 +152,10 @@ final class HomeTimelineRuntimeInteractionWorkflow {
                 hasRelayRuntime: context.state.hasRelayRuntime,
                 receivedWhileRealtime: context.state.receivedWhileRealtime
             ),
-            effects: eventEffects(for: context.effects)
+            effects: eventEffects(
+                state: context.state,
+                for: context.effects
+            )
         )
     }
 
@@ -344,6 +267,7 @@ final class HomeTimelineRuntimeInteractionWorkflow {
     }
 
     private func setupEffects(
+        state: HomeTimelineRuntimeInteractionState,
         for effects: HomeTimelineRuntimeInteractionEffects
     ) -> HomeTimelineRuntimeSetupEffects {
         HomeTimelineRuntimeSetupEffects(
@@ -351,12 +275,19 @@ final class HomeTimelineRuntimeInteractionWorkflow {
                 effects.apply(.setRealtime(isRealtime))
             },
             recordDiagnostic: { diagnostic in
-                effects.apply(.recordSetupDiagnostic(diagnostic))
+                effects.apply(.applyRelayStatusTransition(
+                    self.relayStatus.recordPartialFailure(
+                        diagnostic,
+                        accountID: state.account?.pubkey,
+                        resolvedRelays: state.resolvedRelays
+                    )
+                ))
             }
         )
     }
 
     private func eventEffects(
+        state: HomeTimelineRuntimeEventInteractionState,
         for effects: HomeTimelineRuntimeEventStoreEffects
     ) -> HomeTimelineRuntimeEventEffects {
         HomeTimelineRuntimeEventEffects(
@@ -364,7 +295,13 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             isAccountCurrent: effects.environment.isAccountCurrent,
             application: effects.runtimeApplication,
             recordDiagnostic: { diagnostic in
-                effects.apply(.recordEventDiagnostic(diagnostic))
+                effects.apply(.applyRelayStatusTransition(
+                    self.relayStatus.recordPartialFailure(
+                        diagnostic,
+                        accountID: state.account?.pubkey,
+                        resolvedRelays: state.resolvedRelays
+                    )
+                ))
             },
             scheduleLinkPreviewResolution: {
                 effects.apply(.scheduleLinkPreviewResolution)

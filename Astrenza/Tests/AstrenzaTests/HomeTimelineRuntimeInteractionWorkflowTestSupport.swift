@@ -232,6 +232,7 @@ struct RuntimeInteractionFixture {
     let runtime: RuntimeInteractionRoutingSpy
     let events: RuntimeInteractionEventRoutingSpy
     let lifecycle: RuntimeInteractionLifecycleSpy
+    let relayStatus: RelayStatusRecordingSpy
     let probe = RuntimeInteractionProbe()
     let workflow: HomeTimelineRuntimeInteractionWorkflow
 
@@ -243,16 +244,19 @@ struct RuntimeInteractionFixture {
         let lifecycle = RuntimeInteractionLifecycleSpy(
             currentToken: hasActiveLifecycle ? lifecycleToken : nil
         )
+        let relayStatus = RelayStatusRecordingSpy()
         runtime.event = event
         runtime.completion = completion
         runtime.setupDiagnostic = setupDiagnostic
         self.runtime = runtime
         self.events = events
         self.lifecycle = lifecycle
+        self.relayStatus = relayStatus
         self.workflow = HomeTimelineRuntimeInteractionWorkflow(
             runtime: runtime,
             events: events,
-            lifecycle: lifecycle
+            lifecycle: lifecycle,
+            relayStatus: relayStatus
         )
     }
 
@@ -276,6 +280,7 @@ struct RuntimeInteractionFixture {
             state: HomeTimelineRuntimeInteractionState(
                 account: account,
                 profileRelayURLs: relayURLs,
+                resolvedRelays: relayURLs,
                 policy: policy,
                 hasRelayRuntime: true,
                 isTerminating: false
@@ -311,6 +316,7 @@ struct RuntimeInteractionFixture {
         HomeTimelineRuntimeEventContext(
             state: HomeTimelineRuntimeEventInteractionState(
                 account: account,
+                resolvedRelays: relayURLs,
                 hasRelayRuntime: true,
                 receivedWhileRealtime: true
             ),

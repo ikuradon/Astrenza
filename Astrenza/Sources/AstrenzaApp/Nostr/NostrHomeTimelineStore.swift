@@ -645,13 +645,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         case .materializeEntries:
             materializeEntries()
-        case .recordRuntimeDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: nil,
-                message: diagnostic.message
-            )
+        case .applyRelayStatusTransition(let transition):
+            applyRelayStatusTransition(transition)
         }
     }
 
@@ -784,17 +779,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func recordRuntimeSetupDiagnostic(
-        _ diagnostic: HomeTimelineRuntimeSetupDiagnostic
-    ) {
-        recordRuntimeSyncEvent(
-            relayURL: diagnostic.relayURL,
-            kind: .partialFailure,
-            subscriptionID: diagnostic.subscriptionID,
-            message: diagnostic.message
-        )
-    }
-
     private func runtimeRelayURLs(account: NostrAccount) -> [String] {
         Array(
             normalizedRelayURLs(
@@ -826,6 +810,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             state: HomeTimelineRuntimeInteractionState(
                 account: account,
                 profileRelayURLs: account.map(runtimeRelayURLs(account:)) ?? [],
+                resolvedRelays: resolvedRelays,
                 policy: syncPolicy,
                 hasRelayRuntime: relayRuntime != nil,
                 isTerminating:
@@ -856,6 +841,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineRuntimeEventContext(
             state: HomeTimelineRuntimeEventInteractionState(
                 account: account,
+                resolvedRelays: resolvedRelays,
                 hasRelayRuntime: relayRuntime != nil,
                 receivedWhileRealtime:
                     activityInteractionWorkflow.state.isRealtime
@@ -898,15 +884,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             invalidateListEntries()
         case .scheduleMaterialization:
             scheduleMaterializeEntries()
-        case .recordSetupDiagnostic(let diagnostic):
-            recordRuntimeSetupDiagnostic(diagnostic)
-        case .recordEventDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
         case .scheduleLinkPreviewResolution:
             scheduleLinkPreviewResolution()
         }

@@ -53,7 +53,7 @@ enum HomeTimelineStateInteractionApplication {
         allowsRealtimeFollow: Bool?
     )
     case materializeEntries
-    case recordRuntimeDiagnostic(HomeTimelineRuntimeApplicationDiagnostic)
+    case applyRelayStatusTransition(HomeTimelineRelayStatusTransition)
 }
 
 struct HomeTimelineStateInteractionEffects: Sendable {
@@ -72,9 +72,14 @@ struct HomeTimelineStateInteractionContext: Sendable {
 @MainActor
 final class HomeTimelineStateInteractionWorkflow {
     private let stateWorkflow: any HomeTimelineStateRouting
+    private let relayStatus: any HomeTimelineRelayStatusRecording
 
-    init(stateWorkflow: any HomeTimelineStateRouting) {
+    init(
+        stateWorkflow: any HomeTimelineStateRouting,
+        relayStatus: any HomeTimelineRelayStatusRecording
+    ) {
         self.stateWorkflow = stateWorkflow
+        self.relayStatus = relayStatus
     }
 
     @discardableResult
@@ -171,8 +176,25 @@ final class HomeTimelineStateInteractionWorkflow {
                 effects.apply(.materializeEntries)
             },
             recordDiagnostic: { diagnostic in
-                effects.apply(.recordRuntimeDiagnostic(diagnostic))
+                self.recordRuntimeDiagnostic(
+                    diagnostic,
+                    effects: effects
+                )
             }
         )
+    }
+
+    private func recordRuntimeDiagnostic(
+        _ diagnostic: HomeTimelineRuntimeApplicationDiagnostic,
+        effects: HomeTimelineStateInteractionEffects
+    ) {
+        guard let state = effects.environment.runtimeApplicationState(),
+              let transition = relayStatus.recordPartialFailure(
+                  diagnostic,
+                  accountID: state.account?.pubkey,
+                  resolvedRelays: state.resolvedRelays
+              )
+        else { return }
+        effects.apply(.applyRelayStatusTransition(transition))
     }
 }

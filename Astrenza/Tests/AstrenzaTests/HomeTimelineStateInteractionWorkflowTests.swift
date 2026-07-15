@@ -86,7 +86,20 @@ struct HomeTimelineStateInteractionTests {
                 allowsRealtimeFollow: true
             ),
             .materializeEntries,
-            .diagnostic(fixture.router.diagnostic)
+            .relayStatusTransition(fixture.relayStatus.transition)
+        ])
+        #expect(fixture.relayStatus.records == [
+            HomeTimelineRelayStatusRecord(
+                accountID: fixture.account.pubkey,
+                resolvedRelays: ["wss://relay.example"],
+                relayURL: fixture.router.diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: nil,
+                eventCount: 0,
+                newestCreatedAt: nil,
+                oldestCreatedAt: nil,
+                message: fixture.router.diagnostic.message
+            )
         ])
     }
 }
@@ -246,7 +259,7 @@ private final class StateInteractionProbe {
             allowsRealtimeFollow: Bool?
         )
         case materializeEntries
-        case diagnostic(HomeTimelineRuntimeApplicationDiagnostic)
+        case relayStatusTransition(HomeTimelineRelayStatusTransition)
     }
 
     var persistenceState = HomeTimelinePersistenceState(
@@ -269,10 +282,14 @@ private struct StateInteractionFixture {
     )
     let router = StateInteractionRouterSpy()
     let probe = StateInteractionProbe()
+    let relayStatus = RelayStatusRecordingSpy()
     let workflow: HomeTimelineStateInteractionWorkflow
 
     init() {
-        workflow = HomeTimelineStateInteractionWorkflow(stateWorkflow: router)
+        workflow = HomeTimelineStateInteractionWorkflow(
+            stateWorkflow: router,
+            relayStatus: relayStatus
+        )
     }
 
     var context: HomeTimelineStateInteractionContext {
@@ -362,8 +379,8 @@ private extension StateInteractionProbe {
             ))
         case .materializeEntries:
             events.append(.materializeEntries)
-        case .recordRuntimeDiagnostic(let diagnostic):
-            events.append(.diagnostic(diagnostic))
+        case .applyRelayStatusTransition(let transition):
+            events.append(.relayStatusTransition(transition))
         }
     }
 }

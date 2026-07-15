@@ -44,29 +44,13 @@ protocol HomeTimelineBackwardRequestTracking: AnyObject {
 extension HomeTimelineBackwardRequestRegistry:
     HomeTimelineBackwardRequestTracking {}
 
-struct HomeTimelineRelayStatusRecord: Equatable, Sendable {
-    let accountID: String
-    let resolvedRelays: [String]
-    let relayURL: String
-    let kind: NostrRelaySyncEventKind
-    let subscriptionID: String?
-    let eventCount: Int
-    let newestCreatedAt: Int?
-    let oldestCreatedAt: Int?
-    let message: String?
-}
-
 @MainActor
-protocol HomeTimelineRelayStatusTracking: AnyObject {
+protocol HomeTimelineRelayStatusTracking: HomeTimelineRelayStatusRecording {
     var events: [NostrRelaySyncEventRecord] { get }
 
     func snapshot(
         resolvedRelays: [String]
     ) -> HomeTimelineRelayStatusSnapshot
-
-    func record(
-        _ record: HomeTimelineRelayStatusRecord
-    ) -> HomeTimelineRelayStatusTransition
 }
 
 extension HomeTimelineRelayStatusCoordinator: HomeTimelineRelayStatusTracking {
