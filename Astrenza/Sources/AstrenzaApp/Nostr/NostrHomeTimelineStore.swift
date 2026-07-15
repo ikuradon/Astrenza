@@ -35,7 +35,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     private let refreshWorkflow: HomeTimelineRefreshWorkflow
     private let olderPageWorkflow: HomeTimelineOlderPageWorkflow
-    private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
+    private let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
     private let listProjectionCache: HomeTimelineListProjectionCache
@@ -56,7 +56,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let timelineRepository: HomeTimelineRepository
     private let runtimePacketWorkflow: HomeTimelineRuntimePacketWorkflow
-    private let gapReconciliationApplicationCoordinator: HomeTimelineGapReconciliationApplicationCoordinator
     private let homeFeedProjection: HomeFeedProjectionController
     private let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     private let persistenceCoordinator: HomeTimelinePersistenceCoordinator
@@ -313,7 +312,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             sourcePacketInstaller: sourcePacketInstaller
         )
         self.dependencyCoordinator = dependencyCoordinator
-        self.backwardCompletionApplicationCoordinator =
+        let backwardCompletionApplicationCoordinator =
             HomeTimelineBackwardCompletionApplicationCoordinator(
                 backwardRequestRegistry: backwardRequestRegistry,
                 dependencyCoordinator: dependencyCoordinator,
@@ -362,7 +361,11 @@ final class NostrHomeTimelineStore: ObservableObject {
                 backwardRequestRegistry: backwardRequestRegistry,
                 lifecycleCoordinator: lifecycleCoordinator
             )
-        self.gapReconciliationApplicationCoordinator = gapReconciliationApplicationCoordinator
+        let backwardCompletionWorkflow = HomeTimelineBackwardCompletionWorkflow(
+            completionCoordinator: backwardCompletionApplicationCoordinator,
+            gapReconciliation: gapReconciliationApplicationCoordinator
+        )
+        self.backwardCompletionWorkflow = backwardCompletionWorkflow
         let runtimeEventApplicationCoordinator = HomeTimelineRuntimeEventApplicationCoordinator(
             contentCoordinator: contentCoordinator,
             dependencyCoordinator: dependencyCoordinator,
@@ -495,7 +498,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 },
                 flushRelayTraffic: relayStatusCoordinator.flushTraffic,
                 cancelLifecycle: lifecycleCoordinator.cancel,
-                cancelGapReconciliation: gapReconciliationApplicationCoordinator.cancel,
+                cancelGapReconciliation: backwardCompletionWorkflow.cancel,
                 cancelRuntimeEvents: runtimeSessionCoordinator.cancelRuntimeEvents,
                 resetLinkPreviews: linkPreviewCoordinator.reset,
                 resetPresentation: presentationCoordinator.reset,
@@ -1662,55 +1665,40 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        let commands = backwardCompletionApplicationCoordinator.handle(
-            completion,
-            accountID: account?.pubkey
+        backwardCompletionWorkflow.handle(
+            HomeTimelineBackwardCompletionInput(
+                completion: completion,
+                account: account
+            ),
+            effects: backwardCompletionEffects()
         )
-        for command in commands {
-            applyBackwardCompletionCommand(command)
-        }
     }
 
-    private func applyBackwardCompletionCommand(
-        _ command: HomeTimelineBackwardCompletionCommand
-    ) {
-        switch command {
-        case .applyContentSnapshot(let snapshot):
-            applyContentSnapshot(snapshot)
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: nil,
-                message: diagnostic.message
-            )
-        case .reloadProjection(let anchorEventID, let mergingWithCurrentWindow):
-            guard let account else { return }
-            reloadProjectionWindow(
-                account: account,
-                around: anchorEventID,
-                mergingWithCurrentWindow: mergingWithCurrentWindow
-            )
-            materializeEntries()
-            scheduleLinkPreviewResolution()
-        case .reconcileGap(let gap, let context):
-            guard let account else { return }
-            gapReconciliationApplicationCoordinator.start(
-                gap,
-                feedContext: context,
-                account: account,
-                handlers: gapReconciliationApplicationHandlers()
-            )
-        case .incrementRelayStatusRevision:
-            relayStatusRevision &+= 1
-        }
-    }
-
-    private func gapReconciliationApplicationHandlers()
-        -> HomeTimelineGapReconciliationApplicationHandlers {
-        HomeTimelineGapReconciliationApplicationHandlers(
-            perform: { [weak self] command in
-                self?.applyGapReconciliationApplicationCommand(command)
+    private func backwardCompletionEffects() -> HomeTimelineBackwardCompletionEffects {
+        HomeTimelineBackwardCompletionEffects(
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            recordDiagnostic: { [weak self] relayURL, subscriptionID, message in
+                self?.recordRuntimeSyncEvent(
+                    relayURL: relayURL,
+                    kind: .partialFailure,
+                    subscriptionID: subscriptionID,
+                    message: message
+                )
+            },
+            reloadProjection: { [weak self] account, anchorEventID, mergingWithCurrentWindow in
+                guard let self else { return }
+                reloadProjectionWindow(
+                    account: account,
+                    around: anchorEventID,
+                    mergingWithCurrentWindow: mergingWithCurrentWindow
+                )
+                materializeEntries()
+                scheduleLinkPreviewResolution()
+            },
+            incrementRelayStatusRevision: { [weak self] in
+                self?.relayStatusRevision &+= 1
             },
             resolveDependencies: { [weak self] event, context in
                 guard let self else { return false }
@@ -1724,27 +1712,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
             }
         )
-    }
-
-    private func applyGapReconciliationApplicationCommand(
-        _ command: HomeTimelineGapReconciliationApplicationCommand
-    ) {
-        switch command {
-        case .incrementRelayStatusRevision:
-            relayStatusRevision &+= 1
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
-        case .reloadProjection(let anchorEventID):
-            guard let account else { return }
-            reloadProjectionWindow(account: account, around: anchorEventID)
-            materializeEntries()
-            scheduleLinkPreviewResolution()
-        }
     }
 
     private func scheduleLinkPreviewResolution() {
