@@ -57,6 +57,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let gapReconciliationApplicationCoordinator: HomeTimelineGapReconciliationApplicationCoordinator
     private let homeFeedProjection: HomeFeedProjectionController
     private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
+    private let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     private let publishCoordinator: HomeTimelinePublishCoordinator?
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
@@ -263,11 +264,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         let homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
         self.homeFeedProjection = homeFeedProjection
-        self.snapshotCoordinator = HomeTimelineSnapshotCoordinator(
+        let snapshotCoordinator = HomeTimelineSnapshotCoordinator(
             eventStore: eventStore,
             persistenceWorker: persistenceWorker,
             projectionController: homeFeedProjection
         )
+        self.snapshotCoordinator = snapshotCoordinator
         self.publishCoordinator = eventStore.map(HomeTimelinePublishCoordinator.init)
         self.localMutationCoordinator = (localMutationPersistence ?? eventStore).map {
             HomeTimelineLocalMutationCoordinator(persistence: $0)
@@ -414,6 +416,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         )
         self.relayStatusCoordinator = relayStatusCoordinator
+        self.stateApplicationCoordinator = HomeTimelineStateApplicationCoordinator(
+            snapshotCoordinator: snapshotCoordinator,
+            presentationCoordinator: presentationCoordinator,
+            contentCoordinator: contentCoordinator,
+            dependencyCoordinator: dependencyCoordinator,
+            relayStatusCoordinator: relayStatusCoordinator,
+            projectionController: homeFeedProjection,
+            listProjectionCache: listProjectionCache,
+            pendingEventBuffer: pendingEventBuffer
+        )
         self.runtimePacketCoordinator = HomeTimelineRuntimePacketCoordinator(
             feedSyncCoordinator: feedSyncCoordinator,
             relayStatusCoordinator: relayStatusCoordinator
@@ -980,9 +992,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .replaceState(let state, let replacement):
             switch replacement {
             case .complete:
-                apply(state)
+                replaceTimelineState(state)
             case .runtimeBootstrap:
-                apply(contentCoordinator.runtimeBootstrapState(
+                replaceTimelineState(contentCoordinator.runtimeBootstrapState(
                     from: state,
                     nip05Resolutions: dependencyCoordinator.nip05Resolutions
                 ))
@@ -1028,19 +1040,10 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     @discardableResult
     private func restoreCachedSnapshot(account: NostrAccount) -> Bool {
-        if let databaseState = snapshotCoordinator.restoredState(accountID: account.pubkey) {
-            apply(databaseState)
-            return true
-        }
-
-        applyPresentationTransition(presentationCoordinator.reset())
-        applyContentSnapshot(contentCoordinator.reset())
-        dependencyCoordinator.replaceNIP05Resolutions([:])
-        applyRelayStatusSnapshot(
-            relayStatusCoordinator.reset(resolvedRelays: resolvedRelays)
+        stateApplicationCoordinator.restoreCachedState(
+            accountID: account.pubkey,
+            handlers: stateApplicationHandlers()
         )
-        clearPendingNewEvents()
-        return false
     }
 
     private func persistDatabase(account: NostrAccount) async {
@@ -1808,22 +1811,32 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func apply(_ state: NostrHomeTimelineState) {
-        applyContentSnapshot(
-            contentCoordinator.replace(
-                with: state,
-                accountID: account?.pubkey
-            )
+    private func replaceTimelineState(_ state: NostrHomeTimelineState) {
+        stateApplicationCoordinator.replace(
+            state,
+            accountID: account?.pubkey,
+            handlers: stateApplicationHandlers()
         )
-        dependencyCoordinator.replaceNIP05Resolutions(state.nip05Resolutions)
-        applyRelayStatusSnapshot(
-            relayStatusCoordinator.replaceEvents(
-                state.relaySyncEvents,
-                resolvedRelays: resolvedRelays
-            )
+    }
+
+    private func stateApplicationHandlers() -> HomeTimelineStateApplicationHandlers {
+        HomeTimelineStateApplicationHandlers(
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
+            },
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            applyRelayStatusSnapshot: { [weak self] snapshot in
+                self?.applyRelayStatusSnapshot(snapshot)
+            },
+            listRevisionChanged: { [weak self] revision in
+                self?.listContentRevision = revision
+            },
+            pendingCountChanged: { [weak self] count in
+                self?.setUnmaterializedNewCount(count)
+            }
         )
-        homeFeedProjection.clearWindow()
-        invalidateListEntries()
     }
 
     @discardableResult
