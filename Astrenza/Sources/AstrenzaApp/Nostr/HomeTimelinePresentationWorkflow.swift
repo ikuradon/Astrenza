@@ -51,6 +51,19 @@ protocol HomeTimelinePresentationCoordinating: AnyObject {
 
 extension HomeTimelinePresentationCoordinator: HomeTimelinePresentationCoordinating {}
 
+@MainActor
+protocol HomeTimelineLinkPreviewScheduling: AnyObject {
+    @discardableResult
+    func schedule(
+        scopeID: String,
+        policy: NostrSyncPolicy,
+        didUpdate: @escaping @MainActor () -> Void,
+        didFail: @escaping @MainActor (_ message: String) -> Void
+    ) -> Bool
+}
+
+extension HomeTimelineLinkPreviewCoordinator: HomeTimelineLinkPreviewScheduling {}
+
 struct HomeTimelinePresentationAppState: Sendable {
     let account: NostrAccount?
     let restoreProjectionAnchorEventID: String?
@@ -60,6 +73,19 @@ struct HomeTimelinePresentationInteractionState: Equatable, Sendable {
     let hasPendingNewestProjectionReload: Bool
     let readBoundaryPostID: TimelinePost.ID?
     let defaultDelayNanoseconds: UInt64
+}
+
+struct HomeTimelineLinkPreviewInteractionState: Equatable, Sendable {
+    let accountID: String?
+    let policy: NostrSyncPolicy
+}
+
+struct HomeTimelineLinkPreviewEffects: Sendable {
+    typealias FailureEffect = @MainActor @Sendable (_ message: String) -> Void
+    typealias UpdateEffect = @MainActor @Sendable () -> Void
+
+    let didUpdate: UpdateEffect
+    let didFail: FailureEffect
 }
 
 struct HomeTimelinePresentationEffects: Sendable {
@@ -90,9 +116,14 @@ struct HomeTimelinePresentationEffects: Sendable {
 @MainActor
 final class HomeTimelinePresentationWorkflow {
     private let coordinator: any HomeTimelinePresentationCoordinating
+    private let linkPreviews: any HomeTimelineLinkPreviewScheduling
 
-    init(coordinator: any HomeTimelinePresentationCoordinating) {
+    init(
+        coordinator: any HomeTimelinePresentationCoordinating,
+        linkPreviews: any HomeTimelineLinkPreviewScheduling
+    ) {
         self.coordinator = coordinator
+        self.linkPreviews = linkPreviews
     }
 
     var interactionState: HomeTimelinePresentationInteractionState {
@@ -127,6 +158,20 @@ final class HomeTimelinePresentationWorkflow {
             delayNanoseconds: delayNanoseconds,
             allowsRealtimeFollow: allowsRealtimeFollow,
             materialize: materialize
+        )
+    }
+
+    @discardableResult
+    func scheduleLinkPreviewResolution(
+        state: HomeTimelineLinkPreviewInteractionState,
+        effects: HomeTimelineLinkPreviewEffects
+    ) -> Bool {
+        guard let accountID = state.accountID else { return false }
+        return linkPreviews.schedule(
+            scopeID: accountID,
+            policy: state.policy,
+            didUpdate: effects.didUpdate,
+            didFail: effects.didFail
         )
     }
 

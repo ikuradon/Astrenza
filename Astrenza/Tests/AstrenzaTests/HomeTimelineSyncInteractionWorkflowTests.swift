@@ -291,11 +291,13 @@ private struct SyncInteractionFixture {
         let backwardRequests = BackwardRequestInteractionTrackerSpy(
             requestState: backwardRequestState
         )
+        let relayStatus = SyncInteractionRelayStatusSpy()
         self.tracker = tracker
         self.backwardRequests = backwardRequests
         workflow = HomeTimelineSyncInteractionWorkflow(
             feedSync: tracker,
-            backwardRequests: backwardRequests
+            backwardRequests: backwardRequests,
+            relayStatus: relayStatus
         )
     }
 

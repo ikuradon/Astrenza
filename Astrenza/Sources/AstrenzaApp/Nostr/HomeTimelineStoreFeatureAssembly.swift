@@ -28,11 +28,13 @@ extension HomeTimelineStoreAssembly {
         coordination: HomeTimelineStoreCoordinationGraph,
         relayRuntime: HomeTimelineStoreRelayRuntimeGraph
     ) -> HomeTimelineStoreFeatureGraph {
+        let peripherals = makePeripheralFeatures(input, persistence: persistence)
         let applications = makeApplicationFeatures(
             input,
             persistence: persistence,
             coordination: coordination,
-            relayRuntime: relayRuntime
+            relayRuntime: relayRuntime,
+            linkPreviews: peripherals.linkPreviewCoordinator
         )
         let loads = makeLoadFeatures(
             input,
@@ -40,7 +42,6 @@ extension HomeTimelineStoreAssembly {
             coordination: coordination,
             relayRuntime: relayRuntime
         )
-        let peripherals = makePeripheralFeatures(input, persistence: persistence)
         return HomeTimelineStoreFeatureGraph(
             stateInteractionWorkflow: applications.stateInteractionWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
@@ -101,7 +102,8 @@ extension HomeTimelineStoreAssembly {
         _ input: HomeTimelineStoreAssemblyInput,
         persistence: HomeTimelineStorePersistenceGraph,
         coordination: HomeTimelineStoreCoordinationGraph,
-        relayRuntime: HomeTimelineStoreRelayRuntimeGraph
+        relayRuntime: HomeTimelineStoreRelayRuntimeGraph,
+        linkPreviews: any HomeTimelineLinkPreviewScheduling
     ) -> HomeTimelineStoreApplicationFeatures {
         let persistenceCoordinator = HomeTimelinePersistenceCoordinator(
             snapshotPersistence: persistence.snapshotCoordinator,
@@ -129,7 +131,7 @@ extension HomeTimelineStoreAssembly {
             pendingEventBuffer: coordination.pendingEventBuffer
         )
         let presentationWorkflow = HomeTimelinePresentationWorkflow(
-            coordinator: coordination.presentationCoordinator
+            coordinator: coordination.presentationCoordinator, linkPreviews: linkPreviews
         )
         let pendingEventsWorkflow = HomeTimelinePendingEventsWorkflow(
             buffer: coordination.pendingEventBuffer

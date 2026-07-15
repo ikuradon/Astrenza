@@ -216,4 +216,45 @@ struct HomeTimelinePresentationWorkflowTests {
 
         #expect(fixture.probe.events == [.markNewestWindowRead])
     }
+
+    @Test("Link preview scheduling preserves account, policy, and callbacks")
+    func linkPreviewSchedulingRoutesRequestAndCallbacks() {
+        let fixture = PresentationFixture(linkPreviewScheduleResult: true)
+
+        let scheduled = fixture.workflow.scheduleLinkPreviewResolution(
+            state: fixture.linkPreviewState,
+            effects: fixture.linkPreviewEffects.effects
+        )
+        fixture.linkPreviews.completeUpdate()
+        fixture.linkPreviews.fail("persistence failed")
+
+        #expect(scheduled)
+        #expect(fixture.linkPreviews.schedules == [
+            PresentationLinkPreviewSchedule(
+                scopeID: fixture.account.pubkey,
+                policy: .default()
+            )
+        ])
+        #expect(fixture.linkPreviewEffects.events == [
+            .updated,
+            .failed("persistence failed")
+        ])
+    }
+
+    @Test("Link preview scheduling rejects a missing account")
+    func linkPreviewSchedulingRequiresAccount() {
+        let fixture = PresentationFixture()
+
+        let scheduled = fixture.workflow.scheduleLinkPreviewResolution(
+            state: HomeTimelineLinkPreviewInteractionState(
+                accountID: nil,
+                policy: .default()
+            ),
+            effects: fixture.linkPreviewEffects.effects
+        )
+
+        #expect(!scheduled)
+        #expect(fixture.linkPreviews.schedules.isEmpty)
+        #expect(fixture.linkPreviewEffects.events.isEmpty)
+    }
 }

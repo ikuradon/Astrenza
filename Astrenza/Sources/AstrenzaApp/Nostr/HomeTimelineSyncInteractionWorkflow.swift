@@ -1,3 +1,5 @@
+import AstrenzaCore
+
 @MainActor
 protocol HomeTimelineFeedSyncTracking: AnyObject {
     var isRealtime: Bool { get }
@@ -42,6 +44,49 @@ protocol HomeTimelineBackwardRequestTracking: AnyObject {
 extension HomeTimelineBackwardRequestRegistry:
     HomeTimelineBackwardRequestTracking {}
 
+struct HomeTimelineRelayStatusRecord: Equatable, Sendable {
+    let accountID: String
+    let resolvedRelays: [String]
+    let relayURL: String
+    let kind: NostrRelaySyncEventKind
+    let subscriptionID: String?
+    let eventCount: Int
+    let newestCreatedAt: Int?
+    let oldestCreatedAt: Int?
+    let message: String?
+}
+
+@MainActor
+protocol HomeTimelineRelayStatusTracking: AnyObject {
+    var events: [NostrRelaySyncEventRecord] { get }
+
+    func snapshot(
+        resolvedRelays: [String]
+    ) -> HomeTimelineRelayStatusSnapshot
+
+    func record(
+        _ record: HomeTimelineRelayStatusRecord
+    ) -> HomeTimelineRelayStatusTransition
+}
+
+extension HomeTimelineRelayStatusCoordinator: HomeTimelineRelayStatusTracking {
+    func record(
+        _ record: HomeTimelineRelayStatusRecord
+    ) -> HomeTimelineRelayStatusTransition {
+        self.record(
+            accountID: record.accountID,
+            resolvedRelays: record.resolvedRelays,
+            relayURL: record.relayURL,
+            kind: record.kind,
+            subscriptionID: record.subscriptionID,
+            eventCount: record.eventCount,
+            newestCreatedAt: record.newestCreatedAt,
+            oldestCreatedAt: record.oldestCreatedAt,
+            message: record.message
+        )
+    }
+}
+
 enum HomeTimelineSyncStoreAction: Equatable, Sendable {
     case setRealtime(Bool)
 }
@@ -62,13 +107,16 @@ struct HomeTimelineSyncInteractionContext: Sendable {
 final class HomeTimelineSyncInteractionWorkflow {
     private let feedSync: any HomeTimelineFeedSyncTracking
     private let backwardRequests: any HomeTimelineBackwardRequestTracking
+    private let relayStatus: any HomeTimelineRelayStatusTracking
 
     init(
         feedSync: any HomeTimelineFeedSyncTracking,
-        backwardRequests: any HomeTimelineBackwardRequestTracking
+        backwardRequests: any HomeTimelineBackwardRequestTracking,
+        relayStatus: any HomeTimelineRelayStatusTracking
     ) {
         self.feedSync = feedSync
         self.backwardRequests = backwardRequests
+        self.relayStatus = relayStatus
     }
 
     var activeRequestCount: Int {
@@ -81,6 +129,22 @@ final class HomeTimelineSyncInteractionWorkflow {
 
     var backwardRequestState: HomeTimelineBackwardRequestState {
         backwardRequests.requestState
+    }
+
+    var relaySyncEvents: [NostrRelaySyncEventRecord] {
+        relayStatus.events
+    }
+
+    func relayStatusSnapshot(
+        resolvedRelays: [String]
+    ) -> HomeTimelineRelayStatusSnapshot {
+        relayStatus.snapshot(resolvedRelays: resolvedRelays)
+    }
+
+    func recordRelayStatus(
+        _ record: HomeTimelineRelayStatusRecord
+    ) -> HomeTimelineRelayStatusTransition {
+        relayStatus.record(record)
     }
 
     func prepareForwardSubscriptions(

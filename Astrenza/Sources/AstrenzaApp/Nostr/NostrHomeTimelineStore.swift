@@ -47,8 +47,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeAccountStartInteractionWorkflow
     private let accountResetInteractionWorkflow:
         HomeAccountResetInteractionWorkflow
-    private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
-    private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private let publishInteractionWorkflow:
         HomeTimelinePublishInteractionWorkflow?
@@ -132,7 +130,9 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func updateRelayStatusCounts() {
         applyRelayStatusSnapshot(
-            relayStatusCoordinator.snapshot(resolvedRelays: resolvedRelays)
+            syncInteractionWorkflow.relayStatusSnapshot(
+                resolvedRelays: resolvedRelays
+            )
         )
     }
 
@@ -211,8 +211,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             components.accountStartInteractionWorkflow
         self.accountResetInteractionWorkflow =
             components.accountResetInteractionWorkflow
-        self.relayStatusCoordinator = components.relayStatusCoordinator
-        self.linkPreviewCoordinator = components.linkPreviewCoordinator
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
         self.localMutationInteractionWorkflow =
@@ -999,22 +997,25 @@ private extension NostrHomeTimelineStore {
     }
 
     private func scheduleLinkPreviewResolution() {
-        guard let accountID = account?.pubkey else { return }
-        linkPreviewCoordinator.schedule(
-            scopeID: accountID,
-            policy: syncPolicy,
-            didUpdate: { [weak self] in
-                self?.invalidateListEntries()
-                self?.scheduleMaterializeEntries()
-            },
-            didFail: { [weak self] message in
-                self?.recordRuntimeSyncEvent(
-                    relayURL: "link-preview",
-                    kind: .partialFailure,
-                    subscriptionID: nil,
-                    message: "link preview save failed: \(message)"
-                )
-            }
+        presentationWorkflow.scheduleLinkPreviewResolution(
+            state: HomeTimelineLinkPreviewInteractionState(
+                accountID: account?.pubkey,
+                policy: syncPolicy
+            ),
+            effects: HomeTimelineLinkPreviewEffects(
+                didUpdate: { [weak self] in
+                    self?.invalidateListEntries()
+                    self?.scheduleMaterializeEntries()
+                },
+                didFail: { [weak self] message in
+                    self?.recordRuntimeSyncEvent(
+                        relayURL: "link-preview",
+                        kind: .partialFailure,
+                        subscriptionID: nil,
+                        message: "link preview save failed: \(message)"
+                    )
+                }
+            )
         )
     }
 
@@ -1029,16 +1030,18 @@ private extension NostrHomeTimelineStore {
     ) {
         guard let account else { return }
         applyRelayStatusTransition(
-            relayStatusCoordinator.record(
-                accountID: account.pubkey,
-                resolvedRelays: resolvedRelays,
-                relayURL: relayURL,
-                kind: kind,
-                subscriptionID: subscriptionID,
-                eventCount: eventCount,
-                newestCreatedAt: newestCreatedAt,
-                oldestCreatedAt: oldestCreatedAt,
-                message: message
+            syncInteractionWorkflow.recordRelayStatus(
+                HomeTimelineRelayStatusRecord(
+                    accountID: account.pubkey,
+                    resolvedRelays: resolvedRelays,
+                    relayURL: relayURL,
+                    kind: kind,
+                    subscriptionID: subscriptionID,
+                    eventCount: eventCount,
+                    newestCreatedAt: newestCreatedAt,
+                    oldestCreatedAt: oldestCreatedAt,
+                    message: message
+                )
             )
         )
     }
@@ -1082,7 +1085,7 @@ private extension NostrHomeTimelineStore {
 
     private func loaderState() -> NostrHomeTimelineState {
         dataInteractionWorkflow.loaderState(
-            relaySyncEvents: relayStatusCoordinator.events
+            relaySyncEvents: syncInteractionWorkflow.relaySyncEvents
         )
     }
 

@@ -34,8 +34,6 @@ struct HomeTimelineStoreComponents {
         HomeAccountStartInteractionWorkflow
     let accountResetInteractionWorkflow:
         HomeAccountResetInteractionWorkflow
-    let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
-    let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let publishInteractionWorkflow: HomeTimelinePublishInteractionWorkflow?
     let localMutationInteractionWorkflow:
@@ -192,8 +190,6 @@ enum HomeTimelineStoreAssembly {
                 HomeAccountResetInteractionWorkflow(
                     accountReset: graph.accountResetWorkflow
                 ),
-            relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
-            linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
             stateInteractionWorkflow: graph.features.stateInteractionWorkflow,
             publishInteractionWorkflow: graph.features.publishWorkflow.map {
                 HomeTimelinePublishInteractionWorkflow(publish: $0)
@@ -217,7 +213,8 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineSyncInteractionWorkflow {
         HomeTimelineSyncInteractionWorkflow(
             feedSync: graph.coordination.feedSyncCoordinator,
-            backwardRequests: graph.coordination.backwardRequestRegistry
+            backwardRequests: graph.coordination.backwardRequestRegistry,
+            relayStatus: graph.relayRuntime.relayStatusCoordinator
         )
     }
 

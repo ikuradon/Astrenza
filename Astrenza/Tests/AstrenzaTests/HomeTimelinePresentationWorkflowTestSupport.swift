@@ -148,12 +148,21 @@ struct PresentationFixture {
     )
     let feedID = "home-feed"
     let probe: PresentationProbe
+    let linkPreviews: PresentationLinkPreviewSpy
+    let linkPreviewEffects = PresentationLinkPreviewEffectProbe()
     let workflow: HomeTimelinePresentationWorkflow
 
-    init() {
+    init(linkPreviewScheduleResult: Bool = true) {
         let probe = PresentationProbe()
+        let linkPreviews = PresentationLinkPreviewSpy(
+            result: linkPreviewScheduleResult
+        )
         self.probe = probe
-        workflow = HomeTimelinePresentationWorkflow(coordinator: probe)
+        self.linkPreviews = linkPreviews
+        workflow = HomeTimelinePresentationWorkflow(
+            coordinator: probe,
+            linkPreviews: linkPreviews
+        )
     }
 
     var state: HomeTimelinePresentationAppState {
@@ -162,6 +171,13 @@ struct PresentationFixture {
 
     var effects: HomeTimelinePresentationEffects {
         probe.effects
+    }
+
+    var linkPreviewState: HomeTimelineLinkPreviewInteractionState {
+        HomeTimelineLinkPreviewInteractionState(
+            accountID: account.pubkey,
+            policy: .default()
+        )
     }
 
     func state(
