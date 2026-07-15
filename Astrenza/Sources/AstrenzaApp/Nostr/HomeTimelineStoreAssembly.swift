@@ -17,7 +17,8 @@ struct HomeTimelineStoreComponents {
     let eventStore: NostrEventStore?
     let contentCoordinator: HomeTimelineContentCoordinator
     let runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow
-    let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
+    let gapBackfillInteractionWorkflow:
+        HomeGapBackfillInteractionWorkflow
     let backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     let filterCoordinator: HomeTimelineFilterCoordinator
@@ -171,7 +172,7 @@ enum HomeTimelineStoreAssembly {
                 ),
                 events: graph.runtimeEvents.runtimeEventWorkflow
             ),
-            gapBackfillWorkflow: graph.coordination.gapBackfillWorkflow,
+            gapBackfillInteractionWorkflow: makeGapBackfillInteraction(from: graph),
             backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow(
                 backward: graph.runtimeEvents.backwardCompletionWorkflow
             ),
@@ -205,6 +206,14 @@ enum HomeTimelineStoreAssembly {
             localMutationCoordinator: graph.features.localMutationCoordinator,
             relayRuntime: input.relayRuntime,
             outboxCoordinator: graph.features.outboxCoordinator
+        )
+    }
+
+    private static func makeGapBackfillInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeGapBackfillInteractionWorkflow {
+        HomeGapBackfillInteractionWorkflow(
+            gapBackfill: graph.coordination.gapBackfillWorkflow
         )
     }
 }

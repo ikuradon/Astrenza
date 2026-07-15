@@ -29,7 +29,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeInteractionWorkflow:
         HomeTimelineRuntimeInteractionWorkflow
-    private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
+    private let gapBackfillInteractionWorkflow:
+        HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
         HomeTimelineBackwardInteractionWorkflow
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -181,7 +182,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.eventStore = components.eventStore
         self.contentCoordinator = components.contentCoordinator
         self.runtimeInteractionWorkflow = components.runtimeInteractionWorkflow
-        self.gapBackfillWorkflow = components.gapBackfillWorkflow
+        self.gapBackfillInteractionWorkflow =
+            components.gapBackfillInteractionWorkflow
         self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.dependencyCoordinator = components.dependencyCoordinator
         self.filterCoordinator = components.filterCoordinator
@@ -383,34 +385,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
-        await gapBackfillWorkflow.backfill(
-            HomeTimelineGapBackfillRequest(
-                account: account,
-                hasRelayRuntime: relayRuntime != nil,
-                resolvedRelayCount: resolvedRelays.count,
-                gap: gap,
-                direction: direction
-            ),
-            effects: gapBackfillEffects()
-        )
-    }
-
-    private func gapBackfillEffects() -> HomeTimelineGapBackfillEffects {
-        HomeTimelineGapBackfillEffects(
-            recordDiagnostic: { [weak self] diagnostic in
-                self?.recordRuntimeSyncEvent(
-                    relayURL: diagnostic.relayURL,
-                    kind: .partialFailure,
-                    subscriptionID: diagnostic.subscriptionID,
-                    message: diagnostic.message
-                )
-            },
-            reloadProjection: { [weak self] account, anchorEventID in
-                self?.reloadProjectionWindow(account: account, around: anchorEventID)
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            }
+        await gapBackfillInteractionWorkflow.backfill(
+            gap: gap,
+            direction: direction,
+            context: gapBackfillInteractionContext()
         )
     }
 
@@ -1243,6 +1221,43 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func gapBackfillInteractionContext(
+    ) -> HomeGapBackfillInteractionContext {
+        HomeGapBackfillInteractionContext(
+            state: HomeTimelineGapBackfillInteractionState(
+                account: account,
+                hasRelayRuntime: relayRuntime != nil,
+                resolvedRelayCount: resolvedRelays.count
+            ),
+            effects: HomeGapBackfillInteractionEffects(
+                apply: { [weak self] action in
+                    self?.applyGapBackfillAction(action)
+                }
+            )
+        )
+    }
+
+    func applyGapBackfillAction(
+        _ action: HomeTimelineGapBackfillStoreAction
+    ) {
+        switch action {
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        case .reloadProjection(let account, let anchorEventID):
+            reloadProjectionWindow(
+                account: account,
+                around: anchorEventID
+            )
+        case .materializeEntries:
+            materializeEntries()
+        }
+    }
+
     func publishInteractionContext(
         account: NostrAccount
     ) -> HomeTimelinePublishInteractionContext {
