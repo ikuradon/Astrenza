@@ -27,6 +27,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineStoreApplicationDispatcher()
     private let accountApplicationDispatcher =
         HomeTimelineAccountApplicationDispatcher()
+    private let viewportApplicationDispatcher =
+        HomeTimelineViewportDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -59,6 +61,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeStoreApplicationEffects()
     private lazy var accountApplicationEffects =
         makeAccountApplicationEffects()
+    private lazy var viewportApplicationEffects =
+        makeViewportApplicationEffects()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -316,50 +320,79 @@ final class NostrHomeTimelineStore: ObservableObject {
             ),
             effects: HomeTimelineViewportInteractionEffects(
                 apply: { [weak self] application in
-                    self?.applyViewportInteraction(application)
+                    self?.dispatchViewportApplication(application)
                 },
                 load: { [weak self] load in
                     guard let self else { return }
-                    await performViewportInteraction(load)
+                    await performViewportApplication(load)
                 }
             )
         )
     }
 
-    private func applyViewportInteraction(
+    private func dispatchViewportApplication(
         _ application: HomeTimelineViewportApplication
     ) {
-        switch application {
-        case .applyProjectionViewportTransition(let transition):
-            applyProjectionViewportTransition(transition)
-        case .reloadNewestProjectionWindow(let account):
-            reloadNewestProjectionWindow(account: account)
-        case .materializeEntries(let allowsRealtimeFollow):
-            materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-        case .applyRestoreProjectionAnchor(let account):
-            applyRestoreProjectionAnchorIfPossible(account: account)
-        case .applyPresentationTransition(let transition):
-            applyPresentationTransition(transition)
-        case .scheduleReadStateSave:
-            scheduleHomeFeedReadStateSave()
-        case .applyPendingEventCountPublication(let publication):
-            applyPendingEventCountPublication(publication)
-        case .clearPendingProjectionReload:
-            presentationWorkflow.clearNewestProjectionReload()
-        case .scheduleLinkPreviewResolution:
-            scheduleLinkPreviewResolution()
-        }
+        viewportApplicationDispatcher.apply(
+            application,
+            effects: viewportApplicationEffects
+        )
     }
 
-    private func performViewportInteraction(
+    private func performViewportApplication(
         _ load: HomeTimelineViewportInteractionLoad
     ) async {
-        switch load {
-        case .refreshLatest(let account, let lifecycle):
-            await refreshLatest(account: account, lifecycle: lifecycle)
-        case .loadOlder(let account, let lifecycle):
-            await loadOlder(account: account, lifecycle: lifecycle)
-        }
+        await viewportApplicationDispatcher.perform(
+            load,
+            effects: viewportApplicationEffects
+        )
+    }
+
+    private func makeViewportApplicationEffects(
+    ) -> HomeTimelineViewportApplicationEffects {
+        HomeTimelineViewportApplicationEffects(
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
+            },
+            reloadNewestProjectionWindow: { [weak self] account in
+                self?.reloadNewestProjectionWindow(account: account)
+            },
+            materializeEntries: { [weak self] allowsRealtimeFollow in
+                self?.materializeEntries(
+                    allowsRealtimeFollow: allowsRealtimeFollow
+                )
+            },
+            applyRestoreProjectionAnchor: { [weak self] account in
+                self?.applyRestoreProjectionAnchorIfPossible(account: account)
+            },
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
+            },
+            scheduleReadStateSave: { [weak self] in
+                self?.scheduleHomeFeedReadStateSave()
+            },
+            applyPendingEventCountPublication: { [weak self] publication in
+                self?.applyPendingEventCountPublication(publication)
+            },
+            clearPendingProjectionReload: { [weak self] in
+                self?.presentationWorkflow.clearNewestProjectionReload()
+            },
+            scheduleLinkPreviewResolution: { [weak self] in
+                self?.scheduleLinkPreviewResolution()
+            },
+            refreshLatest: { [weak self] account, lifecycle in
+                await self?.refreshLatest(
+                    account: account,
+                    lifecycle: lifecycle
+                )
+            },
+            loadOlder: { [weak self] account, lifecycle in
+                await self?.loadOlder(
+                    account: account,
+                    lifecycle: lifecycle
+                )
+            }
+        )
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
