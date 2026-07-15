@@ -31,6 +31,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventCoordinator: HomeTimelineRuntimeEventCoordinator
+    private let initialLoadWorkflow: HomeTimelineInitialLoadWorkflow
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     private let refreshWorkflow: HomeTimelineRefreshWorkflow
     private let olderPageWorkflow: HomeTimelineOlderPageWorkflow
@@ -448,6 +449,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             relayEventPersistence: relayStatusCoordinator
         )
         self.remoteLoadCoordinator = remoteLoadCoordinator
+        self.initialLoadWorkflow = HomeTimelineInitialLoadWorkflow(
+            remoteLoader: remoteLoadCoordinator,
+            activityCoordinator: activityCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator
+        )
         self.refreshWorkflow = HomeTimelineRefreshWorkflow(
             remoteLoader: remoteLoadCoordinator,
             activityCoordinator: activityCoordinator,
@@ -837,84 +843,46 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-        if relayRuntime != nil {
-            await loadRuntimeBootstrap(account: account, lifecycle: lifecycle)
-            return
-        }
-
-        let outcome = await remoteLoadCoordinator.load(
-            .initial(account: account),
-            isCurrent: { [weak self] in
-                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
-            },
-            didReceiveStage: { [weak self] stage in
-                self?.handleLoadStage(stage, lifecycle: lifecycle)
-            },
-            didFetch: { [weak self] in
-                guard let self else { return }
-                applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
-            }
-        )
-        await applyRemoteLoadOutcome(
-            outcome,
-            operation: .initial,
-            account: account,
-            lifecycle: lifecycle
+        await initialLoadWorkflow.load(
+            HomeTimelineInitialLoadRequest(
+                account: account,
+                lifecycle: lifecycle,
+                hasRelayRuntime: relayRuntime != nil
+            ),
+            handlers: initialLoadHandlers()
         )
     }
 
-    private func loadRuntimeBootstrap(
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken
-    ) async {
-        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-        installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        let hadCachedBootstrap = lifecycleCoordinator.hasCompletedRuntimeBootstrap
-        if hadCachedBootstrap, !resolvedRelays.isEmpty {
-            await configureRelayRuntime(account: account)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-        } else {
-            applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
-        }
-
-        let outcome = await remoteLoadCoordinator.load(
-            .runtimeBootstrap(account: account),
-            isCurrent: { [weak self] in
-                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
+    private func initialLoadHandlers() -> HomeTimelineInitialLoadHandlers {
+        HomeTimelineInitialLoadHandlers(
+            perform: { [weak self] command in
+                self?.applyInitialLoadCommand(command)
             },
-            didReceiveStage: { [weak self] stage in
-                self?.handleLoadStage(stage, lifecycle: lifecycle)
+            hasResolvedRelays: { [weak self] in
+                self?.resolvedRelays.isEmpty == false
             },
-            didFetch: { [weak self] in
-                guard let self else { return }
-                applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
+            configureRuntime: { [weak self] account in
+                await self?.configureRelayRuntime(account: account)
+            },
+            applyOutcome: { [weak self] outcome, operation, account, lifecycle in
+                await self?.applyRemoteLoadOutcome(
+                    outcome,
+                    operation: operation,
+                    account: account,
+                    lifecycle: lifecycle
+                )
             }
-        )
-        await applyRemoteLoadOutcome(
-            outcome,
-            operation: .runtimeBootstrap(hadCachedBootstrap: hadCachedBootstrap),
-            account: account,
-            lifecycle: lifecycle
         )
     }
 
-    private func handleLoadStage(
-        _ stage: NostrHomeTimelineLoadStage,
-        lifecycle: HomeTimelineLifecycleToken
+    private func applyInitialLoadCommand(
+        _ command: HomeTimelineInitialLoadCommand
     ) {
-        guard !Task.isCancelled,
-              lifecycleCoordinator.isCurrent(lifecycle)
-        else { return }
-        switch stage {
-        case .resolvingRelayList:
-            applyActivityTransition(activityCoordinator.setPhase(.resolvingRelays))
-        case .resolvingContactList:
-            applyActivityTransition(activityCoordinator.setPhase(.resolvingContacts))
-        case .loadingTimeline:
-            applyActivityTransition(activityCoordinator.setPhase(.loadingHome))
+        switch command {
+        case .applyActivityTransition(let transition):
+            applyActivityTransition(transition)
+        case .installProvisionalRuntimeBootstrap(let account):
+            installProvisionalRuntimeBootstrapIfNeeded(account: account)
         }
     }
 
