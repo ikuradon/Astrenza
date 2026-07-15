@@ -67,6 +67,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeViewportApplicationEffects()
     private lazy var loadApplicationEffects =
         makeLoadApplicationEffects()
+    private lazy var featureInteractionContextFactory =
+        makeFeatureInteractionContextFactory()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -405,7 +407,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await gapBackfillInteractionWorkflow.backfill(
             gap: gap,
             direction: direction,
-            context: gapBackfillInteractionContext()
+            context: featureInteractionContextFactory.gapBackfillContext()
         )
     }
 
@@ -414,21 +416,23 @@ final class NostrHomeTimelineStore: ObservableObject {
         try await publishInteractionWorkflow.enqueue(
             input: input,
             signer: signer,
-            context: publishInteractionContext(account: account)
+            context: featureInteractionContextFactory.publishContext(
+                account: account
+            )
         )
     }
 
     func muteAuthor(of post: TimelinePost) {
         localMutationInteractionWorkflow?.perform(
             .muteAuthor(authorPubkey: post.author.pubkey),
-            context: localMutationInteractionContext()
+            context: featureInteractionContextFactory.localMutationContext()
         )
     }
 
     func bookmark(_ post: TimelinePost) {
         localMutationInteractionWorkflow?.perform(
             .bookmark(eventID: post.id),
-            context: localMutationInteractionContext()
+            context: featureInteractionContextFactory.localMutationContext()
         )
     }
 
@@ -1085,26 +1089,16 @@ private extension NostrHomeTimelineStore {
     private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
         backwardInteractionWorkflow.handle(
             completion,
-            context: backwardInteractionContext()
+            context: featureInteractionContextFactory.backwardContext()
         )
     }
 
     private func scheduleLinkPreviewResolution() {
+        let interaction =
+            featureInteractionContextFactory.linkPreviewInteraction()
         linkPreviewInteractionWorkflow.schedule(
-            state: HomeTimelineLinkPreviewInteractionState(
-                accountID: account?.pubkey,
-                resolvedRelays: resolvedRelays,
-                policy: syncPolicy
-            ),
-            effects: HomeLinkPreviewInteractionEffects(
-                didUpdate: { [weak self] in
-                    self?.invalidateListEntries()
-                    self?.scheduleMaterializeEntries()
-                },
-                apply: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                }
-            )
+            state: interaction.state,
+            effects: interaction.effects
         )
     }
 
@@ -1183,38 +1177,71 @@ extension NostrHomeTimelineStore {
     func suspendTimelineFilters() {
         filterInteractionWorkflow.perform(
             .suspend,
-            context: filterInteractionContext()
+            context: featureInteractionContextFactory.filterContext()
         )
     }
 
     func resumeTimelineFilters() {
         filterInteractionWorkflow.perform(
             .resume,
-            context: filterInteractionContext()
+            context: featureInteractionContextFactory.filterContext()
         )
     }
 }
 
 private extension NostrHomeTimelineStore {
-    func filterInteractionContext(
-    ) -> HomeFilterInteractionContext {
-        HomeFilterInteractionContext(
-            effects: HomeFilterInteractionEffects(
-                apply: { [weak self] action in
+    func makeFeatureInteractionContextFactory(
+    ) -> HomeFeatureContextFactory {
+        HomeFeatureContextFactory(
+            environment: HomeFeatureInteractionEnvironment(
+                snapshot: { [weak self] in
+                    self?.featureInteractionSnapshot()
+                },
+                applyFilter: { [weak self] action in
+                    self?.dispatchStoreApplication(action)
+                },
+                applySync: { [weak self] action in
+                    self?.dispatchStoreApplication(action)
+                },
+                applyLocalMutation: { [weak self] action in
+                    self?.dispatchStoreApplication(action)
+                },
+                applyGapBackfill: { [weak self] action in
+                    self?.dispatchStoreApplication(action)
+                },
+                applyPublish: { [weak self] action in
+                    self?.dispatchStoreApplication(action)
+                },
+                performPublish: { [weak self] action in
+                    guard let self else { return }
+                    await performStoreApplication(action)
+                },
+                applyBackward: { [weak self] action in
+                    self?.dispatchStoreApplication(action)
+                },
+                resolveBackwardDependencies: { [weak self] request in
+                    guard let self else { return false }
+                    return await resolveBackwardDependencies(request)
+                },
+                didUpdateLinkPreview: { [weak self] in
+                    self?.invalidateListEntries()
+                    self?.scheduleMaterializeEntries()
+                },
+                applyLinkPreview: { [weak self] action in
                     self?.dispatchStoreApplication(action)
                 }
             )
         )
     }
 
-    func syncInteractionContext(
-    ) -> HomeTimelineSyncInteractionContext {
-        HomeTimelineSyncInteractionContext(
-            effects: HomeTimelineSyncInteractionEffects(
-                apply: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                }
-            )
+    func featureInteractionSnapshot(
+    ) -> HomeTimelineFeatureInteractionSnapshot {
+        HomeTimelineFeatureInteractionSnapshot(
+            account: account,
+            resolvedRelays: resolvedRelays,
+            relayListEvent: relayListEvent,
+            syncPolicy: syncPolicy,
+            hasRelayRuntime: relayRuntime != nil
         )
     }
 
@@ -1223,7 +1250,7 @@ private extension NostrHomeTimelineStore {
     ) {
         syncInteractionWorkflow.prepareForwardSubscriptions(
             runtimeKeys,
-            context: syncInteractionContext()
+            context: featureInteractionContextFactory.syncContext()
         )
     }
 
@@ -1232,69 +1259,14 @@ private extension NostrHomeTimelineStore {
     ) {
         syncInteractionWorkflow.invalidateForwardSubscription(
             key,
-            context: syncInteractionContext()
+            context: featureInteractionContextFactory.syncContext()
         )
     }
 
     func invalidateHomeTimelineRealtime(relayURL: String) {
         syncInteractionWorkflow.invalidateForwardSubscriptions(
             relayURL: relayURL,
-            context: syncInteractionContext()
-        )
-    }
-
-    func localMutationInteractionContext(
-    ) -> HomeLocalMutationInteractionContext {
-        HomeLocalMutationInteractionContext(
-            state: HomeLocalMutationInteractionState(
-                accountID: account?.pubkey
-            ),
-            effects: HomeLocalMutationInteractionEffects(
-                apply: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                }
-            )
-        )
-    }
-
-    func gapBackfillInteractionContext(
-    ) -> HomeGapBackfillInteractionContext {
-        HomeGapBackfillInteractionContext(
-            state: HomeTimelineGapBackfillInteractionState(
-                account: account,
-                hasRelayRuntime: relayRuntime != nil,
-                resolvedRelays: resolvedRelays
-            ),
-            effects: HomeGapBackfillInteractionEffects(
-                apply: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                }
-            )
-        )
-    }
-
-    func publishInteractionContext(
-        account: NostrAccount
-    ) -> HomeTimelinePublishInteractionContext {
-        HomeTimelinePublishInteractionContext(
-            state: HomeTimelinePublishInteractionState(
-                account: account,
-                accountWriteRelays:
-                    NostrRelayList.parse(from: relayListEvent).writeRelays,
-                fallbackRelays: resolvedRelays
-            ),
-            effects: HomeTimelinePublishInteractionEffects(
-                environment: HomeTimelinePublishEnvironment(
-                    currentAccountID: { [weak self] in self?.account?.pubkey }
-                ),
-                apply: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                perform: { [weak self] action in
-                    guard let self else { return }
-                    await performStoreApplication(action)
-                }
-            )
+            context: featureInteractionContextFactory.syncContext()
         )
     }
 
@@ -1468,25 +1440,6 @@ private extension NostrHomeTimelineStore {
                     forceInstall: forceInstall
                 )
             }
-        )
-    }
-
-    func backwardInteractionContext(
-    ) -> HomeTimelineBackwardInteractionContext {
-        HomeTimelineBackwardInteractionContext(
-            state: HomeTimelineBackwardInteractionState(
-                account: account,
-                resolvedRelays: resolvedRelays
-            ),
-            effects: HomeTimelineBackwardInteractionEffects(
-                apply: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                resolveDependencies: { [weak self] request in
-                    guard let self else { return false }
-                    return await resolveBackwardDependencies(request)
-                }
-            )
         )
     }
 
