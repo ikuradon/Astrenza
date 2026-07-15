@@ -25,8 +25,7 @@ struct HomeTimelinePendingEventsWorkflowTests {
 
         #expect(didApplyPendingEvents == scenario.expectedResult)
         #expect(probe.events == [
-            .clearRestoreProjectionAnchor,
-            .markTimelineAtNewest,
+            .applyProjectionViewportTransition(.resetToNewest),
             .reloadNewestProjection(account),
             .clearBufferedEvents,
             .clearPendingProjectionReload,
@@ -91,8 +90,9 @@ extension PendingEventsScenario: CustomTestStringConvertible {
 @MainActor
 private final class PendingEventsProbe {
     enum Event: Equatable {
-        case clearRestoreProjectionAnchor
-        case markTimelineAtNewest
+        case applyProjectionViewportTransition(
+            HomeTimelineProjectionViewportTransition
+        )
         case reloadNewestProjection(NostrAccount)
         case clearBufferedEvents
         case clearPendingProjectionReload
@@ -104,11 +104,8 @@ private final class PendingEventsProbe {
 
     var effects: HomeTimelinePendingEventsEffects {
         HomeTimelinePendingEventsEffects(
-            clearRestoreProjectionAnchor: { [self] in
-                events.append(.clearRestoreProjectionAnchor)
-            },
-            markTimelineAtNewest: { [self] in
-                events.append(.markTimelineAtNewest)
+            applyProjectionViewportTransition: { [self] transition in
+                events.append(.applyProjectionViewportTransition(transition))
             },
             reloadNewestProjection: { [self] account in
                 events.append(.reloadNewestProjection(account))

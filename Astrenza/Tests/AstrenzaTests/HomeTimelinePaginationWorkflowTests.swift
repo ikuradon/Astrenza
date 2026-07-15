@@ -12,12 +12,12 @@ struct HomeTimelinePaginationWorkflowTests {
         fixture.workflow.refresh(fixture.state, effects: fixture.effects)
 
         #expect(fixture.probe.events == [
-            .resetProjectionRestoreState,
+            .applyProjectionViewportTransition(.resetToNewest),
             .startPagination(fixture.lifecycle)
         ])
         await fixture.probe.runScheduledOperation()
         #expect(fixture.probe.events == [
-            .resetProjectionRestoreState,
+            .applyProjectionViewportTransition(.resetToNewest),
             .startPagination(fixture.lifecycle),
             .refreshLatest(fixture.account, fixture.lifecycle)
         ])
@@ -186,7 +186,9 @@ private struct PaginationFixture {
 @MainActor
 private final class PaginationProbe: HomeTimelinePaginationScheduling {
     enum Event: Equatable {
-        case resetProjectionRestoreState
+        case applyProjectionViewportTransition(
+            HomeTimelineProjectionViewportTransition
+        )
         case startPagination(HomeTimelineLifecycleToken)
         case refreshLatest(NostrAccount, HomeTimelineLifecycleToken)
         case loadOlder(NostrAccount, HomeTimelineLifecycleToken)
@@ -206,8 +208,8 @@ private final class PaginationProbe: HomeTimelinePaginationScheduling {
 
     var effects: HomeTimelinePaginationEffects {
         HomeTimelinePaginationEffects(
-            resetProjectionRestoreState: { [self] in
-                events.append(.resetProjectionRestoreState)
+            applyProjectionViewportTransition: { [self] transition in
+                events.append(.applyProjectionViewportTransition(transition))
             },
             refreshLatest: { [self] account, lifecycle in
                 events.append(.refreshLatest(account, lifecycle))

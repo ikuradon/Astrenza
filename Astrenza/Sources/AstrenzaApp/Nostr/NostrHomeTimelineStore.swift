@@ -54,8 +54,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
-    private var isTimelineAtNewestWindow = true
-    private var restoreProjectionAnchorEventID: String?
+    private var projectionViewportState = HomeTimelineProjectionViewportState()
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -306,11 +305,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func presentationEffects() -> HomeTimelinePresentationEffects {
         HomeTimelinePresentationEffects(
-            setRestoreProjectionAnchor: { [weak self] anchorEventID in
-                self?.restoreProjectionAnchorEventID = anchorEventID
-            },
-            setTimelineAtNewestWindow: { [weak self] isAtNewestWindow in
-                self?.isTimelineAtNewestWindow = isAtNewestWindow
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
             },
             reloadNewestProjectionWindow: { [weak self] account in
                 self?.reloadNewestProjectionWindow(account: account)
@@ -352,11 +348,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func pendingEventsEffects() -> HomeTimelinePendingEventsEffects {
         HomeTimelinePendingEventsEffects(
-            clearRestoreProjectionAnchor: { [weak self] in
-                self?.restoreProjectionAnchorEventID = nil
-            },
-            markTimelineAtNewest: { [weak self] in
-                self?.isTimelineAtNewestWindow = true
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
             },
             reloadNewestProjection: { [weak self] account in
                 self?.reloadNewestProjectionWindow(account: account)
@@ -396,8 +389,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func paginationEffects() -> HomeTimelinePaginationEffects {
         HomeTimelinePaginationEffects(
-            resetProjectionRestoreState: { [weak self] in
-                self?.resetProjectionRestoreState()
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
             },
             refreshLatest: { [weak self] account, lifecycle in
                 await self?.refreshLatest(account: account, lifecycle: lifecycle)
@@ -975,9 +968,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             ensureHomeFeedDefinition: { [weak self] account in
                 self?.ensureHomeFeedDefinition(account: account)
             },
-            applyRestoredViewport: { [weak self] viewport in
-                self?.restoreProjectionAnchorEventID = viewport.anchorEventID
-                self?.isTimelineAtNewestWindow = false
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
             },
             reloadNewestProjectionWindow: { [weak self] account in
                 self?.reloadNewestProjectionWindow(account: account)
@@ -1032,8 +1024,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             applyRelayStatusSnapshot: { [weak self] snapshot in
                 self?.applyRelayStatusSnapshot(snapshot)
             },
-            resetProjectionRestoreState: { [weak self] in
-                self?.resetProjectionRestoreState()
+            applyProjectionViewportTransition: { [weak self] transition in
+                self?.applyProjectionViewportTransition(transition)
             },
             publishRelayStatusChange: { [weak self] in
                 self?.publishRelayStatusChange()
@@ -1062,11 +1054,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 )
             }
         )
-    }
-
-    private func resetProjectionRestoreState() {
-        restoreProjectionAnchorEventID = nil
-        isTimelineAtNewestWindow = true
     }
 
     private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
@@ -1488,6 +1475,23 @@ final class NostrHomeTimelineStore: ObservableObject {
 private extension NostrHomeTimelineStore {
     var syncPolicy: NostrSyncPolicy {
         publishedAccountContextState.syncPolicy
+    }
+
+    var restoreProjectionAnchorEventID: String? {
+        projectionViewportState.restoreAnchorEventID
+    }
+
+    var isTimelineAtNewestWindow: Bool {
+        projectionViewportState.isAtNewestWindow
+    }
+
+    func applyProjectionViewportTransition(
+        _ transition: HomeTimelineProjectionViewportTransition
+    ) {
+        guard let next = projectionViewportState.applying(transition) else {
+            return
+        }
+        projectionViewportState = next
     }
 
     func applyAccountContextTransition(

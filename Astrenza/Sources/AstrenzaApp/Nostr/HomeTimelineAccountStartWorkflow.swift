@@ -21,8 +21,8 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     typealias AccountContextTransitionHandler = @MainActor @Sendable (
         _ transition: HomeTimelineAccountContextTransition
     ) -> Void
-    typealias ViewportEffect = @MainActor @Sendable (
-        _ viewport: HomeTimelineRestoredViewport
+    typealias ProjectionViewportTransitionHandler = @MainActor @Sendable (
+        _ transition: HomeTimelineProjectionViewportTransition
     ) -> Void
     typealias PhaseEffect = @MainActor @Sendable (
         _ phase: NostrHomeTimelinePhase
@@ -33,7 +33,7 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     let applyAccountContextTransition: AccountContextTransitionHandler
     let startRuntimeSession: VoidEffect
     let ensureHomeFeedDefinition: AccountEffect
-    let applyRestoredViewport: ViewportEffect
+    let applyProjectionViewportTransition: ProjectionViewportTransitionHandler
     let reloadNewestProjectionWindow: AccountEffect
     let materializeEntries: VoidEffect
     let applyRestoreProjectionAnchor: AccountEffect
@@ -139,7 +139,9 @@ final class HomeTimelineAccountStartWorkflow {
     ) {
         switch command {
         case .applyRestoredViewport(let viewport):
-            effects.applyRestoredViewport(viewport)
+            effects.applyProjectionViewportTransition(.restoreViewport(
+                anchorEventID: viewport.anchorEventID
+            ))
         case .reloadNewestProjectionWindow(let account):
             effects.reloadNewestProjectionWindow(account)
         case .materializeEntries:

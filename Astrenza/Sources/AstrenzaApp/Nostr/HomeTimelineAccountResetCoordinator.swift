@@ -19,6 +19,9 @@ struct HomeTimelineAccountResetHandlers: Sendable {
     typealias AccountContextTransitionHandler = @MainActor @Sendable (
         _ transition: HomeTimelineAccountContextTransition
     ) -> Void
+    typealias ProjectionViewportTransitionHandler = @MainActor @Sendable (
+        _ transition: HomeTimelineProjectionViewportTransition
+    ) -> Void
     typealias Action = @MainActor @Sendable () -> Void
     typealias RuntimeShutdownScheduler = @MainActor @Sendable (
         _ cancellationGeneration: UInt64
@@ -31,7 +34,7 @@ struct HomeTimelineAccountResetHandlers: Sendable {
     let resetRealtimeState: Action
     let applyContentSnapshot: ContentSnapshotHandler
     let applyRelayStatusSnapshot: RelayStatusSnapshotHandler
-    let resetProjectionRestoreState: Action
+    let applyProjectionViewportTransition: ProjectionViewportTransitionHandler
     let publishRelayStatusChange: Action
     let applyAccountContextTransition: AccountContextTransitionHandler
     let scheduleRuntimeShutdown: RuntimeShutdownScheduler
@@ -102,7 +105,7 @@ final class HomeTimelineAccountResetCoordinator {
         handlers.applyRelayStatusSnapshot(
             dependencies.resetRelayStatus(context.resolvedRelays)
         )
-        handlers.resetProjectionRestoreState()
+        handlers.applyProjectionViewportTransition(.resetToNewest)
         dependencies.resetFilters()
         handlers.publishRelayStatusChange()
         handlers.applyAccountContextTransition(.clear)

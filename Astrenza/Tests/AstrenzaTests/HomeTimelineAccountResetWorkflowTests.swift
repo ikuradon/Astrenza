@@ -39,7 +39,7 @@ struct HomeTimelineAccountResetWorkflowTests {
             .resetRealtimeState,
             .applyContentSnapshot,
             .applyRelayStatusSnapshot,
-            .resetProjectionRestoreState,
+            .applyProjectionViewportTransition(.resetToNewest),
             .publishRelayStatusChange,
             .applyAccountContextTransition(.clear)
         ])
@@ -125,7 +125,7 @@ private final class AccountResetWorkflowCoordinatorSpy:
             handlers.resetRealtimeState()
             handlers.applyContentSnapshot(fixtures.contentSnapshot)
             handlers.applyRelayStatusSnapshot(fixtures.relayStatusSnapshot)
-            handlers.resetProjectionRestoreState()
+            handlers.applyProjectionViewportTransition(.resetToNewest)
             handlers.publishRelayStatusChange()
             handlers.applyAccountContextTransition(.clear)
         }
@@ -206,8 +206,10 @@ private final class AccountResetWorkflowEffectProbe {
                 applicationEvents.append(.applyRelayStatusSnapshot)
                 relayStatusSnapshot = snapshot
             },
-            resetProjectionRestoreState: { [self] in
-                applicationEvents.append(.resetProjectionRestoreState)
+            applyProjectionViewportTransition: { [self] transition in
+                applicationEvents.append(.applyProjectionViewportTransition(
+                    transition
+                ))
             },
             publishRelayStatusChange: { [self] in
                 applicationEvents.append(.publishRelayStatusChange)
@@ -284,7 +286,9 @@ private enum AccountResetWorkflowApplicationEvent: Equatable {
     case resetRealtimeState
     case applyContentSnapshot
     case applyRelayStatusSnapshot
-    case resetProjectionRestoreState
+    case applyProjectionViewportTransition(
+        HomeTimelineProjectionViewportTransition
+    )
     case publishRelayStatusChange
     case applyAccountContextTransition(HomeTimelineAccountContextTransition)
 }

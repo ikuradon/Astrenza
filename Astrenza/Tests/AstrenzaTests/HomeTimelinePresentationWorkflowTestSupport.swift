@@ -27,23 +27,19 @@ enum ProjectionAnchorScenario: CaseIterable, Sendable {
         switch self {
         case .clearWithAccount:
             [
-                .setRestoreProjectionAnchor(nil),
+                .applyProjectionViewportTransition(.setRestoreAnchor(nil)),
                 .reloadNewestProjectionWindow(account),
                 .materializeEntries(false)
             ]
         case .restoreWithAccount:
             [
-                .setRestoreProjectionAnchor("anchor"),
-                .setTimelineAtNewestWindow(false),
+                .applyProjectionViewportTransition(.setRestoreAnchor("anchor")),
                 .applyRestoreProjectionAnchor(account)
             ]
         case .clearWithoutAccount:
-            [.setRestoreProjectionAnchor(nil)]
+            [.applyProjectionViewportTransition(.setRestoreAnchor(nil))]
         case .restoreWithoutAccount:
-            [
-                .setRestoreProjectionAnchor("anchor"),
-                .setTimelineAtNewestWindow(false)
-            ]
+            [.applyProjectionViewportTransition(.setRestoreAnchor("anchor"))]
         }
     }
 }
@@ -126,11 +122,11 @@ enum NewestWindowScenario: CaseIterable, Sendable {
     var expectedEvents: [PresentationProbe.Event] {
         switch self {
         case .enterWithoutAnchor:
-            [.setTimelineAtNewestWindow(true)]
+            [.applyProjectionViewportTransition(.setNewestWindow(true))]
         case .enterWithAnchor:
             []
         case .leaveWithAnchor:
-            [.setTimelineAtNewestWindow(false)]
+            [.applyProjectionViewportTransition(.setNewestWindow(false))]
         }
     }
 }
@@ -203,8 +199,9 @@ struct PresentationFixture {
 @MainActor
 final class PresentationProbe: HomeTimelinePresentationCoordinating {
     enum Event: Equatable {
-        case setRestoreProjectionAnchor(String?)
-        case setTimelineAtNewestWindow(Bool)
+        case applyProjectionViewportTransition(
+            HomeTimelineProjectionViewportTransition
+        )
         case reloadNewestProjectionWindow(NostrAccount)
         case materializeEntries(Bool)
         case applyRestoreProjectionAnchor(NostrAccount)
@@ -224,11 +221,8 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
 
     var effects: HomeTimelinePresentationEffects {
         HomeTimelinePresentationEffects(
-            setRestoreProjectionAnchor: { [self] anchorEventID in
-                events.append(.setRestoreProjectionAnchor(anchorEventID))
-            },
-            setTimelineAtNewestWindow: { [self] value in
-                events.append(.setTimelineAtNewestWindow(value))
+            applyProjectionViewportTransition: { [self] transition in
+                events.append(.applyProjectionViewportTransition(transition))
             },
             reloadNewestProjectionWindow: { [self] account in
                 events.append(.reloadNewestProjectionWindow(account))

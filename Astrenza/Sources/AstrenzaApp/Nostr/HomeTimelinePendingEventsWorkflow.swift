@@ -8,10 +8,12 @@ struct HomeTimelinePendingEventsState: Equatable, Sendable {
 
 struct HomeTimelinePendingEventsEffects: Sendable {
     typealias AccountEffect = @MainActor @Sendable (_ account: NostrAccount) -> Void
+    typealias ProjectionViewportTransitionEffect = @MainActor @Sendable (
+        _ transition: HomeTimelineProjectionViewportTransition
+    ) -> Void
     typealias VoidEffect = @MainActor @Sendable () -> Void
 
-    let clearRestoreProjectionAnchor: VoidEffect
-    let markTimelineAtNewest: VoidEffect
+    let applyProjectionViewportTransition: ProjectionViewportTransitionEffect
     let reloadNewestProjection: AccountEffect
     let clearBufferedEvents: VoidEffect
     let clearPendingProjectionReload: VoidEffect
@@ -30,8 +32,7 @@ final class HomeTimelinePendingEventsWorkflow {
         let hadPendingEvents = state.hasBufferedEvents ||
             state.hasPendingProjectionReload
 
-        effects.clearRestoreProjectionAnchor()
-        effects.markTimelineAtNewest()
+        effects.applyProjectionViewportTransition(.resetToNewest)
         effects.reloadNewestProjection(account)
         effects.clearBufferedEvents()
         effects.clearPendingProjectionReload()

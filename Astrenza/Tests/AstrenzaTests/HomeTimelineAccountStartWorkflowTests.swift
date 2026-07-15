@@ -84,7 +84,9 @@ struct HomeTimelineAccountStartWorkflowTests {
             )),
             .startRuntimeSession,
             .ensureHomeFeedDefinition(account),
-            .applyRestoredViewport(viewport),
+            .applyProjectionViewportTransition(.restoreViewport(
+                anchorEventID: viewport.anchorEventID
+            )),
             .reloadNewestProjectionWindow(account),
             .materializeEntries,
             .applyRestoreProjectionAnchor(account),
@@ -170,8 +172,8 @@ private final class AccountStartWorkflowEffectProbe {
             ensureHomeFeedDefinition: { [self] account in
                 applications.append(.ensureHomeFeedDefinition(account))
             },
-            applyRestoredViewport: { [self] viewport in
-                applications.append(.applyRestoredViewport(viewport))
+            applyProjectionViewportTransition: { [self] transition in
+                applications.append(.applyProjectionViewportTransition(transition))
             },
             reloadNewestProjectionWindow: { [self] account in
                 applications.append(.reloadNewestProjectionWindow(account))
@@ -203,7 +205,9 @@ private enum AccountStartWorkflowApplication: Equatable, Sendable {
     case applyAccountContextTransition(HomeTimelineAccountContextTransition)
     case startRuntimeSession
     case ensureHomeFeedDefinition(NostrAccount)
-    case applyRestoredViewport(HomeTimelineRestoredViewport)
+    case applyProjectionViewportTransition(
+        HomeTimelineProjectionViewportTransition
+    )
     case reloadNewestProjectionWindow(NostrAccount)
     case materializeEntries
     case applyRestoreProjectionAnchor(NostrAccount)

@@ -66,7 +66,9 @@ private final class HomeTimelineAccountResetProbe {
         case applyContentSnapshot
         case resetRelayStatus
         case applyRelayStatusSnapshot
-        case resetProjectionRestoreState
+        case applyProjectionViewportTransition(
+            HomeTimelineProjectionViewportTransition
+        )
         case resetFilters
         case publishRelayStatusChange
         case applyAccountContextTransition(HomeTimelineAccountContextTransition)
@@ -96,7 +98,7 @@ private final class HomeTimelineAccountResetProbe {
             .applyContentSnapshot,
             .resetRelayStatus,
             .applyRelayStatusSnapshot,
-            .resetProjectionRestoreState,
+            .applyProjectionViewportTransition(.resetToNewest),
             .resetFilters,
             .publishRelayStatusChange,
             .applyAccountContextTransition(.clear),
@@ -207,8 +209,8 @@ private final class HomeTimelineAccountResetProbe {
                 record(.applyRelayStatusSnapshot)
                 appliedRelayStatusSnapshot = snapshot
             },
-            resetProjectionRestoreState: { [self] in
-                record(.resetProjectionRestoreState)
+            applyProjectionViewportTransition: { [self] transition in
+                record(.applyProjectionViewportTransition(transition))
             },
             publishRelayStatusChange: { [self] in
                 record(.publishRelayStatusChange)

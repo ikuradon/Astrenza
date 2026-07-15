@@ -30,8 +30,9 @@ struct HomeTimelinePresentationAppState: Sendable {
 
 struct HomeTimelinePresentationEffects: Sendable {
     typealias AccountEffect = @MainActor @Sendable (_ account: NostrAccount) -> Void
-    typealias AnchorEffect = @MainActor @Sendable (_ anchorEventID: String?) -> Void
-    typealias BooleanEffect = @MainActor @Sendable (_ value: Bool) -> Void
+    typealias ProjectionViewportTransitionEffect = @MainActor @Sendable (
+        _ transition: HomeTimelineProjectionViewportTransition
+    ) -> Void
     typealias MaterializeEffect = @MainActor @Sendable (
         _ allowsRealtimeFollow: Bool
     ) -> Void
@@ -45,8 +46,7 @@ struct HomeTimelinePresentationEffects: Sendable {
     ) -> Void
     typealias VoidEffect = @MainActor @Sendable () -> Void
 
-    let setRestoreProjectionAnchor: AnchorEffect
-    let setTimelineAtNewestWindow: BooleanEffect
+    let applyProjectionViewportTransition: ProjectionViewportTransitionEffect
     let reloadNewestProjectionWindow: AccountEffect
     let materializeEntries: MaterializeEffect
     let applyRestoreProjectionAnchor: AccountEffect
@@ -68,10 +68,7 @@ final class HomeTimelinePresentationWorkflow {
         state: HomeTimelinePresentationAppState,
         effects: HomeTimelinePresentationEffects
     ) {
-        effects.setRestoreProjectionAnchor(anchorEventID)
-        if anchorEventID != nil {
-            effects.setTimelineAtNewestWindow(false)
-        }
+        effects.applyProjectionViewportTransition(.setRestoreAnchor(anchorEventID))
         guard let account = state.account else { return }
         if anchorEventID == nil {
             effects.reloadNewestProjectionWindow(account)
@@ -100,7 +97,9 @@ final class HomeTimelinePresentationWorkflow {
         effects: HomeTimelinePresentationEffects
     ) {
         guard !isAtNewestWindow || state.restoreProjectionAnchorEventID == nil else { return }
-        effects.setTimelineAtNewestWindow(isAtNewestWindow)
+        effects.applyProjectionViewportTransition(.setNewestWindow(
+            isAtNewestWindow
+        ))
     }
 
     func setTimelineScrollActive(

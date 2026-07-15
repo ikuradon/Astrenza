@@ -24,13 +24,15 @@ struct HomeTimelinePaginationState: Equatable, Sendable {
 }
 
 struct HomeTimelinePaginationEffects: Sendable {
-    typealias VoidEffect = @MainActor @Sendable () -> Void
+    typealias ProjectionViewportTransitionEffect = @MainActor @Sendable (
+        _ transition: HomeTimelineProjectionViewportTransition
+    ) -> Void
     typealias LoadEffect = @MainActor @Sendable (
         _ account: NostrAccount,
         _ lifecycle: HomeTimelineLifecycleToken
     ) async -> Void
 
-    let resetProjectionRestoreState: VoidEffect
+    let applyProjectionViewportTransition: ProjectionViewportTransitionEffect
     let refreshLatest: LoadEffect
     let loadOlder: LoadEffect
 }
@@ -49,7 +51,7 @@ final class HomeTimelinePaginationWorkflow {
     ) {
         guard let context = context(for: state.account) else { return }
 
-        effects.resetProjectionRestoreState()
+        effects.applyProjectionViewportTransition(.resetToNewest)
         lifecycleCoordinator.startPagination(for: context.lifecycle) {
             await effects.refreshLatest(context.account, context.lifecycle)
         }
