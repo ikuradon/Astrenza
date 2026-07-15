@@ -1,5 +1,4 @@
 import AstrenzaCore
-import Foundation
 import Testing
 @testable import Astrenza
 
@@ -70,38 +69,6 @@ struct HomeTimelinePresentationWorkflowTests {
         )
 
         #expect(fixture.probe.events == scenario.expectedEvents(account: fixture.account))
-    }
-
-    @Test("A valid Home viewport is scheduled for its current account feed")
-    func validViewportIsScheduled() {
-        let fixture = PresentationFixture()
-        let viewport = fixture.viewport()
-
-        fixture.workflow.saveViewportState(
-            viewport,
-            state: fixture.state,
-            effects: fixture.effects
-        )
-
-        #expect(fixture.probe.events == [
-            .scheduleViewportState(viewport)
-        ])
-    }
-
-    @Test(
-        "Every invalid viewport context is rejected",
-        arguments: InvalidViewportScenario.allCases
-    )
-    func invalidViewportIsRejected(_ scenario: InvalidViewportScenario) {
-        let fixture = PresentationFixture()
-
-        fixture.workflow.saveViewportState(
-            scenario.viewport(fixture: fixture),
-            state: scenario.state(fixture: fixture),
-            effects: fixture.effects
-        )
-
-        #expect(fixture.probe.events.isEmpty)
     }
 
     @Test(

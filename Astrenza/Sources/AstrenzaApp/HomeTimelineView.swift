@@ -256,7 +256,6 @@ struct HomeTimelineView: View {
         }
         .onDisappear {
             timelineRestoreStore.flushPendingSaves()
-            liveTimelineStore.flushPendingViewportStateSave()
         }
         .homeTimelinePresentations(
             isComposerPresented: $isComposerPresented,
@@ -806,7 +805,6 @@ private extension HomeTimelineView {
         )
 
         timelineRestoreStore.scheduleViewportStateSave(nextState)
-        liveTimelineStore.saveViewportState(nextState)
     }
 
     func saveTimelineLayoutCache(_ cache: TimelineLayoutCache) {

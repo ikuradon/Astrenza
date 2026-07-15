@@ -1,5 +1,4 @@
 import AstrenzaCore
-import Foundation
 import Testing
 @testable import Astrenza
 
@@ -55,47 +54,6 @@ extension ProjectionAnchorScenario: CustomTestStringConvertible {
             "clear without account"
         case .restoreWithoutAccount:
             "restore without account"
-        }
-    }
-}
-
-enum InvalidViewportScenario: CaseIterable, Sendable {
-    case nonHomeTimeline
-    case missingAccount
-    case accountMismatch
-
-    @MainActor
-    func viewport(fixture: PresentationFixture) -> TimelineViewportState {
-        switch self {
-        case .nonHomeTimeline:
-            fixture.viewport(timelineKey: "lists")
-        case .missingAccount:
-            fixture.viewport()
-        case .accountMismatch:
-            fixture.viewport(accountID: String(repeating: "b", count: 64))
-        }
-    }
-
-    @MainActor
-    func state(fixture: PresentationFixture) -> HomeTimelinePresentationAppState {
-        switch self {
-        case .nonHomeTimeline, .accountMismatch:
-            fixture.state
-        case .missingAccount:
-            fixture.state(account: nil)
-        }
-    }
-}
-
-extension InvalidViewportScenario: CustomTestStringConvertible {
-    var testDescription: String {
-        switch self {
-        case .nonHomeTimeline:
-            "non-Home timeline"
-        case .missingAccount:
-            "missing account"
-        case .accountMismatch:
-            "account mismatch"
         }
     }
 }
@@ -176,19 +134,6 @@ struct PresentationFixture {
         )
     }
 
-    func viewport(
-        accountID: String? = nil,
-        timelineKey: String = "home"
-    ) -> TimelineViewportState {
-        TimelineViewportState(
-            accountID: accountID ?? account.pubkey,
-            timelineKey: timelineKey,
-            anchorPostID: "anchor",
-            anchorOffset: 12,
-            contentOffset: 120,
-            updatedAt: Date(timeIntervalSince1970: 100)
-        )
-    }
 }
 
 @MainActor
@@ -200,7 +145,6 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
         case reloadNewestProjectionWindow(NostrAccount)
         case materializeEntries(Bool)
         case applyRestoreProjectionAnchor(NostrAccount)
-        case scheduleViewportState(TimelineViewportState)
         case setScrollActive(Bool)
         case dismissUnreadBadge
         case markVisiblePostsRead([TimelinePost.ID])
@@ -237,9 +181,6 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
             },
             applyRestoreProjectionAnchor: { [self] account in
                 events.append(.applyRestoreProjectionAnchor(account))
-            },
-            scheduleViewportState: { [self] state in
-                events.append(.scheduleViewportState(state))
             },
             applyPresentationTransition: { [self] transition in
                 events.append(.applyPresentationTransition(

@@ -13,7 +13,6 @@ enum HomeTimelineViewportApplication {
     case reloadNewestProjectionWindow(NostrAccount)
     case materializeEntries(allowsRealtimeFollow: Bool)
     case applyRestoreProjectionAnchor(NostrAccount)
-    case scheduleViewportState(TimelineViewportState)
     case applyPresentationTransition(HomeTimelinePresentationTransition)
     case scheduleReadStateSave
     case applyPendingEventCountPublication(
@@ -71,17 +70,6 @@ final class HomeTimelineViewportInteractionWorkflow {
     ) {
         presentation.setRestoreProjectionAnchor(
             anchorEventID,
-            state: context.state.presentation,
-            effects: presentationEffects(for: context.effects)
-        )
-    }
-
-    func saveViewportState(
-        _ viewport: TimelineViewportState,
-        context: HomeTimelineViewportInteractionContext
-    ) {
-        presentation.saveViewportState(
-            viewport,
             state: context.state.presentation,
             effects: presentationEffects(for: context.effects)
         )
@@ -193,9 +181,6 @@ final class HomeTimelineViewportInteractionWorkflow {
             },
             applyRestoreProjectionAnchor: { account in
                 effects.apply(.applyRestoreProjectionAnchor(account))
-            },
-            scheduleViewportState: { state in
-                effects.apply(.scheduleViewportState(state))
             },
             applyPresentationTransition: { transition in
                 effects.apply(.applyPresentationTransition(transition))

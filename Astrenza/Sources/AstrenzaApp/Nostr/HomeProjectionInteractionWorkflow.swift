@@ -29,30 +29,26 @@ protocol HomeFeedProjectionControlling: AnyObject {
 extension HomeFeedProjectionController: HomeFeedProjectionControlling {}
 
 @MainActor
-protocol HomeTimelineReadStateCoordinating: AnyObject {
-    func restoredViewportState(
+protocol HomeTimelineViewportStateRestoring: AnyObject {
+    func viewportState(
         accountID: String,
         timelineKey: String
     ) -> TimelineViewportState?
+}
 
+extension TimelineRestoreStore: HomeTimelineViewportStateRestoring {}
+
+@MainActor
+protocol HomeTimelineReadStateCoordinating: AnyObject {
     func restoredReadBoundaryPostID(
         feedID: String,
         positions: [HomeTimelineReadPosition]
     ) async -> String?
 
     @discardableResult
-    func scheduleViewportState(
-        _ state: TimelineViewportState,
-        feedID: String,
-        scopeID: String
-    ) -> Bool
-
-    @discardableResult
     func scheduleReadBoundarySave(
         _ write: HomeTimelineReadBoundaryWrite
     ) -> Bool
-
-    func flushPendingViewportWrite()
 }
 
 extension HomeTimelineReadStateCoordinator: HomeTimelineReadStateCoordinating {}
@@ -96,12 +92,14 @@ final class HomeProjectionInteractionWorkflow {
     typealias TimestampProvider = @MainActor @Sendable () -> Int
 
     private let projection: any HomeFeedProjectionControlling
+    private let viewportStateRestorer: any HomeTimelineViewportStateRestoring
     private let readState: any HomeTimelineReadStateCoordinating
     private let materialization: any HomeTimelineMaterializationCoordinating
     private let timestamp: TimestampProvider
 
     init(
         projection: any HomeFeedProjectionControlling,
+        viewportStateRestorer: any HomeTimelineViewportStateRestoring,
         readState: any HomeTimelineReadStateCoordinating,
         materialization: any HomeTimelineMaterializationCoordinating,
         timestamp: @escaping TimestampProvider = {
@@ -109,6 +107,7 @@ final class HomeProjectionInteractionWorkflow {
         }
     ) {
         self.projection = projection
+        self.viewportStateRestorer = viewportStateRestorer
         self.readState = readState
         self.materialization = materialization
         self.timestamp = timestamp
@@ -138,26 +137,15 @@ final class HomeProjectionInteractionWorkflow {
         accountID: String,
         timelineKey: String
     ) -> TimelineViewportState? {
-        readState.restoredViewportState(
-            accountID: accountID,
-            timelineKey: timelineKey
-        )
-    }
-
-    @discardableResult
-    func scheduleViewportState(_ state: TimelineViewportState) -> Bool {
-        guard let feedID = activeFeedID(accountID: state.accountID) else {
-            return false
-        }
-        return readState.scheduleViewportState(
-            state,
-            feedID: feedID,
-            scopeID: state.accountID
-        )
-    }
-
-    func flushPendingViewportWrite() {
-        readState.flushPendingViewportWrite()
+        guard timelineKey == "home",
+              let state = viewportStateRestorer.viewportState(
+                  accountID: accountID,
+                  timelineKey: timelineKey
+              ),
+              state.accountID == accountID,
+              state.timelineKey == timelineKey
+        else { return nil }
+        return state
     }
 
     func restoredReadBoundaryPostID(

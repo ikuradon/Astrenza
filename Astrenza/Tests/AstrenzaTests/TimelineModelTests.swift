@@ -1749,8 +1749,8 @@ struct TimelineModelTests {
         #expect(projection.map(\.id) == Array(allowedEvents.prefix(480)).map(\.id))
     }
 
-    @Test("Persistence worker keeps relay history single-saved and viewport/read state independent")
-    func homeTimelinePersistenceWorkerKeepsPartialStateIndependent() async throws {
+    @Test("Persistence worker keeps relay history single-saved and advances read state")
+    func homeTimelinePersistenceWorkerPersistsReadState() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let accountID = String(repeating: "c", count: 64)
         let feedID = "feed:home:\(accountID)"
@@ -1807,83 +1807,15 @@ struct TimelineModelTests {
 
         let firstBoundary = NostrTimelineEntryCursor(sortTimestamp: 90, eventID: "event-90")
         try await worker.saveReadBoundary(feedID: feedID, boundary: firstBoundary, updatedAt: 102)
-        try await worker.saveViewportState(
-            feedID: feedID,
-            anchorEventID: "viewport-anchor",
-            anchorOffset: 18,
-            updatedAt: 103
-        )
 
-        let stateAfterViewport = try #require(try eventStore.feedReadState(feedID: feedID))
-        #expect(stateAfterViewport.viewportAnchorEventID == "viewport-anchor")
-        #expect(stateAfterViewport.viewportAnchorOffset == 18)
-        #expect(stateAfterViewport.readBoundary == firstBoundary)
+        let firstState = try #require(try eventStore.feedReadState(feedID: feedID))
+        #expect(firstState.readBoundary == firstBoundary)
 
         let latestBoundary = NostrTimelineEntryCursor(sortTimestamp: 95, eventID: "event-95")
-        try await worker.saveReadBoundary(feedID: feedID, boundary: latestBoundary, updatedAt: 104)
+        try await worker.saveReadBoundary(feedID: feedID, boundary: latestBoundary, updatedAt: 103)
 
         let stateAfterBoundary = try #require(try eventStore.feedReadState(feedID: feedID))
-        #expect(stateAfterBoundary.viewportAnchorEventID == "viewport-anchor")
-        #expect(stateAfterBoundary.viewportAnchorOffset == 18)
         #expect(stateAfterBoundary.readBoundary == latestBoundary)
-    }
-
-    @Test("Home timeline store debounces viewport writes and flushes the latest anchor")
-    @MainActor
-    func homeTimelineStoreDebouncesViewportPersistence() async throws {
-        let eventStore = try NostrEventStore.inMemory()
-        let accountID = String(repeating: "d", count: 64)
-        let account = NostrAccount(
-            pubkey: accountID,
-            displayIdentifier: "npub-test",
-            readOnly: true
-        )
-        let store = NostrHomeTimelineStore(
-            timelineLoader: NostrHomeTimelineLoader(
-                relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
-                bootstrapRelays: []
-            ),
-            eventStore: eventStore
-        )
-        store.start(account: account)
-        defer { store.cancel() }
-        try #require(await waitForTimelineState { store.phase != .idle })
-
-        func viewport(anchor: String, updatedAt: TimeInterval) -> TimelineViewportState {
-            TimelineViewportState(
-                accountID: accountID,
-                timelineKey: "home",
-                anchorPostID: anchor,
-                anchorOffset: 18,
-                contentOffset: 240,
-                updatedAt: Date(timeIntervalSince1970: updatedAt)
-            )
-        }
-
-        store.saveViewportState(viewport(anchor: "first", updatedAt: 200))
-        store.saveViewportState(viewport(anchor: "latest", updatedAt: 201))
-        try await Task.sleep(for: .milliseconds(250))
-        #expect(try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID)) == nil)
-
-        try await Task.sleep(for: .milliseconds(500))
-        let debouncedState = try #require(
-            try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID))
-        )
-        #expect(debouncedState.viewportAnchorEventID == "latest")
-
-        store.saveViewportState(viewport(anchor: "flushed", updatedAt: 202))
-        store.flushPendingViewportStateSave()
-        for _ in 0..<20 {
-            if try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID))?
-                .viewportAnchorEventID == "flushed" {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        #expect(
-            try eventStore.feedReadState(feedID: homeFeedID(accountID: accountID))?
-                .viewportAnchorEventID == "flushed"
-        )
     }
 
     @Test("Home timeline store restores empty Generic Feed metadata and presentation viewport")

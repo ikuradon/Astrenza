@@ -193,7 +193,7 @@ enum HomeTimelineStoreAssembly {
             linkPreviewInteractionWorkflow:
                 graph.features.linkPreviewInteractionWorkflow,
             projectionInteractionWorkflow:
-                makeProjectionInteraction(from: graph),
+                makeProjectionInteraction(from: graph, input: input),
             syncInteractionWorkflow: makeSyncInteraction(from: graph),
             accountStartInteractionWorkflow:
                 HomeAccountStartInteractionWorkflow(
@@ -271,10 +271,12 @@ enum HomeTimelineStoreAssembly {
     }
 
     private static func makeProjectionInteraction(
-        from graph: HomeTimelineStoreAssemblyGraph
+        from graph: HomeTimelineStoreAssemblyGraph,
+        input: HomeTimelineStoreAssemblyInput
     ) -> HomeProjectionInteractionWorkflow {
         HomeProjectionInteractionWorkflow(
             projection: graph.persistence.homeFeedProjection,
+            viewportStateRestorer: input.viewportStateRestorer,
             readState: graph.features.readStateCoordinator,
             materialization: graph.coordination.materializationCoordinator
         )

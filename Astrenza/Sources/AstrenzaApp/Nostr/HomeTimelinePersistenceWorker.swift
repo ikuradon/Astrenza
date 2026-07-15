@@ -94,20 +94,6 @@ actor HomeTimelinePersistenceWorker {
         try eventStore.saveRelaySyncEvents(events)
     }
 
-    func saveViewportState(
-        feedID: String,
-        anchorEventID: String?,
-        anchorOffset: Double,
-        updatedAt: Int
-    ) throws {
-        try eventStore.saveFeedViewportState(
-            feedID: feedID,
-            viewportAnchorEventID: anchorEventID,
-            viewportAnchorOffset: anchorOffset,
-            updatedAt: updatedAt
-        )
-    }
-
     func saveReadBoundary(
         feedID: String,
         boundary: NostrTimelineEntryCursor?,

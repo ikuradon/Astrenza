@@ -73,16 +73,12 @@ struct HomeTimelinePresentationEffects: Sendable {
     typealias TransitionEffect = @MainActor @Sendable (
         _ transition: HomeTimelinePresentationTransition
     ) -> Void
-    typealias ViewportEffect = @MainActor @Sendable (
-        _ state: TimelineViewportState
-    ) -> Void
     typealias VoidEffect = @MainActor @Sendable () -> Void
 
     let applyProjectionViewportTransition: ProjectionViewportTransitionEffect
     let reloadNewestProjectionWindow: AccountEffect
     let materializeEntries: MaterializeEffect
     let applyRestoreProjectionAnchor: AccountEffect
-    let scheduleViewportState: ViewportEffect
     let applyPresentationTransition: TransitionEffect
     let scheduleReadStateSave: VoidEffect
 }
@@ -143,18 +139,6 @@ final class HomeTimelinePresentationWorkflow {
         } else {
             effects.applyRestoreProjectionAnchor(account)
         }
-    }
-
-    func saveViewportState(
-        _ viewport: TimelineViewportState,
-        state: HomeTimelinePresentationAppState,
-        effects: HomeTimelinePresentationEffects
-    ) {
-        guard viewport.timelineKey == "home",
-              let account = state.account,
-              account.pubkey == viewport.accountID
-        else { return }
-        effects.scheduleViewportState(viewport)
     }
 
     func setTimelineAtNewestWindow(

@@ -214,17 +214,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    func saveViewportState(_ state: TimelineViewportState) {
-        viewportInteractionWorkflow.saveViewportState(
-            state,
-            context: viewportInteractionContext()
-        )
-    }
-
-    func flushPendingViewportStateSave() {
-        projectionInteractionWorkflow.flushPendingViewportWrite()
-    }
-
     func refresh() {
         viewportInteractionWorkflow.refresh(
             viewportInteractionContext()
@@ -333,8 +322,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
         case .applyRestoreProjectionAnchor(let account):
             applyRestoreProjectionAnchorIfPossible(account: account)
-        case .scheduleViewportState(let state):
-            projectionInteractionWorkflow.scheduleViewportState(state)
         case .applyPresentationTransition(let transition):
             applyPresentationTransition(transition)
         case .scheduleReadStateSave:

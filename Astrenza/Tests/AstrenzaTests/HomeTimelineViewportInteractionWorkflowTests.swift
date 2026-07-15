@@ -1,5 +1,4 @@
 import AstrenzaCore
-import Foundation
 import Testing
 @testable import Astrenza
 
@@ -9,7 +8,6 @@ struct HomeTimelineViewportWorkflowTests {
     @Test("Presentation actions route through one typed application boundary")
     func presentationActionsRouteThroughApplicationBoundary() {
         let fixture = ViewportInteractionFixture()
-        let viewport = fixture.viewport()
         fixture.presentationProbe.scrollMaterializationPermission = true
         fixture.presentationProbe.visibleReadTransition = presentationTransition(
             changes: [.unreadCounts],
@@ -18,10 +16,6 @@ struct HomeTimelineViewportWorkflowTests {
 
         fixture.workflow.setRestoreProjectionAnchor(
             "anchor",
-            context: fixture.context
-        )
-        fixture.workflow.saveViewportState(
-            viewport,
             context: fixture.context
         )
         fixture.workflow.setTimelineAtNewestWindow(
@@ -41,7 +35,6 @@ struct HomeTimelineViewportWorkflowTests {
         #expect(fixture.applicationProbe.events == [
             .applyProjectionViewportTransition(.setRestoreAnchor("anchor")),
             .applyRestoreProjectionAnchor(fixture.account),
-            .scheduleViewportState(viewport),
             .applyProjectionViewportTransition(.setNewestWindow(false)),
             .materializeEntries(true),
             .applyPresentationTransition([.unreadCounts], true),
@@ -165,17 +158,6 @@ private struct ViewportInteractionFixture {
             effects: applicationProbe.effects
         )
     }
-
-    func viewport() -> TimelineViewportState {
-        TimelineViewportState(
-            accountID: account.pubkey,
-            timelineKey: "home",
-            anchorPostID: "anchor",
-            anchorOffset: 12,
-            contentOffset: 120,
-            updatedAt: Date(timeIntervalSince1970: 100)
-        )
-    }
 }
 
 @MainActor
@@ -187,7 +169,6 @@ private final class ViewportInteractionApplicationProbe {
         case reloadNewestProjectionWindow(NostrAccount)
         case materializeEntries(Bool)
         case applyRestoreProjectionAnchor(NostrAccount)
-        case scheduleViewportState(TimelineViewportState)
         case applyPresentationTransition(HomeTimelinePresentationChanges, Bool)
         case scheduleReadStateSave
         case applyPendingEventCountPublication(Int)
@@ -221,8 +202,6 @@ private final class ViewportInteractionApplicationProbe {
             events.append(.materializeEntries(allowsRealtimeFollow))
         case .applyRestoreProjectionAnchor(let account):
             events.append(.applyRestoreProjectionAnchor(account))
-        case .scheduleViewportState(let state):
-            events.append(.scheduleViewportState(state))
         case .applyPresentationTransition(let transition):
             events.append(.applyPresentationTransition(
                 transition.changes,
