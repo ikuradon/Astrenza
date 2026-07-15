@@ -39,6 +39,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
+    private let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
     private let materializationCoordinator: HomeTimelineMaterializationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -247,6 +248,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = components.listProjectionCache
         self.activityCoordinator = components.activityCoordinator
         self.presentationCoordinator = components.presentationCoordinator
+        self.pendingEventsWorkflow = components.pendingEventsWorkflow
         self.materializationCoordinator = components.materializationCoordinator
         self.pendingEventBuffer = components.pendingEventBuffer
         self.backwardRequestRegistry = components.backwardRequestRegistry
@@ -366,17 +368,41 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        guard let account else { return false }
-        let hadPendingNewEvents = pendingEventBuffer.hasEvents ||
-            presentationCoordinator.hasPendingNewestProjectionReload
-        restoreProjectionAnchorEventID = nil
-        isTimelineAtNewestWindow = true
-        reloadNewestProjectionWindow(account: account)
-        clearPendingNewEvents()
-        presentationCoordinator.clearNewestProjectionReload()
-        materializeEntries()
-        scheduleLinkPreviewResolution()
-        return hadPendingNewEvents
+        pendingEventsWorkflow.apply(
+            HomeTimelinePendingEventsState(
+                account: account,
+                hasBufferedEvents: pendingEventBuffer.hasEvents,
+                hasPendingProjectionReload:
+                    presentationCoordinator.hasPendingNewestProjectionReload
+            ),
+            effects: pendingEventsEffects()
+        )
+    }
+
+    private func pendingEventsEffects() -> HomeTimelinePendingEventsEffects {
+        HomeTimelinePendingEventsEffects(
+            clearRestoreProjectionAnchor: { [weak self] in
+                self?.restoreProjectionAnchorEventID = nil
+            },
+            markTimelineAtNewest: { [weak self] in
+                self?.isTimelineAtNewestWindow = true
+            },
+            reloadNewestProjection: { [weak self] account in
+                self?.reloadNewestProjectionWindow(account: account)
+            },
+            clearBufferedEvents: { [weak self] in
+                self?.clearPendingNewEvents()
+            },
+            clearPendingProjectionReload: { [weak self] in
+                self?.presentationCoordinator.clearNewestProjectionReload()
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
+            },
+            scheduleLinkPreviewResolution: { [weak self] in
+                self?.scheduleLinkPreviewResolution()
+            }
+        )
     }
 
     func loadOlder() {

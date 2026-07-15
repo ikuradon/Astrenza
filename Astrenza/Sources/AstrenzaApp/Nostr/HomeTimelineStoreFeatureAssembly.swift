@@ -3,6 +3,7 @@ import AstrenzaCore
 private struct HomeTimelineStoreApplicationFeatures {
     let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
+    let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
 }
 
 private struct HomeTimelineStoreLoadFeatures {
@@ -42,6 +43,7 @@ extension HomeTimelineStoreAssembly {
         return HomeTimelineStoreFeatureGraph(
             stateWorkflow: applications.stateWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
+            pendingEventsWorkflow: applications.pendingEventsWorkflow,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
             loadWorkflow: loads.loadWorkflow,
             linkPreviewCoordinator: peripherals.linkPreviewCoordinator,
@@ -128,7 +130,8 @@ extension HomeTimelineStoreAssembly {
                 stateApplication: stateApplicationCoordinator,
                 persistence: persistenceCoordinator
             ),
-            accountStartWorkflow: accountStartWorkflow
+            accountStartWorkflow: accountStartWorkflow,
+            pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow()
         )
     }
 

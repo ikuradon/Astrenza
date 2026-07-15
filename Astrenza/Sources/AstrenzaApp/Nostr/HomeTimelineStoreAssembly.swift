@@ -24,6 +24,7 @@ struct HomeTimelineStoreComponents {
     let listProjectionCache: HomeTimelineListProjectionCache
     let activityCoordinator: HomeTimelineActivityCoordinator
     let presentationCoordinator: HomeTimelinePresentationCoordinator
+    let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
     let materializationCoordinator: HomeTimelineMaterializationCoordinator
     let pendingEventBuffer: HomeTimelinePendingEventBuffer
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -87,6 +88,7 @@ struct HomeTimelineStoreRelayRuntimeGraph {
 struct HomeTimelineStoreFeatureGraph {
     let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
+    let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadWorkflow: HomeTimelineLoadWorkflow
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -171,6 +173,7 @@ enum HomeTimelineStoreAssembly {
             listProjectionCache: graph.coordination.listProjectionCache,
             activityCoordinator: graph.coordination.activityCoordinator,
             presentationCoordinator: graph.coordination.presentationCoordinator,
+            pendingEventsWorkflow: graph.features.pendingEventsWorkflow,
             materializationCoordinator: graph.coordination.materializationCoordinator,
             pendingEventBuffer: graph.coordination.pendingEventBuffer,
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
