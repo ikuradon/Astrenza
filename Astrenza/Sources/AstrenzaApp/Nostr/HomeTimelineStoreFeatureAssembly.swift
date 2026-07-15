@@ -3,9 +3,7 @@ import AstrenzaCore
 private struct HomeTimelineStoreApplicationFeatures {
     let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let presentationWorkflow: HomeTimelinePresentationWorkflow
-    let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
-    let paginationWorkflow: HomeTimelinePaginationWorkflow
+    let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
 }
 
 private struct HomeTimelineStoreLoadFeatures {
@@ -45,9 +43,8 @@ extension HomeTimelineStoreAssembly {
         return HomeTimelineStoreFeatureGraph(
             stateWorkflow: applications.stateWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
-            presentationWorkflow: applications.presentationWorkflow,
-            pendingEventsWorkflow: applications.pendingEventsWorkflow,
-            paginationWorkflow: applications.paginationWorkflow,
+            viewportInteractionWorkflow:
+                applications.viewportInteractionWorkflow,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
             loadWorkflow: loads.loadWorkflow,
             linkPreviewCoordinator: peripherals.linkPreviewCoordinator,
@@ -129,18 +126,23 @@ extension HomeTimelineStoreAssembly {
             listProjectionCache: coordination.listProjectionCache,
             pendingEventBuffer: coordination.pendingEventBuffer
         )
+        let presentationWorkflow = HomeTimelinePresentationWorkflow(
+            coordinator: coordination.presentationCoordinator
+        )
+        let pendingEventsWorkflow = HomeTimelinePendingEventsWorkflow()
+        let paginationWorkflow = HomeTimelinePaginationWorkflow(
+            lifecycleCoordinator: coordination.lifecycleCoordinator
+        )
         return HomeTimelineStoreApplicationFeatures(
             stateWorkflow: HomeTimelineStateWorkflow(
                 stateApplication: stateApplicationCoordinator,
                 persistence: persistenceCoordinator
             ),
             accountStartWorkflow: accountStartWorkflow,
-            presentationWorkflow: HomeTimelinePresentationWorkflow(
-                coordinator: coordination.presentationCoordinator
-            ),
-            pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow(),
-            paginationWorkflow: HomeTimelinePaginationWorkflow(
-                lifecycleCoordinator: coordination.lifecycleCoordinator
+            viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow(
+                presentation: presentationWorkflow,
+                pendingEvents: pendingEventsWorkflow,
+                pagination: paginationWorkflow
             )
         )
     }

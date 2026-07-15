@@ -23,7 +23,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadWorkflow: HomeTimelineLoadWorkflow
-    private let paginationWorkflow: HomeTimelinePaginationWorkflow
+    private let viewportInteractionWorkflow:
+        HomeTimelineViewportInteractionWorkflow
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
@@ -35,8 +36,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
-    private let presentationWorkflow: HomeTimelinePresentationWorkflow
-    private let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
     private let materializationCoordinator: HomeTimelineMaterializationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -174,7 +173,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         self.remoteLoadCoordinator = components.remoteLoadCoordinator
         self.loadWorkflow = components.loadWorkflow
-        self.paginationWorkflow = components.paginationWorkflow
+        self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
         self.eventStore = components.eventStore
         self.contentCoordinator = components.contentCoordinator
         self.runtimeEventWorkflow = components.runtimeEventWorkflow
@@ -186,8 +185,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = components.listProjectionCache
         self.activityCoordinator = components.activityCoordinator
         self.presentationCoordinator = components.presentationCoordinator
-        self.presentationWorkflow = components.presentationWorkflow
-        self.pendingEventsWorkflow = components.pendingEventsWorkflow
         self.materializationCoordinator = components.materializationCoordinator
         self.pendingEventBuffer = components.pendingEventBuffer
         self.backwardRequestRegistry = components.backwardRequestRegistry
@@ -221,10 +218,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
-        presentationWorkflow.setRestoreProjectionAnchor(
+        viewportInteractionWorkflow.setRestoreProjectionAnchor(
             anchorEventID,
-            state: presentationState(),
-            effects: presentationEffects()
+            context: viewportInteractionContext()
         )
     }
 
@@ -236,10 +232,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func saveViewportState(_ state: TimelineViewportState) {
-        presentationWorkflow.saveViewportState(
+        viewportInteractionWorkflow.saveViewportState(
             state,
-            state: presentationState(),
-            effects: presentationEffects()
+            context: viewportInteractionContext()
         )
     }
 
@@ -248,157 +243,141 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func refresh() {
-        paginationWorkflow.refresh(
-            paginationState(),
-            effects: paginationEffects()
+        viewportInteractionWorkflow.refresh(
+            viewportInteractionContext()
         )
     }
 
     func refreshLatest() async {
-        await paginationWorkflow.refreshLatest(
-            paginationState(),
-            effects: paginationEffects()
+        await viewportInteractionWorkflow.refreshLatest(
+            viewportInteractionContext()
         )
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
-        presentationWorkflow.setTimelineAtNewestWindow(
+        viewportInteractionWorkflow.setTimelineAtNewestWindow(
             isAtNewestWindow,
-            state: presentationState(),
-            effects: presentationEffects()
+            context: viewportInteractionContext()
         )
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
-        presentationWorkflow.setTimelineScrollActive(
+        viewportInteractionWorkflow.setTimelineScrollActive(
             isActive,
-            effects: presentationEffects()
+            context: viewportInteractionContext()
         )
     }
 
     func dismissUnreadBadge() {
-        presentationWorkflow.dismissUnreadBadge(
-            effects: presentationEffects()
+        viewportInteractionWorkflow.dismissUnreadBadge(
+            viewportInteractionContext()
         )
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
-        presentationWorkflow.markMaterializedPostsRead(
+        viewportInteractionWorkflow.markMaterializedPostsRead(
             visiblePostIDs: visiblePostIDs,
-            effects: presentationEffects()
+            context: viewportInteractionContext()
         )
     }
 
     func markNewestMaterializedWindowRead() {
-        presentationWorkflow.markNewestMaterializedWindowRead(
-            effects: presentationEffects()
-        )
-    }
-
-    private func presentationState() -> HomeTimelinePresentationAppState {
-        HomeTimelinePresentationAppState(
-            account: account,
-            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
-            homeFeedID: homeFeedProjection.definition?.feedID
-        )
-    }
-
-    private func presentationEffects() -> HomeTimelinePresentationEffects {
-        HomeTimelinePresentationEffects(
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            reloadNewestProjectionWindow: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            materializeEntries: { [weak self] allowsRealtimeFollow in
-                self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-            },
-            applyRestoreProjectionAnchor: { [weak self] account in
-                self?.applyRestoreProjectionAnchorIfPossible(account: account)
-            },
-            scheduleViewportState: { [weak self] state, feedID, scopeID in
-                self?.readStateCoordinator.scheduleViewportState(
-                    state,
-                    feedID: feedID,
-                    scopeID: scopeID
-                )
-            },
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            scheduleReadStateSave: { [weak self] in
-                self?.scheduleHomeFeedReadStateSave()
-            }
+        viewportInteractionWorkflow.markNewestMaterializedWindowRead(
+            viewportInteractionContext()
         )
     }
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        pendingEventsWorkflow.apply(
-            HomeTimelinePendingEventsState(
-                account: account,
-                hasBufferedEvents: pendingEventBuffer.hasEvents,
-                hasPendingProjectionReload:
-                    presentationCoordinator.hasPendingNewestProjectionReload
-            ),
-            effects: pendingEventsEffects()
-        )
-    }
-
-    private func pendingEventsEffects() -> HomeTimelinePendingEventsEffects {
-        HomeTimelinePendingEventsEffects(
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            reloadNewestProjection: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            clearBufferedEvents: { [weak self] in
-                self?.clearPendingNewEvents()
-            },
-            clearPendingProjectionReload: { [weak self] in
-                self?.presentationCoordinator.clearNewestProjectionReload()
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            scheduleLinkPreviewResolution: { [weak self] in
-                self?.scheduleLinkPreviewResolution()
-            }
+        viewportInteractionWorkflow.applyPendingNewEvents(
+            viewportInteractionContext()
         )
     }
 
     func loadOlder() {
-        paginationWorkflow.loadOlder(
-            paginationState(),
-            effects: paginationEffects()
+        viewportInteractionWorkflow.loadOlder(
+            viewportInteractionContext()
         )
     }
 
-    private func paginationState() -> HomeTimelinePaginationState {
-        HomeTimelinePaginationState(
-            account: account,
-            canBeginLoadingOlder: activityCoordinator.canBeginLoadingOlder,
-            hasMoreOlder: hasMoreOlder,
-            hasTimelineEvents: !noteEvents.isEmpty,
-            hasResolvedRelays: !resolvedRelays.isEmpty,
-            hasFollowedPubkeys: !followedPubkeys.isEmpty
+    private func viewportInteractionContext(
+    ) -> HomeTimelineViewportInteractionContext {
+        HomeTimelineViewportInteractionContext(
+            state: HomeTimelineViewportInteractionState(
+                presentation: HomeTimelinePresentationAppState(
+                    account: account,
+                    restoreProjectionAnchorEventID:
+                        restoreProjectionAnchorEventID,
+                    homeFeedID: homeFeedProjection.definition?.feedID
+                ),
+                pendingEvents: HomeTimelinePendingEventsState(
+                    account: account,
+                    hasBufferedEvents: pendingEventBuffer.hasEvents,
+                    hasPendingProjectionReload:
+                        presentationCoordinator.hasPendingNewestProjectionReload
+                ),
+                pagination: HomeTimelinePaginationState(
+                    account: account,
+                    canBeginLoadingOlder:
+                        activityCoordinator.canBeginLoadingOlder,
+                    hasMoreOlder: hasMoreOlder,
+                    hasTimelineEvents: !noteEvents.isEmpty,
+                    hasResolvedRelays: !resolvedRelays.isEmpty,
+                    hasFollowedPubkeys: !followedPubkeys.isEmpty
+                )
+            ),
+            effects: HomeTimelineViewportInteractionEffects(
+                apply: { [weak self] application in
+                    self?.applyViewportInteraction(application)
+                },
+                load: { [weak self] load in
+                    guard let self else { return }
+                    await performViewportInteraction(load)
+                }
+            )
         )
     }
 
-    private func paginationEffects() -> HomeTimelinePaginationEffects {
-        HomeTimelinePaginationEffects(
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            refreshLatest: { [weak self] account, lifecycle in
-                await self?.refreshLatest(account: account, lifecycle: lifecycle)
-            },
-            loadOlder: { [weak self] account, lifecycle in
-                await self?.loadOlder(account: account, lifecycle: lifecycle)
-            }
-        )
+    private func applyViewportInteraction(
+        _ application: HomeTimelineViewportApplication
+    ) {
+        switch application {
+        case .applyProjectionViewportTransition(let transition):
+            applyProjectionViewportTransition(transition)
+        case .reloadNewestProjectionWindow(let account):
+            reloadNewestProjectionWindow(account: account)
+        case .materializeEntries(let allowsRealtimeFollow):
+            materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+        case .applyRestoreProjectionAnchor(let account):
+            applyRestoreProjectionAnchorIfPossible(account: account)
+        case .scheduleViewportState(let state, let feedID, let scopeID):
+            readStateCoordinator.scheduleViewportState(
+                state,
+                feedID: feedID,
+                scopeID: scopeID
+            )
+        case .applyPresentationTransition(let transition):
+            applyPresentationTransition(transition)
+        case .scheduleReadStateSave:
+            scheduleHomeFeedReadStateSave()
+        case .clearBufferedEvents:
+            clearPendingNewEvents()
+        case .clearPendingProjectionReload:
+            presentationCoordinator.clearNewestProjectionReload()
+        case .scheduleLinkPreviewResolution:
+            scheduleLinkPreviewResolution()
+        }
+    }
+
+    private func performViewportInteraction(
+        _ load: HomeTimelineViewportInteractionLoad
+    ) async {
+        switch load {
+        case .refreshLatest(let account, let lifecycle):
+            await refreshLatest(account: account, lifecycle: lifecycle)
+        case .loadOlder(let account, let lifecycle):
+            await loadOlder(account: account, lifecycle: lifecycle)
+        }
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {

@@ -13,7 +13,7 @@ struct HomeTimelineStoreAssemblyInput {
 struct HomeTimelineStoreComponents {
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadWorkflow: HomeTimelineLoadWorkflow
-    let paginationWorkflow: HomeTimelinePaginationWorkflow
+    let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let eventStore: NostrEventStore?
     let contentCoordinator: HomeTimelineContentCoordinator
     let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
@@ -25,8 +25,6 @@ struct HomeTimelineStoreComponents {
     let listProjectionCache: HomeTimelineListProjectionCache
     let activityCoordinator: HomeTimelineActivityCoordinator
     let presentationCoordinator: HomeTimelinePresentationCoordinator
-    let presentationWorkflow: HomeTimelinePresentationWorkflow
-    let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
     let materializationCoordinator: HomeTimelineMaterializationCoordinator
     let pendingEventBuffer: HomeTimelinePendingEventBuffer
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -90,9 +88,7 @@ struct HomeTimelineStoreRelayRuntimeGraph {
 struct HomeTimelineStoreFeatureGraph {
     let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let presentationWorkflow: HomeTimelinePresentationWorkflow
-    let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
-    let paginationWorkflow: HomeTimelinePaginationWorkflow
+    let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadWorkflow: HomeTimelineLoadWorkflow
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -162,7 +158,8 @@ enum HomeTimelineStoreAssembly {
         HomeTimelineStoreComponents(
             remoteLoadCoordinator: graph.features.remoteLoadCoordinator,
             loadWorkflow: graph.features.loadWorkflow,
-            paginationWorkflow: graph.features.paginationWorkflow,
+            viewportInteractionWorkflow:
+                graph.features.viewportInteractionWorkflow,
             eventStore: input.eventStore,
             contentCoordinator: graph.persistence.contentCoordinator,
             runtimeEventWorkflow: graph.runtimeEvents.runtimeEventWorkflow,
@@ -178,8 +175,6 @@ enum HomeTimelineStoreAssembly {
             listProjectionCache: graph.coordination.listProjectionCache,
             activityCoordinator: graph.coordination.activityCoordinator,
             presentationCoordinator: graph.coordination.presentationCoordinator,
-            presentationWorkflow: graph.features.presentationWorkflow,
-            pendingEventsWorkflow: graph.features.pendingEventsWorkflow,
             materializationCoordinator: graph.coordination.materializationCoordinator,
             pendingEventBuffer: graph.coordination.pendingEventBuffer,
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
