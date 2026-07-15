@@ -44,7 +44,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
-    private let accountResetWorkflow: HomeTimelineAccountResetWorkflow
+    private let accountResetInteractionWorkflow:
+        HomeAccountResetInteractionWorkflow
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -193,7 +194,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.lifecycleCoordinator = components.lifecycleCoordinator
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
-        self.accountResetWorkflow = components.accountResetWorkflow
+        self.accountResetInteractionWorkflow =
+            components.accountResetInteractionWorkflow
         self.relayStatusCoordinator = components.relayStatusCoordinator
         self.linkPreviewCoordinator = components.linkPreviewCoordinator
         self.readStateCoordinator = components.readStateCoordinator
@@ -524,12 +526,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func cancel() {
-        accountResetWorkflow.reset(
-            HomeTimelineAccountResetInput(
-                readBoundaryWrite: homeFeedReadBoundaryWrite(),
-                resolvedRelays: resolvedRelays
-            ),
-            effects: accountResetEffects()
+        accountResetInteractionWorkflow.reset(
+            context: accountResetInteractionContext()
         )
     }
 
@@ -885,68 +883,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func accountResetEffects() -> HomeTimelineAccountResetEffects {
-        HomeTimelineAccountResetEffects(
-            application: accountResetApplicationEffects(),
-            runtimeShutdown: runtimeShutdownEffects()
-        )
-    }
-
-    private func accountResetApplicationEffects() -> HomeTimelineAccountResetAppEffects {
-        HomeTimelineAccountResetAppEffects(
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            clearPendingEvents: { [weak self] in
-                self?.clearPendingNewEvents()
-            },
-            applyActivityTransition: { [weak self] transition in
-                self?.applyActivityTransition(transition)
-            },
-            invalidateListEntries: { [weak self] in
-                self?.invalidateListEntries()
-            },
-            resetRealtimeState: { [weak self] in
-                self?.resetHomeTimelineRealtime()
-            },
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            applyRelayStatusSnapshot: { [weak self] snapshot in
-                self?.applyRelayStatusSnapshot(snapshot)
-            },
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            publishRelayStatusChange: { [weak self] in
-                self?.publishRelayStatusChange()
-            },
-            applyAccountContextTransition: { [weak self] transition in
-                self?.applyAccountContextTransition(transition)
-            }
-        )
-    }
-
-    private func runtimeShutdownEffects() -> HomeTimelineRuntimeShutdownEffects {
-        HomeTimelineRuntimeShutdownEffects(
-            currentAccount: { [weak self] in self?.account },
-            resetRuntimeState: { [weak self] in
-                guard let self else { return }
-                runtimeInteractionWorkflow.resetSetup()
-                resetHomeTimelineRealtime()
-            },
-            startRuntimeSession: { [weak self] in
-                self?.startRuntimeSession()
-            },
-            configureRuntime: { [weak self] account, forceInstall in
-                await self?.configureRelayRuntime(
-                    account: account,
-                    forceInstall: forceInstall
-                )
-            }
-        )
-    }
-
     private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
         guard relayRuntime != nil, resolvedRelays.isEmpty else { return }
         let provisionalRelays = provisionalDiscoveryRelays(for: account)
@@ -1060,7 +996,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                 profileRelayURLs: account.map(runtimeRelayURLs(account:)) ?? [],
                 policy: syncPolicy,
                 hasRelayRuntime: relayRuntime != nil,
-                isTerminating: accountResetWorkflow.isRuntimeTerminating
+                isTerminating:
+                    accountResetInteractionWorkflow.isRuntimeTerminating
             ),
             effects: HomeTimelineRuntimeInteractionEffects(
                 environment: HomeTimelineRuntimeStoreEnvironment(
@@ -1335,6 +1272,72 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func accountResetInteractionContext(
+    ) -> HomeAccountResetInteractionContext {
+        HomeAccountResetInteractionContext(
+            state: HomeTimelineAccountResetInteractionState(
+                readBoundaryWrite: homeFeedReadBoundaryWrite(),
+                resolvedRelays: resolvedRelays
+            ),
+            effects: HomeAccountResetInteractionEffects(
+                environment: HomeTimelineAccountResetEnvironment(
+                    currentAccount: { [weak self] in self?.account }
+                ),
+                apply: { [weak self] action in
+                    self?.applyAccountResetAction(action)
+                },
+                perform: { [weak self] action in
+                    guard let self else { return }
+                    await performAccountResetAsyncAction(action)
+                }
+            )
+        )
+    }
+
+    func applyAccountResetAction(
+        _ action: HomeTimelineAccountResetStoreAction
+    ) {
+        switch action {
+        case .applyPresentationTransition(let transition):
+            applyPresentationTransition(transition)
+        case .clearPendingEvents:
+            clearPendingNewEvents()
+        case .applyActivityTransition(let transition):
+            applyActivityTransition(transition)
+        case .invalidateListEntries:
+            invalidateListEntries()
+        case .resetRealtimeState:
+            resetHomeTimelineRealtime()
+        case .applyContentSnapshot(let snapshot):
+            applyContentSnapshot(snapshot)
+        case .applyRelayStatusSnapshot(let snapshot):
+            applyRelayStatusSnapshot(snapshot)
+        case .applyProjectionViewportTransition(let transition):
+            applyProjectionViewportTransition(transition)
+        case .publishRelayStatusChange:
+            publishRelayStatusChange()
+        case .applyAccountContextTransition(let transition):
+            applyAccountContextTransition(transition)
+        }
+    }
+
+    func performAccountResetAsyncAction(
+        _ action: HomeTimelineAccountResetAsyncAction
+    ) async {
+        switch action {
+        case .resetRuntimeState:
+            runtimeInteractionWorkflow.resetSetup()
+            resetHomeTimelineRealtime()
+        case .startRuntimeSession:
+            startRuntimeSession()
+        case .configureRuntime(let account, let forceInstall):
+            await configureRelayRuntime(
+                account: account,
+                forceInstall: forceInstall
+            )
+        }
+    }
+
     func accountStartInteractionContext(
     ) -> HomeAccountStartInteractionContext {
         HomeAccountStartInteractionContext(

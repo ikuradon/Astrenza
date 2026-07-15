@@ -31,7 +31,8 @@ struct HomeTimelineStoreComponents {
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
-    let accountResetWorkflow: HomeTimelineAccountResetWorkflow
+    let accountResetInteractionWorkflow:
+        HomeAccountResetInteractionWorkflow
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -188,7 +189,10 @@ enum HomeTimelineStoreAssembly {
                 HomeAccountStartInteractionWorkflow(
                     accountStart: graph.features.accountStartWorkflow
                 ),
-            accountResetWorkflow: graph.accountResetWorkflow,
+            accountResetInteractionWorkflow:
+                HomeAccountResetInteractionWorkflow(
+                    accountReset: graph.accountResetWorkflow
+                ),
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
             readStateCoordinator: graph.features.readStateCoordinator,
