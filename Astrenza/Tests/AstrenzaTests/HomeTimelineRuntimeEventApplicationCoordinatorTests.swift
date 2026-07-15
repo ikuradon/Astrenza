@@ -209,8 +209,8 @@ struct HomeTimelineRuntimeEventApplicationCoordinatorTests {
         probe: RuntimeEventApplicationProbe
     ) -> HomeTimelineRuntimeEventApplicationHandlers {
         HomeTimelineRuntimeEventApplicationHandlers(
-            listRevisionChanged: { revision in
-                probe.listRevisions.append(revision)
+            applyListProjectionInvalidation: { invalidation in
+                probe.listRevisions.append(invalidation.revision)
             },
             pendingCountChanged: { count in
                 probe.pendingCounts.append(count)

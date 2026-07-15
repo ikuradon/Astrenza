@@ -10,13 +10,15 @@ struct HomeTimelineStateApplicationHandlers: Sendable {
     typealias RelayStatusSnapshotHandler = @MainActor @Sendable (
         _ snapshot: HomeTimelineRelayStatusSnapshot
     ) -> Void
-    typealias RevisionHandler = @MainActor @Sendable (_ revision: Int) -> Void
+    typealias ListProjectionInvalidationHandler = @MainActor @Sendable (
+        _ invalidation: HomeTimelineListProjectionInvalidation
+    ) -> Void
     typealias CountHandler = @MainActor @Sendable (_ count: Int) -> Void
 
     let applyPresentationTransition: PresentationTransitionHandler
     let applyContentSnapshot: ContentSnapshotHandler
     let applyRelayStatusSnapshot: RelayStatusSnapshotHandler
-    let listRevisionChanged: RevisionHandler
+    let applyListProjectionInvalidation: ListProjectionInvalidationHandler
     let pendingCountChanged: CountHandler
 }
 
@@ -41,7 +43,7 @@ struct HomeTimelineStateApplicationDependencies: Sendable {
         _ resolvedRelays: [String]
     ) -> HomeTimelineRelayStatusSnapshot
     typealias Action = @MainActor @Sendable () -> Void
-    typealias ListInvalidation = @MainActor @Sendable () -> Int
+    typealias ListInvalidation = @MainActor @Sendable () -> HomeTimelineListProjectionInvalidation
     typealias PendingEventClear = @MainActor @Sendable (
         _ onCountChange: @escaping HomeTimelineStateApplicationHandlers.CountHandler
     ) -> Void
@@ -132,7 +134,9 @@ final class HomeTimelineStateApplicationCoordinator {
             )
         )
         dependencies.clearProjectionWindow()
-        handlers.listRevisionChanged(dependencies.invalidateListProjection())
+        handlers.applyListProjectionInvalidation(
+            dependencies.invalidateListProjection()
+        )
     }
 
     private func resetMissingCachedState(

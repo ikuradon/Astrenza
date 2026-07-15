@@ -316,7 +316,7 @@ private struct RuntimeWorkflowFixture {
 
     var runtimeApplicationEffects: HomeTimelineRuntimeApplicationEffects {
         HomeTimelineRuntimeApplicationEffects(
-            listRevisionChanged: { _ in },
+            applyListProjectionInvalidation: { _ in },
             pendingCountChanged: { _ in },
             reloadProjection: { _, _ in },
             reloadNewestProjection: { _ in },

@@ -16,7 +16,9 @@ enum HomeTimelineRuntimeEventApplicationCommand: Equatable, Sendable {
 }
 
 struct HomeTimelineRuntimeEventApplicationHandlers: Sendable {
-    typealias ListRevisionHandler = @MainActor @Sendable (_ revision: Int) -> Void
+    typealias ListProjectionInvalidationHandler = @MainActor @Sendable (
+        _ invalidation: HomeTimelineListProjectionInvalidation
+    ) -> Void
     typealias PendingCountHandler = @MainActor @Sendable (_ count: Int) -> Void
     typealias CommandHandler = @MainActor @Sendable (
         _ command: HomeTimelineRuntimeEventApplicationCommand
@@ -26,7 +28,7 @@ struct HomeTimelineRuntimeEventApplicationHandlers: Sendable {
     ) async -> Void
     typealias SourceInstallFailureHandler = @MainActor @Sendable (_ message: String) -> Void
 
-    let listRevisionChanged: ListRevisionHandler
+    let applyListProjectionInvalidation: ListProjectionInvalidationHandler
     let pendingCountChanged: PendingCountHandler
     let perform: CommandHandler
     let persistTimelineMetadata: MetadataPersistenceHandler
@@ -195,7 +197,7 @@ final class HomeTimelineRuntimeEventApplicationCoordinator {
     private func invalidateListEntries(
         handlers: HomeTimelineRuntimeEventApplicationHandlers
     ) {
-        handlers.listRevisionChanged(listProjectionCache.invalidate())
+        handlers.applyListProjectionInvalidation(listProjectionCache.invalidate())
     }
 
     private func isCurrent(

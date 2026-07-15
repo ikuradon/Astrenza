@@ -31,7 +31,7 @@ struct HomeTimelineStateApplicationTests {
             .applyRelayStatus(plannedRelayCount: 1),
             .clearProjectionWindow,
             .invalidateListProjection,
-            .listRevisionChanged(41)
+            .applyListProjectionInvalidation(41)
         ])
     }
 
@@ -89,7 +89,7 @@ struct HomeTimelineStateApplicationTests {
             .applyRelayStatus(plannedRelayCount: 1),
             .clearProjectionWindow,
             .invalidateListProjection,
-            .listRevisionChanged(41)
+            .applyListProjectionInvalidation(41)
         ])
     }
 
@@ -121,7 +121,7 @@ private final class Probe {
         case applyRelayStatus(plannedRelayCount: Int)
         case clearProjectionWindow
         case invalidateListProjection
-        case listRevisionChanged(Int)
+        case applyListProjectionInvalidation(Int)
         case clearPendingEvents
         case pendingCountChanged(Int)
     }
@@ -176,7 +176,7 @@ private final class Probe {
             },
             invalidateListProjection: { [self] in
                 events.append(.invalidateListProjection)
-                return 41
+                return HomeTimelineListProjectionInvalidation(revision: 41)
             },
             clearPendingEvents: { [self] onCountChange in
                 events.append(.clearPendingEvents)
@@ -198,8 +198,10 @@ private final class Probe {
                     plannedRelayCount: snapshot.plannedRelayCount
                 ))
             },
-            listRevisionChanged: { [self] revision in
-                events.append(.listRevisionChanged(revision))
+            applyListProjectionInvalidation: { [self] invalidation in
+                events.append(.applyListProjectionInvalidation(
+                    invalidation.revision
+                ))
             },
             pendingCountChanged: { [self] count in
                 events.append(.pendingCountChanged(count))

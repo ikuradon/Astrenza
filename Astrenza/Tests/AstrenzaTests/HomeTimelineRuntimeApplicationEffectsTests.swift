@@ -107,11 +107,13 @@ struct HomeTimelineRuntimeApplicationTests {
         #expect(fixture.persistence.metadataSnapshots.isEmpty)
     }
 
-    @Test("Revision and pending count changes remain direct state effects")
+    @Test("List invalidation and pending count changes remain direct state effects")
     func directStateEffectsRemainDirect() {
         let fixture = RuntimeApplicationFixture()
 
-        fixture.effects.listRevisionChanged(9)
+        fixture.effects.applyListProjectionInvalidation(
+            HomeTimelineListProjectionInvalidation(revision: 9)
+        )
         fixture.effects.pendingCountChanged(4)
 
         #expect(fixture.probe.events == [
@@ -286,8 +288,8 @@ private struct RuntimeApplicationFixture {
             applyPresentationTransition: { _ in },
             applyContentSnapshot: { _ in },
             applyRelayStatusSnapshot: { _ in },
-            listRevisionChanged: { [probe] revision in
-                probe.events.append(.listRevision(revision))
+            applyListProjectionInvalidation: { [probe] invalidation in
+                probe.events.append(.listRevision(invalidation.revision))
             },
             pendingCountChanged: { [probe] count in
                 probe.events.append(.pendingCount(count))

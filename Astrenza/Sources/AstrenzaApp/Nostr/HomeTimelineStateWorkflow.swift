@@ -44,7 +44,9 @@ struct HomeTimelineStateWorkflowEffects: Sendable {
     typealias RelayStatusSnapshot = @MainActor @Sendable (
         _ snapshot: HomeTimelineRelayStatusSnapshot
     ) -> Void
-    typealias RevisionChange = @MainActor @Sendable (_ revision: Int) -> Void
+    typealias ListProjectionInvalidation = @MainActor @Sendable (
+        _ invalidation: HomeTimelineListProjectionInvalidation
+    ) -> Void
     typealias CountChange = @MainActor @Sendable (_ count: Int) -> Void
     typealias PersistenceState = @MainActor @Sendable () -> HomeTimelinePersistenceState
     typealias PendingEvents = @MainActor @Sendable () -> Bool
@@ -53,7 +55,7 @@ struct HomeTimelineStateWorkflowEffects: Sendable {
     let applyPresentationTransition: PresentationTransition
     let applyContentSnapshot: ContentSnapshot
     let applyRelayStatusSnapshot: RelayStatusSnapshot
-    let listRevisionChanged: RevisionChange
+    let applyListProjectionInvalidation: ListProjectionInvalidation
     let pendingCountChanged: CountChange
     let persistenceState: PersistenceState
     let hasPendingEvents: PendingEvents
@@ -161,7 +163,7 @@ final class HomeTimelineStateWorkflow {
         effects: HomeTimelineStateWorkflowEffects
     ) -> HomeTimelineRuntimeApplicationEffects {
         HomeTimelineRuntimeApplicationEffects(
-            listRevisionChanged: effects.listRevisionChanged,
+            applyListProjectionInvalidation: effects.applyListProjectionInvalidation,
             pendingCountChanged: effects.pendingCountChanged,
             reloadProjection: { [weak self] anchorEventID, materialization in
                 self?.reloadProjection(
@@ -206,7 +208,7 @@ final class HomeTimelineStateWorkflow {
             applyPresentationTransition: effects.applyPresentationTransition,
             applyContentSnapshot: effects.applyContentSnapshot,
             applyRelayStatusSnapshot: effects.applyRelayStatusSnapshot,
-            listRevisionChanged: effects.listRevisionChanged,
+            applyListProjectionInvalidation: effects.applyListProjectionInvalidation,
             pendingCountChanged: effects.pendingCountChanged
         )
     }

@@ -83,7 +83,9 @@ private final class StateApplicationSpy: HomeTimelineStateApplying {
         handlers.applyPresentationTransition(presentationTransition)
         handlers.applyContentSnapshot(contentSnapshot)
         handlers.applyRelayStatusSnapshot(relayStatusSnapshot)
-        handlers.listRevisionChanged(41)
+        handlers.applyListProjectionInvalidation(
+            HomeTimelineListProjectionInvalidation(revision: 41)
+        )
         handlers.pendingCountChanged(3)
         return restoreResult
     }
@@ -224,8 +226,8 @@ private struct StateWorkflowFixture {
             applyRelayStatusSnapshot: { [probe] snapshot in
                 probe.events.append(.relayStatusSnapshot(snapshot.plannedRelayCount))
             },
-            listRevisionChanged: { [probe] revision in
-                probe.events.append(.listRevision(revision))
+            applyListProjectionInvalidation: { [probe] invalidation in
+                probe.events.append(.listRevision(invalidation.revision))
             },
             pendingCountChanged: { [probe] count in
                 probe.events.append(.pendingCount(count))

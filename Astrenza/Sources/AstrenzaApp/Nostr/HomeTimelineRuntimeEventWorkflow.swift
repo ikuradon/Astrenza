@@ -38,7 +38,9 @@ struct HomeTimelineRuntimeEventInput: Equatable, Sendable {
 }
 
 struct HomeTimelineRuntimeApplicationEffects: Sendable {
-    typealias ListRevisionHandler = @MainActor @Sendable (_ revision: Int) -> Void
+    typealias ListProjectionInvalidationHandler = @MainActor @Sendable (
+        _ invalidation: HomeTimelineListProjectionInvalidation
+    ) -> Void
     typealias PendingCountHandler = @MainActor @Sendable (_ count: Int) -> Void
     typealias ProjectionReloader = @MainActor @Sendable (
         _ anchorEventID: String?,
@@ -55,7 +57,7 @@ struct HomeTimelineRuntimeApplicationEffects: Sendable {
     ) async -> Void
     typealias SourceInstallFailure = @MainActor @Sendable (_ message: String) -> Void
 
-    let listRevisionChanged: ListRevisionHandler
+    let applyListProjectionInvalidation: ListProjectionInvalidationHandler
     let pendingCountChanged: PendingCountHandler
     let reloadProjection: ProjectionReloader
     let reloadNewestProjection: NewestProjectionReloader
@@ -160,7 +162,7 @@ final class HomeTimelineRuntimeEventWorkflow {
         effects: HomeTimelineRuntimeApplicationEffects
     ) -> HomeTimelineRuntimeEventApplicationHandlers {
         HomeTimelineRuntimeEventApplicationHandlers(
-            listRevisionChanged: effects.listRevisionChanged,
+            applyListProjectionInvalidation: effects.applyListProjectionInvalidation,
             pendingCountChanged: effects.pendingCountChanged,
             perform: { [weak self] command in
                 self?.apply(command, effects: effects)

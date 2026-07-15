@@ -35,7 +35,7 @@ struct HomeTimelineRuntimeEventWorkflowTests {
         #expect(coordinator.presentationStates == [probe.presentationState])
         #expect(coordinator.accountValidityResults == [true])
         #expect(probe.effects == [
-            .listRevisionChanged(7),
+            .applyListProjectionInvalidation(7),
             .pendingCountChanged(3),
             .reloadProjection(
                 anchorEventID: "anchor",
@@ -104,7 +104,7 @@ struct HomeTimelineRuntimeEventWorkflowTests {
         #expect(enqueuedContext.hasRelayRuntime)
         #expect(!enqueued)
         #expect(probe.effects == [
-            .listRevisionChanged(11),
+            .applyListProjectionInvalidation(11),
             .scheduleMaterialization(.standard),
             .sourceInstallFailed("dependency install failed")
         ])
@@ -139,7 +139,9 @@ private final class RuntimeEventWorkflowCoordinatorSpy: HomeTimelineRuntimeEvent
         )
         guard emitsHandleEffects else { return }
 
-        handlers.application.listRevisionChanged(7)
+        handlers.application.applyListProjectionInvalidation(
+            HomeTimelineListProjectionInvalidation(revision: 7)
+        )
         handlers.application.pendingCountChanged(3)
         handlers.application.perform(.reloadProjection(
             anchorEventID: "anchor",
@@ -170,7 +172,9 @@ private final class RuntimeEventWorkflowCoordinatorSpy: HomeTimelineRuntimeEvent
     ) -> NostrEvent {
         rememberedEvents.append(event)
         consultEventStoreValues.append(consultEventStore)
-        handlers.listRevisionChanged(11)
+        handlers.applyListProjectionInvalidation(
+            HomeTimelineListProjectionInvalidation(revision: 11)
+        )
         return replacementMetadataEvent ?? event
     }
 
@@ -227,8 +231,10 @@ private final class RuntimeEventWorkflowEffectProbe {
 
     var applicationEffects: HomeTimelineRuntimeApplicationEffects {
         HomeTimelineRuntimeApplicationEffects(
-            listRevisionChanged: { [self] revision in
-                effects.append(.listRevisionChanged(revision))
+            applyListProjectionInvalidation: { [self] invalidation in
+                effects.append(.applyListProjectionInvalidation(
+                    invalidation.revision
+                ))
             },
             pendingCountChanged: { [self] count in
                 effects.append(.pendingCountChanged(count))
@@ -258,7 +264,7 @@ private final class RuntimeEventWorkflowEffectProbe {
 }
 
 private enum RuntimeEventWorkflowEffect: Equatable, Sendable {
-    case listRevisionChanged(Int)
+    case applyListProjectionInvalidation(Int)
     case pendingCountChanged(Int)
     case reloadProjection(
         anchorEventID: String?,

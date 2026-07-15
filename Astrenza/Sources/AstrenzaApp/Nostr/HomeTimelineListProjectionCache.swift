@@ -1,3 +1,7 @@
+struct HomeTimelineListProjectionInvalidation: Equatable, Sendable {
+    let revision: Int
+}
+
 @MainActor
 final class HomeTimelineListProjectionCache {
     struct Key: Equatable, Sendable {
@@ -36,9 +40,9 @@ final class HomeTimelineListProjectionCache {
     }
 
     @discardableResult
-    func invalidate() -> Int {
+    func invalidate() -> HomeTimelineListProjectionInvalidation {
         record = nil
         revision &+= 1
-        return revision
+        return HomeTimelineListProjectionInvalidation(revision: revision)
     }
 }

@@ -73,15 +73,15 @@ struct HomeTimelineListProjectionCacheTests {
             materializationCount += 1
             return [.deleted(TimelineDeletedEntry(id: "initial"))]
         }
-        let firstRevision = cache.invalidate()
+        let firstInvalidation = cache.invalidate()
         let entries = cache.entries(for: key) {
             materializationCount += 1
             return [.deleted(TimelineDeletedEntry(id: "replacement"))]
         }
-        let secondRevision = cache.invalidate()
+        let secondInvalidation = cache.invalidate()
 
-        #expect(firstRevision == 1)
-        #expect(secondRevision == 2)
+        #expect(firstInvalidation.revision == 1)
+        #expect(secondInvalidation.revision == 2)
         #expect(cache.revision == 2)
         #expect(entries.map(\.id) == ["replacement"])
         #expect(materializationCount == 2)

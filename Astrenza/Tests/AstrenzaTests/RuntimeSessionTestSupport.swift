@@ -97,7 +97,7 @@ final class RuntimeSessionHandlerProbe {
 
     private static var applicationEffects: HomeTimelineRuntimeApplicationEffects {
         HomeTimelineRuntimeApplicationEffects(
-            listRevisionChanged: { _ in },
+            applyListProjectionInvalidation: { _ in },
             pendingCountChanged: { _ in },
             reloadProjection: { _, _ in },
             reloadNewestProjection: { _ in },

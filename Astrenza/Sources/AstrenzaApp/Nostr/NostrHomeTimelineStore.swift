@@ -15,8 +15,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishedContentState()
     @Published private var publishedRelayStatusState =
         HomeTimelinePublishedRelayStatusState()
+    @Published private var publishedListProjectionState =
+        HomeTimelinePublishedListProjectionState()
     @Published private(set) var unmaterializedNewCount = 0
-    @Published private(set) var listContentRevision = 0
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadWorkflow: HomeTimelineLoadWorkflow
@@ -783,8 +784,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             applyRelayStatusSnapshot: { [weak self] snapshot in
                 self?.applyRelayStatusSnapshot(snapshot)
             },
-            listRevisionChanged: { [weak self] revision in
-                self?.listContentRevision = revision
+            applyListProjectionInvalidation: { [weak self] invalidation in
+                self?.applyListProjectionInvalidation(invalidation)
             },
             pendingCountChanged: { [weak self] count in
                 self?.setUnmaterializedNewCount(count)
@@ -1499,13 +1500,28 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func invalidateListEntries() {
-        listContentRevision = listProjectionCache.invalidate()
+}
+
+private extension NostrHomeTimelineStore {
+    func invalidateListEntries() {
+        applyListProjectionInvalidation(listProjectionCache.invalidate())
     }
 
+    func applyListProjectionInvalidation(
+        _ invalidation: HomeTimelineListProjectionInvalidation
+    ) {
+        guard let next = publishedListProjectionState.applying(invalidation) else {
+            return
+        }
+        publishedListProjectionState = next
+    }
 }
 
 extension NostrHomeTimelineStore {
+    var listContentRevision: Int {
+        publishedListProjectionState.revision
+    }
+
     var relayStatusRevision: Int {
         publishedRelayStatusState.revision
     }
@@ -1607,6 +1623,12 @@ extension NostrHomeTimelineStore {
 
     func testingApplyRelayStatusTransition(_ transition: HomeTimelineRelayStatusTransition?) {
         applyRelayStatusTransition(transition)
+    }
+
+    func testingApplyListProjectionInvalidation(
+        _ invalidation: HomeTimelineListProjectionInvalidation
+    ) {
+        applyListProjectionInvalidation(invalidation)
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
