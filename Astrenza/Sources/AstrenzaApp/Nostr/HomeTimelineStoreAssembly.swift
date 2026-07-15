@@ -21,7 +21,8 @@ struct HomeTimelineStoreComponents {
         HomeGapBackfillInteractionWorkflow
     let backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
-    let filterCoordinator: HomeTimelineFilterCoordinator
+    let filterInteractionWorkflow:
+        HomeTimelineFilterInteractionWorkflow
     let listProjectionCache: HomeTimelineListProjectionCache
     let activityCoordinator: HomeTimelineActivityCoordinator
     let presentationCoordinator: HomeTimelinePresentationCoordinator
@@ -179,7 +180,7 @@ enum HomeTimelineStoreAssembly {
                 backward: graph.runtimeEvents.backwardCompletionWorkflow
             ),
             dependencyCoordinator: graph.coordination.dependencyCoordinator,
-            filterCoordinator: graph.persistence.filterCoordinator,
+            filterInteractionWorkflow: makeFilterInteraction(from: graph),
             listProjectionCache: graph.coordination.listProjectionCache,
             activityCoordinator: graph.coordination.activityCoordinator,
             presentationCoordinator: graph.coordination.presentationCoordinator,
@@ -224,6 +225,14 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineFeedSyncInteractionWorkflow {
         HomeTimelineFeedSyncInteractionWorkflow(
             feedSync: graph.coordination.feedSyncCoordinator
+        )
+    }
+
+    private static func makeFilterInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeTimelineFilterInteractionWorkflow {
+        HomeTimelineFilterInteractionWorkflow(
+            filter: graph.persistence.filterCoordinator
         )
     }
 

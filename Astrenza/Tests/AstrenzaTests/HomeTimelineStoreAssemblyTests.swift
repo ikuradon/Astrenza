@@ -19,6 +19,11 @@ struct HomeTimelineStoreAssemblyTests {
         #expect(
             components.feedSyncInteractionWorkflow.activeRequestCount == 0
         )
+        #expect(
+            components.filterInteractionWorkflow.effectiveRuleSet(
+                accountID: nil
+            ) == nil
+        )
     }
 
     @Test("An event store enables publishing and database-backed local mutations")

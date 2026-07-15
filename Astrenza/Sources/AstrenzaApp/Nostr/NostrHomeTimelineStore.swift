@@ -34,7 +34,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backwardInteractionWorkflow:
         HomeTimelineBackwardInteractionWorkflow
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
-    private let filterCoordinator: HomeTimelineFilterCoordinator
+    private let filterInteractionWorkflow:
+        HomeTimelineFilterInteractionWorkflow
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
@@ -94,7 +95,9 @@ final class NostrHomeTimelineStore: ObservableObject {
             followedPubkeys: Set(followedPubkeys),
             resolvedRelayCount: resolvedRelays.count,
             filterRules: applyingHomeFilters
-                ? filterCoordinator.effectiveRuleSet(accountID: account?.pubkey)
+                ? filterInteractionWorkflow.effectiveRuleSet(
+                    accountID: account?.pubkey
+                )
                 : nil,
             syncPolicy: syncPolicy
         )
@@ -188,7 +191,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             components.gapBackfillInteractionWorkflow
         self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.dependencyCoordinator = components.dependencyCoordinator
-        self.filterCoordinator = components.filterCoordinator
+        self.filterInteractionWorkflow =
+            components.filterInteractionWorkflow
         self.listProjectionCache = components.listProjectionCache
         self.activityCoordinator = components.activityCoordinator
         self.presentationCoordinator = components.presentationCoordinator
@@ -446,18 +450,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 context: readContext
             )
         }
-    }
-
-    func suspendTimelineFilters() {
-        guard filterCoordinator.suspend() else { return }
-        invalidateListEntries()
-        materializeEntries()
-    }
-
-    func resumeTimelineFilters() {
-        guard filterCoordinator.resume() else { return }
-        invalidateListEntries()
-        materializeEntries()
     }
 
     func cancel() {
@@ -1178,7 +1170,45 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 }
 
+extension NostrHomeTimelineStore {
+    func suspendTimelineFilters() {
+        filterInteractionWorkflow.perform(
+            .suspend,
+            context: filterInteractionContext()
+        )
+    }
+
+    func resumeTimelineFilters() {
+        filterInteractionWorkflow.perform(
+            .resume,
+            context: filterInteractionContext()
+        )
+    }
+}
+
 private extension NostrHomeTimelineStore {
+    func filterInteractionContext(
+    ) -> HomeFilterInteractionContext {
+        HomeFilterInteractionContext(
+            effects: HomeFilterInteractionEffects(
+                apply: { [weak self] action in
+                    self?.applyFilterAction(action)
+                }
+            )
+        )
+    }
+
+    func applyFilterAction(
+        _ action: HomeTimelineFilterStoreAction
+    ) {
+        switch action {
+        case .invalidateListEntries:
+            invalidateListEntries()
+        case .materializeEntries:
+            materializeEntries()
+        }
+    }
+
     func feedSyncInteractionContext(
     ) -> HomeFeedSyncInteractionContext {
         HomeFeedSyncInteractionContext(
