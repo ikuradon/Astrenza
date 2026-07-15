@@ -53,7 +53,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationInteractionWorkflow:
         HomeLocalMutationInteractionWorkflow?
     private let relayRuntime: NostrRelayRuntime?
-    private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
     var relayStatusEventStore: NostrEventStore? {
@@ -216,7 +215,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.localMutationInteractionWorkflow =
             components.localMutationInteractionWorkflow
         self.relayRuntime = components.relayRuntime
-        self.outboxCoordinator = components.outboxCoordinator
         self.publishedAccountContextState = HomeTimelinePublishedAccountContextState(
             syncPolicy: syncPolicy
         )
@@ -403,12 +401,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             signer: signer,
             context: publishInteractionContext(account: account)
         )
-    }
-
-    private func activateOutbox(accountID: String) {
-        outboxCoordinator.activate(accountID: accountID) { [weak self] in
-            self?.publishRelayStatusChange()
-        }
     }
 
     func muteAuthor(of post: TimelinePost) {
@@ -1293,8 +1285,6 @@ private extension NostrHomeTimelineStore {
             materializeEntries()
         case .setPhase(let phase):
             applyActivityIntent(.setPhase(phase))
-        case .requestImmediateOutboxDrain:
-            outboxCoordinator.requestImmediateDrain()
         }
     }
 
@@ -1451,8 +1441,8 @@ private extension NostrHomeTimelineStore {
             restoreHomeFeedReadState(account: account)
         case .setPhase(let phase):
             applyActivityIntent(.setPhase(phase))
-        case .activateOutbox(let accountID):
-            activateOutbox(accountID: accountID)
+        case .publishOutboxRelayResults:
+            publishRelayStatusChange()
         case .applyProjectionViewportTransition,
              .reloadNewestProjectionWindow,
              .materializeEntries,
@@ -1480,7 +1470,7 @@ private extension NostrHomeTimelineStore {
              .installProvisionalRuntimeBootstrap,
              .restoreHomeFeedReadState,
              .setPhase,
-             .activateOutbox:
+             .publishOutboxRelayResults:
             assertionFailure("Account action reached the projection router")
         }
     }

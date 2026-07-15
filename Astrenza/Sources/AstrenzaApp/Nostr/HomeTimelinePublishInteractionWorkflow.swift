@@ -23,7 +23,6 @@ enum HomeTimelinePublishStoreAction: Equatable, Sendable {
     case reloadNewestProjectionWindow(NostrAccount)
     case materializeEntries
     case setPhase(NostrHomeTimelinePhase)
-    case requestImmediateOutboxDrain
 }
 
 enum HomeTimelinePublishAsyncAction: Equatable, Sendable {
@@ -99,9 +98,6 @@ final class HomeTimelinePublishInteractionWorkflow {
             },
             setPhase: { phase in
                 effects.apply(.setPhase(phase))
-            },
-            requestImmediateOutboxDrain: {
-                effects.apply(.requestImmediateOutboxDrain)
             }
         )
     }

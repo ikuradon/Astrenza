@@ -40,14 +40,12 @@ struct HomeTimelinePublishInteractionTests {
         effects.materializeEntries()
         await effects.persistDatabase(fixture.account)
         effects.setPhase(.loaded)
-        effects.requestImmediateOutboxDrain()
 
         #expect(fixture.probe.actions == [
             .applyContentSnapshot(fixture.contentSnapshot),
             .reloadNewestProjectionWindow(fixture.account),
             .materializeEntries,
-            .setPhase(.loaded),
-            .requestImmediateOutboxDrain
+            .setPhase(.loaded)
         ])
         #expect(fixture.probe.asyncActions == [
             .persistDatabase(fixture.account)

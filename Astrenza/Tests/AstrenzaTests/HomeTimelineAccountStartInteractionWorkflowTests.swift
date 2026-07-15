@@ -65,7 +65,7 @@ struct HomeTimelineAccountStartInteractionTests {
         application.installProvisionalRuntimeBootstrap(fixture.account)
         application.restoreHomeFeedReadState(fixture.account)
         application.setPhase(.resolvingRelays)
-        application.activateOutbox(fixture.account.pubkey)
+        application.publishOutboxRelayResults()
 
         #expect(fixture.probe.actions == [
             .cancelCurrentAccount,
@@ -84,7 +84,7 @@ struct HomeTimelineAccountStartInteractionTests {
             .installProvisionalRuntimeBootstrap(fixture.account),
             .restoreHomeFeedReadState(fixture.account),
             .setPhase(.resolvingRelays),
-            .activateOutbox(accountID: fixture.account.pubkey)
+            .publishOutboxRelayResults
         ])
     }
 }

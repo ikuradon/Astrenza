@@ -105,7 +105,6 @@ struct HomeTimelinePublishEffects: Sendable {
     let materializeEntries: VoidEffect
     let persistDatabase: PersistenceEffect
     let setPhase: PhaseEffect
-    let requestImmediateOutboxDrain: VoidEffect
 }
 
 @MainActor
@@ -113,15 +112,18 @@ final class HomeTimelinePublishWorkflow {
     private let publisher: any HomeTimelinePublishing
     private let contentManager: any HomeTimelinePublishContentManaging
     private let projectionManager: any HomeTimelinePublishProjectionManaging
+    private let outbox: any HomeTimelineOutboxDrainScheduling
 
     init(
         publisher: any HomeTimelinePublishing,
         contentManager: any HomeTimelinePublishContentManaging,
-        projectionManager: any HomeTimelinePublishProjectionManaging
+        projectionManager: any HomeTimelinePublishProjectionManaging,
+        outbox: any HomeTimelineOutboxDrainScheduling
     ) {
         self.publisher = publisher
         self.contentManager = contentManager
         self.projectionManager = projectionManager
+        self.outbox = outbox
     }
 
     @discardableResult
@@ -159,7 +161,7 @@ final class HomeTimelinePublishWorkflow {
         effects.materializeEntries()
         await effects.persistDatabase(request.account)
         effects.setPhase(.loaded)
-        effects.requestImmediateOutboxDrain()
+        outbox.requestImmediateDrain()
         return true
     }
 }

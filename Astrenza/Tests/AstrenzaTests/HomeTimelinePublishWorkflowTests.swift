@@ -187,7 +187,8 @@ private final class Fixture {
         workflow = HomeTimelinePublishWorkflow(
             publisher: probe,
             contentManager: probe,
-            projectionManager: probe
+            projectionManager: probe,
+            outbox: probe
         )
     }
 
@@ -232,7 +233,8 @@ private enum PublishWorkflowTestError: Error, Equatable {
 private final class PublishWorkflowProbe:
     HomeTimelinePublishing,
     HomeTimelinePublishContentManaging,
-    HomeTimelinePublishProjectionManaging {
+    HomeTimelinePublishProjectionManaging,
+    HomeTimelineOutboxDrainScheduling {
     enum Event: Equatable {
         case prepare(
             input: NostrPublishInput,
@@ -351,6 +353,10 @@ private final class PublishWorkflowProbe:
         return insertedContent
     }
 
+    func requestImmediateDrain() {
+        events.append(.requestImmediateOutboxDrain)
+    }
+
     func effects() -> HomeTimelinePublishEffects {
         HomeTimelinePublishEffects(
             currentAccountID: { [self] in
@@ -371,9 +377,6 @@ private final class PublishWorkflowProbe:
             },
             setPhase: { [self] phase in
                 events.append(.setPhase(phase))
-            },
-            requestImmediateOutboxDrain: { [self] in
-                events.append(.requestImmediateOutboxDrain)
             }
         )
     }

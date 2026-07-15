@@ -5,6 +5,19 @@ protocol HomeTimelineOutboxDraining: Sendable {
 }
 
 @MainActor
+protocol HomeTimelineOutboxActivating: AnyObject {
+    func activate(
+        accountID: String,
+        onRelayResultsRecorded: @escaping @MainActor @Sendable () -> Void
+    )
+}
+
+@MainActor
+protocol HomeTimelineOutboxDrainScheduling: AnyObject {
+    func requestImmediateDrain()
+}
+
+@MainActor
 final class HomeTimelineOutboxCoordinator {
     typealias RelayResultsHandler = @MainActor @Sendable () -> Void
     typealias NowProvider = @MainActor @Sendable () -> Int
@@ -103,3 +116,7 @@ final class HomeTimelineOutboxCoordinator {
         }
     }
 }
+
+extension HomeTimelineOutboxCoordinator:
+    HomeTimelineOutboxActivating,
+    HomeTimelineOutboxDrainScheduling {}

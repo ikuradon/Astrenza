@@ -27,7 +27,6 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     typealias PhaseEffect = @MainActor @Sendable (
         _ phase: NostrHomeTimelinePhase
     ) -> Void
-    typealias OutboxActivator = @MainActor @Sendable (_ accountID: String) -> Void
 
     let cancelCurrentAccount: VoidEffect
     let applyAccountContextTransition: AccountContextTransitionHandler
@@ -40,7 +39,7 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     let installProvisionalRuntimeBootstrap: AccountEffect
     let restoreHomeFeedReadState: AccountEffect
     let setPhase: PhaseEffect
-    let activateOutbox: OutboxActivator
+    let publishOutboxRelayResults: VoidEffect
 }
 
 struct HomeTimelineAccountStartEffects: Sendable {
@@ -54,9 +53,14 @@ struct HomeTimelineAccountStartEffects: Sendable {
 @MainActor
 final class HomeTimelineAccountStartWorkflow {
     private let coordinator: any HomeTimelineAccountStartCoordinating
+    private let outbox: any HomeTimelineOutboxActivating
 
-    init(coordinator: any HomeTimelineAccountStartCoordinating) {
+    init(
+        coordinator: any HomeTimelineAccountStartCoordinating,
+        outbox: any HomeTimelineOutboxActivating
+    ) {
         self.coordinator = coordinator
+        self.outbox = outbox
     }
 
     func start(
@@ -124,7 +128,10 @@ final class HomeTimelineAccountStartWorkflow {
         case .setPhase(let phase):
             effects.setPhase(phase)
         case .activateOutbox(let accountID):
-            effects.activateOutbox(accountID)
+            outbox.activate(
+                accountID: accountID,
+                onRelayResultsRecorded: effects.publishOutboxRelayResults
+            )
         case .applyRestoredViewport,
              .reloadNewestProjectionWindow,
              .materializeEntries,

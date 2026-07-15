@@ -34,7 +34,7 @@ extension HomeTimelineStoreAssembly {
             persistence: persistence,
             coordination: coordination,
             relayRuntime: relayRuntime,
-            linkPreviews: peripherals.linkPreviewCoordinator
+            peripherals: peripherals
         )
         let loads = makeLoadFeatures(
             input,
@@ -103,22 +103,16 @@ extension HomeTimelineStoreAssembly {
         persistence: HomeTimelineStorePersistenceGraph,
         coordination: HomeTimelineStoreCoordinationGraph,
         relayRuntime: HomeTimelineStoreRelayRuntimeGraph,
-        linkPreviews: any HomeTimelineLinkPreviewScheduling
+        peripherals: HomeTimelineStorePeripheralFeatures
     ) -> HomeTimelineStoreApplicationFeatures {
         let persistenceCoordinator = HomeTimelinePersistenceCoordinator(
             snapshotPersistence: persistence.snapshotCoordinator,
             lifecycleCoordinator: coordination.lifecycleCoordinator
         )
-        let accountStartWorkflow = HomeTimelineAccountStartWorkflow(
-            coordinator: HomeTimelineAccountStartCoordinator(
-                lifecycleCoordinator: coordination.lifecycleCoordinator,
-                resolveSyncPolicy: { accountID, fallback in
-                    input.syncPolicySettingsStore.policy(
-                        accountID: accountID,
-                        fallback: fallback
-                    )
-                }
-            )
+        let accountStartWorkflow = makeAccountStartWorkflow(
+            input,
+            lifecycle: coordination.lifecycleCoordinator,
+            outbox: peripherals.outboxCoordinator
         )
         let stateApplicationCoordinator = HomeTimelineStateApplicationCoordinator(
             snapshotCoordinator: persistence.snapshotCoordinator,
@@ -131,7 +125,8 @@ extension HomeTimelineStoreAssembly {
             pendingEventBuffer: coordination.pendingEventBuffer
         )
         let presentationWorkflow = HomeTimelinePresentationWorkflow(
-            coordinator: coordination.presentationCoordinator, linkPreviews: linkPreviews
+            coordinator: coordination.presentationCoordinator,
+            linkPreviews: peripherals.linkPreviewCoordinator
         )
         let pendingEventsWorkflow = HomeTimelinePendingEventsWorkflow(
             buffer: coordination.pendingEventBuffer
@@ -154,6 +149,25 @@ extension HomeTimelineStoreAssembly {
                 pendingEvents: pendingEventsWorkflow,
                 pagination: paginationWorkflow
             )
+        )
+    }
+
+    private static func makeAccountStartWorkflow(
+        _ input: HomeTimelineStoreAssemblyInput,
+        lifecycle: HomeTimelineLifecycleCoordinator,
+        outbox: any HomeTimelineOutboxActivating
+    ) -> HomeTimelineAccountStartWorkflow {
+        HomeTimelineAccountStartWorkflow(
+            coordinator: HomeTimelineAccountStartCoordinator(
+                lifecycleCoordinator: lifecycle,
+                resolveSyncPolicy: { accountID, fallback in
+                    input.syncPolicySettingsStore.policy(
+                        accountID: accountID,
+                        fallback: fallback
+                    )
+                }
+            ),
+            outbox: outbox
         )
     }
 
@@ -221,7 +235,8 @@ extension HomeTimelineStoreAssembly {
             HomeTimelinePublishWorkflow(
                 publisher: HomeTimelinePublishCoordinator(eventStore: eventStore),
                 contentManager: persistence.contentCoordinator,
-                projectionManager: persistence.homeFeedProjection
+                projectionManager: persistence.homeFeedProjection,
+                outbox: outboxCoordinator
             )
         }
         let localMutationCoordinator = (

@@ -18,7 +18,10 @@ struct HomeTimelineAccountStartWorkflowTests {
             viewport: viewport
         )
         let coordinator = AccountStartWorkflowCoordinatorSpy()
-        let workflow = HomeTimelineAccountStartWorkflow(coordinator: coordinator)
+        let workflow = HomeTimelineAccountStartWorkflow(
+            coordinator: coordinator,
+            outbox: AccountStartWorkflowOutboxSpy()
+        )
         let input = HomeTimelineAccountStartInput(
             account: account,
             hasRelayRuntime: true
@@ -66,7 +69,11 @@ struct HomeTimelineAccountStartWorkflowTests {
         ]
         let probe = AccountStartWorkflowEffectProbe(account: account)
         let coordinator = AccountStartWorkflowCoordinatorSpy(commands: commands)
-        let workflow = HomeTimelineAccountStartWorkflow(coordinator: coordinator)
+        let outbox = AccountStartWorkflowOutboxSpy()
+        let workflow = HomeTimelineAccountStartWorkflow(
+            coordinator: coordinator,
+            outbox: outbox
+        )
 
         workflow.start(
             HomeTimelineAccountStartInput(
@@ -76,25 +83,16 @@ struct HomeTimelineAccountStartWorkflowTests {
             effects: probe.effects
         )
 
-        #expect(probe.applications == [
-            .cancelCurrentAccount,
-            .applyAccountContextTransition(.activate(
-                account,
-                syncPolicy: syncPolicy
-            )),
-            .startRuntimeSession,
-            .ensureHomeFeedDefinition(account),
-            .applyProjectionViewportTransition(.restoreViewport(
-                anchorEventID: viewport.anchorEventID
-            )),
-            .reloadNewestProjectionWindow(account),
-            .materializeEntries,
-            .applyRestoreProjectionAnchor(account),
-            .installProvisionalRuntimeBootstrap(account),
-            .restoreHomeFeedReadState(account),
-            .setPhase(.resolvingRelays),
-            .activateOutbox(account.pubkey)
-        ])
+        #expect(probe.applications == accountStartWorkflowApplications(
+            account: account,
+            syncPolicy: syncPolicy,
+            viewport: viewport
+        ))
+        #expect(outbox.activatedAccountIDs == [account.pubkey])
+
+        outbox.recordRelayResults()
+
+        #expect(probe.applications.last == .publishOutboxRelayResults)
     }
 }
 
@@ -193,8 +191,8 @@ private final class AccountStartWorkflowEffectProbe {
             setPhase: { [self] phase in
                 applications.append(.setPhase(phase))
             },
-            activateOutbox: { [self] accountID in
-                applications.append(.activateOutbox(accountID))
+            publishOutboxRelayResults: { [self] in
+                applications.append(.publishOutboxRelayResults)
             }
         )
     }
@@ -214,13 +212,57 @@ private enum AccountStartWorkflowApplication: Equatable, Sendable {
     case installProvisionalRuntimeBootstrap(NostrAccount)
     case restoreHomeFeedReadState(NostrAccount)
     case setPhase(NostrHomeTimelinePhase)
-    case activateOutbox(String)
+    case publishOutboxRelayResults
+}
+
+@MainActor
+private final class AccountStartWorkflowOutboxSpy:
+    HomeTimelineOutboxActivating {
+    private(set) var activatedAccountIDs: [String] = []
+    private var relayResultsHandler: (@MainActor @Sendable () -> Void)?
+
+    func activate(
+        accountID: String,
+        onRelayResultsRecorded: @escaping @MainActor @Sendable () -> Void
+    ) {
+        activatedAccountIDs.append(accountID)
+        relayResultsHandler = onRelayResultsRecorded
+    }
+
+    func recordRelayResults() {
+        relayResultsHandler?()
+    }
 }
 
 private enum AccountStartWorkflowDependency: Equatable, Sendable {
     case restoreCachedSnapshot(NostrAccount)
     case restoreViewport(String)
     case load(NostrAccount, HomeTimelineLifecycleToken)
+}
+
+private func accountStartWorkflowApplications(
+    account: NostrAccount,
+    syncPolicy: NostrSyncPolicy,
+    viewport: HomeTimelineRestoredViewport
+) -> [AccountStartWorkflowApplication] {
+    [
+        .cancelCurrentAccount,
+        .applyAccountContextTransition(.activate(
+            account,
+            syncPolicy: syncPolicy
+        )),
+        .startRuntimeSession,
+        .ensureHomeFeedDefinition(account),
+        .applyProjectionViewportTransition(.restoreViewport(
+            anchorEventID: viewport.anchorEventID
+        )),
+        .reloadNewestProjectionWindow(account),
+        .materializeEntries,
+        .applyRestoreProjectionAnchor(account),
+        .installProvisionalRuntimeBootstrap(account),
+        .restoreHomeFeedReadState(account),
+        .setPhase(.resolvingRelays)
+    ]
 }
 
 private func accountStartWorkflowAccount() -> NostrAccount {

@@ -36,7 +36,7 @@ enum HomeTimelineAccountStartStoreAction: Equatable, Sendable {
     case installProvisionalRuntimeBootstrap(NostrAccount)
     case restoreHomeFeedReadState(NostrAccount)
     case setPhase(NostrHomeTimelinePhase)
-    case activateOutbox(accountID: String)
+    case publishOutboxRelayResults
 }
 
 struct HomeTimelineAccountStartLoadRequest: Equatable, Sendable {
@@ -162,8 +162,8 @@ final class HomeAccountStartInteractionWorkflow {
             setPhase: { phase in
                 effects.apply(.setPhase(phase))
             },
-            activateOutbox: { accountID in
-                effects.apply(.activateOutbox(accountID: accountID))
+            publishOutboxRelayResults: {
+                effects.apply(.publishOutboxRelayResults)
             }
         )
     }
