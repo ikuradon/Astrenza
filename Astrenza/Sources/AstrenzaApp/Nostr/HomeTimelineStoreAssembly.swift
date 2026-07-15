@@ -16,8 +16,7 @@ struct HomeTimelineStoreComponents {
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let eventStore: NostrEventStore?
     let contentCoordinator: HomeTimelineContentCoordinator
-    let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
-    let runtimeWorkflow: HomeTimelineRuntimeWorkflow
+    let runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow
     let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -162,11 +161,13 @@ enum HomeTimelineStoreAssembly {
                 graph.features.viewportInteractionWorkflow,
             eventStore: input.eventStore,
             contentCoordinator: graph.persistence.contentCoordinator,
-            runtimeEventWorkflow: graph.runtimeEvents.runtimeEventWorkflow,
-            runtimeWorkflow: HomeTimelineRuntimeWorkflow(
-                session: graph.runtimeEvents.runtimeSessionCoordinator,
-                setup: graph.relayRuntime.runtimeSetupCoordinator,
-                packetRouter: graph.relayRuntime.runtimePacketWorkflow
+            runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow(
+                runtime: HomeTimelineRuntimeWorkflow(
+                    session: graph.runtimeEvents.runtimeSessionCoordinator,
+                    setup: graph.relayRuntime.runtimeSetupCoordinator,
+                    packetRouter: graph.relayRuntime.runtimePacketWorkflow
+                ),
+                events: graph.runtimeEvents.runtimeEventWorkflow
             ),
             gapBackfillWorkflow: graph.coordination.gapBackfillWorkflow,
             backwardCompletionWorkflow: graph.runtimeEvents.backwardCompletionWorkflow,

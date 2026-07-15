@@ -27,8 +27,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineViewportInteractionWorkflow
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
-    private let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
-    private let runtimeWorkflow: HomeTimelineRuntimeWorkflow
+    private let runtimeInteractionWorkflow:
+        HomeTimelineRuntimeInteractionWorkflow
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     private let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -176,8 +176,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
         self.eventStore = components.eventStore
         self.contentCoordinator = components.contentCoordinator
-        self.runtimeEventWorkflow = components.runtimeEventWorkflow
-        self.runtimeWorkflow = components.runtimeWorkflow
+        self.runtimeInteractionWorkflow = components.runtimeInteractionWorkflow
         self.gapBackfillWorkflow = components.gapBackfillWorkflow
         self.backwardCompletionWorkflow = components.backwardCompletionWorkflow
         self.dependencyCoordinator = components.dependencyCoordinator
@@ -881,57 +880,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func startRuntimeSession() {
-        let profileRelayURLs = account.map(runtimeRelayURLs(account:)) ?? []
-        runtimeWorkflow.startSession(
-            HomeTimelineRuntimeSessionRequest(
-                account: account,
-                profileRelayURLs: profileRelayURLs,
-                hasRelayRuntime: relayRuntime != nil,
-                isTerminating: accountResetWorkflow.isRuntimeTerminating
-            ),
-            effects: runtimeSessionEffects()
-        )
-    }
-
-    private func runtimeSessionEffects() -> HomeTimelineRuntimeSessionEffects {
-        HomeTimelineRuntimeSessionEffects(
-            isAccountCurrent: { [weak self] accountID in
-                self?.account?.pubkey == accountID
-            },
-            application: runtimeApplicationEffects(),
-            packet: runtimePacketEffects(),
-            invalidateListEntries: { [weak self] in
-                self?.invalidateListEntries()
-            },
-            scheduleMaterialization: { [weak self] in
-                self?.scheduleMaterializeEntries()
-            }
-        )
-    }
-
-    private func runtimePacketEffects(
-        isActive: Bool? = nil
-    ) -> HomeTimelineRuntimePacketEffects {
-        HomeTimelineRuntimePacketEffects(
-            context: { [weak self] in
-                self?.runtimePacketContext(isActive: isActive)
-            },
-            setRealtime: { [weak self] isRealtime in
-                self?.publishHomeTimelineRealtimeState(isRealtime)
-            },
-            applyRelayStatusTransition: { [weak self] transition in
-                self?.applyRelayStatusTransition(transition)
-            },
-            handleEvent: { [weak self] relayURL, subscriptionID, event in
-                await self?.handleRuntimeEvent(
-                    relayURL: relayURL,
-                    subscriptionID: subscriptionID,
-                    event: event
-                )
-            },
-            handleBackwardCompletion: { [weak self] completion in
-                self?.handleBackwardCompletion(completion)
-            }
+        runtimeInteractionWorkflow.startSession(
+            context: runtimeInteractionContext()
         )
     }
 
@@ -1044,7 +994,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             currentAccount: { [weak self] in self?.account },
             resetRuntimeState: { [weak self] in
                 guard let self else { return }
-                runtimeWorkflow.resetSetup()
+                runtimeInteractionWorkflow.resetSetup()
                 resetHomeTimelineRealtime()
             },
             startRuntimeSession: { [weak self] in
@@ -1092,27 +1042,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
-        await runtimeWorkflow.configure(
-            HomeTimelineRuntimeSetupRequest(
-                account: account,
-                defaultRelayURLs: runtimeRelayURLs(account: account),
-                policy: syncPolicy,
-                hasRelayRuntime: relayRuntime != nil,
-                isTerminating: accountResetWorkflow.isRuntimeTerminating,
-                forceInstall: forceInstall
-            ),
-            effects: runtimeSetupEffects()
-        )
-    }
-
-    private func runtimeSetupEffects() -> HomeTimelineRuntimeSetupEffects {
-        HomeTimelineRuntimeSetupEffects(
-            setRealtime: { [weak self] isRealtime in
-                self?.publishHomeTimelineRealtimeState(isRealtime)
-            },
-            recordDiagnostic: { [weak self] diagnostic in
-                self?.recordRuntimeSetupDiagnostic(diagnostic)
-            }
+        await runtimeInteractionWorkflow.configure(
+            account: account,
+            defaultRelayURLs: runtimeRelayURLs(account: account),
+            forceInstall: forceInstall,
+            context: runtimeInteractionContext()
         )
     }
 
@@ -1180,46 +1114,114 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
-        let receivedWhileRealtime = activityCoordinator.snapshot.isRealtime
-        await runtimeEventWorkflow.handle(
-            HomeTimelineRuntimeEventInput(
-                relayURL: relayURL,
-                subscriptionID: subscriptionID,
-                event: event,
+    private func runtimeInteractionContext(
+    ) -> HomeTimelineRuntimeInteractionContext {
+        HomeTimelineRuntimeInteractionContext(
+            state: HomeTimelineRuntimeInteractionState(
                 account: account,
+                profileRelayURLs: account.map(runtimeRelayURLs(account:)) ?? [],
+                policy: syncPolicy,
                 hasRelayRuntime: relayRuntime != nil,
-                receivedWhileRealtime: receivedWhileRealtime
+                isTerminating: accountResetWorkflow.isRuntimeTerminating
             ),
-            effects: runtimeEventEffects()
+            effects: HomeTimelineRuntimeInteractionEffects(
+                environment: HomeTimelineRuntimeStoreEnvironment(
+                    packetContext: { [weak self] isActive in
+                        self?.runtimePacketContext(isActive: isActive)
+                    },
+                    isAccountCurrent: { [weak self] accountID in
+                        self?.account?.pubkey == accountID
+                    }
+                ),
+                runtimeApplication: runtimeApplicationEffects(),
+                apply: { [weak self] application in
+                    self?.applyRuntimeInteractionApplication(application)
+                },
+                perform: { [weak self] application in
+                    await self?.performRuntimeInteractionApplication(application)
+                }
+            )
         )
     }
 
-    private func runtimeEventEffects() -> HomeTimelineRuntimeEventEffects {
-        HomeTimelineRuntimeEventEffects(
-            presentationState: { [self] receivedWhileRealtime in
-                HomeTimelineRuntimeEventPresentationState(
-                    receivedWhileRealtime: receivedWhileRealtime,
-                    hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
-                    isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-                    hasPendingEvents: !pendingEventBuffer.isEmpty
-                )
-            },
-            isAccountCurrent: { [self] accountID in
-                account?.pubkey == accountID
-            },
-            application: runtimeApplicationEffects(),
-            recordDiagnostic: { [weak self] diagnostic in
-                self?.recordRuntimeSyncEvent(
-                    relayURL: diagnostic.relayURL,
-                    kind: .partialFailure,
-                    subscriptionID: diagnostic.subscriptionID,
-                    message: diagnostic.message
-                )
-            },
-            scheduleLinkPreviewResolution: { [weak self] in
-                self?.scheduleLinkPreviewResolution()
-            }
+    private func runtimeEventInteractionContext(
+    ) -> HomeTimelineRuntimeEventContext {
+        HomeTimelineRuntimeEventContext(
+            state: HomeTimelineRuntimeEventInteractionState(
+                account: account,
+                hasRelayRuntime: relayRuntime != nil,
+                receivedWhileRealtime: activityCoordinator.snapshot.isRealtime
+            ),
+            effects: HomeTimelineRuntimeEventStoreEffects(
+                environment: HomeTimelineRuntimeEventEnvironment(
+                    presentationState: { [self] receivedWhileRealtime in
+                        HomeTimelineRuntimeEventPresentationState(
+                            receivedWhileRealtime: receivedWhileRealtime,
+                            hasRestoreProjectionAnchor:
+                                restoreProjectionAnchorEventID != nil,
+                            isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+                            hasPendingEvents: !pendingEventBuffer.isEmpty
+                        )
+                    },
+                    isAccountCurrent: { [self] accountID in
+                        account?.pubkey == accountID
+                    }
+                ),
+                runtimeApplication: runtimeApplicationEffects(),
+                apply: { [weak self] application in
+                    self?.applyRuntimeInteractionApplication(application)
+                }
+            )
+        )
+    }
+
+    private func applyRuntimeInteractionApplication(
+        _ application: HomeTimelineRuntimeStoreAction
+    ) {
+        switch application {
+        case .setRealtime(let isRealtime):
+            publishHomeTimelineRealtimeState(isRealtime)
+        case .applyRelayStatusTransition(let transition):
+            applyRelayStatusTransition(transition)
+        case .handleBackwardCompletion(let completion):
+            handleBackwardCompletion(completion)
+        case .invalidateListEntries:
+            invalidateListEntries()
+        case .scheduleMaterialization:
+            scheduleMaterializeEntries()
+        case .recordSetupDiagnostic(let diagnostic):
+            recordRuntimeSetupDiagnostic(diagnostic)
+        case .recordEventDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        case .scheduleLinkPreviewResolution:
+            scheduleLinkPreviewResolution()
+        }
+    }
+
+    private func performRuntimeInteractionApplication(
+        _ application: HomeTimelineRuntimeStoreAsyncAction
+    ) async {
+        switch application {
+        case .handleEvent(let relayURL, let subscriptionID, let event):
+            await handleRuntimeEvent(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                event: event
+            )
+        }
+    }
+
+    private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
+        await runtimeInteractionWorkflow.handleEvent(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID,
+            event: event,
+            context: runtimeEventInteractionContext()
         )
     }
 
@@ -1256,13 +1258,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        _ = await runtimeEventWorkflow.enqueueDependencies(
+        _ = await runtimeInteractionWorkflow.enqueueDependencies(
             for: event,
             context: runtimeEventApplicationContext(
                 account: account,
                 lifecycle: lifecycle
             ),
-            effects: runtimeApplicationEffects()
+            application: runtimeApplicationEffects()
         )
     }
 
@@ -1270,13 +1272,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        runtimeEventWorkflow.resolveNIP05IfNeeded(
+        runtimeInteractionWorkflow.resolveNIP05IfNeeded(
             for: metadataEvent,
             context: runtimeEventApplicationContext(
                 account: account,
                 lifecycle: lifecycle
             ),
-            effects: runtimeApplicationEffects()
+            application: runtimeApplicationEffects()
         )
     }
 
@@ -1321,13 +1323,13 @@ final class NostrHomeTimelineStore: ObservableObject {
             },
             resolveDependencies: { [weak self] event, account, lifecycle in
                 guard let self else { return false }
-                return await runtimeEventWorkflow.enqueueDependencies(
+                return await runtimeInteractionWorkflow.enqueueDependencies(
                     for: event,
                     context: runtimeEventApplicationContext(
                         account: account,
                         lifecycle: lifecycle
                     ),
-                    effects: runtimeApplicationEffects()
+                    application: runtimeApplicationEffects()
                 )
             }
         )
@@ -1432,10 +1434,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         _ event: NostrEvent,
         consultEventStore: Bool = true
     ) -> NostrEvent {
-        runtimeEventWorkflow.rememberLatestMetadataEvent(
+        runtimeInteractionWorkflow.rememberLatestMetadataEvent(
             event,
             consultEventStore: consultEventStore,
-            effects: runtimeApplicationEffects()
+            application: runtimeApplicationEffects()
         )
     }
 }
@@ -1758,9 +1760,10 @@ extension NostrHomeTimelineStore {
     }
 
     func testingHandleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) async {
-        await runtimeWorkflow.handlePacket(
+        await runtimeInteractionWorkflow.handlePacket(
             .requestStarted(attempt),
-            effects: runtimePacketEffects(isActive: true)
+            isActive: true,
+            context: runtimeInteractionContext()
         )
     }
 
