@@ -14,7 +14,6 @@ struct HomeTimelineRuntimeInteractionTests {
         let start = fixture.workflow.startSession(context: fixture.context)
         await fixture.workflow.configure(
             account: fixture.account,
-            defaultRelayURLs: fixture.relayURLs,
             forceInstall: true,
             context: fixture.context
         )
@@ -35,6 +34,93 @@ struct HomeTimelineRuntimeInteractionTests {
         #expect(fixture.probe.runtimeApplications == [
             .listProjectionInvalidation(5)
         ])
+    }
+
+    @Test("Runtime relay plan normalizes sources and preserves priority")
+    func relayPlanNormalizesAndPrioritizesSources() {
+        let planner = HomeTimelineRuntimeRelayPlanner()
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "relay-plan",
+            readOnly: true,
+            discoveryRelays: [
+                " https://shared.example ",
+                "relay.example",
+                "wss://"
+            ]
+        )
+
+        #expect(planner.runtimeRelayURLs(
+            account: account,
+            resolvedRelayURLs: [
+                "wss://resolved.example",
+                "https://shared.example"
+            ],
+            bootstrapRelayURLs: [
+                "http://bootstrap.example",
+                "wss://resolved.example"
+            ]
+        ) == [
+            "wss://resolved.example",
+            "wss://shared.example",
+            "wss://relay.example",
+            "ws://bootstrap.example"
+        ])
+    }
+
+    @Test("Runtime relay plan caps the connection set at ten")
+    func relayPlanCapsRuntimeRelays() {
+        let planner = HomeTimelineRuntimeRelayPlanner()
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "relay-limit",
+            readOnly: true
+        )
+        let relayURLs = (0..<12).map { "wss://relay-\($0).example" }
+
+        #expect(planner.runtimeRelayURLs(
+            account: account,
+            resolvedRelayURLs: relayURLs,
+            bootstrapRelayURLs: []
+        ) == Array(relayURLs.prefix(10)))
+    }
+
+    @Test("Provisional relays require a runtime and an unresolved account")
+    func provisionalRelayPlanRequiresUnresolvedRuntime() {
+        let planner = HomeTimelineRuntimeRelayPlanner()
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "provisional-relays",
+            readOnly: true,
+            discoveryRelays: ["hint.example", "https://shared.example"]
+        )
+        let bootstrapRelayURLs = [
+            "wss://shared.example",
+            "http://fallback.example"
+        ]
+
+        #expect(planner.provisionalBootstrapRelayURLs(
+            account: account,
+            resolvedRelayURLs: [],
+            bootstrapRelayURLs: bootstrapRelayURLs,
+            hasRelayRuntime: true
+        ) == [
+            "wss://hint.example",
+            "wss://shared.example",
+            "ws://fallback.example"
+        ])
+        #expect(planner.provisionalBootstrapRelayURLs(
+            account: account,
+            resolvedRelayURLs: [],
+            bootstrapRelayURLs: bootstrapRelayURLs,
+            hasRelayRuntime: false
+        ) == nil)
+        #expect(planner.provisionalBootstrapRelayURLs(
+            account: account,
+            resolvedRelayURLs: ["wss://resolved.example"],
+            bootstrapRelayURLs: bootstrapRelayURLs,
+            hasRelayRuntime: true
+        ) == nil)
     }
 
     @Test("Packet context stays dynamic and events cross an async boundary")

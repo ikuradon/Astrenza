@@ -69,17 +69,20 @@ final class HomeTimelineRuntimeInteractionWorkflow {
     private let events: any HomeTimelineRuntimeEventRouting
     private let lifecycle: any HomeTimelineRuntimeLifecycleTracking
     private let relayStatus: any HomeTimelineRelayStatusRecording
+    private let relayPlanner: HomeTimelineRuntimeRelayPlanner
 
     init(
         runtime: any HomeTimelineRuntimeRouting,
         events: any HomeTimelineRuntimeEventRouting,
         lifecycle: any HomeTimelineRuntimeLifecycleTracking,
-        relayStatus: any HomeTimelineRelayStatusRecording
+        relayStatus: any HomeTimelineRelayStatusRecording,
+        relayPlanner: HomeTimelineRuntimeRelayPlanner = .init()
     ) {
         self.runtime = runtime
         self.events = events
         self.lifecycle = lifecycle
         self.relayStatus = relayStatus
+        self.relayPlanner = relayPlanner
     }
 
     @discardableResult
@@ -87,35 +90,38 @@ final class HomeTimelineRuntimeInteractionWorkflow {
         context: HomeTimelineRuntimeInteractionContext
     ) -> HomeTimelineRuntimeSessionStart {
         runtime.startSession(
-            HomeTimelineRuntimeSessionRequest(
-                account: context.state.account,
-                profileRelayURLs: context.state.profileRelayURLs,
-                hasRelayRuntime: context.state.hasRelayRuntime,
-                isTerminating: context.state.isTerminating
-            ),
+            relayPlanner.sessionRequest(state: context.state),
             effects: sessionEffects(for: context.effects)
         )
     }
 
     func configure(
         account: NostrAccount,
-        defaultRelayURLs: [String],
         forceInstall: Bool,
         context: HomeTimelineRuntimeInteractionContext
     ) async {
         await runtime.configure(
-            HomeTimelineRuntimeSetupRequest(
+            relayPlanner.setupRequest(
                 account: account,
-                defaultRelayURLs: defaultRelayURLs,
-                policy: context.state.policy,
-                hasRelayRuntime: context.state.hasRelayRuntime,
-                isTerminating: context.state.isTerminating,
-                forceInstall: forceInstall
+                forceInstall: forceInstall,
+                state: context.state
             ),
             effects: setupEffects(
                 state: context.state,
                 for: context.effects
             )
+        )
+    }
+
+    func provisionalBootstrapRelayURLs(
+        account: NostrAccount,
+        state: HomeTimelineRuntimeInteractionState
+    ) -> [String]? {
+        relayPlanner.provisionalBootstrapRelayURLs(
+            account: account,
+            resolvedRelayURLs: state.resolvedRelays,
+            bootstrapRelayURLs: state.bootstrapRelayURLs,
+            hasRelayRuntime: state.hasRelayRuntime
         )
     }
 

@@ -1,12 +1,115 @@
 import AstrenzaCore
+import Foundation
 
 struct HomeTimelineRuntimeInteractionState: Equatable, Sendable {
     let account: NostrAccount?
-    let profileRelayURLs: [String]
     let resolvedRelays: [String]
+    let bootstrapRelayURLs: [String]
     let policy: NostrSyncPolicy
     let hasRelayRuntime: Bool
     let isTerminating: Bool
+}
+
+struct HomeTimelineRuntimeRelayPlanner: Sendable {
+    private let runtimeRelayLimit: Int
+
+    init(runtimeRelayLimit: Int = 10) {
+        self.runtimeRelayLimit = max(0, runtimeRelayLimit)
+    }
+
+    func sessionRequest(
+        state: HomeTimelineRuntimeInteractionState
+    ) -> HomeTimelineRuntimeSessionRequest {
+        HomeTimelineRuntimeSessionRequest(
+            account: state.account,
+            profileRelayURLs: state.account.map {
+                runtimeRelayURLs(
+                    account: $0,
+                    resolvedRelayURLs: state.resolvedRelays,
+                    bootstrapRelayURLs: state.bootstrapRelayURLs
+                )
+            } ?? [],
+            hasRelayRuntime: state.hasRelayRuntime,
+            isTerminating: state.isTerminating
+        )
+    }
+
+    func setupRequest(
+        account: NostrAccount,
+        forceInstall: Bool,
+        state: HomeTimelineRuntimeInteractionState
+    ) -> HomeTimelineRuntimeSetupRequest {
+        HomeTimelineRuntimeSetupRequest(
+            account: account,
+            defaultRelayURLs: runtimeRelayURLs(
+                account: account,
+                resolvedRelayURLs: state.resolvedRelays,
+                bootstrapRelayURLs: state.bootstrapRelayURLs
+            ),
+            policy: state.policy,
+            hasRelayRuntime: state.hasRelayRuntime,
+            isTerminating: state.isTerminating,
+            forceInstall: forceInstall
+        )
+    }
+
+    func runtimeRelayURLs(
+        account: NostrAccount,
+        resolvedRelayURLs: [String],
+        bootstrapRelayURLs: [String]
+    ) -> [String] {
+        Array(
+            deduplicatedRelayURLs(
+                normalizedRelayURLs(
+                    resolvedRelayURLs +
+                        account.discoveryRelays +
+                        bootstrapRelayURLs
+                )
+            )
+            .prefix(runtimeRelayLimit)
+        )
+    }
+
+    func provisionalBootstrapRelayURLs(
+        account: NostrAccount,
+        resolvedRelayURLs: [String],
+        bootstrapRelayURLs: [String],
+        hasRelayRuntime: Bool
+    ) -> [String]? {
+        guard hasRelayRuntime, resolvedRelayURLs.isEmpty else { return nil }
+        let relayURLs = deduplicatedRelayURLs(
+            normalizedRelayURLs(
+                account.discoveryRelays + bootstrapRelayURLs
+            )
+        )
+        return relayURLs.isEmpty ? nil : relayURLs
+    }
+
+    private func normalizedRelayURLs(_ relayURLs: [String]) -> [String] {
+        relayURLs.compactMap { rawValue in
+            var value = rawValue.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            if value.hasPrefix("https://") {
+                value = "wss://" + value.dropFirst("https://".count)
+            } else if value.hasPrefix("http://") {
+                value = "ws://" + value.dropFirst("http://".count)
+            } else if !value.hasPrefix("wss://") &&
+                        !value.hasPrefix("ws://") {
+                value = "wss://\(value)"
+            }
+            guard let url = URL(string: value),
+                  url.scheme == "wss" || url.scheme == "ws",
+                  url.host != nil
+            else { return nil }
+            return value
+        }
+    }
+
+    private func deduplicatedRelayURLs(_ relayURLs: [String]) -> [String] {
+        var seen = Set<String>()
+        return relayURLs.filter { seen.insert($0).inserted }
+    }
 }
 
 struct HomeTimelineRuntimeStoreEnvironment: Sendable {

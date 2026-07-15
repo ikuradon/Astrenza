@@ -695,9 +695,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
-        guard relayRuntime != nil, resolvedRelays.isEmpty else { return }
-        let provisionalRelays = provisionalDiscoveryRelays(for: account)
-        guard !provisionalRelays.isEmpty else { return }
+        guard let provisionalRelays = runtimeInteractionWorkflow
+            .provisionalBootstrapRelayURLs(
+                account: account,
+                state: runtimeInteractionState()
+            )
+        else { return }
         applyContentSnapshot(
             dataInteractionWorkflow.perform(
                 .installProvisionalRelays(provisionalRelays)
@@ -706,44 +709,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         updateRelayStatusCounts()
     }
 
-    private func provisionalDiscoveryRelays(for account: NostrAccount) -> [String] {
-        normalizedRelayURLs(account.discoveryRelays + remoteLoadCoordinator.bootstrapRelays)
-            .dedupedPreservingOrder()
-    }
-
-    private func normalizedRelayURLs(_ relays: [String]) -> [String] {
-        relays.compactMap { raw in
-            var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.hasPrefix("https://") {
-                value = "wss://" + value.dropFirst("https://".count)
-            } else if value.hasPrefix("http://") {
-                value = "ws://" + value.dropFirst("http://".count)
-            } else if !value.hasPrefix("wss://") && !value.hasPrefix("ws://") {
-                value = "wss://\(value)"
-            }
-            guard let url = URL(string: value), url.scheme == "wss" || url.scheme == "ws", url.host != nil else {
-                return nil
-            }
-            return value
-        }
-    }
-
     private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
         await runtimeInteractionWorkflow.configure(
             account: account,
-            defaultRelayURLs: runtimeRelayURLs(account: account),
             forceInstall: forceInstall,
             context: runtimeInteractionContext()
-        )
-    }
-
-    private func runtimeRelayURLs(account: NostrAccount) -> [String] {
-        Array(
-            normalizedRelayURLs(
-                resolvedRelays + account.discoveryRelays + remoteLoadCoordinator.bootstrapRelays
-            )
-            .dedupedPreservingOrder()
-            .prefix(10)
         )
     }
 
@@ -765,15 +735,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func runtimeInteractionContext(
     ) -> HomeTimelineRuntimeInteractionContext {
         HomeTimelineRuntimeInteractionContext(
-            state: HomeTimelineRuntimeInteractionState(
-                account: account,
-                profileRelayURLs: account.map(runtimeRelayURLs(account:)) ?? [],
-                resolvedRelays: resolvedRelays,
-                policy: syncPolicy,
-                hasRelayRuntime: relayRuntime != nil,
-                isTerminating:
-                    accountResetInteractionWorkflow.isRuntimeTerminating
-            ),
+            state: runtimeInteractionState(),
             effects: HomeTimelineRuntimeInteractionEffects(
                 environment: HomeTimelineRuntimeStoreEnvironment(
                     packetContext: { [weak self] isActive in
@@ -791,6 +753,19 @@ final class NostrHomeTimelineStore: ObservableObject {
                     await self?.performRuntimeInteractionApplication(application)
                 }
             )
+        )
+    }
+
+    private func runtimeInteractionState(
+    ) -> HomeTimelineRuntimeInteractionState {
+        HomeTimelineRuntimeInteractionState(
+            account: account,
+            resolvedRelays: resolvedRelays,
+            bootstrapRelayURLs: remoteLoadCoordinator.bootstrapRelays,
+            policy: syncPolicy,
+            hasRelayRuntime: relayRuntime != nil,
+            isTerminating:
+                accountResetInteractionWorkflow.isRuntimeTerminating
         )
     }
 
@@ -1930,16 +1905,5 @@ extension NIP05Status {
         case .invalid, .failed:
             self = .invalid
         }
-    }
-}
-
-private extension Array where Element == String {
-    func dedupedPreservingOrder() -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for value in self where seen.insert(value).inserted {
-            result.append(value)
-        }
-        return result
     }
 }

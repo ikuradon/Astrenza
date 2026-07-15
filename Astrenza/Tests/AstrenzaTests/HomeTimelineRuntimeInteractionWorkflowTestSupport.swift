@@ -279,8 +279,8 @@ struct RuntimeInteractionFixture {
         HomeTimelineRuntimeInteractionContext(
             state: HomeTimelineRuntimeInteractionState(
                 account: account,
-                profileRelayURLs: relayURLs,
                 resolvedRelays: relayURLs,
+                bootstrapRelayURLs: [],
                 policy: policy,
                 hasRelayRuntime: true,
                 isTerminating: false
