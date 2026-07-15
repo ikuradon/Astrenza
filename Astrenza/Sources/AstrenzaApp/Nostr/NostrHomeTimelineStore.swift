@@ -58,7 +58,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let homeFeedProjection: HomeFeedProjectionController
     private let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     private let persistenceCoordinator: HomeTimelinePersistenceCoordinator
-    private let publishCoordinator: HomeTimelinePublishCoordinator?
+    private let publishWorkflow: HomeTimelinePublishWorkflow?
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
@@ -269,7 +269,13 @@ final class NostrHomeTimelineStore: ObservableObject {
             persistenceWorker: persistenceWorker,
             projectionController: homeFeedProjection
         )
-        self.publishCoordinator = eventStore.map(HomeTimelinePublishCoordinator.init)
+        self.publishWorkflow = eventStore.map { eventStore in
+            HomeTimelinePublishWorkflow(
+                publisher: HomeTimelinePublishCoordinator(eventStore: eventStore),
+                contentManager: contentCoordinator,
+                projectionManager: homeFeedProjection
+            )
+        }
         self.localMutationCoordinator = (localMutationPersistence ?? eventStore).map {
             HomeTimelineLocalMutationCoordinator(persistence: $0)
         }
@@ -634,33 +640,46 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
-        guard let account, let publishCoordinator else { return }
-        let writeRelays = NostrRelayList.parse(from: relayListEvent).writeRelays
-        let publish = try await publishCoordinator.prepare(
-            input,
-            accountID: account.pubkey,
-            accountWriteRelays: writeRelays,
-            fallbackRelays: resolvedRelays,
-            signer: signer
+        guard let account, let publishWorkflow else { return }
+        try await publishWorkflow.enqueue(
+            HomeTimelinePublishRequest(
+                input: input,
+                account: account,
+                accountWriteRelays: NostrRelayList.parse(from: relayListEvent).writeRelays,
+                fallbackRelays: resolvedRelays
+            ),
+            signer: signer,
+            handlers: publishHandlers()
         )
-        guard self.account?.pubkey == publish.accountID else { return }
+    }
 
-        ensureHomeFeedDefinition(account: account)
-        let event = try publishCoordinator.persist(
-            publish,
-            feedDefinition: homeFeedProjection.definition
+    private func publishHandlers() -> HomeTimelinePublishHandlers {
+        HomeTimelinePublishHandlers(
+            currentAccountID: { [weak self] in self?.account?.pubkey },
+            perform: { [weak self] command in
+                self?.applyPublishCommand(command)
+            },
+            persistDatabase: { [weak self] account in
+                await self?.persistDatabase(account: account)
+            }
         )
-        applyContentSnapshot(
-            contentCoordinator.insertOutboxEvent(
-                event,
-                accountID: account.pubkey
-            )
-        )
-        reloadNewestProjectionWindow(account: account)
-        materializeEntries()
-        await persistDatabase(account: account)
-        applyActivityTransition(activityCoordinator.setPhase(.loaded))
-        outboxCoordinator.requestImmediateDrain()
+    }
+
+    private func applyPublishCommand(
+        _ command: HomeTimelinePublishCommand
+    ) {
+        switch command {
+        case .applyContentSnapshot(let snapshot):
+            applyContentSnapshot(snapshot)
+        case .reloadNewestProjectionWindow(let account):
+            reloadNewestProjectionWindow(account: account)
+        case .materializeEntries:
+            materializeEntries()
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
+        case .requestImmediateOutboxDrain:
+            outboxCoordinator.requestImmediateDrain()
+        }
     }
 
     private func activateOutbox(accountID: String) {
