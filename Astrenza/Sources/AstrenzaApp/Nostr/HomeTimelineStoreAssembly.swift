@@ -16,6 +16,7 @@ struct HomeTimelineStoreComponents {
     let eventStore: NostrEventStore?
     let contentCoordinator: HomeTimelineContentCoordinator
     let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
+    let runtimeWorkflow: HomeTimelineRuntimeWorkflow
     let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -28,15 +29,12 @@ struct HomeTimelineStoreComponents {
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
-    let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
-    let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let accountResetWorkflow: HomeTimelineAccountResetWorkflow
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let readStateCoordinator: HomeTimelineReadStateCoordinator
     let timelineRepository: HomeTimelineRepository
-    let runtimePacketWorkflow: HomeTimelineRuntimePacketWorkflow
     let homeFeedProjection: HomeFeedProjectionController
     let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     let persistenceCoordinator: HomeTimelinePersistenceCoordinator
@@ -163,6 +161,11 @@ enum HomeTimelineStoreAssembly {
             eventStore: input.eventStore,
             contentCoordinator: graph.persistence.contentCoordinator,
             runtimeEventWorkflow: graph.runtimeEvents.runtimeEventWorkflow,
+            runtimeWorkflow: HomeTimelineRuntimeWorkflow(
+                session: graph.runtimeEvents.runtimeSessionCoordinator,
+                setup: graph.relayRuntime.runtimeSetupCoordinator,
+                packetRouter: graph.relayRuntime.runtimePacketWorkflow
+            ),
             gapBackfillWorkflow: graph.coordination.gapBackfillWorkflow,
             backwardCompletionWorkflow: graph.runtimeEvents.backwardCompletionWorkflow,
             dependencyCoordinator: graph.coordination.dependencyCoordinator,
@@ -175,15 +178,12 @@ enum HomeTimelineStoreAssembly {
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
             feedSyncCoordinator: graph.coordination.feedSyncCoordinator,
             lifecycleCoordinator: graph.coordination.lifecycleCoordinator,
-            runtimeSessionCoordinator: graph.runtimeEvents.runtimeSessionCoordinator,
-            runtimeSetupCoordinator: graph.relayRuntime.runtimeSetupCoordinator,
             accountStartWorkflow: graph.features.accountStartWorkflow,
             accountResetWorkflow: graph.accountResetWorkflow,
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
             readStateCoordinator: graph.features.readStateCoordinator,
             timelineRepository: graph.persistence.timelineRepository,
-            runtimePacketWorkflow: graph.relayRuntime.runtimePacketWorkflow,
             homeFeedProjection: graph.persistence.homeFeedProjection,
             stateApplicationCoordinator: graph.features.stateApplicationCoordinator,
             persistenceCoordinator: graph.features.persistenceCoordinator,
