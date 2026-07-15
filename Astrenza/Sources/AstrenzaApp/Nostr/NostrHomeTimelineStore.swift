@@ -1,26 +1,16 @@
 import Foundation
 import AstrenzaCore
+import Combine
 import SwiftUI
 
 @MainActor
 final class NostrHomeTimelineStore: ObservableObject {
     typealias Phase = NostrHomeTimelinePhase
 
-    @Published private var publishedAccountContextState:
-        HomeTimelinePublishedAccountContextState
-    @Published private var publishedPresentationState =
-        HomeTimelinePublishedPresentationState()
-    @Published private var publishedActivityState =
-        HomeTimelinePublishedActivityState()
-    @Published private var publishedContentState =
-        HomeTimelinePublishedContentState()
-    @Published private var publishedRelayStatusState =
-        HomeTimelinePublishedRelayStatusState()
-    @Published private var publishedListProjectionState =
-        HomeTimelinePublishedListProjectionState()
-    @Published private var publishedPendingEventState =
-        HomeTimelinePublishedPendingEventState()
+    @Published private var publishedStateRevision = 0
 
+    private let publishedStateCoordinator:
+        HomeTimelinePublishedStateCoordinator
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     private let viewportInteractionWorkflow:
@@ -55,6 +45,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationInteractionWorkflow:
         HomeLocalMutationInteractionWorkflow?
     private let relayRuntime: NostrRelayRuntime?
+    private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
     var relayStatusEventStore: NostrEventStore? {
@@ -103,15 +94,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
-        guard let next = publishedContentState.applying(snapshot) else { return }
-        publishedContentState = next
+        publishedStateCoordinator.applyContentSnapshot(snapshot)
     }
 
     private func applyActivityTransition(
         _ transition: HomeTimelineActivityTransition
     ) {
-        guard let next = publishedActivityState.applying(transition) else { return }
-        publishedActivityState = next
+        publishedStateCoordinator.applyActivityTransition(transition)
     }
 
     private func applyActivityIntent(
@@ -125,8 +114,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func applyPresentationTransition(
         _ transition: HomeTimelinePresentationTransition
     ) {
-        guard let next = publishedPresentationState.applying(transition) else { return }
-        publishedPresentationState = next
+        publishedStateCoordinator.applyPresentationTransition(transition)
     }
 
     private func updateRelayStatusCounts() {
@@ -138,35 +126,21 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
-        applyPublishedRelayStatus(snapshot)
+        publishedStateCoordinator.applyRelayStatusSnapshot(snapshot)
     }
 
     private func applyRelayStatusTransition(
         _ transition: HomeTimelineRelayStatusTransition?
     ) {
-        guard let transition else { return }
-        applyPublishedRelayStatus(
-            transition.snapshot,
-            publishingStatusChange: transition.publishesStatusChange
-        )
-        if let relayURL = transition.invalidatedRealtimeRelayURL {
+        if let relayURL = publishedStateCoordinator.applyRelayStatusTransition(
+            transition
+        ) {
             invalidateHomeTimelineRealtime(relayURL: relayURL)
         }
     }
 
-    private func applyPublishedRelayStatus(
-        _ snapshot: HomeTimelineRelayStatusSnapshot,
-        publishingStatusChange: Bool = false
-    ) {
-        guard let next = publishedRelayStatusState.applying(
-            snapshot,
-            publishingStatusChange: publishingStatusChange
-        ) else { return }
-        publishedRelayStatusState = next
-    }
-
     private func publishRelayStatusChange() {
-        publishedRelayStatusState = publishedRelayStatusState.publishingStatusChange()
+        publishedStateCoordinator.publishRelayStatusChange()
     }
 
     init(
@@ -187,9 +161,12 @@ final class NostrHomeTimelineStore: ObservableObject {
                 linkPreviewResolver: linkPreviewResolver,
                 outboxPublisher: outboxPublisher,
                 localMutationPersistence: localMutationPersistence,
+                initialSyncPolicy: syncPolicy,
                 syncPolicySettingsStore: syncPolicySettingsStore
             )
         )
+        self.publishedStateCoordinator =
+            components.publishedStateCoordinator
         self.remoteLoadCoordinator = components.remoteLoadCoordinator
         self.loadInteractionWorkflow = components.loadInteractionWorkflow
         self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
@@ -219,9 +196,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.localMutationInteractionWorkflow =
             components.localMutationInteractionWorkflow
         self.relayRuntime = components.relayRuntime
-        self.publishedAccountContextState = HomeTimelinePublishedAccountContextState(
-            syncPolicy: syncPolicy
-        )
+        self.publishedStateObservation =
+            publishedStateCoordinator.objectWillChange.sink { [weak self] in
+                self?.publishedStateRevision &+= 1
+            }
     }
 
     func start(account: NostrAccount) {
@@ -1468,7 +1446,7 @@ private extension NostrHomeTimelineStore {
     }
 
     var syncPolicy: NostrSyncPolicy {
-        publishedAccountContextState.syncPolicy
+        publishedStateCoordinator.accountContext.syncPolicy
     }
 
     var restoreProjectionAnchorEventID: String? {
@@ -1491,10 +1469,7 @@ private extension NostrHomeTimelineStore {
     func applyAccountContextTransition(
         _ transition: HomeTimelineAccountContextTransition
     ) {
-        guard let next = publishedAccountContextState.applying(transition) else {
-            return
-        }
-        publishedAccountContextState = next
+        publishedStateCoordinator.applyAccountContextTransition(transition)
     }
 
     @discardableResult
@@ -1507,10 +1482,9 @@ private extension NostrHomeTimelineStore {
     func applyPendingEventCountPublication(
         _ publication: HomeTimelinePendingEventCountPublication
     ) {
-        guard let next = publishedPendingEventState.applying(publication) else {
-            return
-        }
-        publishedPendingEventState = next
+        publishedStateCoordinator.applyPendingEventCountPublication(
+            publication
+        )
     }
 
     func invalidateListEntries() {
@@ -1522,10 +1496,7 @@ private extension NostrHomeTimelineStore {
     func applyListProjectionInvalidation(
         _ invalidation: HomeTimelineListProjectionInvalidation
     ) {
-        guard let next = publishedListProjectionState.applying(invalidation) else {
-            return
-        }
-        publishedListProjectionState = next
+        publishedStateCoordinator.applyListProjectionInvalidation(invalidation)
     }
 }
 
@@ -1594,33 +1565,35 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore {
     var account: NostrAccount? {
-        publishedAccountContextState.account
+        publishedStateCoordinator.accountContext.account
     }
 
     var currentSyncPolicy: NostrSyncPolicy {
-        publishedAccountContextState.syncPolicy
+        publishedStateCoordinator.accountContext.syncPolicy
     }
 
     var unmaterializedNewCount: Int {
-        publishedPendingEventState.count
+        publishedStateCoordinator.pendingEvents.count
     }
 
     var listContentRevision: Int {
-        publishedListProjectionState.revision
+        publishedStateCoordinator.listProjection.revision
     }
 
     var relayStatusRevision: Int {
-        publishedRelayStatusState.revision
+        publishedStateCoordinator.relayStatus.revision
     }
 
     var relayRuntimeStates: [String: NostrRelayConnectionState] {
-        publishedRelayStatusState.snapshot.runtimeStates
+        publishedStateCoordinator.relayStatus.snapshot.runtimeStates
     }
 
     var relayStatusCounts: (connected: Int, planned: Int) {
         (
-            connected: publishedRelayStatusState.snapshot.connectedRelayCount,
-            planned: publishedRelayStatusState.snapshot.plannedRelayCount
+            connected: publishedStateCoordinator.relayStatus.snapshot
+                .connectedRelayCount,
+            planned: publishedStateCoordinator.relayStatus.snapshot
+                .plannedRelayCount
         )
     }
 
@@ -1646,55 +1619,55 @@ extension NostrHomeTimelineStore {
     }
 
     var phase: Phase {
-        publishedActivityState.phase
+        publishedStateCoordinator.activity.phase
     }
 
     var isRefreshing: Bool {
-        publishedActivityState.isRefreshing
+        publishedStateCoordinator.activity.isRefreshing
     }
 
     var isLoadingOlder: Bool {
-        publishedActivityState.isLoadingOlder
+        publishedStateCoordinator.activity.isLoadingOlder
     }
 
     var isHomeTimelineRealtime: Bool {
-        publishedActivityState.isRealtime
+        publishedStateCoordinator.activity.isRealtime
     }
 
     var resolvedRelays: [String] {
-        publishedContentState.resolvedRelays
+        publishedStateCoordinator.content.resolvedRelays
     }
 
     var followedPubkeys: [String] {
-        publishedContentState.followedPubkeys
+        publishedStateCoordinator.content.followedPubkeys
     }
 
     var hasMoreOlder: Bool {
-        publishedContentState.hasMoreOlder
+        publishedStateCoordinator.content.hasMoreOlder
     }
 
     var entries: [TimelineFeedEntry] {
-        publishedPresentationState.entries
+        publishedStateCoordinator.presentation.entries
     }
 
     var filterStatus: TimelineFilterStatus {
-        publishedPresentationState.filterStatus
+        publishedStateCoordinator.presentation.filterStatus
     }
 
     var materializedUnreadCount: Int {
-        publishedPresentationState.materializedUnreadCount
+        publishedStateCoordinator.presentation.materializedUnreadCount
     }
 
     var visibleUnreadBadgeCount: Int {
-        publishedPresentationState.visibleUnreadBadgeCount
+        publishedStateCoordinator.presentation.visibleUnreadBadgeCount
     }
 
     var resolvedContentRevision: Int {
-        publishedPresentationState.resolvedContentRevision
+        publishedStateCoordinator.presentation.resolvedContentRevision
     }
 
     var realtimeFollowSourceRevision: Int? {
-        publishedPresentationState.realtimeFollowSourceRevision
+        publishedStateCoordinator.presentation.realtimeFollowSourceRevision
     }
 }
 

@@ -58,6 +58,22 @@ struct HomeTimelineStoreAssemblyTests {
             ))
     }
 
+    @Test("Assembly preserves the initial published sync policy")
+    func assemblesPublishedStatePolicy() {
+        let initialSyncPolicy = NostrSyncPolicy.default(
+            networkType: .cellular,
+            lowPowerMode: true
+        )
+        let components = assembledHomeTimelineComponents(
+            initialSyncPolicy: initialSyncPolicy
+        )
+
+        #expect(
+            components.publishedStateCoordinator.accountContext.syncPolicy ==
+                initialSyncPolicy
+        )
+    }
+
     @Test("An event store enables publishing and database-backed local mutations")
     func assemblesEventStoreCapabilities() throws {
         let eventStore = try NostrEventStore.inMemory()
@@ -106,7 +122,8 @@ struct HomeTimelineStoreAssemblyTests {
 @MainActor
 private func assembledHomeTimelineComponents(
     eventStore: NostrEventStore? = nil,
-    localMutationPersistence: (any HomeTimelineLocalMutationPersisting)? = nil
+    localMutationPersistence: (any HomeTimelineLocalMutationPersisting)? = nil,
+    initialSyncPolicy: NostrSyncPolicy = .default(networkType: .unknown)
 ) -> HomeTimelineStoreComponents {
     HomeTimelineStoreAssembly.assemble(
         HomeTimelineStoreAssemblyInput(
@@ -116,6 +133,7 @@ private func assembledHomeTimelineComponents(
             linkPreviewResolver: nil,
             outboxPublisher: NostrOutboxRelayPublisher(),
             localMutationPersistence: localMutationPersistence,
+            initialSyncPolicy: initialSyncPolicy,
             syncPolicySettingsStore: .shared
         )
     )

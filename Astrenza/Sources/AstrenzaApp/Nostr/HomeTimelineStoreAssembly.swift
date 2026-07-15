@@ -7,10 +7,12 @@ struct HomeTimelineStoreAssemblyInput {
     let linkPreviewResolver: NostrLinkPreviewResolver?
     let outboxPublisher: NostrOutboxRelayPublisher
     let localMutationPersistence: (any HomeTimelineLocalMutationPersisting)?
+    let initialSyncPolicy: NostrSyncPolicy
     let syncPolicySettingsStore: NostrSyncPolicySettingsStore
 }
 
 struct HomeTimelineStoreComponents {
+    let publishedStateCoordinator: HomeTimelinePublishedStateCoordinator
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
@@ -158,6 +160,9 @@ enum HomeTimelineStoreAssembly {
         graph: HomeTimelineStoreAssemblyGraph
     ) -> HomeTimelineStoreComponents {
         HomeTimelineStoreComponents(
+            publishedStateCoordinator: HomeTimelinePublishedStateCoordinator(
+                syncPolicy: input.initialSyncPolicy
+            ),
             remoteLoadCoordinator: graph.features.remoteLoadCoordinator,
             loadInteractionWorkflow: graph.features.loadInteractionWorkflow,
             viewportInteractionWorkflow:
