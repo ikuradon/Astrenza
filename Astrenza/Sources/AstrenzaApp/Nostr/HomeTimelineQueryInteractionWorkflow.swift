@@ -103,22 +103,6 @@ protocol HomeTimelineProfileProjectionCaching: AnyObject {
 extension HomeTimelineProfileProjectionCache:
     HomeTimelineProfileProjectionCaching {}
 
-struct HomeTimelineListProjectionQuery {
-    let accountID: String
-    let limit: Int
-    let homeContentRevision: Int
-    let contextInput: HomeTimelineReadContextInput
-}
-
-struct HomeTimelineProfileProjectionQuery {
-    let pubkey: String
-    let isCurrentUser: Bool
-    let postsLimit: Int
-    let homeContentRevision: Int
-    let listContentRevision: Int
-    let contextInput: HomeTimelineReadContextInput
-}
-
 struct HomeTimelineOlderBackfillQuery {
     let accountID: String
     let followedPubkeys: [String]
@@ -133,17 +117,21 @@ final class HomeTimelineQueryInteractionWorkflow {
     private let profileProjectionCache:
         any HomeTimelineProfileProjectionCaching
     private let readContext: any HomeTimelineReadContextProviding
+    private let contextProjector: HomeTimelineQueryContextProjector
 
     init(
         repository: any HomeTimelineQueryRepository,
         listProjectionCache: any HomeTimelineListProjectionCaching,
         profileProjectionCache: any HomeTimelineProfileProjectionCaching,
-        readContext: any HomeTimelineReadContextProviding
+        readContext: any HomeTimelineReadContextProviding,
+        contextProjector: HomeTimelineQueryContextProjector =
+            HomeTimelineQueryContextProjector()
     ) {
         self.repository = repository
         self.listProjectionCache = listProjectionCache
         self.profileProjectionCache = profileProjectionCache
         self.readContext = readContext
+        self.contextProjector = contextProjector
     }
 
     func isBookmarked(eventID: String, accountID: String?) -> Bool {
@@ -154,8 +142,14 @@ final class HomeTimelineQueryInteractionWorkflow {
     }
 
     func listEntries(
-        _ query: HomeTimelineListProjectionQuery
+        limit: Int,
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> [TimelineFeedEntry] {
+        let projection = contextProjector.projection(from: snapshot)
+        guard let query = contextProjector.listProjectionQuery(
+            limit: limit,
+            from: projection
+        ) else { return [] }
         let cacheKey = HomeTimelineListProjectionCache.Key(
             accountID: query.accountID,
             limit: query.limit,
@@ -174,12 +168,13 @@ final class HomeTimelineQueryInteractionWorkflow {
 
     func post(
         eventID: String,
-        contextInput: HomeTimelineReadContextInput
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> TimelinePost? {
-        repository.post(
+        let projection = contextProjector.projection(from: snapshot)
+        return repository.post(
             eventID: eventID,
             context: readContext.context(
-                for: contextInput,
+                for: projection.readContextInput,
                 applyingHomeFilters: true
             )
         )
@@ -188,21 +183,32 @@ final class HomeTimelineQueryInteractionWorkflow {
     func profile(
         pubkey: String,
         isCurrentUser: Bool,
-        contextInput: HomeTimelineReadContextInput
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> UserProfile {
-        repository.profile(
+        let projection = contextProjector.projection(from: snapshot)
+        return repository.profile(
             pubkey: pubkey,
             isCurrentUser: isCurrentUser,
             context: readContext.context(
-                for: contextInput,
+                for: projection.readContextInput,
                 applyingHomeFilters: true
             )
         )
     }
 
     func profileProjection(
-        _ query: HomeTimelineProfileProjectionQuery
+        pubkey: String,
+        isCurrentUser: Bool,
+        postsLimit: Int,
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> HomeTimelineProfileProjection {
+        let projection = contextProjector.projection(from: snapshot)
+        let query = contextProjector.profileProjectionQuery(
+            pubkey: pubkey,
+            isCurrentUser: isCurrentUser,
+            postsLimit: postsLimit,
+            from: projection
+        )
         let input = query.contextInput
         let key = HomeTimelineProfileProjectionCache.Key(
             accountID: input.accountID,
@@ -230,13 +236,14 @@ final class HomeTimelineQueryInteractionWorkflow {
     func profilePosts(
         pubkey: String,
         limit: Int,
-        contextInput: HomeTimelineReadContextInput
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> [TimelinePost] {
-        repository.profilePosts(
+        let projection = contextProjector.projection(from: snapshot)
+        return repository.profilePosts(
             pubkey: pubkey,
             limit: limit,
             context: readContext.context(
-                for: contextInput,
+                for: projection.readContextInput,
                 applyingHomeFilters: true
             )
         )
@@ -245,13 +252,14 @@ final class HomeTimelineQueryInteractionWorkflow {
     func replyAncestors(
         for post: TimelinePost,
         limit: Int,
-        contextInput: HomeTimelineReadContextInput
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> [TimelinePost] {
-        repository.replyAncestors(
+        let projection = contextProjector.projection(from: snapshot)
+        return repository.replyAncestors(
             for: post,
             limit: limit,
             context: readContext.context(
-                for: contextInput,
+                for: projection.readContextInput,
                 applyingHomeFilters: true
             )
         )
@@ -260,13 +268,14 @@ final class HomeTimelineQueryInteractionWorkflow {
     func replies(
         for post: TimelinePost,
         limit: Int,
-        contextInput: HomeTimelineReadContextInput
+        snapshot: HomeTimelineQueryStoreSnapshot
     ) -> [TimelinePost] {
-        repository.replies(
+        let projection = contextProjector.projection(from: snapshot)
+        return repository.replies(
             for: post,
             limit: limit,
             context: readContext.context(
-                for: contextInput,
+                for: projection.readContextInput,
                 applyingHomeFilters: true
             )
         )

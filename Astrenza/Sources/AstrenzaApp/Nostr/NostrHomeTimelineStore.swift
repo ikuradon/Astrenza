@@ -94,12 +94,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         contentState.contactListEvent
     }
 
-    private var timelineReadContextInput: HomeTimelineReadContextInput {
-        HomeTimelineReadContextInput(
+    private var timelineQuerySnapshot: HomeTimelineQueryStoreSnapshot {
+        HomeTimelineQueryStoreSnapshot(
             accountID: account?.pubkey,
             fallbackEntries: entries,
             resolvedRelayCount: resolvedRelays.count,
-            syncPolicy: syncPolicy
+            syncPolicy: syncPolicy,
+            homeContentRevision: resolvedContentRevision,
+            listContentRevision: listContentRevision
         )
     }
 
@@ -1566,21 +1568,16 @@ extension NostrHomeTimelineStore {
     }
 
     func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
-        guard let account else { return [] }
-        return queryInteractionWorkflow.listEntries(
-            HomeTimelineListProjectionQuery(
-                accountID: account.pubkey,
-                limit: limit,
-                homeContentRevision: resolvedContentRevision,
-                contextInput: timelineReadContextInput
-            )
+        queryInteractionWorkflow.listEntries(
+            limit: limit,
+            snapshot: timelineQuerySnapshot
         )
     }
 
     func post(eventID: String) -> TimelinePost? {
         queryInteractionWorkflow.post(
             eventID: eventID,
-            contextInput: timelineReadContextInput
+            snapshot: timelineQuerySnapshot
         )
     }
 
@@ -1588,7 +1585,7 @@ extension NostrHomeTimelineStore {
         queryInteractionWorkflow.profile(
             pubkey: pubkey,
             isCurrentUser: isCurrentUser,
-            contextInput: timelineReadContextInput
+            snapshot: timelineQuerySnapshot
         )
     }
 
@@ -1598,14 +1595,10 @@ extension NostrHomeTimelineStore {
         postsLimit: Int = 80
     ) -> HomeTimelineProfileProjection {
         queryInteractionWorkflow.profileProjection(
-            HomeTimelineProfileProjectionQuery(
-                pubkey: pubkey,
-                isCurrentUser: isCurrentUser,
-                postsLimit: postsLimit,
-                homeContentRevision: resolvedContentRevision,
-                listContentRevision: listContentRevision,
-                contextInput: timelineReadContextInput
-            )
+            pubkey: pubkey,
+            isCurrentUser: isCurrentUser,
+            postsLimit: postsLimit,
+            snapshot: timelineQuerySnapshot
         )
     }
 
@@ -1613,7 +1606,7 @@ extension NostrHomeTimelineStore {
         queryInteractionWorkflow.profilePosts(
             pubkey: pubkey,
             limit: limit,
-            contextInput: timelineReadContextInput
+            snapshot: timelineQuerySnapshot
         )
     }
 
@@ -1624,7 +1617,7 @@ extension NostrHomeTimelineStore {
         queryInteractionWorkflow.replyAncestors(
             for: post,
             limit: limit,
-            contextInput: timelineReadContextInput
+            snapshot: timelineQuerySnapshot
         )
     }
 
@@ -1632,7 +1625,7 @@ extension NostrHomeTimelineStore {
         queryInteractionWorkflow.replies(
             for: post,
             limit: limit,
-            contextInput: timelineReadContextInput
+            snapshot: timelineQuerySnapshot
         )
     }
 }

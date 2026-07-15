@@ -9,7 +9,7 @@ struct HomeTimelineQueryInteractionTests {
     func routesPublicQueries() {
         let repository = QueryRepositorySpy()
         let workflow = makeWorkflow(repository: repository)
-        let contextInput = readContextInput(accountID: "account")
+        let snapshot = querySnapshot(accountID: "account")
         let post = repository.postResult
 
         let isBookmarked = workflow.isBookmarked(
@@ -18,27 +18,27 @@ struct HomeTimelineQueryInteractionTests {
         )
         let resolvedPost = workflow.post(
             eventID: post.id,
-            contextInput: contextInput
+            snapshot: snapshot
         )
         let profile = workflow.profile(
             pubkey: "author",
             isCurrentUser: true,
-            contextInput: contextInput
+            snapshot: snapshot
         )
         let profilePosts = workflow.profilePosts(
             pubkey: "author",
             limit: 80,
-            contextInput: contextInput
+            snapshot: snapshot
         )
         let ancestors = workflow.replyAncestors(
             for: post,
             limit: 8,
-            contextInput: contextInput
+            snapshot: snapshot
         )
         let replies = workflow.replies(
             for: post,
             limit: 24,
-            contextInput: contextInput
+            snapshot: snapshot
         )
 
         #expect(isBookmarked)
@@ -71,35 +71,30 @@ struct HomeTimelineQueryInteractionTests {
             profileProjectionCache: HomeTimelineProfileProjectionCache(),
             readContext: ReadContextProviderSpy()
         )
-        let firstQuery = listQuery(
+        let firstSnapshot = querySnapshot(
             accountID: "account-a",
-            limit: 5,
             revision: 1
         )
 
-        let first = workflow.listEntries(firstQuery)
-        let cached = workflow.listEntries(firstQuery)
-        let accountChanged = workflow.listEntries(listQuery(
-            accountID: "account-b",
+        let first = workflow.listEntries(limit: 5, snapshot: firstSnapshot)
+        let cached = workflow.listEntries(limit: 5, snapshot: firstSnapshot)
+        let accountChanged = workflow.listEntries(
             limit: 5,
-            revision: 1
-        ))
-        let limitChanged = workflow.listEntries(listQuery(
-            accountID: "account-a",
+            snapshot: querySnapshot(accountID: "account-b", revision: 1)
+        )
+        let limitChanged = workflow.listEntries(
             limit: 6,
-            revision: 1
-        ))
-        let revisionChanged = workflow.listEntries(listQuery(
-            accountID: "account-a",
+            snapshot: querySnapshot(accountID: "account-a", revision: 1)
+        )
+        let revisionChanged = workflow.listEntries(
             limit: 5,
-            revision: 2
-        ))
+            snapshot: querySnapshot(accountID: "account-a", revision: 2)
+        )
         let invalidation = workflow.invalidateListEntries()
-        let invalidated = workflow.listEntries(listQuery(
-            accountID: "account-a",
+        let invalidated = workflow.listEntries(
             limit: 5,
-            revision: 2
-        ))
+            snapshot: querySnapshot(accountID: "account-a", revision: 2)
+        )
 
         #expect(first.map(\.id) == ["list-1"])
         #expect(cached.map(\.id) == ["list-1"])
@@ -115,6 +110,25 @@ struct HomeTimelineQueryInteractionTests {
             .listEntries(limit: 5, accountID: "account-a"),
             .listEntries(limit: 5, accountID: "account-a")
         ])
+    }
+
+    @Test("Signed-out list query bypasses context and repository work")
+    func signedOutListQueryIsEmpty() {
+        let repository = QueryRepositorySpy()
+        let readContext = ReadContextProviderSpy()
+        let workflow = makeWorkflow(
+            repository: repository,
+            readContext: readContext
+        )
+
+        let entries = workflow.listEntries(
+            limit: 500,
+            snapshot: querySnapshot(accountID: nil)
+        )
+
+        #expect(entries.isEmpty)
+        #expect(repository.events.isEmpty)
+        #expect(readContext.appliedHomeFilterValues.isEmpty)
     }
 
     @Test("In-memory events win while database fallback and backfill are routed")
@@ -167,27 +181,17 @@ struct HomeTimelineQueryInteractionTests {
         )
     }
 
-    private func listQuery(
-        accountID: String,
-        limit: Int,
-        revision: Int
-    ) -> HomeTimelineListProjectionQuery {
-        HomeTimelineListProjectionQuery(
-            accountID: accountID,
-            limit: limit,
-            homeContentRevision: revision,
-            contextInput: readContextInput(accountID: accountID)
-        )
-    }
-
-    private func readContextInput(
-        accountID: String?
-    ) -> HomeTimelineReadContextInput {
-        HomeTimelineReadContextInput(
+    private func querySnapshot(
+        accountID: String?,
+        revision: Int = 0
+    ) -> HomeTimelineQueryStoreSnapshot {
+        HomeTimelineQueryStoreSnapshot(
             accountID: accountID,
             fallbackEntries: [],
             resolvedRelayCount: 0,
-            syncPolicy: .default()
+            syncPolicy: .default(),
+            homeContentRevision: revision,
+            listContentRevision: 0
         )
     }
 

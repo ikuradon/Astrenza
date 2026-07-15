@@ -26,22 +26,27 @@ struct HomeTimelineProfileQueryInteractionTests {
             profileProjectionCache: HomeTimelineProfileProjectionCache(),
             readContext: readContext
         )
-        let query = HomeTimelineProfileProjectionQuery(
+        let snapshot = HomeTimelineQueryStoreSnapshot(
+            accountID: "account",
+            fallbackEntries: [],
+            resolvedRelayCount: 3,
+            syncPolicy: .default(networkType: .wifi),
+            homeContentRevision: 7,
+            listContentRevision: 2
+        )
+
+        let first = workflow.profileProjection(
             pubkey: pubkey,
             isCurrentUser: false,
             postsLimit: 80,
-            homeContentRevision: 7,
-            listContentRevision: 2,
-            contextInput: HomeTimelineReadContextInput(
-                accountID: "account",
-                fallbackEntries: [],
-                resolvedRelayCount: 3,
-                syncPolicy: .default(networkType: .wifi)
-            )
+            snapshot: snapshot
         )
-
-        let first = workflow.profileProjection(query)
-        let cached = workflow.profileProjection(query)
+        let cached = workflow.profileProjection(
+            pubkey: pubkey,
+            isCurrentUser: false,
+            postsLimit: 80,
+            snapshot: snapshot
+        )
 
         #expect(first.posts.map(\.id) == [post.id])
         #expect(cached.profile.id == pubkey)
