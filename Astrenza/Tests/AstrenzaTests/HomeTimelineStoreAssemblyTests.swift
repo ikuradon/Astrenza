@@ -13,7 +13,7 @@ struct HomeTimelineStoreAssemblyTests {
         #expect(components.eventStore == nil)
         #expect(components.relayRuntime == nil)
         #expect(components.publishInteractionWorkflow == nil)
-        #expect(components.localMutationCoordinator == nil)
+        #expect(components.localMutationInteractionWorkflow == nil)
         #expect(components.contentCoordinator.snapshot == .initial)
         #expect(!components.backwardRequestRegistry.hasRequests)
     }
@@ -22,19 +22,23 @@ struct HomeTimelineStoreAssemblyTests {
     func assemblesEventStoreCapabilities() throws {
         let eventStore = try NostrEventStore.inMemory()
         let components = assembledHomeTimelineComponents(eventStore: eventStore)
-        let mutation = try #require(components.localMutationCoordinator)
+        let mutation = try #require(
+            components.localMutationInteractionWorkflow
+        )
         let accountID = String(repeating: "a", count: 64)
         let eventID = String(repeating: "1", count: 64)
 
-        let bookmark = try mutation.bookmarkPost(
-            accountID: accountID,
-            eventID: eventID,
-            at: 100
+        mutation.perform(
+            .bookmark(eventID: eventID),
+            context: localMutationContext(accountID: accountID)
         )
 
         #expect(components.eventStore === eventStore)
         #expect(components.publishInteractionWorkflow != nil)
-        #expect(try eventStore.localBookmarks(accountID: accountID) == [bookmark])
+        #expect(
+            try eventStore.localBookmarks(accountID: accountID).map(\.eventID)
+                == [eventID]
+        )
     }
 
     @Test("Explicit mutation persistence remains available without a database")
@@ -43,17 +47,19 @@ struct HomeTimelineStoreAssemblyTests {
         let components = assembledHomeTimelineComponents(
             localMutationPersistence: persistence
         )
-        let mutation = try #require(components.localMutationCoordinator)
+        let mutation = try #require(
+            components.localMutationInteractionWorkflow
+        )
 
-        let rule = try mutation.muteAuthor(
-            accountID: "account",
-            authorPubkey: "author",
-            at: 200
+        mutation.perform(
+            .muteAuthor(authorPubkey: "author"),
+            context: localMutationContext(accountID: "account")
         )
 
         #expect(components.eventStore == nil)
         #expect(components.publishInteractionWorkflow == nil)
-        #expect(persistence.savedRules == [rule])
+        #expect(persistence.savedRules.map(\.accountID) == ["account"])
+        #expect(persistence.savedRules.map(\.value) == ["author"])
     }
 }
 
@@ -72,6 +78,16 @@ private func assembledHomeTimelineComponents(
             localMutationPersistence: localMutationPersistence,
             syncPolicySettingsStore: .shared
         )
+    )
+}
+
+@MainActor
+private func localMutationContext(
+    accountID: String?
+) -> HomeLocalMutationInteractionContext {
+    HomeLocalMutationInteractionContext(
+        state: HomeLocalMutationInteractionState(accountID: accountID),
+        effects: HomeLocalMutationInteractionEffects(apply: { _ in })
     )
 }
 

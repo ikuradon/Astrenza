@@ -55,7 +55,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private let publishInteractionWorkflow:
         HomeTimelinePublishInteractionWorkflow?
-    private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
+    private let localMutationInteractionWorkflow:
+        HomeLocalMutationInteractionWorkflow?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
     private var projectionViewportState = HomeTimelineProjectionViewportState()
@@ -206,7 +207,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.homeFeedProjection = components.homeFeedProjection
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
-        self.localMutationCoordinator = components.localMutationCoordinator
+        self.localMutationInteractionWorkflow =
+            components.localMutationInteractionWorkflow
         self.relayRuntime = components.relayRuntime
         self.outboxCoordinator = components.outboxCoordinator
         self.publishedAccountContextState = HomeTimelinePublishedAccountContextState(
@@ -408,35 +410,17 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func muteAuthor(of post: TimelinePost) {
-        guard let account, let localMutationCoordinator else { return }
-
-        do {
-            try localMutationCoordinator.muteAuthor(
-                accountID: account.pubkey,
-                authorPubkey: post.author.pubkey
-            )
-            invalidateListEntries()
-            materializeEntries()
-        } catch {
-            applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Mute failed: \(error.localizedDescription)"))
-            )
-        }
+        localMutationInteractionWorkflow?.perform(
+            .muteAuthor(authorPubkey: post.author.pubkey),
+            context: localMutationInteractionContext()
+        )
     }
 
     func bookmark(_ post: TimelinePost) {
-        guard let account, let localMutationCoordinator else { return }
-
-        do {
-            try localMutationCoordinator.bookmarkPost(
-                accountID: account.pubkey,
-                eventID: post.id
-            )
-        } catch {
-            applyActivityTransition(
-                activityCoordinator.setPhase(.failed("Bookmark failed: \(error.localizedDescription)"))
-            )
-        }
+        localMutationInteractionWorkflow?.perform(
+            .bookmark(eventID: post.id),
+            context: localMutationInteractionContext()
+        )
     }
 
     func isBookmarked(_ post: TimelinePost) -> Bool {
@@ -1221,6 +1205,33 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func localMutationInteractionContext(
+    ) -> HomeLocalMutationInteractionContext {
+        HomeLocalMutationInteractionContext(
+            state: HomeLocalMutationInteractionState(
+                accountID: account?.pubkey
+            ),
+            effects: HomeLocalMutationInteractionEffects(
+                apply: { [weak self] action in
+                    self?.applyLocalMutationAction(action)
+                }
+            )
+        )
+    }
+
+    func applyLocalMutationAction(
+        _ action: HomeTimelineLocalMutationStoreAction
+    ) {
+        switch action {
+        case .invalidateListEntries:
+            invalidateListEntries()
+        case .materializeEntries:
+            materializeEntries()
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
+        }
+    }
+
     func gapBackfillInteractionContext(
     ) -> HomeGapBackfillInteractionContext {
         HomeGapBackfillInteractionContext(

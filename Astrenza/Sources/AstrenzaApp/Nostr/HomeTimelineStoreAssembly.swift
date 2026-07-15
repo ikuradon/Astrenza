@@ -41,7 +41,8 @@ struct HomeTimelineStoreComponents {
     let homeFeedProjection: HomeFeedProjectionController
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let publishInteractionWorkflow: HomeTimelinePublishInteractionWorkflow?
-    let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
+    let localMutationInteractionWorkflow:
+        HomeLocalMutationInteractionWorkflow?
     let relayRuntime: NostrRelayRuntime?
     let outboxCoordinator: HomeTimelineOutboxCoordinator
 }
@@ -203,7 +204,7 @@ enum HomeTimelineStoreAssembly {
             publishInteractionWorkflow: graph.features.publishWorkflow.map {
                 HomeTimelinePublishInteractionWorkflow(publish: $0)
             },
-            localMutationCoordinator: graph.features.localMutationCoordinator,
+            localMutationInteractionWorkflow: makeLocalMutationInteraction(from: graph),
             relayRuntime: input.relayRuntime,
             outboxCoordinator: graph.features.outboxCoordinator
         )
@@ -215,5 +216,13 @@ enum HomeTimelineStoreAssembly {
         HomeGapBackfillInteractionWorkflow(
             gapBackfill: graph.coordination.gapBackfillWorkflow
         )
+    }
+
+    private static func makeLocalMutationInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeLocalMutationInteractionWorkflow? {
+        graph.features.localMutationCoordinator.map {
+            HomeLocalMutationInteractionWorkflow(localMutation: $0)
+        }
     }
 }
