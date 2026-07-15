@@ -37,7 +37,6 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     let materializeEntries: VoidEffect
     let applyRestoreProjectionAnchor: AccountEffect
     let installProvisionalRuntimeBootstrap: AccountEffect
-    let restoreHomeFeedReadState: AccountEffect
     let setPhase: PhaseEffect
     let publishOutboxRelayResults: VoidEffect
 }
@@ -49,6 +48,8 @@ struct HomeTimelineAccountStartEffects: Sendable {
     let restoredViewport: HomeTimelineAccountStartHandlers.ViewportRestorer
     let waitForCachedPresentation:
         HomeTimelineAccountStartHandlers.CachedPresentationWaiter
+    let restoreCachedReadState:
+        HomeTimelineAccountStartHandlers.CachedReadStateRestorer
     let load: HomeTimelineAccountStartHandlers.LoadHandler
 }
 
@@ -89,6 +90,7 @@ final class HomeTimelineAccountStartWorkflow {
             restoreCachedSnapshot: effects.restoreCachedSnapshot,
             restoredViewport: effects.restoredViewport,
             waitForCachedPresentation: effects.waitForCachedPresentation,
+            restoreCachedReadState: effects.restoreCachedReadState,
             load: effects.load
         )
     }
@@ -126,8 +128,6 @@ final class HomeTimelineAccountStartWorkflow {
             effects.prepareHomeFeedDefinition(account)
         case .installProvisionalRuntimeBootstrap(let account):
             effects.installProvisionalRuntimeBootstrap(account)
-        case .restoreHomeFeedReadState(let account):
-            effects.restoreHomeFeedReadState(account)
         case .setPhase(let phase):
             effects.setPhase(phase)
         case .activateOutbox(let accountID):
@@ -163,7 +163,6 @@ final class HomeTimelineAccountStartWorkflow {
              .startRuntimeSession,
              .prepareHomeFeedDefinition,
              .installProvisionalRuntimeBootstrap,
-             .restoreHomeFeedReadState,
              .setPhase,
              .activateOutbox:
             assertionFailure("Account command reached the projection command router")

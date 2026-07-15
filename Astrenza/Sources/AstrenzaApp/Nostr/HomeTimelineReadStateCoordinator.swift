@@ -21,10 +21,29 @@ private struct HomeTimelineViewportWrite: Sendable {
     let updatedAt: Int
 }
 
+protocol HomeTimelineReadStatePersisting: Actor {
+    func restoredReadState(feedID: String) throws -> NostrFeedReadStateRecord?
+
+    func saveViewportState(
+        feedID: String,
+        anchorEventID: String?,
+        anchorOffset: Double,
+        updatedAt: Int
+    ) throws
+
+    func saveReadBoundary(
+        feedID: String,
+        boundary: NostrTimelineEntryCursor?,
+        updatedAt: Int
+    ) throws
+}
+
+extension HomeTimelinePersistenceWorker: HomeTimelineReadStatePersisting {}
+
 @MainActor
 final class HomeTimelineReadStateCoordinator {
     private let eventStore: NostrEventStore?
-    private let persistenceWorker: HomeTimelinePersistenceWorker?
+    private let persistenceWorker: (any HomeTimelineReadStatePersisting)?
     private let viewportDelayNanoseconds: UInt64
     private let readBoundaryDelayNanoseconds: UInt64
 
@@ -47,7 +66,7 @@ final class HomeTimelineReadStateCoordinator {
 
     init(
         eventStore: NostrEventStore?,
-        persistenceWorker: HomeTimelinePersistenceWorker?,
+        persistenceWorker: (any HomeTimelineReadStatePersisting)?,
         viewportDelayNanoseconds: UInt64 = 600_000_000,
         readBoundaryDelayNanoseconds: UInt64 = 500_000_000
     ) {
@@ -81,8 +100,11 @@ final class HomeTimelineReadStateCoordinator {
     func restoredReadBoundaryPostID(
         feedID: String,
         positions: [HomeTimelineReadPosition]
-    ) -> String? {
-        guard let state = try? eventStore?.feedReadState(feedID: feedID),
+    ) async -> String? {
+        guard let persistenceWorker,
+              let state = try? await persistenceWorker.restoredReadState(
+                  feedID: feedID
+              ),
               let cursor = state.readBoundary
         else { return nil }
         if positions.contains(where: { $0.postID == cursor.eventID }) {

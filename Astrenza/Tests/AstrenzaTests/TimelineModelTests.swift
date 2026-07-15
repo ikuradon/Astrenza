@@ -1950,6 +1950,21 @@ struct TimelineModelTests {
         await relayClient.releaseBootstrap()
     }
 
+    @Test("Home timeline store restores cached read boundary before relay sync")
+    @MainActor
+    func homeTimelineStoreRestoresCachedReadBoundaryBeforeRelaySync() async throws {
+        let fixture = try makeCachedReadBoundaryStoreFixture()
+
+        fixture.store.start(account: fixture.account)
+        defer { fixture.store.cancel() }
+        try await fixture.relayClient.waitUntilBootstrapFetchStarts()
+
+        #expect(fixture.store.entries.compactMap(\.post?.id) == fixture.expectedPostIDs)
+        #expect(fixture.store.materializedUnreadCount == 1)
+        #expect(fixture.store.visibleUnreadBadgeCount == 1)
+        await fixture.relayClient.releaseBootstrap()
+    }
+
     @Test("Home timeline store confines legacy timeline restore to migration and creates Generic Feed")
     @MainActor
     func homeTimelineStoreMigratesLegacyTimelineSnapshot() async throws {
@@ -8240,6 +8255,94 @@ private func makeGatedHomeStore(
         eventStore: eventStore
     )
     return (store, relayClient)
+}
+
+private struct CachedReadBoundaryStoreFixture {
+    let account: NostrAccount
+    let store: NostrHomeTimelineStore
+    let relayClient: GatedStoreRelayClient
+    let expectedPostIDs: [String]
+}
+
+@MainActor
+private func makeCachedReadBoundaryStoreFixture() throws -> CachedReadBoundaryStoreFixture {
+    let eventStore = try NostrEventStore.inMemory()
+    let account = NostrAccount(
+        pubkey: String(repeating: "d", count: 64),
+        displayIdentifier: "npub-cached-read-boundary",
+        readOnly: true
+    )
+    let newest = timelineEvent(
+        idSeed: "cached-read-newest", pubkey: account.pubkey, createdAt: 300, content: "newest"
+    )
+    let boundary = timelineEvent(
+        idSeed: "cached-read-boundary", pubkey: account.pubkey, createdAt: 200, content: "boundary"
+    )
+    let oldest = timelineEvent(
+        idSeed: "cached-read-oldest", pubkey: account.pubkey, createdAt: 100, content: "oldest"
+    )
+    let events = [newest, boundary, oldest]
+    let relays = ["wss://relay.example"]
+    try saveCachedReadBoundaryFeed(
+        events: events,
+        boundary: boundary,
+        relays: relays,
+        account: account,
+        eventStore: eventStore
+    )
+    let (store, relayClient) = makeGatedHomeStore(
+        eventStore: eventStore,
+        bootstrapRelays: relays
+    )
+    return CachedReadBoundaryStoreFixture(
+        account: account,
+        store: store,
+        relayClient: relayClient,
+        expectedPostIDs: events.map(\.id)
+    )
+}
+
+private func saveCachedReadBoundaryFeed(
+    events: [NostrEvent],
+    boundary: NostrEvent,
+    relays: [String],
+    account: NostrAccount,
+    eventStore: NostrEventStore
+) throws {
+    let plan = try #require(HomeFeedProjectionBuilder.definitionPlan(
+        accountID: account.pubkey,
+        followedPubkeys: [account.pubkey],
+        existingDefinition: nil,
+        now: 301
+    ))
+    try eventStore.saveHomeFeedState(
+        NostrHomeTimelineState(
+            relays: relays,
+            followedPubkeys: [account.pubkey],
+            noteEvents: events,
+            metadataEvents: []
+        ),
+        accountID: account.pubkey,
+        definition: plan.definition,
+        memberships: HomeFeedProjectionBuilder.memberships(
+            events: events,
+            feedID: plan.definition.feedID,
+            feedRevision: plan.definition.revision,
+            reason: "test",
+            insertedAt: 301
+        ),
+        readState: NostrFeedReadStateRecord(
+            feedID: plan.definition.feedID,
+            viewportAnchorEventID: nil,
+            viewportAnchorOffset: 0,
+            readBoundary: NostrTimelineEntryCursor(
+                sortTimestamp: boundary.createdAt,
+                eventID: boundary.id
+            ),
+            updatedAt: 301
+        ),
+        savedAt: 301
+    )
 }
 
 @MainActor

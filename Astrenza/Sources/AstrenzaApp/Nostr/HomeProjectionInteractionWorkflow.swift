@@ -38,7 +38,7 @@ protocol HomeTimelineReadStateCoordinating: AnyObject {
     func restoredReadBoundaryPostID(
         feedID: String,
         positions: [HomeTimelineReadPosition]
-    ) -> String?
+    ) async -> String?
 
     @discardableResult
     func scheduleViewportState(
@@ -163,11 +163,11 @@ final class HomeProjectionInteractionWorkflow {
     func restoredReadBoundaryPostID(
         accountID: String,
         positions: [HomeTimelineReadPosition]
-    ) -> String? {
+    ) async -> String? {
         guard let feedID = activeFeedID(accountID: accountID) else {
             return nil
         }
-        return readState.restoredReadBoundaryPostID(
+        return await readState.restoredReadBoundaryPostID(
             feedID: feedID,
             positions: positions
         )

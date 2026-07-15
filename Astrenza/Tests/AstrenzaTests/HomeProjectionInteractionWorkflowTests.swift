@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct HomeProjectionInteractionWorkflowTests {
     @Test("Active feed identity gates viewport and read state operations")
-    func activeFeedIdentityGatesReadState() throws {
+    func activeFeedIdentityGatesReadState() async throws {
         let account = account(character: "a")
         let definition = definition(accountID: account.pubkey)
         let projection = ProjectionInteractionSpy(definition: definition)
@@ -28,7 +28,7 @@ struct HomeProjectionInteractionWorkflowTests {
         )
 
         #expect(workflow.scheduleViewportState(viewport(accountID: account.pubkey)))
-        #expect(workflow.restoredReadBoundaryPostID(
+        #expect(await workflow.restoredReadBoundaryPostID(
             accountID: account.pubkey,
             positions: positions
         ) == "boundary")
@@ -51,7 +51,7 @@ struct HomeProjectionInteractionWorkflowTests {
         #expect(!workflow.scheduleViewportState(
             viewport(accountID: String(repeating: "b", count: 64))
         ))
-        #expect(workflow.restoredReadBoundaryPostID(
+        #expect(await workflow.restoredReadBoundaryPostID(
             accountID: String(repeating: "b", count: 64),
             positions: positions
         ) == nil)
@@ -313,7 +313,7 @@ private final class ReadStateInteractionSpy: HomeTimelineReadStateCoordinating {
     func restoredReadBoundaryPostID(
         feedID: String,
         positions: [HomeTimelineReadPosition]
-    ) -> String? {
+    ) async -> String? {
         restoredBoundaryFeedID = feedID
         restoredBoundaryPositions = positions
         restoredBoundaryCallCount += 1

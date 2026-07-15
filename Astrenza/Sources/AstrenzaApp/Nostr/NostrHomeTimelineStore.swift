@@ -606,16 +606,19 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func restoreHomeFeedReadState(account: NostrAccount) {
+    private func restoreHomeFeedReadState(account: NostrAccount) async {
         let positions = entries.compactMap(\.post).map { post in
             HomeTimelineReadPosition(postID: post.id, createdAt: post.createdAt)
         }
-        let boundaryID = projectionInteractionWorkflow
+        let boundaryID = await projectionInteractionWorkflow
             .restoredReadBoundaryPostID(
                 accountID: account.pubkey,
                 positions: positions
             )
-        guard let boundaryID else { return }
+        guard !Task.isCancelled,
+              self.account?.pubkey == account.pubkey,
+              let boundaryID
+        else { return }
         applyPresentationTransition(
             presentationWorkflow.restoreReadBoundary(postID: boundaryID)
         )
@@ -1317,6 +1320,9 @@ private extension NostrHomeTimelineStore {
                     waitForCachedPresentation: { [weak self] in
                         await self?.projectionInteractionWorkflow
                             .waitForPendingPresentation()
+                    },
+                    restoreCachedReadState: { [weak self] account in
+                        await self?.restoreHomeFeedReadState(account: account)
                     }
                 ),
                 apply: { [weak self] action in
@@ -1361,8 +1367,6 @@ private extension NostrHomeTimelineStore {
             prepareHomeFeedDefinition(account: account)
         case .installProvisionalRuntimeBootstrap(let account):
             installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        case .restoreHomeFeedReadState(let account):
-            restoreHomeFeedReadState(account: account)
         case .setPhase(let phase):
             applyActivityIntent(.setPhase(phase))
         case .publishOutboxRelayResults:
@@ -1392,7 +1396,6 @@ private extension NostrHomeTimelineStore {
              .startRuntimeSession,
              .prepareHomeFeedDefinition,
              .installProvisionalRuntimeBootstrap,
-             .restoreHomeFeedReadState,
              .setPhase,
              .publishOutboxRelayResults:
             assertionFailure("Account action reached the projection router")

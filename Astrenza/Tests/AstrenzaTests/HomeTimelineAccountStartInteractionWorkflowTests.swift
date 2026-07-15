@@ -29,12 +29,14 @@ struct HomeTimelineAccountStartInteractionTests {
                 == fixture.restoredViewport
         )
         await effects.waitForCachedPresentation()
+        await effects.restoreCachedReadState(fixture.account)
         await effects.load(fixture.account, fixture.lifecycle)
 
         #expect(fixture.probe.dependencies == [
             .restoreCachedSnapshot(fixture.account),
             .restoreViewport(fixture.account.pubkey),
             .waitForCachedPresentation,
+            .restoreCachedReadState(fixture.account),
             .load(HomeTimelineAccountStartLoadRequest(
                 account: fixture.account,
                 lifecycle: fixture.lifecycle
@@ -65,7 +67,6 @@ struct HomeTimelineAccountStartInteractionTests {
         application.materializeEntries()
         application.applyRestoreProjectionAnchor(fixture.account)
         application.installProvisionalRuntimeBootstrap(fixture.account)
-        application.restoreHomeFeedReadState(fixture.account)
         application.setPhase(.resolvingRelays)
         application.publishOutboxRelayResults()
 
@@ -84,7 +85,6 @@ struct HomeTimelineAccountStartInteractionTests {
             .materializeEntries,
             .applyRestoreProjectionAnchor(fixture.account),
             .installProvisionalRuntimeBootstrap(fixture.account),
-            .restoreHomeFeedReadState(fixture.account),
             .setPhase(.resolvingRelays),
             .publishOutboxRelayResults
         ])
@@ -135,6 +135,9 @@ private final class AccountStartInteractionProbe {
                 },
                 waitForCachedPresentation: { [self] in
                     dependencies.append(.waitForCachedPresentation)
+                },
+                restoreCachedReadState: { [self] account in
+                    dependencies.append(.restoreCachedReadState(account))
                 }
             ),
             apply: { [self] action in
@@ -151,6 +154,7 @@ private enum AccountStartInteractionDependency: Equatable, Sendable {
     case restoreCachedSnapshot(NostrAccount)
     case restoreViewport(String)
     case waitForCachedPresentation
+    case restoreCachedReadState(NostrAccount)
     case load(HomeTimelineAccountStartLoadRequest)
 }
 

@@ -34,7 +34,6 @@ enum HomeTimelineAccountStartStoreAction: Equatable, Sendable {
     case materializeEntries
     case applyRestoreProjectionAnchor(NostrAccount)
     case installProvisionalRuntimeBootstrap(NostrAccount)
-    case restoreHomeFeedReadState(NostrAccount)
     case setPhase(NostrHomeTimelinePhase)
     case publishOutboxRelayResults
 }
@@ -54,11 +53,15 @@ struct HomeTimelineAccountStartEnvironment: Sendable {
         _ accountID: String
     ) -> HomeTimelineRestoredViewport?
     typealias CachedPresentationWaiter = @MainActor @Sendable () async -> Void
+    typealias CachedReadStateRestorer = @MainActor @Sendable (
+        _ account: NostrAccount
+    ) async -> Void
 
     let state: StateProvider
     let restoreCachedSnapshot: CachedSnapshotRestorer
     let restoredViewport: ViewportRestorer
     let waitForCachedPresentation: CachedPresentationWaiter
+    let restoreCachedReadState: CachedReadStateRestorer
 }
 
 struct HomeAccountStartInteractionEffects: Sendable {
@@ -120,6 +123,8 @@ final class HomeAccountStartInteractionWorkflow {
             restoredViewport: effects.environment.restoredViewport,
             waitForCachedPresentation:
                 effects.environment.waitForCachedPresentation,
+            restoreCachedReadState:
+                effects.environment.restoreCachedReadState,
             load: { account, lifecycle in
                 await effects.load(HomeTimelineAccountStartLoadRequest(
                     account: account,
@@ -159,9 +164,6 @@ final class HomeAccountStartInteractionWorkflow {
             },
             installProvisionalRuntimeBootstrap: { account in
                 effects.apply(.installProvisionalRuntimeBootstrap(account))
-            },
-            restoreHomeFeedReadState: { account in
-                effects.apply(.restoreHomeFeedReadState(account))
             },
             setPhase: { phase in
                 effects.apply(.setPhase(phase))

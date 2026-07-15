@@ -56,9 +56,9 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .command(.reloadNewestProjectionWindow(account)),
             .command(.materializeEntries),
             .command(.installProvisionalRuntimeBootstrap(account)),
-            .command(.restoreHomeFeedReadState(account)),
             .command(.setPhase(.resolvingRelays)),
             .waitForCachedPresentation,
+            .restoreCachedReadState(account),
             .command(.startRuntimeSession)
         ])
         #expect(probe.loadedAccount == account)
@@ -105,9 +105,9 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .command(.applyRestoredViewport(viewport)),
             .command(.applyRestoreProjectionAnchor(account)),
             .command(.installProvisionalRuntimeBootstrap(account)),
-            .command(.restoreHomeFeedReadState(account)),
             .command(.setPhase(.loaded)),
             .waitForCachedPresentation,
+            .restoreCachedReadState(account),
             .command(.startRuntimeSession)
         ])
         #expect(probe.restoreProjectionAnchorEventID == viewport.anchorEventID)
@@ -153,6 +153,22 @@ struct HomeTimelineAccountStartCoordinatorTests {
         ])
         #expect(probe.loadedAccount == nil)
     }
+
+    @Test("A stale lifecycle cannot start runtime after read state restoration")
+    func staleLifecycleAfterReadStateDoesNotStartRuntime() async {
+        let account = HomeTimelineAccountStartProbe.account()
+        let probe = HomeTimelineAccountStartProbe(
+            invalidateDuringReadStateRestore: true
+        )
+
+        probe.start(account: account, hasRelayRuntime: true)
+        await probe.lifecycle.runScheduledLoad()
+
+        #expect(probe.events.contains(.waitForCachedPresentation))
+        #expect(probe.events.contains(.restoreCachedReadState(account)))
+        #expect(!probe.commands.contains(.startRuntimeSession))
+        #expect(probe.loadedAccount == nil)
+    }
 }
 
 @MainActor
@@ -165,6 +181,7 @@ private final class HomeTimelineAccountStartProbe {
         case setRuntimeBootstrapCompleted(Bool, HomeTimelineLifecycleToken)
         case restoreViewport(String)
         case waitForCachedPresentation
+        case restoreCachedReadState(NostrAccount)
         case scheduleLoad(HomeTimelineLifecycleToken)
     }
 
@@ -189,13 +206,15 @@ private final class HomeTimelineAccountStartProbe {
     private let restoredSnapshotHasEntries: Bool
     private let restoredSnapshotHasRelays: Bool
     private let viewport: HomeTimelineRestoredViewport?
+    private let invalidateDuringReadStateRestore: Bool
 
     init(
         currentAccountID: String? = nil,
         cachedSnapshotFound: Bool = false,
         restoredSnapshotHasEntries: Bool = false,
         restoredSnapshotHasRelays: Bool = false,
-        restoredViewport: HomeTimelineRestoredViewport? = nil
+        restoredViewport: HomeTimelineRestoredViewport? = nil,
+        invalidateDuringReadStateRestore: Bool = false
     ) {
         accountID = currentAccountID
         syncPolicy = fallbackSyncPolicy
@@ -206,6 +225,7 @@ private final class HomeTimelineAccountStartProbe {
         self.restoredSnapshotHasEntries = restoredSnapshotHasEntries
         self.restoredSnapshotHasRelays = restoredSnapshotHasRelays
         viewport = restoredViewport
+        self.invalidateDuringReadStateRestore = invalidateDuringReadStateRestore
         lifecycle = HomeTimelineAccountStartLifecycleProbe()
         lifecycle.record = { [weak self] event in
             self?.events.append(event)
@@ -260,6 +280,13 @@ private final class HomeTimelineAccountStartProbe {
             waitForCachedPresentation: { [weak self] in
                 self?.events.append(.waitForCachedPresentation)
             },
+            restoreCachedReadState: { [weak self] account in
+                guard let self else { return }
+                events.append(.restoreCachedReadState(account))
+                if invalidateDuringReadStateRestore {
+                    lifecycle.invalidateCurrentToken()
+                }
+            },
             load: { [weak self] account, lifecycle in
                 self?.loadedAccount = account
                 self?.loadedLifecycle = lifecycle
@@ -296,7 +323,6 @@ private final class HomeTimelineAccountStartProbe {
              .materializeEntries,
              .applyRestoreProjectionAnchor,
              .installProvisionalRuntimeBootstrap,
-             .restoreHomeFeedReadState,
              .setPhase,
              .activateOutbox:
             break

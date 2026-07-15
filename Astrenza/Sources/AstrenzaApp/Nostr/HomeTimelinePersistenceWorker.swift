@@ -55,6 +55,10 @@ actor HomeTimelinePersistenceWorker {
         )
     }
 
+    func restoredReadState(feedID: String) throws -> NostrFeedReadStateRecord? {
+        try eventStore.feedReadState(feedID: feedID)
+    }
+
     func saveFeedSnapshot(
         _ snapshot: HomeTimelineFeedPersistenceSnapshot
     ) throws -> NostrFeedWindow? {

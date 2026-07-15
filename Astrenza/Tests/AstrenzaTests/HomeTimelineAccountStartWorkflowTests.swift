@@ -38,11 +38,13 @@ struct HomeTimelineAccountStartWorkflowTests {
         #expect(await handlers.restoreCachedSnapshot(account))
         #expect(handlers.restoredViewport(account.pubkey) == viewport)
         await handlers.waitForCachedPresentation()
+        await handlers.restoreCachedReadState(account)
         await handlers.load(account, lifecycle)
         #expect(probe.dependencies == [
             .restoreCachedSnapshot(account),
             .restoreViewport(account.pubkey),
             .waitForCachedPresentation,
+            .restoreCachedReadState(account),
             .load(account, lifecycle)
         ])
     }
@@ -65,7 +67,6 @@ struct HomeTimelineAccountStartWorkflowTests {
             .materializeEntries,
             .applyRestoreProjectionAnchor(account),
             .installProvisionalRuntimeBootstrap(account),
-            .restoreHomeFeedReadState(account),
             .setPhase(.resolvingRelays),
             .activateOutbox(accountID: account.pubkey)
         ]
@@ -155,6 +156,9 @@ private final class AccountStartWorkflowEffectProbe {
             waitForCachedPresentation: { [self] in
                 dependencies.append(.waitForCachedPresentation)
             },
+            restoreCachedReadState: { [self] account in
+                dependencies.append(.restoreCachedReadState(account))
+            },
             load: { [self] account, lifecycle in
                 dependencies.append(.load(account, lifecycle))
             }
@@ -190,9 +194,6 @@ private final class AccountStartWorkflowEffectProbe {
             installProvisionalRuntimeBootstrap: { [self] account in
                 applications.append(.installProvisionalRuntimeBootstrap(account))
             },
-            restoreHomeFeedReadState: { [self] account in
-                applications.append(.restoreHomeFeedReadState(account))
-            },
             setPhase: { [self] phase in
                 applications.append(.setPhase(phase))
             },
@@ -215,7 +216,6 @@ private enum AccountStartWorkflowApplication: Equatable, Sendable {
     case materializeEntries
     case applyRestoreProjectionAnchor(NostrAccount)
     case installProvisionalRuntimeBootstrap(NostrAccount)
-    case restoreHomeFeedReadState(NostrAccount)
     case setPhase(NostrHomeTimelinePhase)
     case publishOutboxRelayResults
 }
@@ -243,6 +243,7 @@ private enum AccountStartWorkflowDependency: Equatable, Sendable {
     case restoreCachedSnapshot(NostrAccount)
     case restoreViewport(String)
     case waitForCachedPresentation
+    case restoreCachedReadState(NostrAccount)
     case load(NostrAccount, HomeTimelineLifecycleToken)
 }
 
@@ -266,7 +267,6 @@ private func accountStartWorkflowApplications(
         .materializeEntries,
         .applyRestoreProjectionAnchor(account),
         .installProvisionalRuntimeBootstrap(account),
-        .restoreHomeFeedReadState(account),
         .setPhase(.resolvingRelays)
     ]
 }

@@ -101,7 +101,7 @@ struct HomeTimelineReadStateCoordinatorTests {
             timelineKey: "lists"
         ) == nil)
 
-        let fallbackBoundary = fixture.coordinator.restoredReadBoundaryPostID(
+        let fallbackBoundary = await fixture.coordinator.restoredReadBoundaryPostID(
             feedID: fixture.feedID,
             positions: [
                 HomeTimelineReadPosition(postID: "newer", createdAt: 300),

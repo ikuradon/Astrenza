@@ -51,7 +51,6 @@ enum HomeTimelineAccountStartCommand: Equatable, Sendable {
     case materializeEntries
     case applyRestoreProjectionAnchor(NostrAccount)
     case installProvisionalRuntimeBootstrap(NostrAccount)
-    case restoreHomeFeedReadState(NostrAccount)
     case setPhase(NostrHomeTimelinePhase)
     case activateOutbox(accountID: String)
 }
@@ -68,6 +67,9 @@ struct HomeTimelineAccountStartHandlers: Sendable {
         _ accountID: String
     ) -> HomeTimelineRestoredViewport?
     typealias CachedPresentationWaiter = @MainActor @Sendable () async -> Void
+    typealias CachedReadStateRestorer = @MainActor @Sendable (
+        _ account: NostrAccount
+    ) async -> Void
     typealias LoadHandler = @MainActor @Sendable (
         _ account: NostrAccount,
         _ lifecycle: HomeTimelineLifecycleToken
@@ -78,6 +80,7 @@ struct HomeTimelineAccountStartHandlers: Sendable {
     let restoreCachedSnapshot: CachedSnapshotRestorer
     let restoredViewport: ViewportRestorer
     let waitForCachedPresentation: CachedPresentationWaiter
+    let restoreCachedReadState: CachedReadStateRestorer
     let load: LoadHandler
 }
 
@@ -139,6 +142,10 @@ final class HomeTimelineAccountStartCoordinator {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
+            await handlers.restoreCachedReadState(request.account)
+            guard !Task.isCancelled,
+                  lifecycleCoordinator.isCurrent(lifecycle)
+            else { return }
             handlers.perform(.startRuntimeSession)
             await load(request.account, lifecycle)
         }
@@ -162,7 +169,6 @@ final class HomeTimelineAccountStartCoordinator {
         )
         restoreProjectionWindow(account: request.account, handlers: handlers)
         handlers.perform(.installProvisionalRuntimeBootstrap(request.account))
-        handlers.perform(.restoreHomeFeedReadState(request.account))
         if let phase = initialPhase(
             hasRelayRuntime: request.hasRelayRuntime,
             state: handlers.state()
