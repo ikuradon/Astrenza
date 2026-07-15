@@ -28,7 +28,8 @@ struct HomeTimelineStoreComponents {
     let materializationCoordinator: HomeTimelineMaterializationCoordinator
     let pendingEventBuffer: HomeTimelinePendingEventBuffer
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
-    let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
+    let feedSyncInteractionWorkflow:
+        HomeTimelineFeedSyncInteractionWorkflow
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -185,7 +186,7 @@ enum HomeTimelineStoreAssembly {
             materializationCoordinator: graph.coordination.materializationCoordinator,
             pendingEventBuffer: graph.coordination.pendingEventBuffer,
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
-            feedSyncCoordinator: graph.coordination.feedSyncCoordinator,
+            feedSyncInteractionWorkflow: makeFeedSyncInteraction(from: graph),
             lifecycleCoordinator: graph.coordination.lifecycleCoordinator,
             accountStartInteractionWorkflow:
                 HomeAccountStartInteractionWorkflow(
@@ -215,6 +216,14 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeGapBackfillInteractionWorkflow {
         HomeGapBackfillInteractionWorkflow(
             gapBackfill: graph.coordination.gapBackfillWorkflow
+        )
+    }
+
+    private static func makeFeedSyncInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeTimelineFeedSyncInteractionWorkflow {
+        HomeTimelineFeedSyncInteractionWorkflow(
+            feedSync: graph.coordination.feedSyncCoordinator
         )
     }
 

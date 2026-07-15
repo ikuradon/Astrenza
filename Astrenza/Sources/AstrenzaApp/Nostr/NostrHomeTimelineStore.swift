@@ -41,7 +41,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let materializationCoordinator: HomeTimelineMaterializationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
-    private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
+    private let feedSyncInteractionWorkflow:
+        HomeTimelineFeedSyncInteractionWorkflow
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -194,7 +195,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.materializationCoordinator = components.materializationCoordinator
         self.pendingEventBuffer = components.pendingEventBuffer
         self.backwardRequestRegistry = components.backwardRequestRegistry
-        self.feedSyncCoordinator = components.feedSyncCoordinator
+        self.feedSyncInteractionWorkflow =
+            components.feedSyncInteractionWorkflow
         self.lifecycleCoordinator = components.lifecycleCoordinator
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
@@ -878,34 +880,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func resetHomeTimelineRealtime(
-        expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
-    ) {
-        feedSyncCoordinator.prepareForwardSubscriptions(runtimeKeys)
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func invalidateHomeTimelineRealtime(for key: RuntimeSubscriptionKey) {
-        guard HomeTimelineSyncPlanner.isHomeForwardSubscription(key.subscriptionID) else { return }
-        feedSyncCoordinator.invalidateForwardSubscription(key)
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func invalidateHomeTimelineRealtime(relayURL: String) {
-        feedSyncCoordinator.invalidateForwardSubscriptions(relayURL: relayURL)
-        publishHomeTimelineRealtimeState()
-    }
-
-    private func publishHomeTimelineRealtimeState() {
-        publishHomeTimelineRealtimeState(feedSyncCoordinator.isRealtime)
-    }
-
-    private func publishHomeTimelineRealtimeState(_ nextIsRealtime: Bool) {
-        applyActivityTransition(
-            activityCoordinator.setRealtime(nextIsRealtime)
-        )
-    }
-
     private func runtimePacketContext(
         isActive: Bool? = nil
     ) -> HomeTimelineRuntimePacketContext {
@@ -988,7 +962,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) {
         switch application {
         case .setRealtime(let isRealtime):
-            publishHomeTimelineRealtimeState(isRealtime)
+            applyFeedSyncAction(.setRealtime(isRealtime))
         case .applyRelayStatusTransition(let transition):
             applyRelayStatusTransition(transition)
         case .handleBackwardCompletion(let completion):
@@ -1205,6 +1179,53 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func feedSyncInteractionContext(
+    ) -> HomeFeedSyncInteractionContext {
+        HomeFeedSyncInteractionContext(
+            effects: HomeFeedSyncInteractionEffects(
+                apply: { [weak self] action in
+                    self?.applyFeedSyncAction(action)
+                }
+            )
+        )
+    }
+
+    func applyFeedSyncAction(
+        _ action: HomeTimelineFeedSyncStoreAction
+    ) {
+        switch action {
+        case .setRealtime(let isRealtime):
+            applyActivityTransition(
+                activityCoordinator.setRealtime(isRealtime)
+            )
+        }
+    }
+
+    func resetHomeTimelineRealtime(
+        expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
+    ) {
+        feedSyncInteractionWorkflow.prepareForwardSubscriptions(
+            runtimeKeys,
+            context: feedSyncInteractionContext()
+        )
+    }
+
+    func invalidateHomeTimelineRealtime(
+        for key: RuntimeSubscriptionKey
+    ) {
+        feedSyncInteractionWorkflow.invalidateForwardSubscription(
+            key,
+            context: feedSyncInteractionContext()
+        )
+    }
+
+    func invalidateHomeTimelineRealtime(relayURL: String) {
+        feedSyncInteractionWorkflow.invalidateForwardSubscriptions(
+            relayURL: relayURL,
+            context: feedSyncInteractionContext()
+        )
+    }
+
     func localMutationInteractionContext(
     ) -> HomeLocalMutationInteractionContext {
         HomeLocalMutationInteractionContext(
@@ -1756,7 +1777,7 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        publishHomeTimelineRealtimeState(isRealtime)
+        applyFeedSyncAction(.setRealtime(isRealtime))
     }
 
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
@@ -1851,7 +1872,7 @@ extension NostrHomeTimelineStore {
         packet: NostrREQPacket,
         definition: NostrFeedDefinitionRecord
     ) {
-        feedSyncCoordinator.registerForwardContext(
+        feedSyncInteractionWorkflow.registerForwardContext(
             HomeFeedRuntimeContext(definition: definition),
             groupID: packet.groupID
         )
@@ -1931,11 +1952,11 @@ extension NostrHomeTimelineStore {
     }
 
     var testingActiveFeedSyncRequestCount: Int {
-        feedSyncCoordinator.activeRequestCount
+        feedSyncInteractionWorkflow.activeRequestCount
     }
 
     var testingActiveFeedSyncContextCount: Int {
-        feedSyncCoordinator.activeContextCount
+        feedSyncInteractionWorkflow.activeContextCount
     }
 }
 #endif

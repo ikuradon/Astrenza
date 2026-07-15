@@ -16,6 +16,9 @@ struct HomeTimelineStoreAssemblyTests {
         #expect(components.localMutationInteractionWorkflow == nil)
         #expect(components.contentCoordinator.snapshot == .initial)
         #expect(!components.backwardRequestRegistry.hasRequests)
+        #expect(
+            components.feedSyncInteractionWorkflow.activeRequestCount == 0
+        )
     }
 
     @Test("An event store enables publishing and database-backed local mutations")
