@@ -42,7 +42,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
-    private let accountStartWorkflow: HomeTimelineAccountStartWorkflow
+    private let accountStartInteractionWorkflow:
+        HomeAccountStartInteractionWorkflow
     private let accountResetWorkflow: HomeTimelineAccountResetWorkflow
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -190,7 +191,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.backwardRequestRegistry = components.backwardRequestRegistry
         self.feedSyncCoordinator = components.feedSyncCoordinator
         self.lifecycleCoordinator = components.lifecycleCoordinator
-        self.accountStartWorkflow = components.accountStartWorkflow
+        self.accountStartInteractionWorkflow =
+            components.accountStartInteractionWorkflow
         self.accountResetWorkflow = components.accountResetWorkflow
         self.relayStatusCoordinator = components.relayStatusCoordinator
         self.linkPreviewCoordinator = components.linkPreviewCoordinator
@@ -208,12 +210,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func start(account: NostrAccount) {
-        accountStartWorkflow.start(
-            HomeTimelineAccountStartInput(
-                account: account,
-                hasRelayRuntime: relayRuntime != nil
-            ),
-            effects: accountStartEffects()
+        accountStartInteractionWorkflow.start(
+            account: account,
+            context: accountStartInteractionContext()
         )
     }
 
@@ -886,68 +885,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func accountStartEffects() -> HomeTimelineAccountStartEffects {
-        HomeTimelineAccountStartEffects(
-            state: { [unowned self] in
-                HomeTimelineAccountStartState(
-                    accountID: account?.pubkey,
-                    syncPolicy: syncPolicy,
-                    restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
-                    hasEntries: !entries.isEmpty,
-                    hasResolvedRelays: !resolvedRelays.isEmpty
-                )
-            },
-            application: accountStartApplicationEffects(),
-            restoreCachedSnapshot: { [weak self] account in
-                self?.restoreCachedSnapshot(account: account) ?? false
-            },
-            restoredViewport: { [weak self] accountID in
-                self?.restoredViewportState(accountID: accountID, timelineKey: "home")
-                    .map { HomeTimelineRestoredViewport(anchorEventID: $0.anchorPostID) }
-            },
-            load: { [weak self] account, lifecycle in
-                await self?.load(account: account, lifecycle: lifecycle)
-            }
-        )
-    }
-
-    private func accountStartApplicationEffects(
-    ) -> HomeTimelineAccountStartAppEffects {
-        HomeTimelineAccountStartAppEffects(
-            cancelCurrentAccount: { [weak self] in self?.cancel() },
-            applyAccountContextTransition: { [weak self] transition in
-                self?.applyAccountContextTransition(transition)
-            },
-            startRuntimeSession: { [weak self] in self?.startRuntimeSession() },
-            ensureHomeFeedDefinition: { [weak self] account in
-                self?.ensureHomeFeedDefinition(account: account)
-            },
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            reloadNewestProjectionWindow: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            materializeEntries: { [weak self] in self?.materializeEntries() },
-            applyRestoreProjectionAnchor: { [weak self] account in
-                self?.applyRestoreProjectionAnchorIfPossible(account: account)
-            },
-            installProvisionalRuntimeBootstrap: { [weak self] account in
-                self?.installProvisionalRuntimeBootstrapIfNeeded(account: account)
-            },
-            restoreHomeFeedReadState: { [weak self] account in
-                self?.restoreHomeFeedReadState(account: account)
-            },
-            setPhase: { [weak self] phase in
-                guard let self else { return }
-                applyActivityTransition(activityCoordinator.setPhase(phase))
-            },
-            activateOutbox: { [weak self] accountID in
-                self?.activateOutbox(accountID: accountID)
-            }
-        )
-    }
-
     private func accountResetEffects() -> HomeTimelineAccountResetEffects {
         HomeTimelineAccountResetEffects(
             application: accountResetApplicationEffects(),
@@ -1398,6 +1335,118 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func accountStartInteractionContext(
+    ) -> HomeAccountStartInteractionContext {
+        HomeAccountStartInteractionContext(
+            state: HomeTimelineAccountStartInteractionState(
+                hasRelayRuntime: relayRuntime != nil
+            ),
+            effects: HomeAccountStartInteractionEffects(
+                environment: HomeTimelineAccountStartEnvironment(
+                    state: { [unowned self] in
+                        HomeTimelineAccountStartStoreState(
+                            accountID: account?.pubkey,
+                            syncPolicy: syncPolicy,
+                            restoreProjectionAnchorEventID:
+                                restoreProjectionAnchorEventID,
+                            hasEntries: !entries.isEmpty,
+                            hasResolvedRelays: !resolvedRelays.isEmpty
+                        )
+                    },
+                    restoreCachedSnapshot: { [weak self] account in
+                        self?.restoreCachedSnapshot(account: account) ?? false
+                    },
+                    restoredViewport: { [weak self] accountID in
+                        self?.restoredViewportState(
+                            accountID: accountID,
+                            timelineKey: "home"
+                        ).map {
+                            HomeTimelineRestoredViewport(
+                                anchorEventID: $0.anchorPostID
+                            )
+                        }
+                    }
+                ),
+                apply: { [weak self] action in
+                    self?.applyAccountStartAction(action)
+                },
+                load: { [weak self] request in
+                    guard let self else { return }
+                    await load(
+                        account: request.account,
+                        lifecycle: request.lifecycle
+                    )
+                }
+            )
+        )
+    }
+
+    func applyAccountStartAction(
+        _ action: HomeTimelineAccountStartStoreAction
+    ) {
+        switch action {
+        case .applyProjectionViewportTransition,
+             .reloadNewestProjectionWindow,
+             .materializeEntries,
+             .applyRestoreProjectionAnchor:
+            applyAccountStartProjectionAction(action)
+        default:
+            applyAccountStartAccountAction(action)
+        }
+    }
+
+    func applyAccountStartAccountAction(
+        _ action: HomeTimelineAccountStartStoreAction
+    ) {
+        switch action {
+        case .cancelCurrentAccount:
+            cancel()
+        case .applyAccountContextTransition(let transition):
+            applyAccountContextTransition(transition)
+        case .startRuntimeSession:
+            startRuntimeSession()
+        case .ensureHomeFeedDefinition(let account):
+            ensureHomeFeedDefinition(account: account)
+        case .installProvisionalRuntimeBootstrap(let account):
+            installProvisionalRuntimeBootstrapIfNeeded(account: account)
+        case .restoreHomeFeedReadState(let account):
+            restoreHomeFeedReadState(account: account)
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
+        case .activateOutbox(let accountID):
+            activateOutbox(accountID: accountID)
+        case .applyProjectionViewportTransition,
+             .reloadNewestProjectionWindow,
+             .materializeEntries,
+             .applyRestoreProjectionAnchor:
+            assertionFailure("Projection action reached the account router")
+        }
+    }
+
+    func applyAccountStartProjectionAction(
+        _ action: HomeTimelineAccountStartStoreAction
+    ) {
+        switch action {
+        case .applyProjectionViewportTransition(let transition):
+            applyProjectionViewportTransition(transition)
+        case .reloadNewestProjectionWindow(let account):
+            reloadNewestProjectionWindow(account: account)
+        case .materializeEntries:
+            materializeEntries()
+        case .applyRestoreProjectionAnchor(let account):
+            applyRestoreProjectionAnchorIfPossible(account: account)
+        case .cancelCurrentAccount,
+             .applyAccountContextTransition,
+             .startRuntimeSession,
+             .ensureHomeFeedDefinition,
+             .installProvisionalRuntimeBootstrap,
+             .restoreHomeFeedReadState,
+             .setPhase,
+             .activateOutbox:
+            assertionFailure("Account action reached the projection router")
+        }
+    }
+
     func backwardInteractionContext(
     ) -> HomeTimelineBackwardInteractionContext {
         HomeTimelineBackwardInteractionContext(

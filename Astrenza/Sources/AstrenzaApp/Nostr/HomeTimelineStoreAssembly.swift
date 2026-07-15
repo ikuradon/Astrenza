@@ -29,7 +29,8 @@ struct HomeTimelineStoreComponents {
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
-    let accountStartWorkflow: HomeTimelineAccountStartWorkflow
+    let accountStartInteractionWorkflow:
+        HomeAccountStartInteractionWorkflow
     let accountResetWorkflow: HomeTimelineAccountResetWorkflow
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -183,7 +184,10 @@ enum HomeTimelineStoreAssembly {
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
             feedSyncCoordinator: graph.coordination.feedSyncCoordinator,
             lifecycleCoordinator: graph.coordination.lifecycleCoordinator,
-            accountStartWorkflow: graph.features.accountStartWorkflow,
+            accountStartInteractionWorkflow:
+                HomeAccountStartInteractionWorkflow(
+                    accountStart: graph.features.accountStartWorkflow
+                ),
             accountResetWorkflow: graph.accountResetWorkflow,
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
