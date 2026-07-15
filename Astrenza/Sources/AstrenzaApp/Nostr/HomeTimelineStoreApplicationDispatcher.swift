@@ -18,7 +18,11 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     ) -> Void
     typealias ProjectionReload = @MainActor @Sendable (
         _ account: NostrAccount,
-        _ anchorEventID: String?
+        _ anchorEventID: String?,
+        _ mergingWithCurrentWindow: Bool
+    ) -> Void
+    typealias Account = @MainActor @Sendable (
+        _ account: NostrAccount
     ) -> Void
     typealias Action = @MainActor @Sendable () -> Void
     typealias MaterializationSchedule = @MainActor @Sendable (
@@ -40,6 +44,9 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
         _ subscriptionID: String,
         _ event: NostrEvent
     ) async -> Void
+    typealias AsyncAccount = @MainActor @Sendable (
+        _ account: NostrAccount
+    ) async -> Void
 
     let applyPresentationTransition: PresentationTransition
     let applyContentSnapshot: ContentSnapshot
@@ -47,6 +54,7 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     let applyListProjectionInvalidation: ListProjectionInvalidation
     let applyPendingEventCountPublication: PendingEventCountPublication
     let reloadProjection: ProjectionReload
+    let reloadNewestProjectionWindow: Account
     let requestNewestProjectionReload: Action
     let scheduleMaterialization: MaterializationSchedule
     let materializeEntries: Action
@@ -56,7 +64,9 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     let handleBackwardCompletion: BackwardCompletion
     let invalidateListEntries: Action
     let scheduleLinkPreviewResolution: Action
+    let publishRelayStatusChange: Action
     let handleRuntimeEvent: RuntimeEvent
+    let persistDatabase: AsyncAccount
 }
 
 @MainActor
@@ -77,7 +87,7 @@ struct HomeTimelineStoreApplicationDispatcher {
         case .applyPendingEventCountPublication(let publication):
             effects.applyPendingEventCountPublication(publication)
         case .reloadProjection(let account, let anchorEventID):
-            effects.reloadProjection(account, anchorEventID)
+            effects.reloadProjection(account, anchorEventID, false)
         case .requestNewestProjectionReload:
             effects.requestNewestProjectionReload()
         case .scheduleMaterialization(let delay, let allowsRealtimeFollow):
@@ -152,6 +162,74 @@ struct HomeTimelineStoreApplicationDispatcher {
             effects.materializeEntries()
         case .setPhase(let phase):
             effects.setPhase(phase)
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelineGapBackfillStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .applyRelayStatusTransition(let transition):
+            effects.applyRelayStatusTransition(transition)
+        case .reloadProjection(let account, let anchorEventID):
+            effects.reloadProjection(account, anchorEventID, false)
+        case .materializeEntries:
+            effects.materializeEntries()
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelinePublishStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .applyContentSnapshot(let snapshot):
+            effects.applyContentSnapshot(snapshot)
+        case .reloadNewestProjectionWindow(let account):
+            effects.reloadNewestProjectionWindow(account)
+        case .materializeEntries:
+            effects.materializeEntries()
+        case .setPhase(let phase):
+            effects.setPhase(phase)
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelineBackwardStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .applyContentSnapshot(let snapshot):
+            effects.applyContentSnapshot(snapshot)
+        case .applyRelayStatusTransition(let transition):
+            effects.applyRelayStatusTransition(transition)
+        case .reloadProjection(
+            let account,
+            let anchorEventID,
+            let mergingWithCurrentWindow
+        ):
+            effects.reloadProjection(
+                account,
+                anchorEventID,
+                mergingWithCurrentWindow
+            )
+        case .materializeEntries:
+            effects.materializeEntries()
+        case .scheduleLinkPreviewResolution:
+            effects.scheduleLinkPreviewResolution()
+        case .incrementRelayStatusRevision:
+            effects.publishRelayStatusChange()
+        }
+    }
+
+    func perform(
+        _ action: HomeTimelinePublishAsyncAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) async {
+        switch action {
+        case .persistDatabase(let account):
+            await effects.persistDatabase(account)
         }
     }
 

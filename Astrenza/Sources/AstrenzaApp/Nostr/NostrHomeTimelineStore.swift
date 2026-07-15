@@ -901,6 +901,42 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
+    private func dispatchStoreApplication(
+        _ action: HomeTimelineGapBackfillStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func dispatchStoreApplication(
+        _ action: HomeTimelinePublishStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func dispatchStoreApplication(
+        _ action: HomeTimelineBackwardStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func performStoreApplication(
+        _ action: HomeTimelinePublishAsyncAction
+    ) async {
+        await storeApplicationDispatcher.perform(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
     private func performStoreApplication(
         _ application: HomeTimelineRuntimeStoreAsyncAction
     ) async {
@@ -928,11 +964,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             applyPendingEventCountPublication: { [weak self] publication in
                 self?.applyPendingEventCountPublication(publication)
             },
-            reloadProjection: { [weak self] account, anchorEventID in
+            reloadProjection: {
+                [weak self] account, anchorEventID, merging in
                 self?.reloadProjectionWindow(
                     account: account,
-                    around: anchorEventID
+                    around: anchorEventID,
+                    mergingWithCurrentWindow: merging
                 )
+            },
+            reloadNewestProjectionWindow: { [weak self] account in
+                self?.reloadNewestProjectionWindow(account: account)
             },
             requestNewestProjectionReload: { [weak self] in
                 self?.presentationWorkflow.requestNewestProjectionReload()
@@ -964,12 +1005,18 @@ final class NostrHomeTimelineStore: ObservableObject {
             scheduleLinkPreviewResolution: { [weak self] in
                 self?.scheduleLinkPreviewResolution()
             },
+            publishRelayStatusChange: { [weak self] in
+                self?.publishRelayStatusChange()
+            },
             handleRuntimeEvent: { [weak self] relayURL, subscriptionID, event in
                 await self?.handleRuntimeEvent(
                     relayURL: relayURL,
                     subscriptionID: subscriptionID,
                     event: event
                 )
+            },
+            persistDatabase: { [weak self] account in
+                await self?.persistDatabase(account: account)
             }
         )
     }
@@ -1218,26 +1265,10 @@ private extension NostrHomeTimelineStore {
             ),
             effects: HomeGapBackfillInteractionEffects(
                 apply: { [weak self] action in
-                    self?.applyGapBackfillAction(action)
+                    self?.dispatchStoreApplication(action)
                 }
             )
         )
-    }
-
-    func applyGapBackfillAction(
-        _ action: HomeTimelineGapBackfillStoreAction
-    ) {
-        switch action {
-        case .applyRelayStatusTransition(let transition):
-            applyRelayStatusTransition(transition)
-        case .reloadProjection(let account, let anchorEventID):
-            reloadProjectionWindow(
-                account: account,
-                around: anchorEventID
-            )
-        case .materializeEntries:
-            materializeEntries()
-        }
     }
 
     func publishInteractionContext(
@@ -1255,36 +1286,14 @@ private extension NostrHomeTimelineStore {
                     currentAccountID: { [weak self] in self?.account?.pubkey }
                 ),
                 apply: { [weak self] action in
-                    self?.applyPublishAction(action)
+                    self?.dispatchStoreApplication(action)
                 },
                 perform: { [weak self] action in
                     guard let self else { return }
-                    await performPublishAsyncAction(action)
+                    await performStoreApplication(action)
                 }
             )
         )
-    }
-
-    func applyPublishAction(_ action: HomeTimelinePublishStoreAction) {
-        switch action {
-        case .applyContentSnapshot(let snapshot):
-            applyContentSnapshot(snapshot)
-        case .reloadNewestProjectionWindow(let account):
-            reloadNewestProjectionWindow(account: account)
-        case .materializeEntries:
-            materializeEntries()
-        case .setPhase(let phase):
-            applyActivityIntent(.setPhase(phase))
-        }
-    }
-
-    func performPublishAsyncAction(
-        _ action: HomeTimelinePublishAsyncAction
-    ) async {
-        switch action {
-        case .persistDatabase(let account):
-            await persistDatabase(account: account)
-        }
     }
 
     func accountResetInteractionContext(
@@ -1469,7 +1478,7 @@ private extension NostrHomeTimelineStore {
             ),
             effects: HomeTimelineBackwardInteractionEffects(
                 apply: { [weak self] action in
-                    self?.applyBackwardInteractionAction(action)
+                    self?.dispatchStoreApplication(action)
                 },
                 resolveDependencies: { [weak self] request in
                     guard let self else { return false }
@@ -1477,33 +1486,6 @@ private extension NostrHomeTimelineStore {
                 }
             )
         )
-    }
-
-    func applyBackwardInteractionAction(
-        _ action: HomeTimelineBackwardStoreAction
-    ) {
-        switch action {
-        case .applyContentSnapshot(let snapshot):
-            applyContentSnapshot(snapshot)
-        case .applyRelayStatusTransition(let transition):
-            applyRelayStatusTransition(transition)
-        case .reloadProjection(
-            let account,
-            let anchorEventID,
-            let mergingWithCurrentWindow
-        ):
-            reloadProjectionWindow(
-                account: account,
-                around: anchorEventID,
-                mergingWithCurrentWindow: mergingWithCurrentWindow
-            )
-        case .materializeEntries:
-            materializeEntries()
-        case .scheduleLinkPreviewResolution:
-            scheduleLinkPreviewResolution()
-        case .incrementRelayStatusRevision:
-            publishRelayStatusChange()
-        }
     }
 
     func resolveBackwardDependencies(
