@@ -63,7 +63,7 @@ final class RuntimeSessionProfileApplicationSpy: HomeTimelineProfileUpdateApplyi
     func rememberLatestMetadataEvent(
         _ event: NostrEvent,
         consultEventStore: Bool,
-        handlers: HomeTimelineRuntimeEventApplicationHandlers
+        effects: HomeTimelineRuntimeApplicationEffects
     ) -> NostrEvent {
         rememberedEvents.append(event)
         consultEventStoreValues.append(consultEventStore)
@@ -73,7 +73,7 @@ final class RuntimeSessionProfileApplicationSpy: HomeTimelineProfileUpdateApplyi
     func resolveNIP05IfNeeded(
         for metadataEvent: NostrEvent,
         context: HomeTimelineRuntimeEventApplicationContext,
-        handlers: HomeTimelineRuntimeEventApplicationHandlers
+        effects: HomeTimelineRuntimeApplicationEffects
     ) {
         resolvedEvents.append(metadataEvent)
         contexts.append(context)
@@ -90,16 +90,18 @@ final class RuntimeSessionHandlerProbe {
         HomeTimelineRuntimeSessionHandlers(
             isAccountCurrent: { [self] _ in isAccountCurrent },
             handlePacket: { [self] packet in packets.append(packet) },
-            eventApplication: Self.applicationHandlers,
+            applicationEffects: Self.applicationEffects,
             perform: { [self] command in commands.append(command) }
         )
     }
 
-    private static var applicationHandlers: HomeTimelineRuntimeEventApplicationHandlers {
-        HomeTimelineRuntimeEventApplicationHandlers(
+    private static var applicationEffects: HomeTimelineRuntimeApplicationEffects {
+        HomeTimelineRuntimeApplicationEffects(
             listRevisionChanged: { _ in },
             pendingCountChanged: { _ in },
-            perform: { _ in },
+            reloadProjection: { _, _ in },
+            reloadNewestProjection: { _ in },
+            scheduleMaterialization: { _ in },
             persistTimelineMetadata: { _ in },
             sourceInstallFailed: { _ in }
         )

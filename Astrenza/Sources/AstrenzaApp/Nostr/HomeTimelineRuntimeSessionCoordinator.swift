@@ -30,17 +30,15 @@ protocol HomeTimelineProfileUpdateApplying: AnyObject {
     func rememberLatestMetadataEvent(
         _ event: NostrEvent,
         consultEventStore: Bool,
-        handlers: HomeTimelineRuntimeEventApplicationHandlers
+        effects: HomeTimelineRuntimeApplicationEffects
     ) -> NostrEvent
 
     func resolveNIP05IfNeeded(
         for metadataEvent: NostrEvent,
         context: HomeTimelineRuntimeEventApplicationContext,
-        handlers: HomeTimelineRuntimeEventApplicationHandlers
+        effects: HomeTimelineRuntimeApplicationEffects
     )
 }
-
-extension HomeTimelineRuntimeEventCoordinator: HomeTimelineProfileUpdateApplying {}
 
 struct HomeTimelineRuntimeSessionRequest: Equatable, Sendable {
     let account: NostrAccount?
@@ -74,7 +72,7 @@ struct HomeTimelineRuntimeSessionHandlers: Sendable {
 
     let isAccountCurrent: AccountValidity
     let handlePacket: PacketHandler
-    let eventApplication: HomeTimelineRuntimeEventApplicationHandlers
+    let applicationEffects: HomeTimelineRuntimeApplicationEffects
     let perform: CommandHandler
 }
 
@@ -172,12 +170,12 @@ final class HomeTimelineRuntimeSessionCoordinator {
             let effectiveEvent = profileUpdateApplication.rememberLatestMetadataEvent(
                 event,
                 consultEventStore: false,
-                handlers: handlers.eventApplication
+                effects: handlers.applicationEffects
             )
             profileUpdateApplication.resolveNIP05IfNeeded(
                 for: effectiveEvent,
                 context: context,
-                handlers: handlers.eventApplication
+                effects: handlers.applicationEffects
             )
         }
         if !update.states.isEmpty || !update.metadataEvents.isEmpty {

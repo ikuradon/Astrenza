@@ -30,7 +30,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
-    private let runtimeEventCoordinator: HomeTimelineRuntimeEventCoordinator
+    private let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
     private let initialLoadWorkflow: HomeTimelineInitialLoadWorkflow
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
     private let refreshWorkflow: HomeTimelineRefreshWorkflow
@@ -379,7 +379,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             feedEventRecorder: feedSyncCoordinator,
             lifecycleCoordinator: lifecycleCoordinator
         )
-        self.runtimeEventCoordinator = runtimeEventCoordinator
+        let runtimeEventWorkflow = HomeTimelineRuntimeEventWorkflow(
+            coordinator: runtimeEventCoordinator
+        )
+        self.runtimeEventWorkflow = runtimeEventWorkflow
         let runtimeEventPump = HomeTimelineRuntimeEventPump()
         let runtimeStream: HomeTimelineRuntimeSessionCoordinator.RuntimeStream?
         if let relayRuntime {
@@ -391,7 +394,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             runtimeEventPump: runtimeEventPump,
             runtimeStream: runtimeStream,
             profileUpdateObserver: dependencyCoordinator,
-            profileUpdateApplication: runtimeEventCoordinator,
+            profileUpdateApplication: runtimeEventWorkflow,
             lifecycleCoordinator: lifecycleCoordinator
         )
         self.runtimeSessionCoordinator = runtimeSessionCoordinator
@@ -1223,7 +1226,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 handlePacket: { [weak self] packet in
                     await self?.handleRuntimePacket(packet)
                 },
-                eventApplication: runtimeEventApplicationHandlers(),
+                applicationEffects: runtimeApplicationEffects(),
                 perform: { [weak self] command in
                     self?.applyRuntimeSessionCommand(command)
                 }
@@ -1529,8 +1532,8 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
         let receivedWhileRealtime = activityCoordinator.snapshot.isRealtime
-        await runtimeEventCoordinator.handle(
-            HomeTimelineRuntimeEventRequest(
+        await runtimeEventWorkflow.handle(
+            HomeTimelineRuntimeEventInput(
                 relayURL: relayURL,
                 subscriptionID: subscriptionID,
                 event: event,
@@ -1538,40 +1541,36 @@ final class NostrHomeTimelineStore: ObservableObject {
                 hasRelayRuntime: relayRuntime != nil,
                 receivedWhileRealtime: receivedWhileRealtime
             ),
-            handlers: HomeTimelineRuntimeEventHandlers(
-                presentationState: { [self] receivedWhileRealtime in
-                    HomeTimelineRuntimeEventPresentationState(
-                        receivedWhileRealtime: receivedWhileRealtime,
-                        hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
-                        isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-                        hasPendingEvents: !pendingEventBuffer.isEmpty
-                    )
-                },
-                isAccountCurrent: { [self] accountID in
-                    account?.pubkey == accountID
-                },
-                application: runtimeEventApplicationHandlers(),
-                perform: { [weak self] command in
-                    self?.applyRuntimeEventCommand(command)
-                }
-            )
+            effects: runtimeEventEffects()
         )
     }
 
-    private func applyRuntimeEventCommand(
-        _ command: HomeTimelineRuntimeEventCommand
-    ) {
-        switch command {
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
-        case .scheduleLinkPreviewResolution:
-            scheduleLinkPreviewResolution()
-        }
+    private func runtimeEventEffects() -> HomeTimelineRuntimeEventEffects {
+        HomeTimelineRuntimeEventEffects(
+            presentationState: { [self] receivedWhileRealtime in
+                HomeTimelineRuntimeEventPresentationState(
+                    receivedWhileRealtime: receivedWhileRealtime,
+                    hasRestoreProjectionAnchor: restoreProjectionAnchorEventID != nil,
+                    isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+                    hasPendingEvents: !pendingEventBuffer.isEmpty
+                )
+            },
+            isAccountCurrent: { [self] accountID in
+                account?.pubkey == accountID
+            },
+            application: runtimeApplicationEffects(),
+            recordDiagnostic: { [weak self] diagnostic in
+                self?.recordRuntimeSyncEvent(
+                    relayURL: diagnostic.relayURL,
+                    kind: .partialFailure,
+                    subscriptionID: diagnostic.subscriptionID,
+                    message: diagnostic.message
+                )
+            },
+            scheduleLinkPreviewResolution: { [weak self] in
+                self?.scheduleLinkPreviewResolution()
+            }
+        )
     }
 
     private func runtimeEventApplicationContext(
@@ -1585,16 +1584,39 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func runtimeEventApplicationHandlers() -> HomeTimelineRuntimeEventApplicationHandlers {
-        HomeTimelineRuntimeEventApplicationHandlers(
+    private func runtimeApplicationEffects() -> HomeTimelineRuntimeApplicationEffects {
+        HomeTimelineRuntimeApplicationEffects(
             listRevisionChanged: { [weak self] revision in
                 self?.listContentRevision = revision
             },
             pendingCountChanged: { [weak self] count in
                 self?.setUnmaterializedNewCount(count)
             },
-            perform: { [weak self] command in
-                self?.applyRuntimeEventApplicationCommand(command)
+            reloadProjection: { [weak self] anchorEventID, materialization in
+                guard let self, let account else { return }
+                _ = reloadProjectionWindow(account: account, around: anchorEventID)
+                switch materialization {
+                case .scheduled(let allowsRealtimeFollow):
+                    scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+                case .immediate:
+                    materializeEntries()
+                }
+            },
+            reloadNewestProjection: { [weak self] allowsRealtimeFollow in
+                guard let self else { return }
+                presentationCoordinator.requestNewestProjectionReload()
+                scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+            },
+            scheduleMaterialization: { [weak self] schedule in
+                guard let self else { return }
+                switch schedule {
+                case .standard:
+                    scheduleMaterializeEntries()
+                case .deferredDependencies:
+                    scheduleMaterializeEntries(
+                        delayNanoseconds: presentationCoordinator.defaultDelayNanoseconds * 2
+                    )
+                }
             },
             persistTimelineMetadata: { [weak self] account in
                 await self?.persistTimelineMetadata(account: account)
@@ -1611,45 +1633,17 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func applyRuntimeEventApplicationCommand(
-        _ command: HomeTimelineRuntimeEventApplicationCommand
-    ) {
-        switch command {
-        case .reloadProjection(let anchorEventID, let materialization):
-            guard let account else { return }
-            _ = reloadProjectionWindow(account: account, around: anchorEventID)
-            switch materialization {
-            case .scheduled(let allowsRealtimeFollow):
-                scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-            case .immediate:
-                materializeEntries()
-            }
-        case .requestNewestProjectionReloadAndSchedule(let allowsRealtimeFollow):
-            presentationCoordinator.requestNewestProjectionReload()
-            scheduleMaterializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-        case .scheduleMaterialization(let schedule):
-            switch schedule {
-            case .standard:
-                scheduleMaterializeEntries()
-            case .deferredDependencies:
-                scheduleMaterializeEntries(
-                    delayNanoseconds: presentationCoordinator.defaultDelayNanoseconds * 2
-                )
-            }
-        }
-    }
-
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        _ = await runtimeEventCoordinator.enqueueDependencies(
+        _ = await runtimeEventWorkflow.enqueueDependencies(
             for: event,
             context: runtimeEventApplicationContext(
                 account: account,
                 lifecycle: lifecycle
             ),
-            handlers: runtimeEventApplicationHandlers()
+            effects: runtimeApplicationEffects()
         )
     }
 
@@ -1657,13 +1651,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
-        runtimeEventCoordinator.resolveNIP05IfNeeded(
+        runtimeEventWorkflow.resolveNIP05IfNeeded(
             for: metadataEvent,
             context: runtimeEventApplicationContext(
                 account: account,
                 lifecycle: lifecycle
             ),
-            handlers: runtimeEventApplicationHandlers()
+            effects: runtimeApplicationEffects()
         )
     }
 
@@ -1720,13 +1714,13 @@ final class NostrHomeTimelineStore: ObservableObject {
             },
             resolveDependencies: { [weak self] event, context in
                 guard let self else { return false }
-                return await runtimeEventCoordinator.enqueueDependencies(
+                return await runtimeEventWorkflow.enqueueDependencies(
                     for: event,
                     context: runtimeEventApplicationContext(
                         account: context.account,
                         lifecycle: context.lifecycle
                     ),
-                    handlers: runtimeEventApplicationHandlers()
+                    effects: runtimeApplicationEffects()
                 )
             }
         )
@@ -1884,10 +1878,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         _ event: NostrEvent,
         consultEventStore: Bool = true
     ) -> NostrEvent {
-        runtimeEventCoordinator.rememberLatestMetadataEvent(
+        runtimeEventWorkflow.rememberLatestMetadataEvent(
             event,
             consultEventStore: consultEventStore,
-            handlers: runtimeEventApplicationHandlers()
+            effects: runtimeApplicationEffects()
         )
     }
 
