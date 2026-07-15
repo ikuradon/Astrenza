@@ -69,6 +69,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeLoadApplicationEffects()
     private lazy var featureInteractionContextFactory =
         makeFeatureInteractionContextFactory()
+    private lazy var accountContextFactory =
+        makeAccountContextFactory()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -224,7 +226,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     func start(account: NostrAccount) {
         accountStartInteractionWorkflow.start(
             account: account,
-            context: accountStartInteractionContext()
+            context: accountContextFactory.startContext()
         )
     }
 
@@ -439,7 +441,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     func cancel() {
         projectionInteractionWorkflow.cancelMaterialization()
         accountResetInteractionWorkflow.reset(
-            context: accountResetInteractionContext()
+            context: accountContextFactory.resetContext()
         )
     }
 
@@ -1270,25 +1272,64 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    func accountResetInteractionContext(
-    ) -> HomeAccountResetInteractionContext {
-        HomeAccountResetInteractionContext(
-            state: HomeTimelineAccountResetInteractionState(
-                readBoundaryWrite: homeFeedReadBoundaryWrite(),
-                resolvedRelays: resolvedRelays
-            ),
-            effects: HomeAccountResetInteractionEffects(
-                environment: HomeTimelineAccountResetEnvironment(
-                    currentAccount: { [weak self] in self?.account }
-                ),
-                apply: { [weak self] action in
+    func makeAccountContextFactory() -> HomeAccountContextFactory {
+        HomeAccountContextFactory(
+            environment: HomeAccountLifecycleEnvironment(
+                snapshot: { [weak self] in
+                    self?.accountLifecycleSnapshot()
+                },
+                readBoundaryWrite: { [weak self] in
+                    self?.homeFeedReadBoundaryWrite()
+                },
+                restoreCachedSnapshot: { [weak self] account in
+                    await self?.restoreCachedSnapshot(account: account) ?? false
+                },
+                restoredViewport: { [weak self] accountID in
+                    self?.restoredViewportState(
+                        accountID: accountID,
+                        timelineKey: "home"
+                    ).map {
+                        HomeTimelineRestoredViewport(
+                            anchorEventID: $0.anchorPostID
+                        )
+                    }
+                },
+                waitForCachedPresentation: { [weak self] in
+                    await self?.projectionInteractionWorkflow
+                        .waitForPendingPresentation()
+                },
+                restoreCachedReadState: { [weak self] account in
+                    await self?.restoreHomeFeedReadState(account: account)
+                },
+                applyStart: { [weak self] action in
                     self?.dispatchAccountApplication(action)
                 },
-                perform: { [weak self] action in
+                load: { [weak self] request in
+                    guard let self else { return }
+                    await load(
+                        account: request.account,
+                        lifecycle: request.lifecycle
+                    )
+                },
+                applyReset: { [weak self] action in
+                    self?.dispatchAccountApplication(action)
+                },
+                performReset: { [weak self] action in
                     guard let self else { return }
                     await performAccountApplication(action)
                 }
             )
+        )
+    }
+
+    func accountLifecycleSnapshot() -> HomeAccountLifecycleSnapshot {
+        HomeAccountLifecycleSnapshot(
+            account: account,
+            syncPolicy: syncPolicy,
+            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
+            hasEntries: !entries.isEmpty,
+            resolvedRelays: resolvedRelays,
+            hasRelayRuntime: relayRuntime != nil
         )
     }
 
@@ -1307,59 +1348,6 @@ private extension NostrHomeTimelineStore {
         await accountApplicationDispatcher.perform(
             action,
             effects: accountApplicationEffects
-        )
-    }
-
-    func accountStartInteractionContext(
-    ) -> HomeAccountStartInteractionContext {
-        HomeAccountStartInteractionContext(
-            state: HomeTimelineAccountStartInteractionState(
-                hasRelayRuntime: relayRuntime != nil
-            ),
-            effects: HomeAccountStartInteractionEffects(
-                environment: HomeTimelineAccountStartEnvironment(
-                    state: { [unowned self] in
-                        HomeTimelineAccountStartStoreState(
-                            accountID: account?.pubkey,
-                            syncPolicy: syncPolicy,
-                            restoreProjectionAnchorEventID:
-                                restoreProjectionAnchorEventID,
-                            hasEntries: !entries.isEmpty,
-                            hasResolvedRelays: !resolvedRelays.isEmpty
-                        )
-                    },
-                    restoreCachedSnapshot: { [weak self] account in
-                        await self?.restoreCachedSnapshot(account: account) ?? false
-                    },
-                    restoredViewport: { [weak self] accountID in
-                        self?.restoredViewportState(
-                            accountID: accountID,
-                            timelineKey: "home"
-                        ).map {
-                            HomeTimelineRestoredViewport(
-                                anchorEventID: $0.anchorPostID
-                            )
-                        }
-                    },
-                    waitForCachedPresentation: { [weak self] in
-                        await self?.projectionInteractionWorkflow
-                            .waitForPendingPresentation()
-                    },
-                    restoreCachedReadState: { [weak self] account in
-                        await self?.restoreHomeFeedReadState(account: account)
-                    }
-                ),
-                apply: { [weak self] action in
-                    self?.dispatchAccountApplication(action)
-                },
-                load: { [weak self] request in
-                    guard let self else { return }
-                    await load(
-                        account: request.account,
-                        lifecycle: request.lifecycle
-                    )
-                }
-            )
         )
     }
 
