@@ -7,24 +7,20 @@ final class NostrHomeTimelineStore: ObservableObject {
     typealias Phase = NostrHomeTimelinePhase
 
     @Published private(set) var account: NostrAccount?
-    @Published private(set) var entries: [TimelineFeedEntry] = []
+    @Published private var publishedPresentationState =
+        HomeTimelinePublishedPresentationState()
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var resolvedRelays: [String] = []
     @Published private(set) var followedPubkeys: [String] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var isLoadingOlder = false
     @Published private(set) var hasMoreOlder = true
-    @Published private(set) var filterStatus = TimelineFilterStatus()
     @Published private(set) var relayStatusRevision = 0
     @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
     @Published private(set) var relayStatusCounts: (connected: Int, planned: Int) = (connected: 0, planned: 1)
     @Published private(set) var unmaterializedNewCount = 0
-    @Published private(set) var materializedUnreadCount = 0
-    @Published private(set) var visibleUnreadBadgeCount = 0
-    @Published private(set) var resolvedContentRevision = 0
     @Published private(set) var listContentRevision = 0
     @Published private(set) var isHomeTimelineRealtime = false
-    @Published private(set) var realtimeFollowSourceRevision: Int?
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadWorkflow: HomeTimelineLoadWorkflow
@@ -69,6 +65,30 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     var currentSyncPolicy: NostrSyncPolicy {
         syncPolicy
+    }
+
+    var entries: [TimelineFeedEntry] {
+        publishedPresentationState.entries
+    }
+
+    var filterStatus: TimelineFilterStatus {
+        publishedPresentationState.filterStatus
+    }
+
+    var materializedUnreadCount: Int {
+        publishedPresentationState.materializedUnreadCount
+    }
+
+    var visibleUnreadBadgeCount: Int {
+        publishedPresentationState.visibleUnreadBadgeCount
+    }
+
+    var resolvedContentRevision: Int {
+        publishedPresentationState.resolvedContentRevision
+    }
+
+    var realtimeFollowSourceRevision: Int? {
+        publishedPresentationState.realtimeFollowSourceRevision
     }
 
     private var noteEvents: [NostrEvent] {
@@ -139,28 +159,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func applyPresentationTransition(
         _ transition: HomeTimelinePresentationTransition
     ) {
-        let changes = transition.changes
-        let snapshot = transition.snapshot
-        if changes.contains(.entries) {
-            entries = snapshot.entries
-        }
-        if changes.contains(.unreadCounts) {
-            if materializedUnreadCount != snapshot.materializedUnreadCount {
-                materializedUnreadCount = snapshot.materializedUnreadCount
-            }
-            if visibleUnreadBadgeCount != snapshot.visibleUnreadBadgeCount {
-                visibleUnreadBadgeCount = snapshot.visibleUnreadBadgeCount
-            }
-        }
-        if changes.contains(.filterStatus) {
-            filterStatus = snapshot.filterStatus
-        }
-        if changes.contains(.resolvedContentRevision) {
-            resolvedContentRevision = snapshot.resolvedContentRevision
-        }
-        if changes.contains(.realtimeFollowSourceRevision) {
-            realtimeFollowSourceRevision = snapshot.realtimeFollowSourceRevision
-        }
+        guard let next = publishedPresentationState.applying(transition) else { return }
+        publishedPresentationState = next
     }
 
     private func updateRelayStatusCounts() {
