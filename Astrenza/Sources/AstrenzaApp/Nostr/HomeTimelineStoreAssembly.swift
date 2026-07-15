@@ -29,9 +29,7 @@ struct HomeTimelineStoreComponents {
     let presentationWorkflow: HomeTimelinePresentationWorkflow
     let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
-    let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
-    let feedSyncInteractionWorkflow:
-        HomeTimelineFeedSyncInteractionWorkflow
+    let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -185,8 +183,7 @@ enum HomeTimelineStoreAssembly {
             presentationWorkflow: graph.features.presentationWorkflow,
             projectionInteractionWorkflow:
                 makeProjectionInteraction(from: graph),
-            backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
-            feedSyncInteractionWorkflow: makeFeedSyncInteraction(from: graph),
+            syncInteractionWorkflow: makeSyncInteraction(from: graph),
             lifecycleCoordinator: graph.coordination.lifecycleCoordinator,
             accountStartInteractionWorkflow:
                 HomeAccountStartInteractionWorkflow(
@@ -216,11 +213,12 @@ enum HomeTimelineStoreAssembly {
         )
     }
 
-    private static func makeFeedSyncInteraction(
+    private static func makeSyncInteraction(
         from graph: HomeTimelineStoreAssemblyGraph
-    ) -> HomeTimelineFeedSyncInteractionWorkflow {
-        HomeTimelineFeedSyncInteractionWorkflow(
-            feedSync: graph.coordination.feedSyncCoordinator
+    ) -> HomeTimelineSyncInteractionWorkflow {
+        HomeTimelineSyncInteractionWorkflow(
+            feedSync: graph.coordination.feedSyncCoordinator,
+            backwardRequests: graph.coordination.backwardRequestRegistry
         )
     }
 

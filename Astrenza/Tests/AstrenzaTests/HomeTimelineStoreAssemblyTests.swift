@@ -25,9 +25,11 @@ struct HomeTimelineStoreAssemblyTests {
                 hasPendingWork: false,
                 pendingSourceRequestCount: 0
             ))
-        #expect(!components.backwardRequestRegistry.hasRequests)
         #expect(
-            components.feedSyncInteractionWorkflow.activeRequestCount == 0
+            components.syncInteractionWorkflow.backwardRequestState == .idle
+        )
+        #expect(
+            components.syncInteractionWorkflow.activeRequestCount == 0
         )
         #expect(
             components.filterInteractionWorkflow.effectiveRuleSet(

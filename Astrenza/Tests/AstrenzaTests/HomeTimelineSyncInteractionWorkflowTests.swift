@@ -3,12 +3,12 @@ import Foundation
 import Testing
 @testable import Astrenza
 
-@Suite("Home timeline feed sync interaction workflow")
+@Suite("Home timeline sync interaction workflow")
 @MainActor
-struct HomeFeedSyncInteractionTests {
+struct HomeTimelineSyncInteractionTests {
     @Test("Preparing subscriptions publishes state after replacing expectations")
     func preparePublishesCurrentStateAfterMutation() {
-        let fixture = FeedSyncInteractionFixture(isRealtime: false)
+        let fixture = SyncInteractionFixture(isRealtime: false)
         let subscriptions = Set([fixture.homeKey, fixture.secondHomeKey])
 
         fixture.workflow.prepareForwardSubscriptions(
@@ -25,7 +25,7 @@ struct HomeFeedSyncInteractionTests {
 
     @Test("Invalidating a home subscription republishes the current state")
     func homeInvalidationPublishesCurrentState() {
-        let fixture = FeedSyncInteractionFixture(isRealtime: false)
+        let fixture = SyncInteractionFixture(isRealtime: false)
 
         fixture.workflow.invalidateForwardSubscription(
             fixture.homeKey,
@@ -41,7 +41,7 @@ struct HomeFeedSyncInteractionTests {
 
     @Test("A non-home subscription does not mutate or publish realtime state")
     func nonHomeInvalidationIsNoOp() {
-        let fixture = FeedSyncInteractionFixture(isRealtime: true)
+        let fixture = SyncInteractionFixture(isRealtime: true)
         let unrelatedKey = RuntimeSubscriptionKey(
             relayURL: "wss://relay.example",
             subscriptionID: "astrenza-profile-metadata"
@@ -58,7 +58,7 @@ struct HomeFeedSyncInteractionTests {
 
     @Test("Relay invalidation republishes state after invalidating every relay key")
     func relayInvalidationPublishesCurrentState() {
-        let fixture = FeedSyncInteractionFixture(isRealtime: false)
+        let fixture = SyncInteractionFixture(isRealtime: false)
 
         fixture.workflow.invalidateForwardSubscriptions(
             relayURL: fixture.homeKey.relayURL,
@@ -74,7 +74,7 @@ struct HomeFeedSyncInteractionTests {
 
     @Test("Forward context registration and active metrics stay behind the facade")
     func routesRegistrationAndMetrics() throws {
-        let fixture = FeedSyncInteractionFixture(
+        let fixture = SyncInteractionFixture(
             isRealtime: false,
             activeRequestCount: 3,
             activeContextCount: 2
@@ -93,6 +93,52 @@ struct HomeFeedSyncInteractionTests {
         ])
         #expect(fixture.workflow.activeRequestCount == 3)
         #expect(fixture.workflow.activeContextCount == 2)
+    }
+
+    @Test("Backward request state and registrations stay behind the facade")
+    func routesBackwardRequestStateAndRegistrations() throws {
+        let requestState = HomeTimelineBackwardRequestState(
+            requestCount: 3,
+            hasOlderPageRequest: true,
+            hasGapWork: true,
+            hasRequests: true
+        )
+        let fixture = SyncInteractionFixture(
+            isRealtime: false,
+            backwardRequestState: requestState
+        )
+        let context = HomeFeedRuntimeContext(
+            definition: try fixture.feedDefinition()
+        )
+
+        fixture.workflow.registerOlderPage(
+            groupID: "older-group",
+            context: context,
+            anchorEventID: "anchor"
+        )
+        fixture.workflow.registerGap(
+            groupID: "gap-group",
+            context: context,
+            newerEventID: "newer",
+            olderEventID: "older",
+            direction: .newer
+        )
+
+        #expect(fixture.workflow.backwardRequestState == requestState)
+        #expect(fixture.backwardRequests.events == [
+            .registerOlderPage(
+                groupID: "older-group",
+                context: context,
+                anchorEventID: "anchor"
+            ),
+            .registerGap(
+                groupID: "gap-group",
+                context: context,
+                newerEventID: "newer",
+                olderEventID: "older",
+                direction: .newer
+            )
+        ])
     }
 }
 
@@ -149,12 +195,66 @@ private final class FeedSyncInteractionTrackerSpy:
     }
 }
 
+private enum BackwardRequestInteractionEvent: Equatable {
+    case registerOlderPage(
+        groupID: String,
+        context: HomeFeedRuntimeContext,
+        anchorEventID: String?
+    )
+    case registerGap(
+        groupID: String,
+        context: HomeFeedRuntimeContext,
+        newerEventID: String,
+        olderEventID: String,
+        direction: TimelineGapFillDirection
+    )
+}
+
+@MainActor
+private final class BackwardRequestInteractionTrackerSpy:
+    HomeTimelineBackwardRequestTracking {
+    let requestState: HomeTimelineBackwardRequestState
+    private(set) var events: [BackwardRequestInteractionEvent] = []
+
+    init(requestState: HomeTimelineBackwardRequestState) {
+        self.requestState = requestState
+    }
+
+    func registerOlderPage(
+        groupID: String,
+        context: HomeFeedRuntimeContext,
+        anchorEventID: String?
+    ) {
+        events.append(.registerOlderPage(
+            groupID: groupID,
+            context: context,
+            anchorEventID: anchorEventID
+        ))
+    }
+
+    func registerGap(
+        groupID: String,
+        context: HomeFeedRuntimeContext,
+        newerEventID: String,
+        olderEventID: String,
+        direction: TimelineGapFillDirection
+    ) {
+        events.append(.registerGap(
+            groupID: groupID,
+            context: context,
+            newerEventID: newerEventID,
+            olderEventID: olderEventID,
+            direction: direction
+        ))
+    }
+}
+
 @MainActor
 private final class FeedSyncInteractionProbe {
-    private(set) var actions: [HomeTimelineFeedSyncStoreAction] = []
+    private(set) var actions: [HomeTimelineSyncStoreAction] = []
 
-    var effects: HomeFeedSyncInteractionEffects {
-        HomeFeedSyncInteractionEffects(
+    var effects: HomeTimelineSyncInteractionEffects {
+        HomeTimelineSyncInteractionEffects(
             apply: { [self] action in
                 actions.append(action)
             }
@@ -163,7 +263,7 @@ private final class FeedSyncInteractionProbe {
 }
 
 @MainActor
-private struct FeedSyncInteractionFixture {
+private struct SyncInteractionFixture {
     let homeKey = RuntimeSubscriptionKey(
         relayURL: "wss://one.example",
         subscriptionID: NostrHomeForwardREQBuilder.subscriptionID + "-one"
@@ -173,27 +273,34 @@ private struct FeedSyncInteractionFixture {
         subscriptionID: NostrHomeForwardREQBuilder.subscriptionID + "-two"
     )
     let tracker: FeedSyncInteractionTrackerSpy
+    let backwardRequests: BackwardRequestInteractionTrackerSpy
     let probe = FeedSyncInteractionProbe()
-    let workflow: HomeTimelineFeedSyncInteractionWorkflow
+    let workflow: HomeTimelineSyncInteractionWorkflow
 
     init(
         isRealtime: Bool,
         activeRequestCount: Int = 0,
-        activeContextCount: Int = 0
+        activeContextCount: Int = 0,
+        backwardRequestState: HomeTimelineBackwardRequestState = .idle
     ) {
         let tracker = FeedSyncInteractionTrackerSpy(
             isRealtime: isRealtime,
             activeRequestCount: activeRequestCount,
             activeContextCount: activeContextCount
         )
+        let backwardRequests = BackwardRequestInteractionTrackerSpy(
+            requestState: backwardRequestState
+        )
         self.tracker = tracker
-        workflow = HomeTimelineFeedSyncInteractionWorkflow(
-            feedSync: tracker
+        self.backwardRequests = backwardRequests
+        workflow = HomeTimelineSyncInteractionWorkflow(
+            feedSync: tracker,
+            backwardRequests: backwardRequests
         )
     }
 
-    var context: HomeFeedSyncInteractionContext {
-        HomeFeedSyncInteractionContext(effects: probe.effects)
+    var context: HomeTimelineSyncInteractionContext {
+        HomeTimelineSyncInteractionContext(effects: probe.effects)
     }
 
     func feedDefinition() throws -> NostrFeedDefinitionRecord {

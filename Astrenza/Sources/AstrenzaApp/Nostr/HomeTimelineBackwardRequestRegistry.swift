@@ -1,3 +1,17 @@
+struct HomeTimelineBackwardRequestState: Equatable, Sendable {
+    let requestCount: Int
+    let hasOlderPageRequest: Bool
+    let hasGapWork: Bool
+    let hasRequests: Bool
+
+    static let idle = HomeTimelineBackwardRequestState(
+        requestCount: 0,
+        hasOlderPageRequest: false,
+        hasGapWork: false,
+        hasRequests: false
+    )
+}
+
 @MainActor
 final class HomeTimelineBackwardRequestRegistry {
     private var requestsByGroupID: [String: PendingBackwardRequest] = [:]
@@ -22,6 +36,15 @@ final class HomeTimelineBackwardRequestRegistry {
 
     var activeGapReconciliationCount: Int {
         activeGapReconciliationIDs.count
+    }
+
+    var requestState: HomeTimelineBackwardRequestState {
+        HomeTimelineBackwardRequestState(
+            requestCount: requestCount,
+            hasOlderPageRequest: hasOlderPageRequest,
+            hasGapWork: hasGapWork,
+            hasRequests: hasRequests
+        )
     }
 
     func reset() {

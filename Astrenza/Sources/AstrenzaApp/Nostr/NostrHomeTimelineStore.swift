@@ -42,9 +42,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let presentationWorkflow: HomeTimelinePresentationWorkflow
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
-    private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
-    private let feedSyncInteractionWorkflow:
-        HomeTimelineFeedSyncInteractionWorkflow
+    private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -209,9 +207,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.presentationWorkflow = components.presentationWorkflow
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
-        self.backwardRequestRegistry = components.backwardRequestRegistry
-        self.feedSyncInteractionWorkflow =
-            components.feedSyncInteractionWorkflow
+        self.syncInteractionWorkflow = components.syncInteractionWorkflow
         self.lifecycleCoordinator = components.lifecycleCoordinator
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
@@ -905,7 +901,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) {
         switch application {
         case .setRealtime(let isRealtime):
-            applyFeedSyncAction(.setRealtime(isRealtime))
+            applySyncAction(.setRealtime(isRealtime))
         case .applyRelayStatusTransition(let transition):
             applyRelayStatusTransition(transition)
         case .handleBackwardCompletion(let completion):
@@ -1168,19 +1164,19 @@ private extension NostrHomeTimelineStore {
         }
     }
 
-    func feedSyncInteractionContext(
-    ) -> HomeFeedSyncInteractionContext {
-        HomeFeedSyncInteractionContext(
-            effects: HomeFeedSyncInteractionEffects(
+    func syncInteractionContext(
+    ) -> HomeTimelineSyncInteractionContext {
+        HomeTimelineSyncInteractionContext(
+            effects: HomeTimelineSyncInteractionEffects(
                 apply: { [weak self] action in
-                    self?.applyFeedSyncAction(action)
+                    self?.applySyncAction(action)
                 }
             )
         )
     }
 
-    func applyFeedSyncAction(
-        _ action: HomeTimelineFeedSyncStoreAction
+    func applySyncAction(
+        _ action: HomeTimelineSyncStoreAction
     ) {
         switch action {
         case .setRealtime(let isRealtime):
@@ -1191,25 +1187,25 @@ private extension NostrHomeTimelineStore {
     func resetHomeTimelineRealtime(
         expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
     ) {
-        feedSyncInteractionWorkflow.prepareForwardSubscriptions(
+        syncInteractionWorkflow.prepareForwardSubscriptions(
             runtimeKeys,
-            context: feedSyncInteractionContext()
+            context: syncInteractionContext()
         )
     }
 
     func invalidateHomeTimelineRealtime(
         for key: RuntimeSubscriptionKey
     ) {
-        feedSyncInteractionWorkflow.invalidateForwardSubscription(
+        syncInteractionWorkflow.invalidateForwardSubscription(
             key,
-            context: feedSyncInteractionContext()
+            context: syncInteractionContext()
         )
     }
 
     func invalidateHomeTimelineRealtime(relayURL: String) {
-        feedSyncInteractionWorkflow.invalidateForwardSubscriptions(
+        syncInteractionWorkflow.invalidateForwardSubscriptions(
             relayURL: relayURL,
-            context: feedSyncInteractionContext()
+            context: syncInteractionContext()
         )
     }
 
@@ -1723,13 +1719,16 @@ extension NostrHomeTimelineStore {
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        activityInteractionWorkflow.status(
+        let backwardRequestState =
+            syncInteractionWorkflow.backwardRequestState
+        return activityInteractionWorkflow.status(
             context: HomeTimelineActivityContext(
                 connectedRelayCount: relayStatusCounts.connected,
                 plannedRelayCount: relayStatusCounts.planned,
-                hasOlderPageRequest: backwardRequestRegistry.hasOlderPageRequest,
-                hasGapWork: backwardRequestRegistry.hasGapWork,
-                hasBackwardRequests: backwardRequestRegistry.hasRequests,
+                hasOlderPageRequest:
+                    backwardRequestState.hasOlderPageRequest,
+                hasGapWork: backwardRequestState.hasGapWork,
+                hasBackwardRequests: backwardRequestState.hasRequests,
                 hasPendingDependencyWork:
                     dataInteractionWorkflow.dependencyWorkState.hasPendingWork
             )
@@ -1830,7 +1829,7 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        applyFeedSyncAction(.setRealtime(isRealtime))
+        applySyncAction(.setRealtime(isRealtime))
     }
 
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
@@ -1916,7 +1915,7 @@ extension NostrHomeTimelineStore {
         definition: NostrFeedDefinitionRecord,
         anchorEventID: String?
     ) {
-        backwardRequestRegistry.registerOlderPage(
+        syncInteractionWorkflow.registerOlderPage(
             groupID: packet.groupID,
             context: HomeFeedRuntimeContext(definition: definition),
             anchorEventID: anchorEventID
@@ -1927,7 +1926,7 @@ extension NostrHomeTimelineStore {
         packet: NostrREQPacket,
         definition: NostrFeedDefinitionRecord
     ) {
-        feedSyncInteractionWorkflow.registerForwardContext(
+        syncInteractionWorkflow.registerForwardContext(
             HomeFeedRuntimeContext(definition: definition),
             groupID: packet.groupID
         )
@@ -1940,7 +1939,7 @@ extension NostrHomeTimelineStore {
         olderEventID: String,
         direction: TimelineGapFillDirection
     ) {
-        backwardRequestRegistry.registerGap(
+        syncInteractionWorkflow.registerGap(
             groupID: packet.groupID,
             context: HomeFeedRuntimeContext(definition: definition),
             newerEventID: newerEventID,
@@ -1998,7 +1997,7 @@ extension NostrHomeTimelineStore {
     }
 
     var testingPendingBackwardRequestCount: Int {
-        backwardRequestRegistry.requestCount +
+        syncInteractionWorkflow.backwardRequestState.requestCount +
             dataInteractionWorkflow.dependencyWorkState.pendingSourceRequestCount
     }
 
@@ -2007,11 +2006,11 @@ extension NostrHomeTimelineStore {
     }
 
     var testingActiveFeedSyncRequestCount: Int {
-        feedSyncInteractionWorkflow.activeRequestCount
+        syncInteractionWorkflow.activeRequestCount
     }
 
     var testingActiveFeedSyncContextCount: Int {
-        feedSyncInteractionWorkflow.activeContextCount
+        syncInteractionWorkflow.activeContextCount
     }
 }
 #endif

@@ -23,6 +23,12 @@ struct HomeTimelineBackwardRequestRegistryTests {
             direction: .older
         )
 
+        #expect(registry.requestState == HomeTimelineBackwardRequestState(
+            requestCount: 2,
+            hasOlderPageRequest: true,
+            hasGapWork: true,
+            hasRequests: true
+        ))
         #expect(registry.key(for: "older-group") == "older-group")
         #expect(registry.key(for: "older-group-relay-1") == "older-group")
         #expect(registry.key(for: "astrenza-older-notes-relay-1") == "older-group")
@@ -90,8 +96,7 @@ struct HomeTimelineBackwardRequestRegistryTests {
         )
         #expect(registry.hasOlderPageRequest)
         registry.reset()
-        #expect(!registry.hasOlderPageRequest)
-        #expect(!registry.hasRequests)
+        #expect(registry.requestState == .idle)
     }
 
     private func feedContext() throws -> HomeFeedRuntimeContext {
