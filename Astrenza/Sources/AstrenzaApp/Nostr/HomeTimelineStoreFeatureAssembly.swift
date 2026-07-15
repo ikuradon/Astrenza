@@ -8,7 +8,7 @@ private struct HomeTimelineStoreApplicationFeatures {
 
 private struct HomeTimelineStoreLoadFeatures {
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    let loadWorkflow: HomeTimelineLoadWorkflow
+    let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
 }
 
 private struct HomeTimelineStorePeripheralFeatures {
@@ -46,7 +46,7 @@ extension HomeTimelineStoreAssembly {
             viewportInteractionWorkflow:
                 applications.viewportInteractionWorkflow,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
-            loadWorkflow: loads.loadWorkflow,
+            loadInteractionWorkflow: loads.loadInteractionWorkflow,
             linkPreviewCoordinator: peripherals.linkPreviewCoordinator,
             readStateCoordinator: peripherals.readStateCoordinator,
             outboxCoordinator: peripherals.outboxCoordinator,
@@ -173,15 +173,18 @@ extension HomeTimelineStoreAssembly {
             activityCoordinator: coordination.activityCoordinator,
             lifecycleCoordinator: coordination.lifecycleCoordinator
         )
+        let loadWorkflow = HomeTimelineLoadWorkflow(
+            initialLoad: initialLoad,
+            refresh: refresh,
+            olderPage: olderPage,
+            outcomeApplication: HomeTimelineLoadApplicationCoordinator(
+                lifecycleCoordinator: coordination.lifecycleCoordinator
+            )
+        )
         return HomeTimelineStoreLoadFeatures(
             remoteLoadCoordinator: remoteLoadCoordinator,
-            loadWorkflow: HomeTimelineLoadWorkflow(
-                initialLoad: initialLoad,
-                refresh: refresh,
-                olderPage: olderPage,
-                outcomeApplication: HomeTimelineLoadApplicationCoordinator(
-                    lifecycleCoordinator: coordination.lifecycleCoordinator
-                )
+            loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow(
+                loadWorkflow: loadWorkflow
             )
         )
     }

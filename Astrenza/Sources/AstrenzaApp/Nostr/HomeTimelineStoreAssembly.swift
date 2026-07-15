@@ -12,7 +12,7 @@ struct HomeTimelineStoreAssemblyInput {
 
 struct HomeTimelineStoreComponents {
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    let loadWorkflow: HomeTimelineLoadWorkflow
+    let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let eventStore: NostrEventStore?
     let contentCoordinator: HomeTimelineContentCoordinator
@@ -90,7 +90,7 @@ struct HomeTimelineStoreFeatureGraph {
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    let loadWorkflow: HomeTimelineLoadWorkflow
+    let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let readStateCoordinator: HomeTimelineReadStateCoordinator
     let outboxCoordinator: HomeTimelineOutboxCoordinator
@@ -157,7 +157,7 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineStoreComponents {
         HomeTimelineStoreComponents(
             remoteLoadCoordinator: graph.features.remoteLoadCoordinator,
-            loadWorkflow: graph.features.loadWorkflow,
+            loadInteractionWorkflow: graph.features.loadInteractionWorkflow,
             viewportInteractionWorkflow:
                 graph.features.viewportInteractionWorkflow,
             eventStore: input.eventStore,

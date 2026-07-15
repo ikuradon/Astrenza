@@ -22,7 +22,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishedPendingEventState()
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    private let loadWorkflow: HomeTimelineLoadWorkflow
+    private let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     private let viewportInteractionWorkflow:
         HomeTimelineViewportInteractionWorkflow
     private let eventStore: NostrEventStore?
@@ -172,7 +172,7 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         )
         self.remoteLoadCoordinator = components.remoteLoadCoordinator
-        self.loadWorkflow = components.loadWorkflow
+        self.loadInteractionWorkflow = components.loadInteractionWorkflow
         self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
         self.eventStore = components.eventStore
         self.contentCoordinator = components.contentCoordinator
@@ -577,13 +577,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await loadWorkflow.loadInitial(
-            HomeTimelineInitialLoadRequest(
-                account: account,
-                lifecycle: lifecycle,
-                hasRelayRuntime: relayRuntime != nil
-            ),
-            effects: loadEffects()
+        await loadInteractionWorkflow.loadInitial(
+            account: account,
+            lifecycle: lifecycle,
+            context: loadInteractionContext()
         )
     }
 
@@ -591,14 +588,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await loadWorkflow.refreshLatest(
-            HomeTimelineRefreshRequest(
-                account: account,
-                lifecycle: lifecycle,
-                hasTimelineEvents: !noteEvents.isEmpty,
-                hasRelayRuntime: relayRuntime != nil
-            ),
-            effects: loadEffects()
+        await loadInteractionWorkflow.refreshLatest(
+            account: account,
+            lifecycle: lifecycle,
+            context: loadInteractionContext()
         )
     }
 
@@ -606,80 +599,84 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await loadWorkflow.loadOlder(
-            HomeTimelineOlderPageRequest(
-                account: account,
-                lifecycle: lifecycle,
-                hasRelayRuntime: relayRuntime != nil
+        await loadInteractionWorkflow.loadOlder(
+            account: account,
+            lifecycle: lifecycle,
+            context: loadInteractionContext()
+        )
+    }
+
+    private func loadInteractionContext() -> HomeTimelineLoadInteractionContext {
+        HomeTimelineLoadInteractionContext(
+            state: HomeTimelineLoadInteractionState(
+                hasRelayRuntime: relayRuntime != nil,
+                hasTimelineEvents: !noteEvents.isEmpty
             ),
-            effects: loadEffects()
+            effects: HomeTimelineLoadInteractionEffects(
+                environment: HomeTimelineLoadEnvironment(
+                    hasResolvedRelays: { [weak self] in
+                        self?.resolvedRelays.isEmpty == false
+                    },
+                    currentState: { [weak self] in
+                        self?.loaderState()
+                    },
+                    localBackfillEvents: { [weak self] account, current in
+                        self?.databaseBackfillEvents(
+                            account: account,
+                            current: current
+                        )
+                    },
+                    resolvedRelays: { [weak self] in
+                        self?.resolvedRelays ?? []
+                    }
+                ),
+                apply: { [weak self] application in
+                    self?.applyLoadApplication(application)
+                },
+                perform: { [weak self] application in
+                    guard let self else { return }
+                    await performLoadApplication(application)
+                }
+            )
         )
     }
 
-    private func loadEffects() -> HomeTimelineLoadEffects {
-        HomeTimelineLoadEffects(
-            state: loadStateProviders(),
-            application: loadAppEffects()
-        )
+    private func applyLoadApplication(
+        _ application: HomeTimelineLoadApplication
+    ) {
+        switch application {
+        case .applyActivityTransition(let transition):
+            applyActivityTransition(transition)
+        case .installProvisionalRuntimeBootstrap(let account):
+            installProvisionalRuntimeBootstrapIfNeeded(account: account)
+        case .restartAccount(let account):
+            start(account: account)
+        case .recordBackwardDiagnostic(let diagnostic):
+            recordBackwardLoadDiagnostic(diagnostic)
+        case .replaceTimelineState(let state):
+            replaceTimelineState(state)
+        case .replaceRuntimeBootstrapState(let state):
+            replaceRuntimeBootstrapState(state)
+        case .replaceFollowedPubkeys(let pubkeys):
+            replaceFollowedPubkeys(pubkeys)
+        case .materializeEntries:
+            materializeEntries()
+        case .recordLoadDiagnostic(let diagnostic):
+            recordLoadDiagnostic(diagnostic)
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
+        }
     }
 
-    private func loadStateProviders() -> HomeTimelineLoadStateProviders {
-        HomeTimelineLoadStateProviders(
-            hasResolvedRelays: { [weak self] in
-                self?.resolvedRelays.isEmpty == false
-            },
-            currentState: { [weak self] in
-                self?.loaderState()
-            },
-            localBackfillEvents: { [weak self] account, current in
-                self?.databaseBackfillEvents(account: account, current: current)
-            },
-            resolvedRelays: { [weak self] in
-                self?.resolvedRelays ?? []
-            }
-        )
-    }
-
-    private func loadAppEffects() -> HomeTimelineLoadAppEffects {
-        HomeTimelineLoadAppEffects(
-            applyActivityTransition: { [weak self] transition in
-                self?.applyActivityTransition(transition)
-            },
-            installProvisionalRuntimeBootstrap: { [weak self] account in
-                self?.installProvisionalRuntimeBootstrapIfNeeded(account: account)
-            },
-            configureRuntime: { [weak self] account in
-                await self?.configureRelayRuntime(account: account)
-            },
-            restartAccount: { [weak self] account in
-                self?.start(account: account)
-            },
-            recordBackwardDiagnostic: { [weak self] diagnostic in
-                self?.recordBackwardLoadDiagnostic(diagnostic)
-            },
-            replaceTimelineState: { [weak self] state in
-                self?.replaceTimelineState(state)
-            },
-            replaceRuntimeBootstrapState: { [weak self] state in
-                self?.replaceRuntimeBootstrapState(state)
-            },
-            replaceFollowedPubkeys: { [weak self] pubkeys in
-                self?.replaceFollowedPubkeys(pubkeys)
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            persistDatabase: { [weak self] account in
-                await self?.persistDatabase(account: account)
-            },
-            recordLoadDiagnostic: { [weak self] diagnostic in
-                self?.recordLoadDiagnostic(diagnostic)
-            },
-            setPhase: { [weak self] phase in
-                guard let self else { return }
-                applyActivityTransition(activityCoordinator.setPhase(phase))
-            }
-        )
+    private func performLoadApplication(
+        _ application: HomeTimelineLoadAsyncApplication
+    ) async {
+        switch application {
+        case .configureRuntime(let account):
+            await configureRelayRuntime(account: account)
+        case .persistDatabase(let account):
+            await persistDatabase(account: account)
+        }
     }
 
     private func recordBackwardLoadDiagnostic(
