@@ -63,14 +63,13 @@ enum InvalidViewportScenario: CaseIterable, Sendable {
     case nonHomeTimeline
     case missingAccount
     case accountMismatch
-    case missingFeed
 
     @MainActor
     func viewport(fixture: PresentationFixture) -> TimelineViewportState {
         switch self {
         case .nonHomeTimeline:
             fixture.viewport(timelineKey: "lists")
-        case .missingAccount, .missingFeed:
+        case .missingAccount:
             fixture.viewport()
         case .accountMismatch:
             fixture.viewport(accountID: String(repeating: "b", count: 64))
@@ -84,8 +83,6 @@ enum InvalidViewportScenario: CaseIterable, Sendable {
             fixture.state
         case .missingAccount:
             fixture.state(account: nil)
-        case .missingFeed:
-            fixture.state(account: fixture.account, feedID: nil)
         }
     }
 }
@@ -99,8 +96,6 @@ extension InvalidViewportScenario: CustomTestStringConvertible {
             "missing account"
         case .accountMismatch:
             "account mismatch"
-        case .missingFeed:
-            "missing feed"
         }
     }
 }
@@ -171,13 +166,11 @@ struct PresentationFixture {
 
     func state(
         account: NostrAccount?,
-        anchorEventID: String? = nil,
-        feedID: String? = "home-feed"
+        anchorEventID: String? = nil
     ) -> HomeTimelinePresentationAppState {
         HomeTimelinePresentationAppState(
             account: account,
-            restoreProjectionAnchorEventID: anchorEventID,
-            homeFeedID: feedID
+            restoreProjectionAnchorEventID: anchorEventID
         )
     }
 
@@ -205,7 +198,7 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
         case reloadNewestProjectionWindow(NostrAccount)
         case materializeEntries(Bool)
         case applyRestoreProjectionAnchor(NostrAccount)
-        case scheduleViewportState(TimelineViewportState, String, String)
+        case scheduleViewportState(TimelineViewportState)
         case setScrollActive(Bool)
         case dismissUnreadBadge
         case markVisiblePostsRead([TimelinePost.ID])
@@ -243,8 +236,8 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
             applyRestoreProjectionAnchor: { [self] account in
                 events.append(.applyRestoreProjectionAnchor(account))
             },
-            scheduleViewportState: { [self] state, feedID, scopeID in
-                events.append(.scheduleViewportState(state, feedID, scopeID))
+            scheduleViewportState: { [self] state in
+                events.append(.scheduleViewportState(state))
             },
             applyPresentationTransition: { [self] transition in
                 events.append(.applyPresentationTransition(

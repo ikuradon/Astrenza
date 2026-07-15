@@ -54,7 +54,6 @@ extension HomeTimelinePresentationCoordinator: HomeTimelinePresentationCoordinat
 struct HomeTimelinePresentationAppState: Sendable {
     let account: NostrAccount?
     let restoreProjectionAnchorEventID: String?
-    let homeFeedID: String?
 }
 
 struct HomeTimelinePresentationInteractionState: Equatable, Sendable {
@@ -75,9 +74,7 @@ struct HomeTimelinePresentationEffects: Sendable {
         _ transition: HomeTimelinePresentationTransition
     ) -> Void
     typealias ViewportEffect = @MainActor @Sendable (
-        _ state: TimelineViewportState,
-        _ feedID: String,
-        _ scopeID: String
+        _ state: TimelineViewportState
     ) -> Void
     typealias VoidEffect = @MainActor @Sendable () -> Void
 
@@ -155,10 +152,9 @@ final class HomeTimelinePresentationWorkflow {
     ) {
         guard viewport.timelineKey == "home",
               let account = state.account,
-              account.pubkey == viewport.accountID,
-              let feedID = state.homeFeedID
+              account.pubkey == viewport.accountID
         else { return }
-        effects.scheduleViewportState(viewport, feedID, account.pubkey)
+        effects.scheduleViewportState(viewport)
     }
 
     func setTimelineAtNewestWindow(

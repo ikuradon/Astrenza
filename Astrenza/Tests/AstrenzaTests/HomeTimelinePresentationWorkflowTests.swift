@@ -84,11 +84,7 @@ struct HomeTimelinePresentationWorkflowTests {
         )
 
         #expect(fixture.probe.events == [
-            .scheduleViewportState(
-                viewport,
-                fixture.feedID,
-                fixture.account.pubkey
-            )
+            .scheduleViewportState(viewport)
         ])
     }
 

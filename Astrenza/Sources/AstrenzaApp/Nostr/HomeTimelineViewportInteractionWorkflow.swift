@@ -13,11 +13,7 @@ enum HomeTimelineViewportApplication {
     case reloadNewestProjectionWindow(NostrAccount)
     case materializeEntries(allowsRealtimeFollow: Bool)
     case applyRestoreProjectionAnchor(NostrAccount)
-    case scheduleViewportState(
-        TimelineViewportState,
-        feedID: String,
-        scopeID: String
-    )
+    case scheduleViewportState(TimelineViewportState)
     case applyPresentationTransition(HomeTimelinePresentationTransition)
     case scheduleReadStateSave
     case clearBufferedEvents
@@ -183,12 +179,8 @@ final class HomeTimelineViewportInteractionWorkflow {
             applyRestoreProjectionAnchor: { account in
                 effects.apply(.applyRestoreProjectionAnchor(account))
             },
-            scheduleViewportState: { state, feedID, scopeID in
-                effects.apply(.scheduleViewportState(
-                    state,
-                    feedID: feedID,
-                    scopeID: scopeID
-                ))
+            scheduleViewportState: { state in
+                effects.apply(.scheduleViewportState(state))
             },
             applyPresentationTransition: { transition in
                 effects.apply(.applyPresentationTransition(transition))

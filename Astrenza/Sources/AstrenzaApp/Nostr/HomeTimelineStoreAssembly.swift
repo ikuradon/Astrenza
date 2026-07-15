@@ -27,7 +27,8 @@ struct HomeTimelineStoreComponents {
     let activityInteractionWorkflow:
         HomeTimelineActivityInteractionWorkflow
     let presentationWorkflow: HomeTimelinePresentationWorkflow
-    let materializationCoordinator: HomeTimelineMaterializationCoordinator
+    let projectionInteractionWorkflow:
+        HomeProjectionInteractionWorkflow
     let pendingEventBuffer: HomeTimelinePendingEventBuffer
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     let feedSyncInteractionWorkflow:
@@ -39,8 +40,6 @@ struct HomeTimelineStoreComponents {
         HomeAccountResetInteractionWorkflow
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
-    let readStateCoordinator: HomeTimelineReadStateCoordinator
-    let homeFeedProjection: HomeFeedProjectionController
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let publishInteractionWorkflow: HomeTimelinePublishInteractionWorkflow?
     let localMutationInteractionWorkflow:
@@ -185,7 +184,8 @@ enum HomeTimelineStoreAssembly {
             activityInteractionWorkflow:
                 makeActivityInteraction(from: graph),
             presentationWorkflow: graph.features.presentationWorkflow,
-            materializationCoordinator: graph.coordination.materializationCoordinator,
+            projectionInteractionWorkflow:
+                makeProjectionInteraction(from: graph),
             pendingEventBuffer: graph.coordination.pendingEventBuffer,
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
             feedSyncInteractionWorkflow: makeFeedSyncInteraction(from: graph),
@@ -200,8 +200,6 @@ enum HomeTimelineStoreAssembly {
                 ),
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
-            readStateCoordinator: graph.features.readStateCoordinator,
-            homeFeedProjection: graph.persistence.homeFeedProjection,
             stateInteractionWorkflow: graph.features.stateInteractionWorkflow,
             publishInteractionWorkflow: graph.features.publishWorkflow.map {
                 HomeTimelinePublishInteractionWorkflow(publish: $0)
@@ -250,6 +248,16 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineActivityInteractionWorkflow {
         HomeTimelineActivityInteractionWorkflow(
             activity: graph.coordination.activityCoordinator
+        )
+    }
+
+    private static func makeProjectionInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeProjectionInteractionWorkflow {
+        HomeProjectionInteractionWorkflow(
+            projection: graph.persistence.homeFeedProjection,
+            readState: graph.features.readStateCoordinator,
+            materialization: graph.coordination.materializationCoordinator
         )
     }
 

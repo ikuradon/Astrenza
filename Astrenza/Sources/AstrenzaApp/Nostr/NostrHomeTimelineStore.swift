@@ -40,7 +40,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let activityInteractionWorkflow:
         HomeTimelineActivityInteractionWorkflow
     private let presentationWorkflow: HomeTimelinePresentationWorkflow
-    private let materializationCoordinator: HomeTimelineMaterializationCoordinator
+    private let projectionInteractionWorkflow:
+        HomeProjectionInteractionWorkflow
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncInteractionWorkflow:
@@ -52,8 +53,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeAccountResetInteractionWorkflow
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
-    private let readStateCoordinator: HomeTimelineReadStateCoordinator
-    private let homeFeedProjection: HomeFeedProjectionController
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private let publishInteractionWorkflow:
         HomeTimelinePublishInteractionWorkflow?
@@ -209,7 +208,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.activityInteractionWorkflow =
             components.activityInteractionWorkflow
         self.presentationWorkflow = components.presentationWorkflow
-        self.materializationCoordinator = components.materializationCoordinator
+        self.projectionInteractionWorkflow =
+            components.projectionInteractionWorkflow
         self.pendingEventBuffer = components.pendingEventBuffer
         self.backwardRequestRegistry = components.backwardRequestRegistry
         self.feedSyncInteractionWorkflow =
@@ -221,8 +221,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             components.accountResetInteractionWorkflow
         self.relayStatusCoordinator = components.relayStatusCoordinator
         self.linkPreviewCoordinator = components.linkPreviewCoordinator
-        self.readStateCoordinator = components.readStateCoordinator
-        self.homeFeedProjection = components.homeFeedProjection
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
         self.localMutationInteractionWorkflow =
@@ -249,7 +247,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
-        readStateCoordinator.restoredViewportState(
+        projectionInteractionWorkflow.restoredViewportState(
             accountID: accountID,
             timelineKey: timelineKey
         )
@@ -263,7 +261,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func flushPendingViewportStateSave() {
-        readStateCoordinator.flushPendingViewportWrite()
+        projectionInteractionWorkflow.flushPendingViewportWrite()
     }
 
     func refresh() {
@@ -331,8 +329,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 presentation: HomeTimelinePresentationAppState(
                     account: account,
                     restoreProjectionAnchorEventID:
-                        restoreProjectionAnchorEventID,
-                    homeFeedID: homeFeedProjection.definition?.feedID
+                        restoreProjectionAnchorEventID
                 ),
                 pendingEvents: HomeTimelinePendingEventsState(
                     account: account,
@@ -376,12 +373,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
         case .applyRestoreProjectionAnchor(let account):
             applyRestoreProjectionAnchorIfPossible(account: account)
-        case .scheduleViewportState(let state, let feedID, let scopeID):
-            readStateCoordinator.scheduleViewportState(
-                state,
-                feedID: feedID,
-                scopeID: scopeID
-            )
+        case .scheduleViewportState(let state):
+            projectionInteractionWorkflow.scheduleViewportState(state)
         case .applyPresentationTransition(let transition):
             applyPresentationTransition(transition)
         case .scheduleReadStateSave:
@@ -682,28 +675,29 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func ensureHomeFeedDefinition(account: NostrAccount) {
-        homeFeedProjection.ensureDefinition(
-            accountID: account.pubkey,
+        projectionInteractionWorkflow.ensureDefinition(
+            account: account,
             followedPubkeys: followedPubkeys,
             liveEvents: noteEvents
         )
     }
 
     private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
-        homeFeedProjection.isCurrent(context, accountID: account?.pubkey)
+        projectionInteractionWorkflow.isCurrent(
+            context,
+            accountID: account?.pubkey
+        )
     }
 
     private func restoreHomeFeedReadState(account: NostrAccount) {
-        guard let definition = homeFeedProjection.definition,
-              definition.accountID == account.pubkey
-        else { return }
         let positions = entries.compactMap(\.post).map { post in
             HomeTimelineReadPosition(postID: post.id, createdAt: post.createdAt)
         }
-        let boundaryID = readStateCoordinator.restoredReadBoundaryPostID(
-            feedID: definition.feedID,
-            positions: positions
-        )
+        let boundaryID = projectionInteractionWorkflow
+            .restoredReadBoundaryPostID(
+                accountID: account.pubkey,
+                positions: positions
+            )
         guard let boundaryID else { return }
         applyPresentationTransition(
             presentationWorkflow.restoreReadBoundary(postID: boundaryID)
@@ -711,31 +705,30 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func scheduleHomeFeedReadStateSave() {
-        guard let write = homeFeedReadBoundaryWrite() else { return }
-        readStateCoordinator.scheduleReadBoundarySave(write)
-    }
-
-    private func homeFeedReadBoundaryWrite() -> HomeTimelineReadBoundaryWrite? {
-        guard let account,
-              let definition = homeFeedProjection.definition,
-              definition.accountID == account.pubkey
-        else { return nil }
-
-        let boundaryID = presentationWorkflow.interactionState.readBoundaryPostID
-        let boundaryEvent = boundaryID.flatMap(timelineEvent(id:))
-        let readBoundary = boundaryEvent.map {
-            NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
-        }
-        return HomeTimelineReadBoundaryWrite(
-            scopeID: account.pubkey,
-            feedID: definition.feedID,
-            boundary: readBoundary,
-            updatedAt: Int(Date().timeIntervalSince1970)
+        guard let account else { return }
+        projectionInteractionWorkflow.scheduleReadBoundarySave(
+            accountID: account.pubkey,
+            boundary: currentReadBoundaryCursor()
         )
     }
 
+    private func homeFeedReadBoundaryWrite() -> HomeTimelineReadBoundaryWrite? {
+        guard let account else { return nil }
+        return projectionInteractionWorkflow.readBoundaryWrite(
+            accountID: account.pubkey,
+            boundary: currentReadBoundaryCursor()
+        )
+    }
+
+    private func currentReadBoundaryCursor() -> NostrTimelineEntryCursor? {
+        let boundaryID = presentationWorkflow.interactionState.readBoundaryPostID
+        return boundaryID.flatMap(timelineEvent(id:)).map {
+            NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
+        }
+    }
+
     private func reloadNewestProjectionWindow(account: NostrAccount) {
-        materializationCoordinator.reloadNewestProjection(account: account)
+        projectionInteractionWorkflow.reloadNewestProjection(account: account)
     }
 
     @discardableResult
@@ -744,7 +737,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         around anchorEventID: String?,
         mergingWithCurrentWindow: Bool = false
     ) -> Bool {
-        materializationCoordinator.reloadProjection(
+        projectionInteractionWorkflow.reloadProjection(
             account: account,
             around: anchorEventID,
             mergingWithCurrentWindow: mergingWithCurrentWindow
@@ -1087,7 +1080,7 @@ private extension NostrHomeTimelineStore {
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
         let dependencies = dataInteractionWorkflow.dependencyResolutionState
-        guard let transition = materializationCoordinator.materialize(
+        guard let transition = projectionInteractionWorkflow.materialize(
             HomeTimelineMaterializationRequest(
                 account: account,
                 nip05Resolutions: dependencies.nip05Resolutions,
@@ -1889,11 +1882,10 @@ extension NostrHomeTimelineStore {
         with loaded: NostrFeedWindow,
         centeredOn anchorEventID: String
     ) -> NostrFeedWindow {
-        HomeFeedProjectionBuilder.mergedWindow(
+        projectionInteractionWorkflow.mergedWindow(
             current,
             with: loaded,
-            centeredOn: anchorEventID,
-            retainedLimit: homeFeedProjection.retainedWindowLimit
+            centeredOn: anchorEventID
         )
     }
 
@@ -1914,7 +1906,7 @@ extension NostrHomeTimelineStore {
                 .replaceFollowedPubkeys(sourceAuthors)
             )
         )
-        homeFeedProjection.activateStoredProjection(
+        projectionInteractionWorkflow.activateStoredProjection(
             definition: definition,
             sourceAuthors: sourceAuthors
         )

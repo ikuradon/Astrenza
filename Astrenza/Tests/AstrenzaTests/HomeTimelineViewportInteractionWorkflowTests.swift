@@ -41,11 +41,7 @@ struct HomeTimelineViewportWorkflowTests {
         #expect(fixture.applicationProbe.events == [
             .applyProjectionViewportTransition(.setRestoreAnchor("anchor")),
             .applyRestoreProjectionAnchor(fixture.account),
-            .scheduleViewportState(
-                viewport,
-                fixture.feedID,
-                fixture.account.pubkey
-            ),
+            .scheduleViewportState(viewport),
             .applyProjectionViewportTransition(.setNewestWindow(false)),
             .materializeEntries(true),
             .applyPresentationTransition([.unreadCounts], true),
@@ -146,8 +142,7 @@ private struct ViewportInteractionFixture {
             state: HomeTimelineViewportInteractionState(
                 presentation: HomeTimelinePresentationAppState(
                     account: account,
-                    restoreProjectionAnchorEventID: nil,
-                    homeFeedID: feedID
+                    restoreProjectionAnchorEventID: nil
                 ),
                 pendingEvents: HomeTimelinePendingEventsState(
                     account: account,
@@ -188,7 +183,7 @@ private final class ViewportInteractionApplicationProbe {
         case reloadNewestProjectionWindow(NostrAccount)
         case materializeEntries(Bool)
         case applyRestoreProjectionAnchor(NostrAccount)
-        case scheduleViewportState(TimelineViewportState, String, String)
+        case scheduleViewportState(TimelineViewportState)
         case applyPresentationTransition(HomeTimelinePresentationChanges, Bool)
         case scheduleReadStateSave
         case clearBufferedEvents
@@ -222,8 +217,8 @@ private final class ViewportInteractionApplicationProbe {
             events.append(.materializeEntries(allowsRealtimeFollow))
         case .applyRestoreProjectionAnchor(let account):
             events.append(.applyRestoreProjectionAnchor(account))
-        case .scheduleViewportState(let state, let feedID, let scopeID):
-            events.append(.scheduleViewportState(state, feedID, scopeID))
+        case .scheduleViewportState(let state):
+            events.append(.scheduleViewportState(state))
         case .applyPresentationTransition(let transition):
             events.append(.applyPresentationTransition(
                 transition.changes,
