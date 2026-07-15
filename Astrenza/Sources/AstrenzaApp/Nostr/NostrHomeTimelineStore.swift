@@ -40,6 +40,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let listProjectionCache: HomeTimelineListProjectionCache
     private let activityCoordinator: HomeTimelineActivityCoordinator
     private let presentationCoordinator: HomeTimelinePresentationCoordinator
+    private let presentationWorkflow: HomeTimelinePresentationWorkflow
     private let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
     private let materializationCoordinator: HomeTimelineMaterializationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
@@ -250,6 +251,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.listProjectionCache = components.listProjectionCache
         self.activityCoordinator = components.activityCoordinator
         self.presentationCoordinator = components.presentationCoordinator
+        self.presentationWorkflow = components.presentationWorkflow
         self.pendingEventsWorkflow = components.pendingEventsWorkflow
         self.materializationCoordinator = components.materializationCoordinator
         self.pendingEventBuffer = components.pendingEventBuffer
@@ -282,17 +284,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
-        restoreProjectionAnchorEventID = anchorEventID
-        if anchorEventID != nil {
-            isTimelineAtNewestWindow = false
-        }
-        guard let account else { return }
-        if anchorEventID == nil {
-            reloadNewestProjectionWindow(account: account)
-            materializeEntries()
-        } else {
-            applyRestoreProjectionAnchorIfPossible(account: account)
-        }
+        presentationWorkflow.setRestoreProjectionAnchor(
+            anchorEventID,
+            state: presentationState(),
+            effects: presentationEffects()
+        )
     }
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
@@ -303,15 +299,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func saveViewportState(_ state: TimelineViewportState) {
-        guard state.timelineKey == "home",
-              let account,
-              account.pubkey == state.accountID,
-              let definition = homeFeedProjection.definition
-        else { return }
-        readStateCoordinator.scheduleViewportState(
+        presentationWorkflow.saveViewportState(
             state,
-            feedID: definition.feedID,
-            scopeID: account.pubkey
+            state: presentationState(),
+            effects: presentationEffects()
         )
     }
 
@@ -334,34 +325,78 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
-        guard !isAtNewestWindow || restoreProjectionAnchorEventID == nil else { return }
-        isTimelineAtNewestWindow = isAtNewestWindow
+        presentationWorkflow.setTimelineAtNewestWindow(
+            isAtNewestWindow,
+            state: presentationState(),
+            effects: presentationEffects()
+        )
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
-        presentationCoordinator.setScrollActive(isActive) { [weak self] allowsRealtimeFollow in
-            self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-        }
+        presentationWorkflow.setTimelineScrollActive(
+            isActive,
+            effects: presentationEffects()
+        )
     }
 
     func dismissUnreadBadge() {
-        applyPresentationTransition(
-            presentationCoordinator.dismissUnreadBadge()
+        presentationWorkflow.dismissUnreadBadge(
+            effects: presentationEffects()
         )
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
-        guard let transition = presentationCoordinator.markVisiblePostsRead(
-            visiblePostIDs
-        ) else { return }
-        applyPresentationTransition(transition)
-        scheduleHomeFeedReadStateSave()
+        presentationWorkflow.markMaterializedPostsRead(
+            visiblePostIDs: visiblePostIDs,
+            effects: presentationEffects()
+        )
     }
 
     func markNewestMaterializedWindowRead() {
-        guard let transition = presentationCoordinator.markNewestWindowRead() else { return }
-        applyPresentationTransition(transition)
-        scheduleHomeFeedReadStateSave()
+        presentationWorkflow.markNewestMaterializedWindowRead(
+            effects: presentationEffects()
+        )
+    }
+
+    private func presentationState() -> HomeTimelinePresentationAppState {
+        HomeTimelinePresentationAppState(
+            account: account,
+            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
+            homeFeedID: homeFeedProjection.definition?.feedID
+        )
+    }
+
+    private func presentationEffects() -> HomeTimelinePresentationEffects {
+        HomeTimelinePresentationEffects(
+            setRestoreProjectionAnchor: { [weak self] anchorEventID in
+                self?.restoreProjectionAnchorEventID = anchorEventID
+            },
+            setTimelineAtNewestWindow: { [weak self] isAtNewestWindow in
+                self?.isTimelineAtNewestWindow = isAtNewestWindow
+            },
+            reloadNewestProjectionWindow: { [weak self] account in
+                self?.reloadNewestProjectionWindow(account: account)
+            },
+            materializeEntries: { [weak self] allowsRealtimeFollow in
+                self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
+            },
+            applyRestoreProjectionAnchor: { [weak self] account in
+                self?.applyRestoreProjectionAnchorIfPossible(account: account)
+            },
+            scheduleViewportState: { [weak self] state, feedID, scopeID in
+                self?.readStateCoordinator.scheduleViewportState(
+                    state,
+                    feedID: feedID,
+                    scopeID: scopeID
+                )
+            },
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
+            },
+            scheduleReadStateSave: { [weak self] in
+                self?.scheduleHomeFeedReadStateSave()
+            }
+        )
     }
 
     @discardableResult
