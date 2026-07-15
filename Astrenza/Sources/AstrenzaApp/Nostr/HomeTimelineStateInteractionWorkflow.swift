@@ -29,13 +29,49 @@ protocol HomeTimelineStateRouting: AnyObject {
 
 extension HomeTimelineStateWorkflow: HomeTimelineStateRouting {}
 
-struct HomeTimelineStateInteractionEnvironment: Sendable {
-    typealias PersistenceStateProvider = @MainActor @Sendable () -> HomeTimelinePersistenceState
-    typealias PendingEventsProvider = @MainActor @Sendable () -> Bool
+struct HomeTimelineStateStoreSnapshot: Equatable, Sendable {
+    let account: NostrAccount?
+    let resolvedRelays: [String]
+    let followedPubkeys: [String]
+    let nip05Resolutions: [String: NostrNIP05Resolution]
+    let hasMoreOlder: Bool
+    let hasPendingEvents: Bool
+    let defaultMaterializationDelayNanoseconds: UInt64
+}
 
-    let persistenceState: PersistenceStateProvider
-    let hasPendingEvents: PendingEventsProvider
-    let runtimeApplicationState: HomeTimelineRuntimeApplicationState.Provider
+struct HomeTimelineStateContextProjection: Equatable, Sendable {
+    let persistenceState: HomeTimelinePersistenceState
+    let runtimeApplicationState: HomeTimelineRuntimeApplicationState
+    let hasPendingEvents: Bool
+}
+
+struct HomeTimelineStateContextProjector: Sendable {
+    func projection(
+        from snapshot: HomeTimelineStateStoreSnapshot
+    ) -> HomeTimelineStateContextProjection {
+        HomeTimelineStateContextProjection(
+            persistenceState: HomeTimelinePersistenceState(
+                accountID: snapshot.account?.pubkey,
+                followedPubkeys: snapshot.followedPubkeys
+            ),
+            runtimeApplicationState: HomeTimelineRuntimeApplicationState(
+                account: snapshot.account,
+                resolvedRelays: snapshot.resolvedRelays,
+                followedPubkeys: snapshot.followedPubkeys,
+                nip05Resolutions: snapshot.nip05Resolutions,
+                hasMoreOlder: snapshot.hasMoreOlder,
+                deferredMaterializationDelayNanoseconds:
+                    snapshot.defaultMaterializationDelayNanoseconds * 2
+            ),
+            hasPendingEvents: snapshot.hasPendingEvents
+        )
+    }
+}
+
+struct HomeTimelineStateInteractionEnvironment: Sendable {
+    typealias ProjectionProvider = @MainActor @Sendable () -> HomeTimelineStateContextProjection?
+
+    let projection: ProjectionProvider
 }
 
 enum HomeTimelineStateInteractionApplication {
@@ -120,7 +156,9 @@ final class HomeTimelineStateInteractionWorkflow {
         context: HomeTimelineStateInteractionContext
     ) -> HomeTimelineRuntimeApplicationEffects {
         stateWorkflow.runtimeApplicationEffects(
-            state: context.effects.environment.runtimeApplicationState,
+            state: {
+                context.effects.environment.projection()?.runtimeApplicationState
+            },
             actions: runtimeActions(for: context.effects),
             effects: stateEffects(for: context.effects)
         )
@@ -145,8 +183,16 @@ final class HomeTimelineStateInteractionWorkflow {
             applyPendingEventCountPublication: { publication in
                 effects.apply(.applyPendingEventCountPublication(publication))
             },
-            persistenceState: effects.environment.persistenceState,
-            hasPendingEvents: effects.environment.hasPendingEvents,
+            persistenceState: {
+                effects.environment.projection()?.persistenceState ??
+                    HomeTimelinePersistenceState(
+                        accountID: nil,
+                        followedPubkeys: []
+                    )
+            },
+            hasPendingEvents: {
+                effects.environment.projection()?.hasPendingEvents == true
+            },
             materializeEntries: {
                 effects.apply(.materializeEntries)
             }
@@ -188,7 +234,7 @@ final class HomeTimelineStateInteractionWorkflow {
         _ diagnostic: HomeTimelineRuntimeApplicationDiagnostic,
         effects: HomeTimelineStateInteractionEffects
     ) {
-        guard let state = effects.environment.runtimeApplicationState(),
+        guard let state = effects.environment.projection()?.runtimeApplicationState,
               let transition = relayStatus.recordDiagnostic(
                   diagnostic,
                   accountID: state.account?.pubkey,

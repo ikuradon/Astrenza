@@ -64,7 +64,7 @@ struct HomeTimelineStateWorkflowEffects: Sendable {
     let materializeEntries: Action
 }
 
-struct HomeTimelineRuntimeApplicationState: Sendable {
+struct HomeTimelineRuntimeApplicationState: Equatable, Sendable {
     typealias Provider = @MainActor @Sendable () -> HomeTimelineRuntimeApplicationState?
 
     let account: NostrAccount?

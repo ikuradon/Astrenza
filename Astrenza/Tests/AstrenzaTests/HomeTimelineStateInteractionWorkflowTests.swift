@@ -31,8 +31,8 @@ struct HomeTimelineStateInteractionTests {
         #expect(fixture.router.persistedAccountID == fixture.account.pubkey)
     }
 
-    @Test("State providers remain dynamic behind the interaction boundary")
-    func forwardsDynamicStateProviders() async {
+    @Test("State projection remains dynamic behind the interaction boundary")
+    func forwardsDynamicStateProjection() async {
         let fixture = StateInteractionFixture()
         let context = fixture.context
         fixture.router.readsEnvironment = true
@@ -51,9 +51,22 @@ struct HomeTimelineStateInteractionTests {
         #expect(fixture.router.persistenceState == fixture.probe.persistenceState)
         #expect(fixture.router.hasPendingEvents == false)
         #expect(fixture.router.runtimeState?.account == fixture.account)
-        #expect(fixture.probe.persistenceStateReads == 1)
-        #expect(fixture.probe.pendingEventReads == 1)
-        #expect(fixture.probe.runtimeStateReads == 1)
+        #expect(fixture.probe.projectionReads == 3)
+
+        fixture.probe.providesProjection = false
+        _ = await fixture.workflow.restoreCachedState(
+            accountID: fixture.account.pubkey,
+            context: context
+        )
+        _ = fixture.workflow.runtimeApplicationEffects(context: context)
+
+        #expect(fixture.router.persistenceState == HomeTimelinePersistenceState(
+            accountID: nil,
+            followedPubkeys: []
+        ))
+        #expect(fixture.router.hasPendingEvents == false)
+        #expect(fixture.router.runtimeState == nil)
+        #expect(fixture.probe.projectionReads == 6)
     }
 
     @Test("State and runtime applications share one typed application boundary")
@@ -267,9 +280,8 @@ private final class StateInteractionProbe {
         followedPubkeys: []
     )
     var hasPendingEvents = true
-    var persistenceStateReads = 0
-    var pendingEventReads = 0
-    var runtimeStateReads = 0
+    var providesProjection = true
+    var projectionReads = 0
     var events: [Event] = []
 }
 
@@ -296,17 +308,14 @@ private struct StateInteractionFixture {
         HomeTimelineStateInteractionContext(
             effects: HomeTimelineStateInteractionEffects(
                 environment: HomeTimelineStateInteractionEnvironment(
-                    persistenceState: { [probe] in
-                        probe.persistenceStateReads += 1
-                        return probe.persistenceState
-                    },
-                    hasPendingEvents: { [probe] in
-                        probe.pendingEventReads += 1
-                        return probe.hasPendingEvents
-                    },
-                    runtimeApplicationState: { [probe, runtimeState] in
-                        probe.runtimeStateReads += 1
-                        return runtimeState
+                    projection: { [probe, runtimeState] in
+                        probe.projectionReads += 1
+                        guard probe.providesProjection else { return nil }
+                        return HomeTimelineStateContextProjection(
+                            persistenceState: probe.persistenceState,
+                            runtimeApplicationState: runtimeState,
+                            hasPendingEvents: probe.hasPendingEvents
+                        )
                     }
                 ),
                 apply: { [probe] application in

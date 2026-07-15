@@ -21,6 +21,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineRuntimeInteractionWorkflow
     private let runtimeContextProjector =
         HomeTimelineRuntimeContextProjector()
+    private let stateContextProjector =
+        HomeTimelineStateContextProjector()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -545,17 +547,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineStateInteractionContext(
             effects: HomeTimelineStateInteractionEffects(
                 environment: HomeTimelineStateInteractionEnvironment(
-                    persistenceState: { [weak self] in
-                        HomeTimelinePersistenceState(
-                            accountID: self?.account?.pubkey,
-                            followedPubkeys: self?.followedPubkeys ?? []
-                        )
-                    },
-                    hasPendingEvents: { [weak self] in
-                        self?.viewportInteractionWorkflow.hasBufferedEvents == true
-                    },
-                    runtimeApplicationState: { [weak self] in
-                        self?.runtimeApplicationState()
+                    projection: { [weak self] in
+                        self?.stateContextProjection()
                     }
                 ),
                 apply: { [weak self] application in
@@ -873,17 +866,21 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    private func runtimeApplicationState() -> HomeTimelineRuntimeApplicationState {
+    private func stateContextProjection() -> HomeTimelineStateContextProjection {
+        stateContextProjector.projection(from: stateStoreSnapshot())
+    }
+
+    private func stateStoreSnapshot() -> HomeTimelineStateStoreSnapshot {
         let dependencies = dataInteractionWorkflow.dependencyResolutionState
-        return HomeTimelineRuntimeApplicationState(
+        return HomeTimelineStateStoreSnapshot(
             account: account,
             resolvedRelays: resolvedRelays,
             followedPubkeys: followedPubkeys,
             nip05Resolutions: dependencies.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
-            deferredMaterializationDelayNanoseconds:
-                presentationWorkflow.interactionState
-                    .defaultDelayNanoseconds * 2
+            hasPendingEvents: viewportInteractionWorkflow.hasBufferedEvents,
+            defaultMaterializationDelayNanoseconds:
+                presentationWorkflow.interactionState.defaultDelayNanoseconds
         )
     }
 
