@@ -43,7 +43,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
-    private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
     private let accountResetInteractionWorkflow:
@@ -208,7 +207,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
-        self.lifecycleCoordinator = components.lifecycleCoordinator
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
         self.accountResetInteractionWorkflow =
@@ -950,13 +948,9 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    private func runtimeEventApplicationContext(
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken
-    ) -> HomeTimelineRuntimeEventApplicationContext {
-        HomeTimelineRuntimeEventApplicationContext(
+    private func runtimeDependencyState() -> HomeTimelineRuntimeDependencyState {
+        HomeTimelineRuntimeDependencyState(
             account: account,
-            lifecycle: lifecycle,
             hasRelayRuntime: relayRuntime != nil
         )
     }
@@ -982,29 +976,17 @@ private extension NostrHomeTimelineStore {
     }
 
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
         _ = await runtimeInteractionWorkflow.enqueueDependencies(
             for: event,
-            context: runtimeEventApplicationContext(
-                account: account,
-                lifecycle: lifecycle
-            ),
+            state: runtimeDependencyState(),
             application: runtimeApplicationEffects()
         )
     }
 
     private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
         runtimeInteractionWorkflow.resolveNIP05IfNeeded(
             for: metadataEvent,
-            context: runtimeEventApplicationContext(
-                account: account,
-                lifecycle: lifecycle
-            ),
+            state: runtimeDependencyState(),
             application: runtimeApplicationEffects()
         )
     }
@@ -1553,9 +1535,10 @@ private extension NostrHomeTimelineStore {
     ) async -> Bool {
         await runtimeInteractionWorkflow.enqueueDependencies(
             for: request.event,
-            context: runtimeEventApplicationContext(
+            context: HomeTimelineRuntimeEventApplicationContext(
                 account: request.account,
-                lifecycle: request.lifecycle
+                lifecycle: request.lifecycle,
+                hasRelayRuntime: relayRuntime != nil
             ),
             application: runtimeApplicationEffects()
         )
@@ -1892,9 +1875,7 @@ extension NostrHomeTimelineStore {
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
     ) {
-        if lifecycleCoordinator.token(for: account.pubkey) == nil {
-            lifecycleCoordinator.begin(accountID: account.pubkey)
-        }
+        runtimeInteractionWorkflow.ensureLifecycle(accountID: account.pubkey)
         applyAccountContextTransition(.activate(
             account,
             syncPolicy: syncPolicy

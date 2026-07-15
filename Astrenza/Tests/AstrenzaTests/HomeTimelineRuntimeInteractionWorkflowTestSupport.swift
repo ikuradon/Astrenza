@@ -225,24 +225,49 @@ struct RuntimeInteractionFixture {
         subscriptionID: "astrenza-home-forward-interaction",
         message: "install failed"
     )
+    let lifecycleToken = HomeTimelineLifecycleToken(
+        accountID: String(repeating: "a", count: 64),
+        generation: 7
+    )
     let runtime: RuntimeInteractionRoutingSpy
     let events: RuntimeInteractionEventRoutingSpy
+    let lifecycle: RuntimeInteractionLifecycleSpy
     let probe = RuntimeInteractionProbe()
     let workflow: HomeTimelineRuntimeInteractionWorkflow
 
-    init() {
+    init(hasActiveLifecycle: Bool = true) {
         let runtime = RuntimeInteractionRoutingSpy()
         let events = RuntimeInteractionEventRoutingSpy(
             replacementEvent: replacementEvent
+        )
+        let lifecycle = RuntimeInteractionLifecycleSpy(
+            currentToken: hasActiveLifecycle ? lifecycleToken : nil
         )
         runtime.event = event
         runtime.completion = completion
         runtime.setupDiagnostic = setupDiagnostic
         self.runtime = runtime
         self.events = events
+        self.lifecycle = lifecycle
         self.workflow = HomeTimelineRuntimeInteractionWorkflow(
             runtime: runtime,
-            events: events
+            events: events,
+            lifecycle: lifecycle
+        )
+    }
+
+    var dependencyState: HomeTimelineRuntimeDependencyState {
+        HomeTimelineRuntimeDependencyState(
+            account: account,
+            hasRelayRuntime: true
+        )
+    }
+
+    var dependencyContext: HomeTimelineRuntimeEventApplicationContext {
+        HomeTimelineRuntimeEventApplicationContext(
+            account: account,
+            lifecycle: lifecycleToken,
+            hasRelayRuntime: true
         )
     }
 

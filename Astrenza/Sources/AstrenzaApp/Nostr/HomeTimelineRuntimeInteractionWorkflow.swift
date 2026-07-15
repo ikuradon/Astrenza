@@ -51,6 +51,18 @@ protocol HomeTimelineRuntimeEventRouting: AnyObject {
 
 extension HomeTimelineRuntimeEventWorkflow: HomeTimelineRuntimeEventRouting {}
 
+@MainActor
+protocol HomeTimelineRuntimeLifecycleTracking: AnyObject {
+    func token(for accountID: String) -> HomeTimelineLifecycleToken?
+
+    #if DEBUG
+    func begin(accountID: String) -> HomeTimelineLifecycleToken
+    #endif
+}
+
+extension HomeTimelineLifecycleCoordinator:
+    HomeTimelineRuntimeLifecycleTracking {}
+
 struct HomeTimelineRuntimeInteractionState: Equatable, Sendable {
     let account: NostrAccount?
     let profileRelayURLs: [String]
@@ -132,17 +144,25 @@ struct HomeTimelineRuntimeEventContext: Sendable {
     let effects: HomeTimelineRuntimeEventStoreEffects
 }
 
+struct HomeTimelineRuntimeDependencyState: Equatable, Sendable {
+    let account: NostrAccount?
+    let hasRelayRuntime: Bool
+}
+
 @MainActor
 final class HomeTimelineRuntimeInteractionWorkflow {
     private let runtime: any HomeTimelineRuntimeRouting
     private let events: any HomeTimelineRuntimeEventRouting
+    private let lifecycle: any HomeTimelineRuntimeLifecycleTracking
 
     init(
         runtime: any HomeTimelineRuntimeRouting,
-        events: any HomeTimelineRuntimeEventRouting
+        events: any HomeTimelineRuntimeEventRouting,
+        lifecycle: any HomeTimelineRuntimeLifecycleTracking
     ) {
         self.runtime = runtime
         self.events = events
+        self.lifecycle = lifecycle
     }
 
     @discardableResult
@@ -231,13 +251,27 @@ final class HomeTimelineRuntimeInteractionWorkflow {
 
     func resolveNIP05IfNeeded(
         for metadataEvent: NostrEvent,
-        context: HomeTimelineRuntimeEventApplicationContext,
+        state: HomeTimelineRuntimeDependencyState,
         application: HomeTimelineRuntimeApplicationEffects
     ) {
+        guard let context = dependencyContext(for: state) else { return }
         events.resolveNIP05IfNeeded(
             for: metadataEvent,
             context: context,
             effects: application
+        )
+    }
+
+    func enqueueDependencies(
+        for event: NostrEvent,
+        state: HomeTimelineRuntimeDependencyState,
+        application: HomeTimelineRuntimeApplicationEffects
+    ) async -> Bool {
+        guard let context = dependencyContext(for: state) else { return false }
+        return await enqueueDependencies(
+            for: event,
+            context: context,
+            application: application
         )
     }
 
@@ -250,6 +284,19 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             for: event,
             context: context,
             effects: application
+        )
+    }
+
+    private func dependencyContext(
+        for state: HomeTimelineRuntimeDependencyState
+    ) -> HomeTimelineRuntimeEventApplicationContext? {
+        guard let account = state.account,
+              let lifecycle = lifecycle.token(for: account.pubkey)
+        else { return nil }
+        return HomeTimelineRuntimeEventApplicationContext(
+            account: account,
+            lifecycle: lifecycle,
+            hasRelayRuntime: state.hasRelayRuntime
         )
     }
 
@@ -325,3 +372,15 @@ final class HomeTimelineRuntimeInteractionWorkflow {
         )
     }
 }
+
+#if DEBUG
+extension HomeTimelineRuntimeInteractionWorkflow {
+    @discardableResult
+    func ensureLifecycle(accountID: String) -> HomeTimelineLifecycleToken {
+        if let token = lifecycle.token(for: accountID) {
+            return token
+        }
+        return lifecycle.begin(accountID: accountID)
+    }
+}
+#endif

@@ -30,7 +30,6 @@ struct HomeTimelineStoreComponents {
     let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
     let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
-    let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
     let accountResetInteractionWorkflow:
@@ -170,7 +169,8 @@ enum HomeTimelineStoreAssembly {
                     setup: graph.relayRuntime.runtimeSetupCoordinator,
                     packetRouter: graph.relayRuntime.runtimePacketWorkflow
                 ),
-                events: graph.runtimeEvents.runtimeEventWorkflow
+                events: graph.runtimeEvents.runtimeEventWorkflow,
+                lifecycle: graph.coordination.lifecycleCoordinator
             ),
             gapBackfillInteractionWorkflow: makeGapBackfillInteraction(from: graph),
             backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow(
@@ -184,7 +184,6 @@ enum HomeTimelineStoreAssembly {
             projectionInteractionWorkflow:
                 makeProjectionInteraction(from: graph),
             syncInteractionWorkflow: makeSyncInteraction(from: graph),
-            lifecycleCoordinator: graph.coordination.lifecycleCoordinator,
             accountStartInteractionWorkflow:
                 HomeAccountStartInteractionWorkflow(
                     accountStart: graph.features.accountStartWorkflow
