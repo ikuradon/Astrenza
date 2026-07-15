@@ -31,8 +31,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventCoordinator: HomeTimelineRuntimeEventCoordinator
-    private let backwardRequestCoordinator: HomeTimelineBackwardRequestCoordinator
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
+    private let olderPageWorkflow: HomeTimelineOlderPageWorkflow
     private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
@@ -288,7 +288,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             syncPlanner: syncPlanner,
             packetInstaller: backwardPacketInstaller
         )
-        self.backwardRequestCoordinator = backwardRequestCoordinator
         self.gapBackfillWorkflow = HomeTimelineGapBackfillWorkflow(
             requester: backwardRequestCoordinator,
             persistence: backfillPersistence
@@ -443,9 +442,16 @@ final class NostrHomeTimelineStore: ObservableObject {
             feedSyncCoordinator: feedSyncCoordinator,
             relayStatusCoordinator: relayStatusCoordinator
         )
-        self.remoteLoadCoordinator = HomeTimelineRemoteLoadCoordinator(
+        let remoteLoadCoordinator = HomeTimelineRemoteLoadCoordinator(
             loader: timelineLoader,
             relayEventPersistence: relayStatusCoordinator
+        )
+        self.remoteLoadCoordinator = remoteLoadCoordinator
+        self.olderPageWorkflow = HomeTimelineOlderPageWorkflow(
+            requester: backwardRequestCoordinator,
+            remoteLoader: remoteLoadCoordinator,
+            activityCoordinator: activityCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator
         )
         let linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
             eventStore: eventStore,
@@ -951,45 +957,57 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-        guard let activityTransition = activityCoordinator.beginLoadingOlder() else { return }
-        applyActivityTransition(activityTransition)
-        defer {
-            if lifecycleCoordinator.isCurrent(lifecycle) {
-                applyActivityTransition(activityCoordinator.endLoadingOlder())
-            }
-        }
-
-        if relayRuntime != nil {
-            let outcome = await backwardRequestCoordinator.requestOlder(
-                account: account
-            )
-            _ = applyBackwardRequestOutcome(outcome)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-            return
-        }
-
-        let current = loaderState()
-        let localBackfillEvents = databaseBackfillEvents(account: account, current: current)
-        let outcome = await remoteLoadCoordinator.load(
-            .older(
+        await olderPageWorkflow.load(
+            HomeTimelineOlderPageRequest(
                 account: account,
-                current: current,
-                localBackfillEvents: localBackfillEvents
+                lifecycle: lifecycle,
+                hasRelayRuntime: relayRuntime != nil
             ),
-            isCurrent: { [weak self] in
-                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
+            handlers: olderPageHandlers()
+        )
+    }
+
+    private func olderPageHandlers() -> HomeTimelineOlderPageHandlers {
+        HomeTimelineOlderPageHandlers(
+            perform: { [weak self] command in
+                self?.applyOlderPageCommand(command)
+            },
+            prepareRemoteInput: { [weak self] account in
+                guard let self else { return nil }
+                let current = loaderState()
+                return HomeTimelineOlderPageRemoteInput(
+                    current: current,
+                    localBackfillEvents: databaseBackfillEvents(
+                        account: account,
+                        current: current
+                    )
+                )
+            },
+            applyRemoteOutcome: { [weak self] outcome, account, lifecycle in
+                await self?.applyRemoteLoadOutcome(
+                    outcome,
+                    operation: .older,
+                    account: account,
+                    lifecycle: lifecycle
+                )
             }
         )
-        await applyRemoteLoadOutcome(
-            outcome,
-            operation: .older,
-            account: account,
-            lifecycle: lifecycle
-        )
+    }
+
+    private func applyOlderPageCommand(
+        _ command: HomeTimelineOlderPageCommand
+    ) {
+        switch command {
+        case .applyActivityTransition(let transition):
+            applyActivityTransition(transition)
+        case .recordDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: diagnostic.subscriptionID,
+                message: diagnostic.message
+            )
+        }
     }
 
     private func applyRemoteLoadOutcome(
@@ -1051,25 +1069,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         case .setPhase(let phase):
             applyActivityTransition(activityCoordinator.setPhase(phase))
-        }
-    }
-
-    private func applyBackwardRequestOutcome(
-        _ outcome: HomeTimelineBackwardRequestOutcome
-    ) -> NostrFeedDefinitionRecord? {
-        switch outcome {
-        case .unavailable:
-            return nil
-        case .installed(let definition):
-            return definition
-        case .failed(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
-            return nil
         }
     }
 
