@@ -41,8 +41,18 @@ protocol HomeTimelineReadStatePersisting: Actor {
 extension HomeTimelinePersistenceWorker: HomeTimelineReadStatePersisting {}
 
 @MainActor
+protocol HomeTimelineViewportStateRestoring: AnyObject {
+    func viewportState(
+        accountID: String,
+        timelineKey: String
+    ) -> TimelineViewportState?
+}
+
+extension TimelineRestoreStore: HomeTimelineViewportStateRestoring {}
+
+@MainActor
 final class HomeTimelineReadStateCoordinator {
-    private let eventStore: NostrEventStore?
+    private let viewportStateRestorer: any HomeTimelineViewportStateRestoring
     private let persistenceWorker: (any HomeTimelineReadStatePersisting)?
     private let viewportDelayNanoseconds: UInt64
     private let readBoundaryDelayNanoseconds: UInt64
@@ -65,12 +75,12 @@ final class HomeTimelineReadStateCoordinator {
     }
 
     init(
-        eventStore: NostrEventStore?,
+        viewportStateRestorer: any HomeTimelineViewportStateRestoring,
         persistenceWorker: (any HomeTimelineReadStatePersisting)?,
         viewportDelayNanoseconds: UInt64 = 600_000_000,
         readBoundaryDelayNanoseconds: UInt64 = 500_000_000
     ) {
-        self.eventStore = eventStore
+        self.viewportStateRestorer = viewportStateRestorer
         self.persistenceWorker = persistenceWorker
         self.viewportDelayNanoseconds = viewportDelayNanoseconds
         self.readBoundaryDelayNanoseconds = readBoundaryDelayNanoseconds
@@ -81,20 +91,14 @@ final class HomeTimelineReadStateCoordinator {
         timelineKey: String
     ) -> TimelineViewportState? {
         guard timelineKey == "home",
-              let eventStore,
-              let state = try? eventStore.feedReadState(
-                feedID: HomeFeedProjectionBuilder.feedID(accountID: accountID)
+              let state = viewportStateRestorer.viewportState(
+                  accountID: accountID,
+                  timelineKey: timelineKey
               ),
-              let anchorEventID = state.viewportAnchorEventID
+              state.accountID == accountID,
+              state.timelineKey == timelineKey
         else { return nil }
-        return TimelineViewportState(
-            accountID: accountID,
-            timelineKey: timelineKey,
-            anchorPostID: anchorEventID,
-            anchorOffset: state.viewportAnchorOffset,
-            contentOffset: 0,
-            updatedAt: Date(timeIntervalSince1970: TimeInterval(state.updatedAt))
-        )
+        return state
     }
 
     func restoredReadBoundaryPostID(

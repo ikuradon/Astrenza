@@ -74,15 +74,21 @@ struct HomeTimelineReadStateCoordinatorTests {
         }
     }
 
-    @Test("Restoration maps persisted viewport and missing boundary cursors")
+    @Test("Restoration routes presentation viewport and maps missing boundary cursors")
     @MainActor
     func restorationMapsPersistedState() async throws {
-        let fixture = try fixture(delayNanoseconds: 0)
-        try fixture.eventStore.saveFeedViewportState(
-            feedID: fixture.feedID,
-            viewportAnchorEventID: "anchor",
-            viewportAnchorOffset: 24,
-            updatedAt: 300
+        let accountID = String(repeating: "a", count: 64)
+        let restoredViewport = TimelineViewportState(
+            accountID: accountID,
+            timelineKey: "home",
+            anchorPostID: "anchor",
+            anchorOffset: 24,
+            contentOffset: 180,
+            updatedAt: Date(timeIntervalSince1970: 300)
+        )
+        let fixture = try fixture(
+            delayNanoseconds: 0,
+            restoredViewportState: restoredViewport
         )
         try fixture.eventStore.saveFeedReadBoundary(
             feedID: fixture.feedID,
@@ -94,12 +100,14 @@ struct HomeTimelineReadStateCoordinatorTests {
             accountID: fixture.accountID,
             timelineKey: "home"
         ))
-        #expect(viewport.anchorPostID == "anchor")
-        #expect(viewport.anchorOffset == 24)
+        #expect(viewport == restoredViewport)
+        #expect(fixture.viewportStateRestorer.accountID == fixture.accountID)
+        #expect(fixture.viewportStateRestorer.timelineKey == "home")
         #expect(fixture.coordinator.restoredViewportState(
             accountID: fixture.accountID,
             timelineKey: "lists"
         ) == nil)
+        #expect(fixture.viewportStateRestorer.callCount == 1)
 
         let fallbackBoundary = await fixture.coordinator.restoredReadBoundaryPostID(
             feedID: fixture.feedID,
@@ -113,7 +121,10 @@ struct HomeTimelineReadStateCoordinatorTests {
     }
 
     @MainActor
-    private func fixture(delayNanoseconds: UInt64) throws -> ReadStateFixture {
+    private func fixture(
+        delayNanoseconds: UInt64,
+        restoredViewportState: TimelineViewportState? = nil
+    ) throws -> ReadStateFixture {
         let eventStore = try NostrEventStore.inMemory()
         let accountID = String(repeating: "a", count: 64)
         let feedID = HomeFeedProjectionBuilder.feedID(accountID: accountID)
@@ -128,12 +139,16 @@ struct HomeTimelineReadStateCoordinatorTests {
             updatedAt: 1
         ))
         let worker = HomeTimelinePersistenceWorker(eventStore: eventStore)
+        let viewportStateRestorer = ViewportStateRestorerSpy(
+            result: restoredViewportState
+        )
         return ReadStateFixture(
             accountID: accountID,
             feedID: feedID,
             eventStore: eventStore,
+            viewportStateRestorer: viewportStateRestorer,
             coordinator: HomeTimelineReadStateCoordinator(
-                eventStore: eventStore,
+                viewportStateRestorer: viewportStateRestorer,
                 persistenceWorker: worker,
                 viewportDelayNanoseconds: delayNanoseconds,
                 readBoundaryDelayNanoseconds: delayNanoseconds
@@ -177,7 +192,7 @@ struct HomeTimelineReadStateCoordinatorTests {
             if predicate() { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        throw HomeTimelineReadStateCoordinatorTestError.timeout
+        throw ReadStateCoordinatorTestError.timeout
     }
 }
 
@@ -186,9 +201,34 @@ private struct ReadStateFixture {
     let accountID: String
     let feedID: String
     let eventStore: NostrEventStore
+    let viewportStateRestorer: ViewportStateRestorerSpy
     let coordinator: HomeTimelineReadStateCoordinator
 }
 
-private enum HomeTimelineReadStateCoordinatorTestError: Error {
+@MainActor
+private final class ViewportStateRestorerSpy:
+    HomeTimelineViewportStateRestoring {
+    private let result: TimelineViewportState?
+
+    private(set) var accountID: String?
+    private(set) var timelineKey: String?
+    private(set) var callCount = 0
+
+    init(result: TimelineViewportState?) {
+        self.result = result
+    }
+
+    func viewportState(
+        accountID: String,
+        timelineKey: String
+    ) -> TimelineViewportState? {
+        self.accountID = accountID
+        self.timelineKey = timelineKey
+        callCount += 1
+        return result
+    }
+}
+
+private enum ReadStateCoordinatorTestError: Error {
     case timeout
 }

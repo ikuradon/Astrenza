@@ -1886,7 +1886,7 @@ struct TimelineModelTests {
         )
     }
 
-    @Test("Home timeline store restores metadata and viewport from an empty Generic Feed")
+    @Test("Home timeline store restores empty Generic Feed metadata and presentation viewport")
     @MainActor
     func homeTimelineStoreRestoresEmptyGenericFeedMetadata() async throws {
         let eventStore = try NostrEventStore.inMemory()
@@ -1928,9 +1928,22 @@ struct TimelineModelTests {
             readState: readState,
             savedAt: 101
         )
+        let suiteName = "HomeTimelineEmptyFeedRestoreTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let viewportStateRestorer = TimelineRestoreStore(defaults: defaults)
+        viewportStateRestorer.saveViewportState(TimelineViewportState(
+            accountID: account.pubkey,
+            timelineKey: "home",
+            anchorPostID: "empty-feed-anchor",
+            anchorOffset: 18,
+            contentOffset: 240,
+            updatedAt: Date(timeIntervalSince1970: 101)
+        ))
         let (store, relayClient) = makeGatedHomeStore(
             eventStore: eventStore,
-            bootstrapRelays: state.relays
+            bootstrapRelays: state.relays,
+            viewportStateRestorer: viewportStateRestorer
         )
 
         store.start(account: account)
@@ -8244,7 +8257,9 @@ struct TimelineModelTests {
 @MainActor
 private func makeGatedHomeStore(
     eventStore: NostrEventStore,
-    bootstrapRelays: [String]
+    bootstrapRelays: [String],
+    viewportStateRestorer: any HomeTimelineViewportStateRestoring =
+        TimelineRestoreStore()
 ) -> (store: NostrHomeTimelineStore, relayClient: GatedStoreRelayClient) {
     let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [:])
     let store = NostrHomeTimelineStore(
@@ -8252,7 +8267,8 @@ private func makeGatedHomeStore(
             relayClient: relayClient,
             bootstrapRelays: bootstrapRelays
         ),
-        eventStore: eventStore
+        eventStore: eventStore,
+        viewportStateRestorer: viewportStateRestorer
     )
     return (store, relayClient)
 }

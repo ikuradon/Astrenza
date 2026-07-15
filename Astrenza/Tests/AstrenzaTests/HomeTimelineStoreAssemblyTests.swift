@@ -131,6 +131,7 @@ private func assembledHomeTimelineComponents(
             eventStore: eventStore,
             relayRuntime: nil,
             linkPreviewResolver: nil,
+            viewportStateRestorer: TimelineRestoreStore(),
             outboxPublisher: NostrOutboxRelayPublisher(),
             localMutationPersistence: localMutationPersistence,
             initialSyncPolicy: initialSyncPolicy,

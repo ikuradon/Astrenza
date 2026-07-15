@@ -228,7 +228,7 @@ extension HomeTimelineStoreAssembly {
             resolver: input.linkPreviewResolver
         )
         let readStateCoordinator = HomeTimelineReadStateCoordinator(
-            eventStore: input.eventStore,
+            viewportStateRestorer: input.viewportStateRestorer,
             persistenceWorker: persistence.persistenceWorker
         )
         let outboxCoordinator = HomeTimelineOutboxCoordinator(

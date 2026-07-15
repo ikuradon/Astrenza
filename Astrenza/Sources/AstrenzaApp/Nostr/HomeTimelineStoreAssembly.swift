@@ -5,6 +5,7 @@ struct HomeTimelineStoreAssemblyInput {
     let eventStore: NostrEventStore?
     let relayRuntime: NostrRelayRuntime?
     let linkPreviewResolver: NostrLinkPreviewResolver?
+    let viewportStateRestorer: any HomeTimelineViewportStateRestoring
     let outboxPublisher: NostrOutboxRelayPublisher
     let localMutationPersistence: (any HomeTimelineLocalMutationPersisting)?
     let initialSyncPolicy: NostrSyncPolicy

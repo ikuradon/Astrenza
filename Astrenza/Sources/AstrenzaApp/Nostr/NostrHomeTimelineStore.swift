@@ -136,6 +136,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza"),
         relayRuntime: NostrRelayRuntime? = nil,
         linkPreviewResolver: NostrLinkPreviewResolver? = nil,
+        viewportStateRestorer: any HomeTimelineViewportStateRestoring =
+            TimelineRestoreStore(),
         outboxPublisher: NostrOutboxRelayPublisher = NostrOutboxRelayPublisher(),
         localMutationPersistence: (any HomeTimelineLocalMutationPersisting)? = nil,
         syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
@@ -147,6 +149,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 eventStore: eventStore,
                 relayRuntime: relayRuntime,
                 linkPreviewResolver: linkPreviewResolver,
+                viewportStateRestorer: viewportStateRestorer,
                 outboxPublisher: outboxPublisher,
                 localMutationPersistence: localMutationPersistence,
                 initialSyncPolicy: syncPolicy,
