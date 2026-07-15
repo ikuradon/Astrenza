@@ -61,7 +61,7 @@ struct HomeTimelineStateApplicationTests {
             .resetRelayStatus(["wss://reset-effective.example"]),
             .applyRelayStatus(plannedRelayCount: 1),
             .clearPendingEvents,
-            .pendingCountChanged(0)
+            .applyPendingEventCountPublication(0)
         ])
     }
 
@@ -123,7 +123,7 @@ private final class Probe {
         case invalidateListProjection
         case applyListProjectionInvalidation(Int)
         case clearPendingEvents
-        case pendingCountChanged(Int)
+        case applyPendingEventCountPublication(Int)
     }
 
     private let cachedState: NostrHomeTimelineState?
@@ -178,9 +178,11 @@ private final class Probe {
                 events.append(.invalidateListProjection)
                 return HomeTimelineListProjectionInvalidation(revision: 41)
             },
-            clearPendingEvents: { [self] onCountChange in
+            clearPendingEvents: { [self] onCountPublication in
                 events.append(.clearPendingEvents)
-                onCountChange(0)
+                onCountPublication(
+                    HomeTimelinePendingEventCountPublication(count: 0)
+                )
             }
         )
     }
@@ -203,8 +205,10 @@ private final class Probe {
                     invalidation.revision
                 ))
             },
-            pendingCountChanged: { [self] count in
-                events.append(.pendingCountChanged(count))
+            applyPendingEventCountPublication: { [self] publication in
+                events.append(.applyPendingEventCountPublication(
+                    publication.count
+                ))
             }
         )
     }

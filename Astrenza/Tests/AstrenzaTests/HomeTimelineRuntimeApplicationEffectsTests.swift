@@ -114,7 +114,9 @@ struct HomeTimelineRuntimeApplicationTests {
         fixture.effects.applyListProjectionInvalidation(
             HomeTimelineListProjectionInvalidation(revision: 9)
         )
-        fixture.effects.pendingCountChanged(4)
+        fixture.effects.applyPendingEventCountPublication(
+            HomeTimelinePendingEventCountPublication(count: 4)
+        )
 
         #expect(fixture.probe.events == [
             .listRevision(9),
@@ -291,8 +293,8 @@ private struct RuntimeApplicationFixture {
             applyListProjectionInvalidation: { [probe] invalidation in
                 probe.events.append(.listRevision(invalidation.revision))
             },
-            pendingCountChanged: { [probe] count in
-                probe.events.append(.pendingCount(count))
+            applyPendingEventCountPublication: { [probe] publication in
+                probe.events.append(.pendingCount(publication.count))
             },
             persistenceState: {
                 HomeTimelinePersistenceState(

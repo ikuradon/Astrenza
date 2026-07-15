@@ -122,9 +122,15 @@ final class HomeTimelineMaterializationScheduler {
     }
 }
 
+struct HomeTimelinePendingEventCountPublication: Equatable, Sendable {
+    let count: Int
+}
+
 @MainActor
 final class HomeTimelinePendingEventBuffer {
-    typealias CountPublisher = @MainActor @Sendable (_ count: Int) -> Void
+    typealias PublicationHandler = @MainActor @Sendable (
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) -> Void
     typealias DelayProvider = @MainActor @Sendable (_ nanoseconds: UInt64) async throws -> Void
 
     private let countPublishDelayNanoseconds: UInt64
@@ -160,32 +166,37 @@ final class HomeTimelinePendingEventBuffer {
     @discardableResult
     func insert(
         eventID: String,
-        onCountChange: @escaping CountPublisher
+        onCountPublication: @escaping PublicationHandler
     ) -> Bool {
         guard eventIDs.insert(eventID).inserted else { return false }
-        scheduleCountPublication(onCountChange: onCountChange)
+        scheduleCountPublication(onCountPublication: onCountPublication)
         return true
     }
 
     @discardableResult
-    func removeAll(onCountChange: @escaping CountPublisher) -> Bool {
+    func removeAll(onCountPublication: @escaping PublicationHandler) -> Bool {
         let hadEvents = !eventIDs.isEmpty
         eventIDs.removeAll()
         cancelCountPublication()
-        publishCountIfNeeded(0, onCountChange: onCountChange)
+        publishCountIfNeeded(0, onCountPublication: onCountPublication)
         return hadEvents
     }
 
     func replaceEventIDs(
         _ eventIDs: Set<String>,
-        onCountChange: @escaping CountPublisher
+        onCountPublication: @escaping PublicationHandler
     ) {
         cancelCountPublication()
         self.eventIDs = eventIDs
-        publishCountIfNeeded(eventIDs.count, onCountChange: onCountChange)
+        publishCountIfNeeded(
+            eventIDs.count,
+            onCountPublication: onCountPublication
+        )
     }
 
-    private func scheduleCountPublication(onCountChange: @escaping CountPublisher) {
+    private func scheduleCountPublication(
+        onCountPublication: @escaping PublicationHandler
+    ) {
         guard countPublicationTask == nil else { return }
         publicationGeneration &+= 1
         let expectedGeneration = publicationGeneration
@@ -206,7 +217,10 @@ final class HomeTimelinePendingEventBuffer {
                   publicationGeneration == expectedGeneration
             else { return }
             countPublicationTask = nil
-            publishCountIfNeeded(eventIDs.count, onCountChange: onCountChange)
+            publishCountIfNeeded(
+                eventIDs.count,
+                onCountPublication: onCountPublication
+            )
         }
     }
 
@@ -218,11 +232,11 @@ final class HomeTimelinePendingEventBuffer {
 
     private func publishCountIfNeeded(
         _ count: Int,
-        onCountChange: CountPublisher
+        onCountPublication: PublicationHandler
     ) {
         guard publishedCount != count else { return }
         publishedCount = count
-        onCountChange(count)
+        onCountPublication(HomeTimelinePendingEventCountPublication(count: count))
     }
 }
 

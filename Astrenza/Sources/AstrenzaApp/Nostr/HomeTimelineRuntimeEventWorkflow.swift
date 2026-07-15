@@ -41,7 +41,9 @@ struct HomeTimelineRuntimeApplicationEffects: Sendable {
     typealias ListProjectionInvalidationHandler = @MainActor @Sendable (
         _ invalidation: HomeTimelineListProjectionInvalidation
     ) -> Void
-    typealias PendingCountHandler = @MainActor @Sendable (_ count: Int) -> Void
+    typealias PendingEventCountPublicationHandler = @MainActor @Sendable (
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) -> Void
     typealias ProjectionReloader = @MainActor @Sendable (
         _ anchorEventID: String?,
         _ materialization: HomeTimelineRuntimeEventApplicationPlan.DeletionMaterialization
@@ -58,7 +60,7 @@ struct HomeTimelineRuntimeApplicationEffects: Sendable {
     typealias SourceInstallFailure = @MainActor @Sendable (_ message: String) -> Void
 
     let applyListProjectionInvalidation: ListProjectionInvalidationHandler
-    let pendingCountChanged: PendingCountHandler
+    let applyPendingEventCountPublication: PendingEventCountPublicationHandler
     let reloadProjection: ProjectionReloader
     let reloadNewestProjection: NewestProjectionReloader
     let scheduleMaterialization: MaterializationScheduler
@@ -163,7 +165,7 @@ final class HomeTimelineRuntimeEventWorkflow {
     ) -> HomeTimelineRuntimeEventApplicationHandlers {
         HomeTimelineRuntimeEventApplicationHandlers(
             applyListProjectionInvalidation: effects.applyListProjectionInvalidation,
-            pendingCountChanged: effects.pendingCountChanged,
+            applyPendingEventCountPublication: effects.applyPendingEventCountPublication,
             perform: { [weak self] command in
                 self?.apply(command, effects: effects)
             },

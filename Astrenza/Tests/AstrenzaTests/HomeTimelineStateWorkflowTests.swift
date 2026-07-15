@@ -86,7 +86,9 @@ private final class StateApplicationSpy: HomeTimelineStateApplying {
         handlers.applyListProjectionInvalidation(
             HomeTimelineListProjectionInvalidation(revision: 41)
         )
-        handlers.pendingCountChanged(3)
+        handlers.applyPendingEventCountPublication(
+            HomeTimelinePendingEventCountPublication(count: 3)
+        )
         return restoreResult
     }
 
@@ -229,8 +231,8 @@ private struct StateWorkflowFixture {
             applyListProjectionInvalidation: { [probe] invalidation in
                 probe.events.append(.listRevision(invalidation.revision))
             },
-            pendingCountChanged: { [probe] count in
-                probe.events.append(.pendingCount(count))
+            applyPendingEventCountPublication: { [probe] publication in
+                probe.events.append(.pendingCount(publication.count))
             },
             persistenceState: { [probe, persistenceState] in
                 probe.events.append(.persistenceState)

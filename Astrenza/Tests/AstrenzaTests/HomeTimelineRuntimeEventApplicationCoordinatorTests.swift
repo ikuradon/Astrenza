@@ -212,8 +212,8 @@ struct HomeTimelineRuntimeEventApplicationCoordinatorTests {
             applyListProjectionInvalidation: { invalidation in
                 probe.listRevisions.append(invalidation.revision)
             },
-            pendingCountChanged: { count in
-                probe.pendingCounts.append(count)
+            applyPendingEventCountPublication: { publication in
+                probe.pendingCounts.append(publication.count)
             },
             perform: { command in
                 probe.commands.append(command)

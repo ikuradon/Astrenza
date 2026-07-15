@@ -143,7 +143,7 @@ final class RuntimeEventHandlerProbe {
     private static var applicationHandlers: HomeTimelineRuntimeEventApplicationHandlers {
         HomeTimelineRuntimeEventApplicationHandlers(
             applyListProjectionInvalidation: { _ in },
-            pendingCountChanged: { _ in },
+            applyPendingEventCountPublication: { _ in },
             perform: { _ in },
             persistTimelineMetadata: { _ in },
             sourceInstallFailed: { _ in }

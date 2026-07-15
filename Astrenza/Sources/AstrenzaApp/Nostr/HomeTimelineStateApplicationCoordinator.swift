@@ -13,13 +13,15 @@ struct HomeTimelineStateApplicationHandlers: Sendable {
     typealias ListProjectionInvalidationHandler = @MainActor @Sendable (
         _ invalidation: HomeTimelineListProjectionInvalidation
     ) -> Void
-    typealias CountHandler = @MainActor @Sendable (_ count: Int) -> Void
+    typealias PendingEventCountPublicationHandler = @MainActor @Sendable (
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) -> Void
 
     let applyPresentationTransition: PresentationTransitionHandler
     let applyContentSnapshot: ContentSnapshotHandler
     let applyRelayStatusSnapshot: RelayStatusSnapshotHandler
     let applyListProjectionInvalidation: ListProjectionInvalidationHandler
-    let pendingCountChanged: CountHandler
+    let applyPendingEventCountPublication: PendingEventCountPublicationHandler
 }
 
 struct HomeTimelineStateApplicationDependencies: Sendable {
@@ -44,8 +46,10 @@ struct HomeTimelineStateApplicationDependencies: Sendable {
     ) -> HomeTimelineRelayStatusSnapshot
     typealias Action = @MainActor @Sendable () -> Void
     typealias ListInvalidation = @MainActor @Sendable () -> HomeTimelineListProjectionInvalidation
+    typealias PendingEventCountPublicationHandler =
+        HomeTimelineStateApplicationHandlers.PendingEventCountPublicationHandler
     typealias PendingEventClear = @MainActor @Sendable (
-        _ onCountChange: @escaping HomeTimelineStateApplicationHandlers.CountHandler
+        _ onCountPublication: @escaping PendingEventCountPublicationHandler
     ) -> Void
 
     let restoredState: StateRestorer
@@ -95,8 +99,10 @@ final class HomeTimelineStateApplicationCoordinator {
             },
             clearProjectionWindow: projectionController.clearWindow,
             invalidateListProjection: listProjectionCache.invalidate,
-            clearPendingEvents: { onCountChange in
-                _ = pendingEventBuffer.removeAll(onCountChange: onCountChange)
+            clearPendingEvents: { onCountPublication in
+                _ = pendingEventBuffer.removeAll(
+                    onCountPublication: onCountPublication
+                )
             }
         ))
     }
@@ -149,6 +155,8 @@ final class HomeTimelineStateApplicationCoordinator {
         handlers.applyRelayStatusSnapshot(
             dependencies.resetRelayStatus(content.resolvedRelays)
         )
-        dependencies.clearPendingEvents(handlers.pendingCountChanged)
+        dependencies.clearPendingEvents(
+            handlers.applyPendingEventCountPublication
+        )
     }
 }

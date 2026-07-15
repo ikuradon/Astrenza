@@ -19,7 +19,9 @@ struct HomeTimelineRuntimeEventApplicationHandlers: Sendable {
     typealias ListProjectionInvalidationHandler = @MainActor @Sendable (
         _ invalidation: HomeTimelineListProjectionInvalidation
     ) -> Void
-    typealias PendingCountHandler = @MainActor @Sendable (_ count: Int) -> Void
+    typealias PendingEventCountPublicationHandler = @MainActor @Sendable (
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) -> Void
     typealias CommandHandler = @MainActor @Sendable (
         _ command: HomeTimelineRuntimeEventApplicationCommand
     ) -> Void
@@ -29,7 +31,7 @@ struct HomeTimelineRuntimeEventApplicationHandlers: Sendable {
     typealias SourceInstallFailureHandler = @MainActor @Sendable (_ message: String) -> Void
 
     let applyListProjectionInvalidation: ListProjectionInvalidationHandler
-    let pendingCountChanged: PendingCountHandler
+    let applyPendingEventCountPublication: PendingEventCountPublicationHandler
     let perform: CommandHandler
     let persistTimelineMetadata: MetadataPersistenceHandler
     let sourceInstallFailed: SourceInstallFailureHandler
@@ -120,7 +122,7 @@ final class HomeTimelineRuntimeEventApplicationCoordinator {
             case .bufferPendingEvent(let eventID):
                 _ = pendingEventBuffer.insert(
                     eventID: eventID,
-                    onCountChange: handlers.pendingCountChanged
+                    onCountPublication: handlers.applyPendingEventCountPublication
                 )
             }
         }

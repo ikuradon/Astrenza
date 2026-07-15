@@ -17,7 +17,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishedRelayStatusState()
     @Published private var publishedListProjectionState =
         HomeTimelinePublishedListProjectionState()
-    @Published private(set) var unmaterializedNewCount = 0
+    @Published private var publishedPendingEventState =
+        HomeTimelinePublishedPendingEventState()
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadWorkflow: HomeTimelineLoadWorkflow
@@ -787,8 +788,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             applyListProjectionInvalidation: { [weak self] invalidation in
                 self?.applyListProjectionInvalidation(invalidation)
             },
-            pendingCountChanged: { [weak self] count in
-                self?.setUnmaterializedNewCount(count)
+            applyPendingEventCountPublication: { [weak self] publication in
+                self?.applyPendingEventCountPublication(publication)
             },
             persistenceState: { [weak self] in
                 HomeTimelinePersistenceState(
@@ -1461,18 +1462,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    @discardableResult
-    private func clearPendingNewEvents() -> Bool {
-        pendingEventBuffer.removeAll { [weak self] count in
-            self?.setUnmaterializedNewCount(count)
-        }
-    }
-
-    private func setUnmaterializedNewCount(_ count: Int) {
-        guard unmaterializedNewCount != count else { return }
-        unmaterializedNewCount = count
-    }
-
     private func loaderState() -> NostrHomeTimelineState {
         contentCoordinator.loaderState(
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
@@ -1503,6 +1492,22 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    @discardableResult
+    func clearPendingNewEvents() -> Bool {
+        pendingEventBuffer.removeAll { [weak self] publication in
+            self?.applyPendingEventCountPublication(publication)
+        }
+    }
+
+    func applyPendingEventCountPublication(
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) {
+        guard let next = publishedPendingEventState.applying(publication) else {
+            return
+        }
+        publishedPendingEventState = next
+    }
+
     func invalidateListEntries() {
         applyListProjectionInvalidation(listProjectionCache.invalidate())
     }
@@ -1518,6 +1523,10 @@ private extension NostrHomeTimelineStore {
 }
 
 extension NostrHomeTimelineStore {
+    var unmaterializedNewCount: Int {
+        publishedPendingEventState.count
+    }
+
     var listContentRevision: Int {
         publishedListProjectionState.revision
     }
@@ -1631,6 +1640,12 @@ extension NostrHomeTimelineStore {
         applyListProjectionInvalidation(invalidation)
     }
 
+    func testingApplyPendingEventCountPublication(
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) {
+        applyPendingEventCountPublication(publication)
+    }
+
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
         publishHomeTimelineRealtimeState(isRealtime)
     }
@@ -1672,8 +1687,8 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
-        pendingEventBuffer.replaceEventIDs(ids) { [weak self] count in
-            self?.setUnmaterializedNewCount(count)
+        pendingEventBuffer.replaceEventIDs(ids) { [weak self] publication in
+            self?.applyPendingEventCountPublication(publication)
         }
     }
 

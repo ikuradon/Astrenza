@@ -82,13 +82,22 @@ struct HomeTimelinePendingEventBufferTests {
         let buffer = HomeTimelinePendingEventBuffer(delay: { _ in
             await delay.suspend()
         })
-        let publish: HomeTimelinePendingEventBuffer.CountPublisher = { count in
-            probe.counts.append(count)
+        let publish: HomeTimelinePendingEventBuffer.PublicationHandler = { publication in
+            probe.counts.append(publication.count)
         }
 
-        let insertedFirst = buffer.insert(eventID: "event-a", onCountChange: publish)
-        let insertedDuplicate = buffer.insert(eventID: "event-a", onCountChange: publish)
-        let insertedSecond = buffer.insert(eventID: "event-b", onCountChange: publish)
+        let insertedFirst = buffer.insert(
+            eventID: "event-a",
+            onCountPublication: publish
+        )
+        let insertedDuplicate = buffer.insert(
+            eventID: "event-a",
+            onCountPublication: publish
+        )
+        let insertedSecond = buffer.insert(
+            eventID: "event-b",
+            onCountPublication: publish
+        )
 
         #expect(insertedFirst)
         #expect(!insertedDuplicate)
@@ -112,23 +121,32 @@ struct HomeTimelinePendingEventBufferTests {
         let buffer = HomeTimelinePendingEventBuffer(delay: { _ in
             await delay.suspend()
         })
-        let publish: HomeTimelinePendingEventBuffer.CountPublisher = { count in
-            probe.counts.append(count)
+        let publish: HomeTimelinePendingEventBuffer.PublicationHandler = { publication in
+            probe.counts.append(publication.count)
         }
 
-        #expect(buffer.insert(eventID: "event-a", onCountChange: publish))
+        #expect(buffer.insert(
+            eventID: "event-a",
+            onCountPublication: publish
+        ))
         try #require(await waitUntil { await delay.requestCount() == 1 })
         await delay.resumeAll()
         try #require(await waitUntil { probe.counts == [1] })
 
-        #expect(buffer.insert(eventID: "event-b", onCountChange: publish))
+        #expect(buffer.insert(
+            eventID: "event-b",
+            onCountPublication: publish
+        ))
         try #require(await waitUntil { await delay.requestCount() == 2 })
-        #expect(buffer.removeAll(onCountChange: publish))
+        #expect(buffer.removeAll(onCountPublication: publish))
         #expect(probe.counts == [1, 0])
         #expect(buffer.isEmpty)
         #expect(!buffer.hasScheduledCountPublication)
 
-        #expect(buffer.insert(eventID: "event-c", onCountChange: publish))
+        #expect(buffer.insert(
+            eventID: "event-c",
+            onCountPublication: publish
+        ))
         try #require(await waitUntil { await delay.requestCount() == 3 })
         await delay.resumeAll()
         try #require(await waitUntil { probe.counts == [1, 0, 1] })

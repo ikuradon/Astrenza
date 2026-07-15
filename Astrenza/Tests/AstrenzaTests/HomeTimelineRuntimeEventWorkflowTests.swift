@@ -36,7 +36,7 @@ struct HomeTimelineRuntimeEventWorkflowTests {
         #expect(coordinator.accountValidityResults == [true])
         #expect(probe.effects == [
             .applyListProjectionInvalidation(7),
-            .pendingCountChanged(3),
+            .applyPendingEventCountPublication(3),
             .reloadProjection(
                 anchorEventID: "anchor",
                 materialization: .scheduled(allowsRealtimeFollow: true)
@@ -142,7 +142,9 @@ private final class RuntimeEventWorkflowCoordinatorSpy: HomeTimelineRuntimeEvent
         handlers.application.applyListProjectionInvalidation(
             HomeTimelineListProjectionInvalidation(revision: 7)
         )
-        handlers.application.pendingCountChanged(3)
+        handlers.application.applyPendingEventCountPublication(
+            HomeTimelinePendingEventCountPublication(count: 3)
+        )
         handlers.application.perform(.reloadProjection(
             anchorEventID: "anchor",
             materialization: .scheduled(allowsRealtimeFollow: true)
@@ -236,8 +238,10 @@ private final class RuntimeEventWorkflowEffectProbe {
                     invalidation.revision
                 ))
             },
-            pendingCountChanged: { [self] count in
-                effects.append(.pendingCountChanged(count))
+            applyPendingEventCountPublication: { [self] publication in
+                effects.append(.applyPendingEventCountPublication(
+                    publication.count
+                ))
             },
             reloadProjection: { [self] anchorEventID, materialization in
                 effects.append(.reloadProjection(
@@ -265,7 +269,7 @@ private final class RuntimeEventWorkflowEffectProbe {
 
 private enum RuntimeEventWorkflowEffect: Equatable, Sendable {
     case applyListProjectionInvalidation(Int)
-    case pendingCountChanged(Int)
+    case applyPendingEventCountPublication(Int)
     case reloadProjection(
         anchorEventID: String?,
         materialization: HomeTimelineRuntimeEventApplicationPlan.DeletionMaterialization

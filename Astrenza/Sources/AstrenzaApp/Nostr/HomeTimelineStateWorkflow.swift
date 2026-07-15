@@ -47,7 +47,9 @@ struct HomeTimelineStateWorkflowEffects: Sendable {
     typealias ListProjectionInvalidation = @MainActor @Sendable (
         _ invalidation: HomeTimelineListProjectionInvalidation
     ) -> Void
-    typealias CountChange = @MainActor @Sendable (_ count: Int) -> Void
+    typealias PendingEventCountPublicationHandler = @MainActor @Sendable (
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) -> Void
     typealias PersistenceState = @MainActor @Sendable () -> HomeTimelinePersistenceState
     typealias PendingEvents = @MainActor @Sendable () -> Bool
     typealias Action = @MainActor @Sendable () -> Void
@@ -56,7 +58,7 @@ struct HomeTimelineStateWorkflowEffects: Sendable {
     let applyContentSnapshot: ContentSnapshot
     let applyRelayStatusSnapshot: RelayStatusSnapshot
     let applyListProjectionInvalidation: ListProjectionInvalidation
-    let pendingCountChanged: CountChange
+    let applyPendingEventCountPublication: PendingEventCountPublicationHandler
     let persistenceState: PersistenceState
     let hasPendingEvents: PendingEvents
     let materializeEntries: Action
@@ -164,7 +166,7 @@ final class HomeTimelineStateWorkflow {
     ) -> HomeTimelineRuntimeApplicationEffects {
         HomeTimelineRuntimeApplicationEffects(
             applyListProjectionInvalidation: effects.applyListProjectionInvalidation,
-            pendingCountChanged: effects.pendingCountChanged,
+            applyPendingEventCountPublication: effects.applyPendingEventCountPublication,
             reloadProjection: { [weak self] anchorEventID, materialization in
                 self?.reloadProjection(
                     anchorEventID: anchorEventID,
@@ -209,7 +211,7 @@ final class HomeTimelineStateWorkflow {
             applyContentSnapshot: effects.applyContentSnapshot,
             applyRelayStatusSnapshot: effects.applyRelayStatusSnapshot,
             applyListProjectionInvalidation: effects.applyListProjectionInvalidation,
-            pendingCountChanged: effects.pendingCountChanged
+            applyPendingEventCountPublication: effects.applyPendingEventCountPublication
         )
     }
 
