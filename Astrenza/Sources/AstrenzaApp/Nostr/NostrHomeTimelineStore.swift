@@ -23,6 +23,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineRuntimeContextProjector()
     private let stateContextProjector =
         HomeTimelineStateContextProjector()
+    private let storeApplicationDispatcher =
+        HomeTimelineStoreApplicationDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -51,6 +53,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationInteractionWorkflow:
         HomeLocalMutationInteractionWorkflow?
     private let relayRuntime: NostrRelayRuntime?
+    private lazy var storeApplicationEffects =
+        makeStoreApplicationEffects()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -552,40 +556,19 @@ final class NostrHomeTimelineStore: ObservableObject {
                     }
                 ),
                 apply: { [weak self] application in
-                    self?.applyStateInteractionApplication(application)
+                    self?.dispatchStoreApplication(application)
                 }
             )
         )
     }
 
-    private func applyStateInteractionApplication(
+    private func dispatchStoreApplication(
         _ application: HomeTimelineStateInteractionApplication
     ) {
-        switch application {
-        case .applyPresentationTransition(let transition):
-            applyPresentationTransition(transition)
-        case .applyContentSnapshot(let snapshot):
-            applyContentSnapshot(snapshot)
-        case .applyRelayStatusSnapshot(let snapshot):
-            applyRelayStatusSnapshot(snapshot)
-        case .applyListProjectionInvalidation(let invalidation):
-            applyListProjectionInvalidation(invalidation)
-        case .applyPendingEventCountPublication(let publication):
-            applyPendingEventCountPublication(publication)
-        case .reloadProjection(let account, let anchorEventID):
-            reloadProjectionWindow(account: account, around: anchorEventID)
-        case .requestNewestProjectionReload:
-            presentationWorkflow.requestNewestProjectionReload()
-        case .scheduleMaterialization(let delay, let allowsRealtimeFollow):
-            scheduleMaterializeEntries(
-                delayNanoseconds: delay,
-                allowsRealtimeFollow: allowsRealtimeFollow
-            )
-        case .materializeEntries:
-            materializeEntries()
-        case .applyRelayStatusTransition(let transition):
-            applyRelayStatusTransition(transition)
-        }
+        storeApplicationDispatcher.apply(
+            application,
+            effects: storeApplicationEffects
+        )
     }
 
     private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
@@ -743,10 +726,10 @@ final class NostrHomeTimelineStore: ObservableObject {
                 ),
                 runtimeApplication: runtimeApplicationEffects(),
                 apply: { [weak self] application in
-                    self?.applyRuntimeInteractionApplication(application)
+                    self?.dispatchStoreApplication(application)
                 },
                 perform: { [weak self] application in
-                    await self?.performRuntimeInteractionApplication(application)
+                    await self?.performStoreApplication(application)
                 }
             )
         )
@@ -803,42 +786,89 @@ final class NostrHomeTimelineStore: ObservableObject {
                 ),
                 runtimeApplication: runtimeApplicationEffects(),
                 apply: { [weak self] application in
-                    self?.applyRuntimeInteractionApplication(application)
+                    self?.dispatchStoreApplication(application)
                 }
             )
         )
     }
 
-    private func applyRuntimeInteractionApplication(
+    private func dispatchStoreApplication(
         _ application: HomeTimelineRuntimeStoreAction
     ) {
-        switch application {
-        case .setRealtime(let isRealtime):
-            applySyncAction(.setRealtime(isRealtime))
-        case .applyRelayStatusTransition(let transition):
-            applyRelayStatusTransition(transition)
-        case .handleBackwardCompletion(let completion):
-            handleBackwardCompletion(completion)
-        case .invalidateListEntries:
-            invalidateListEntries()
-        case .scheduleMaterialization:
-            scheduleMaterializeEntries()
-        case .scheduleLinkPreviewResolution:
-            scheduleLinkPreviewResolution()
-        }
+        storeApplicationDispatcher.apply(
+            application,
+            effects: storeApplicationEffects
+        )
     }
 
-    private func performRuntimeInteractionApplication(
+    private func performStoreApplication(
         _ application: HomeTimelineRuntimeStoreAsyncAction
     ) async {
-        switch application {
-        case .handleEvent(let relayURL, let subscriptionID, let event):
-            await handleRuntimeEvent(
-                relayURL: relayURL,
-                subscriptionID: subscriptionID,
-                event: event
-            )
-        }
+        await storeApplicationDispatcher.perform(
+            application,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func makeStoreApplicationEffects(
+    ) -> HomeTimelineStoreApplicationEffects {
+        HomeTimelineStoreApplicationEffects(
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
+            },
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            applyRelayStatusSnapshot: { [weak self] snapshot in
+                self?.applyRelayStatusSnapshot(snapshot)
+            },
+            applyListProjectionInvalidation: { [weak self] invalidation in
+                self?.applyListProjectionInvalidation(invalidation)
+            },
+            applyPendingEventCountPublication: { [weak self] publication in
+                self?.applyPendingEventCountPublication(publication)
+            },
+            reloadProjection: { [weak self] account, anchorEventID in
+                self?.reloadProjectionWindow(
+                    account: account,
+                    around: anchorEventID
+                )
+            },
+            requestNewestProjectionReload: { [weak self] in
+                self?.presentationWorkflow.requestNewestProjectionReload()
+            },
+            scheduleMaterialization: { [weak self] delay, realtimeFollow in
+                self?.scheduleMaterializeEntries(
+                    delayNanoseconds: delay,
+                    allowsRealtimeFollow: realtimeFollow
+                )
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
+            },
+            applyRelayStatusTransition: { [weak self] transition in
+                self?.applyRelayStatusTransition(transition)
+            },
+            setRealtime: { [weak self] isRealtime in
+                self?.applySyncAction(.setRealtime(isRealtime))
+            },
+            handleBackwardCompletion: { [weak self] completion in
+                self?.handleBackwardCompletion(completion)
+            },
+            invalidateListEntries: { [weak self] in
+                self?.invalidateListEntries()
+            },
+            scheduleLinkPreviewResolution: { [weak self] in
+                self?.scheduleLinkPreviewResolution()
+            },
+            handleRuntimeEvent: { [weak self] relayURL, subscriptionID, event in
+                await self?.handleRuntimeEvent(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID,
+                    event: event
+                )
+            }
+        )
     }
 
 }
