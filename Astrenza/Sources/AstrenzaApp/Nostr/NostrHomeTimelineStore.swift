@@ -48,7 +48,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let timelineRepository: HomeTimelineRepository
     private let homeFeedProjection: HomeFeedProjectionController
-    private let stateWorkflow: HomeTimelineStateWorkflow
+    private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private let publishWorkflow: HomeTimelinePublishWorkflow?
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
@@ -197,7 +197,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.readStateCoordinator = components.readStateCoordinator
         self.timelineRepository = components.timelineRepository
         self.homeFeedProjection = components.homeFeedProjection
-        self.stateWorkflow = components.stateWorkflow
+        self.stateInteractionWorkflow = components.stateInteractionWorkflow
         self.publishWorkflow = components.publishWorkflow
         self.localMutationCoordinator = components.localMutationCoordinator
         self.relayRuntime = components.relayRuntime
@@ -718,14 +718,14 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     @discardableResult
     private func restoreCachedSnapshot(account: NostrAccount) -> Bool {
-        stateWorkflow.restoreCachedState(
+        stateInteractionWorkflow.restoreCachedState(
             accountID: account.pubkey,
-            effects: stateWorkflowEffects()
+            context: stateInteractionContext()
         )
     }
 
     private func persistDatabase(account: NostrAccount) async {
-        await stateWorkflow.persistSnapshot(
+        await stateInteractionWorkflow.persistSnapshot(
             HomeTimelineSnapshotInput(
                 accountID: account.pubkey,
                 relays: resolvedRelays,
@@ -737,40 +737,67 @@ final class NostrHomeTimelineStore: ObservableObject {
                 nip05Resolutions: dependencyCoordinator.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
             ),
-            effects: stateWorkflowEffects()
+            context: stateInteractionContext()
         )
     }
 
-    private func stateWorkflowEffects() -> HomeTimelineStateWorkflowEffects {
-        HomeTimelineStateWorkflowEffects(
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            applyRelayStatusSnapshot: { [weak self] snapshot in
-                self?.applyRelayStatusSnapshot(snapshot)
-            },
-            applyListProjectionInvalidation: { [weak self] invalidation in
-                self?.applyListProjectionInvalidation(invalidation)
-            },
-            applyPendingEventCountPublication: { [weak self] publication in
-                self?.applyPendingEventCountPublication(publication)
-            },
-            persistenceState: { [weak self] in
-                HomeTimelinePersistenceState(
-                    accountID: self?.account?.pubkey,
-                    followedPubkeys: self?.followedPubkeys ?? []
-                )
-            },
-            hasPendingEvents: { [weak self] in
-                self?.pendingEventBuffer.isEmpty == false
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            }
+    private func stateInteractionContext() -> HomeTimelineStateInteractionContext {
+        HomeTimelineStateInteractionContext(
+            effects: HomeTimelineStateInteractionEffects(
+                environment: HomeTimelineStateInteractionEnvironment(
+                    persistenceState: { [weak self] in
+                        HomeTimelinePersistenceState(
+                            accountID: self?.account?.pubkey,
+                            followedPubkeys: self?.followedPubkeys ?? []
+                        )
+                    },
+                    hasPendingEvents: { [weak self] in
+                        self?.pendingEventBuffer.isEmpty == false
+                    },
+                    runtimeApplicationState: { [weak self] in
+                        self?.runtimeApplicationState()
+                    }
+                ),
+                apply: { [weak self] application in
+                    self?.applyStateInteractionApplication(application)
+                }
+            )
         )
+    }
+
+    private func applyStateInteractionApplication(
+        _ application: HomeTimelineStateInteractionApplication
+    ) {
+        switch application {
+        case .applyPresentationTransition(let transition):
+            applyPresentationTransition(transition)
+        case .applyContentSnapshot(let snapshot):
+            applyContentSnapshot(snapshot)
+        case .applyRelayStatusSnapshot(let snapshot):
+            applyRelayStatusSnapshot(snapshot)
+        case .applyListProjectionInvalidation(let invalidation):
+            applyListProjectionInvalidation(invalidation)
+        case .applyPendingEventCountPublication(let publication):
+            applyPendingEventCountPublication(publication)
+        case .reloadProjection(let account, let anchorEventID):
+            reloadProjectionWindow(account: account, around: anchorEventID)
+        case .requestNewestProjectionReload:
+            presentationCoordinator.requestNewestProjectionReload()
+        case .scheduleMaterialization(let delay, let allowsRealtimeFollow):
+            scheduleMaterializeEntries(
+                delayNanoseconds: delay,
+                allowsRealtimeFollow: allowsRealtimeFollow
+            )
+        case .materializeEntries:
+            materializeEntries()
+        case .recordRuntimeDiagnostic(let diagnostic):
+            recordRuntimeSyncEvent(
+                relayURL: diagnostic.relayURL,
+                kind: .partialFailure,
+                subscriptionID: nil,
+                message: diagnostic.message
+            )
+        }
     }
 
     private func ensureHomeFeedDefinition(account: NostrAccount) {
@@ -1208,12 +1235,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func runtimeApplicationEffects() -> HomeTimelineRuntimeApplicationEffects {
-        stateWorkflow.runtimeApplicationEffects(
-            state: { [weak self] in
-                self?.runtimeApplicationState()
-            },
-            actions: runtimeApplicationActions(),
-            effects: stateWorkflowEffects()
+        stateInteractionWorkflow.runtimeApplicationEffects(
+            context: stateInteractionContext()
         )
     }
 
@@ -1226,37 +1249,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             hasMoreOlder: hasMoreOlder,
             deferredMaterializationDelayNanoseconds:
                 presentationCoordinator.defaultDelayNanoseconds * 2
-        )
-    }
-
-    private func runtimeApplicationActions() -> HomeTimelineRuntimeApplicationActions {
-        HomeTimelineRuntimeApplicationActions(
-            reloadProjection: { [weak self] account, anchorEventID in
-                self?.reloadProjectionWindow(
-                    account: account,
-                    around: anchorEventID
-                )
-            },
-            requestNewestProjectionReload: { [weak self] in
-                self?.presentationCoordinator.requestNewestProjectionReload()
-            },
-            scheduleMaterialization: { [weak self] delay, allowsRealtimeFollow in
-                self?.scheduleMaterializeEntries(
-                    delayNanoseconds: delay,
-                    allowsRealtimeFollow: allowsRealtimeFollow
-                )
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            recordDiagnostic: { [weak self] diagnostic in
-                self?.recordRuntimeSyncEvent(
-                    relayURL: diagnostic.relayURL,
-                    kind: .partialFailure,
-                    subscriptionID: nil,
-                    message: diagnostic.message
-                )
-            }
         )
     }
 
@@ -1428,10 +1420,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func replaceTimelineState(_ state: NostrHomeTimelineState) {
-        stateWorkflow.replace(
+        stateInteractionWorkflow.replace(
             state,
             accountID: account?.pubkey,
-            effects: stateWorkflowEffects()
+            context: stateInteractionContext()
         )
     }
 

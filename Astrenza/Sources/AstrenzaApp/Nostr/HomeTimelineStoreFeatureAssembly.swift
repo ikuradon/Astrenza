@@ -1,7 +1,7 @@
 import AstrenzaCore
 
 private struct HomeTimelineStoreApplicationFeatures {
-    let stateWorkflow: HomeTimelineStateWorkflow
+    let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
 }
@@ -41,7 +41,7 @@ extension HomeTimelineStoreAssembly {
         )
         let peripherals = makePeripheralFeatures(input, persistence: persistence)
         return HomeTimelineStoreFeatureGraph(
-            stateWorkflow: applications.stateWorkflow,
+            stateInteractionWorkflow: applications.stateInteractionWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
             viewportInteractionWorkflow:
                 applications.viewportInteractionWorkflow,
@@ -133,10 +133,13 @@ extension HomeTimelineStoreAssembly {
         let paginationWorkflow = HomeTimelinePaginationWorkflow(
             lifecycleCoordinator: coordination.lifecycleCoordinator
         )
+        let stateWorkflow = HomeTimelineStateWorkflow(
+            stateApplication: stateApplicationCoordinator,
+            persistence: persistenceCoordinator
+        )
         return HomeTimelineStoreApplicationFeatures(
-            stateWorkflow: HomeTimelineStateWorkflow(
-                stateApplication: stateApplicationCoordinator,
-                persistence: persistenceCoordinator
+            stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow(
+                stateWorkflow: stateWorkflow
             ),
             accountStartWorkflow: accountStartWorkflow,
             viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow(
