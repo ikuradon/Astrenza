@@ -4,6 +4,7 @@ private struct HomeTimelineStoreApplicationFeatures {
     let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow
+    let paginationWorkflow: HomeTimelinePaginationWorkflow
 }
 
 private struct HomeTimelineStoreLoadFeatures {
@@ -44,6 +45,7 @@ extension HomeTimelineStoreAssembly {
             stateWorkflow: applications.stateWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
             pendingEventsWorkflow: applications.pendingEventsWorkflow,
+            paginationWorkflow: applications.paginationWorkflow,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
             loadWorkflow: loads.loadWorkflow,
             linkPreviewCoordinator: peripherals.linkPreviewCoordinator,
@@ -131,7 +133,10 @@ extension HomeTimelineStoreAssembly {
                 persistence: persistenceCoordinator
             ),
             accountStartWorkflow: accountStartWorkflow,
-            pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow()
+            pendingEventsWorkflow: HomeTimelinePendingEventsWorkflow(),
+            paginationWorkflow: HomeTimelinePaginationWorkflow(
+                lifecycleCoordinator: coordination.lifecycleCoordinator
+            )
         )
     }
 

@@ -28,6 +28,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadWorkflow: HomeTimelineLoadWorkflow
+    private let paginationWorkflow: HomeTimelinePaginationWorkflow
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
@@ -237,6 +238,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         self.remoteLoadCoordinator = components.remoteLoadCoordinator
         self.loadWorkflow = components.loadWorkflow
+        self.paginationWorkflow = components.paginationWorkflow
         self.eventStore = components.eventStore
         self.contentCoordinator = components.contentCoordinator
         self.runtimeEventWorkflow = components.runtimeEventWorkflow
@@ -318,21 +320,17 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func refresh() {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
-        restoreProjectionAnchorEventID = nil
-        isTimelineAtNewestWindow = true
-        lifecycleCoordinator.startPagination(for: lifecycle) { [weak self] in
-            await self?.refreshLatest(account: account, lifecycle: lifecycle)
-        }
+        paginationWorkflow.refresh(
+            paginationState(),
+            effects: paginationEffects()
+        )
     }
 
     func refreshLatest() async {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
-        else { return }
-        await refreshLatest(account: account, lifecycle: lifecycle)
+        await paginationWorkflow.refreshLatest(
+            paginationState(),
+            effects: paginationEffects()
+        )
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
@@ -406,18 +404,35 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func loadOlder() {
-        guard let account,
-              let lifecycle = lifecycleCoordinator.token(for: account.pubkey),
-              activityCoordinator.canBeginLoadingOlder,
-              hasMoreOlder,
-              !noteEvents.isEmpty,
-              !resolvedRelays.isEmpty,
-              !followedPubkeys.isEmpty
-        else { return }
+        paginationWorkflow.loadOlder(
+            paginationState(),
+            effects: paginationEffects()
+        )
+    }
 
-        lifecycleCoordinator.startPagination(for: lifecycle) { [weak self] in
-            await self?.loadOlder(account: account, lifecycle: lifecycle)
-        }
+    private func paginationState() -> HomeTimelinePaginationState {
+        HomeTimelinePaginationState(
+            account: account,
+            canBeginLoadingOlder: activityCoordinator.canBeginLoadingOlder,
+            hasMoreOlder: hasMoreOlder,
+            hasTimelineEvents: !noteEvents.isEmpty,
+            hasResolvedRelays: !resolvedRelays.isEmpty,
+            hasFollowedPubkeys: !followedPubkeys.isEmpty
+        )
+    }
+
+    private func paginationEffects() -> HomeTimelinePaginationEffects {
+        HomeTimelinePaginationEffects(
+            resetProjectionRestoreState: { [weak self] in
+                self?.resetProjectionRestoreState()
+            },
+            refreshLatest: { [weak self] account, lifecycle in
+                await self?.refreshLatest(account: account, lifecycle: lifecycle)
+            },
+            loadOlder: { [weak self] account, lifecycle in
+                await self?.loadOlder(account: account, lifecycle: lifecycle)
+            }
+        )
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
