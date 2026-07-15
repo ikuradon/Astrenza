@@ -14,6 +14,9 @@ final class HomeTimelineMaterializationCoordinator {
     typealias TransitionHandler = @MainActor @Sendable (
         _ transition: HomeTimelinePresentationTransition
     ) -> Void
+    typealias ProjectionReloadHandler = @MainActor @Sendable (
+        _ didReload: Bool
+    ) -> Void
 
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
@@ -23,6 +26,8 @@ final class HomeTimelineMaterializationCoordinator {
 
     private var materializationTask: Task<Void, Never>?
     private var materializationGeneration: UInt64 = 0
+    private var projectionTask: Task<Bool, Never>?
+    private var projectionGeneration: UInt64 = 0
 
     init(
         contentCoordinator: HomeTimelineContentCoordinator,
@@ -38,34 +43,38 @@ final class HomeTimelineMaterializationCoordinator {
         self.worker = worker
     }
 
-    @discardableResult
-    func reloadNewestProjection(account: NostrAccount) -> Bool {
+    func reloadNewestProjection(
+        account: NostrAccount,
+        onCompletion: ProjectionReloadHandler? = nil
+    ) {
         let content = contentCoordinator.snapshot
-        guard let window = projectionController.reloadNewest(
-            accountID: account.pubkey,
-            followedPubkeys: content.followedPubkeys,
-            liveEvents: content.noteEvents
-        ) else { return false }
-        contentCoordinator.replaceProjectionEvents(window.events)
-        return true
+        let projectionController = projectionController
+        enqueueProjectionReload(onCompletion: onCompletion) {
+            await projectionController.reloadNewest(
+                accountID: account.pubkey,
+                followedPubkeys: content.followedPubkeys,
+                liveEvents: content.noteEvents
+            )
+        }
     }
 
-    @discardableResult
     func reloadProjection(
         account: NostrAccount,
         around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool
-    ) -> Bool {
+        mergingWithCurrentWindow: Bool,
+        onCompletion: ProjectionReloadHandler? = nil
+    ) {
         let content = contentCoordinator.snapshot
-        guard let window = projectionController.reload(
-            accountID: account.pubkey,
-            followedPubkeys: content.followedPubkeys,
-            liveEvents: content.noteEvents,
-            around: anchorEventID,
-            mergingWithCurrentWindow: mergingWithCurrentWindow
-        ) else { return false }
-        contentCoordinator.replaceProjectionEvents(window.events)
-        return true
+        let projectionController = projectionController
+        enqueueProjectionReload(onCompletion: onCompletion) {
+            await projectionController.reload(
+                accountID: account.pubkey,
+                followedPubkeys: content.followedPubkeys,
+                liveEvents: content.noteEvents,
+                around: anchorEventID,
+                mergingWithCurrentWindow: mergingWithCurrentWindow
+            )
+        }
     }
 
     func materialize(
@@ -83,21 +92,8 @@ final class HomeTimelineMaterializationCoordinator {
             presentationCoordinator.clearNewestProjectionReload()
         }
 
-        let content = contentCoordinator.snapshot
         startMaterialization(
-            HomeTimelineMaterializationInput(
-                accountID: request.account?.pubkey,
-                noteEvents: content.noteEvents,
-                feedWindow: projectionController.window,
-                metadataEvents: content.metadataEvents,
-                nip05Resolutions: request.nip05Resolutions,
-                profileResolutionStates: request.profileResolutionStates,
-                followedPubkeys: content.followedPubkeys,
-                resolvedRelayCount: content.resolvedRelays.count,
-                filtersSuspended: filterCoordinator.filtersSuspended,
-                filterTimestamp: Int(Date().timeIntervalSince1970),
-                policy: request.policy
-            ),
+            request,
             pass: pass,
             onTransition: onTransition
         )
@@ -105,21 +101,31 @@ final class HomeTimelineMaterializationCoordinator {
 
     func cancel() {
         cancelTask()
+        cancelProjectionTask()
         presentationCoordinator.cancelMaterialization()
     }
 
     private func startMaterialization(
-        _ input: HomeTimelineMaterializationInput,
+        _ request: HomeTimelineMaterializationRequest,
         pass: HomeTimelineMaterializationPass,
         onTransition: @escaping TransitionHandler
     ) {
         cancelTask()
         let generation = materializationGeneration
         let worker = worker
+        let pendingProjectionTask = projectionTask
         materializationTask = Task { [weak self] in
+            if let pendingProjectionTask {
+                _ = await pendingProjectionTask.value
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  generation == materializationGeneration
+            else { return }
+            let input = materializationInput(for: request)
             guard let materialized = await worker.materialize(input),
                   !Task.isCancelled,
-                  let self
+                  generation == materializationGeneration
             else { return }
             finishMaterialization(
                 materialized,
@@ -127,6 +133,51 @@ final class HomeTimelineMaterializationCoordinator {
                 generation: generation,
                 onTransition: onTransition
             )
+        }
+    }
+
+    private func materializationInput(
+        for request: HomeTimelineMaterializationRequest
+    ) -> HomeTimelineMaterializationInput {
+        let content = contentCoordinator.snapshot
+        return HomeTimelineMaterializationInput(
+            accountID: request.account?.pubkey,
+            noteEvents: content.noteEvents,
+            feedWindow: projectionController.window,
+            metadataEvents: content.metadataEvents,
+            nip05Resolutions: request.nip05Resolutions,
+            profileResolutionStates: request.profileResolutionStates,
+            followedPubkeys: content.followedPubkeys,
+            resolvedRelayCount: content.resolvedRelays.count,
+            filtersSuspended: filterCoordinator.filtersSuspended,
+            filterTimestamp: Int(Date().timeIntervalSince1970),
+            policy: request.policy
+        )
+    }
+
+    private func enqueueProjectionReload(
+        onCompletion: ProjectionReloadHandler?,
+        operation: @escaping @MainActor @Sendable (
+        ) async -> NostrFeedWindow?
+    ) {
+        cancelTask()
+        projectionTask?.cancel()
+        projectionGeneration &+= 1
+        let generation = projectionGeneration
+        projectionTask = Task { [weak self] in
+            guard !Task.isCancelled else { return false }
+            let window = await operation()
+            guard let self,
+                  !Task.isCancelled,
+                  generation == projectionGeneration
+            else { return false }
+            let didReload = window != nil
+            if let window {
+                contentCoordinator.replaceProjectionEvents(window.events)
+            }
+            projectionTask = nil
+            onCompletion?(didReload)
+            return didReload
         }
     }
 
@@ -149,5 +200,11 @@ final class HomeTimelineMaterializationCoordinator {
         materializationGeneration &+= 1
         materializationTask?.cancel()
         materializationTask = nil
+    }
+
+    private func cancelProjectionTask() {
+        projectionGeneration &+= 1
+        projectionTask?.cancel()
+        projectionTask = nil
     }
 }

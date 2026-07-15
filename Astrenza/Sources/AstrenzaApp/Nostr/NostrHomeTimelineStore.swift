@@ -656,26 +656,40 @@ final class NostrHomeTimelineStore: ObservableObject {
         projectionInteractionWorkflow.reloadNewestProjection(account: account)
     }
 
-    @discardableResult
     private func reloadProjectionWindow(
         account: NostrAccount,
         around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool = false
-    ) -> Bool {
+        mergingWithCurrentWindow: Bool = false,
+        onCompletion: HomeTimelineMaterializationCoordinating
+            .ProjectionReloadHandler? = nil
+    ) {
         projectionInteractionWorkflow.reloadProjection(
             account: account,
             around: anchorEventID,
-            mergingWithCurrentWindow: mergingWithCurrentWindow
+            mergingWithCurrentWindow: mergingWithCurrentWindow,
+            onCompletion: onCompletion
         )
     }
 
     private func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
         guard let restoreProjectionAnchorEventID else { return }
-        guard reloadProjectionWindow(account: account, around: restoreProjectionAnchorEventID) else { return }
-        materializeEntries()
-        scheduleLinkPreviewResolution()
-        if !entries.isEmpty {
-            applyActivityIntent(.setPhase(.loaded))
+        reloadProjectionWindow(
+            account: account,
+            around: restoreProjectionAnchorEventID
+        ) { [weak self] didReload in
+            guard didReload,
+                  let self,
+                  self.account?.pubkey == account.pubkey,
+                  self.restoreProjectionAnchorEventID ==
+                    restoreProjectionAnchorEventID
+            else { return }
+            materializeEntries { [weak self] transition in
+                guard let self else { return }
+                scheduleLinkPreviewResolution()
+                if !transition.snapshot.entries.isEmpty {
+                    applyActivityIntent(.setPhase(.loaded))
+                }
+            }
         }
     }
 
@@ -953,7 +967,11 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    private func materializeEntries(allowsRealtimeFollow: Bool = false) {
+    private func materializeEntries(
+        allowsRealtimeFollow: Bool = false,
+        onTransition: HomeTimelineMaterializationCoordinating
+            .TransitionHandler? = nil
+    ) {
         let dependencies = dataInteractionWorkflow.dependencyResolutionState
         projectionInteractionWorkflow.materialize(
             HomeTimelineMaterializationRequest(
@@ -964,7 +982,9 @@ private extension NostrHomeTimelineStore {
                 allowsRealtimeFollow: allowsRealtimeFollow
             )
         ) { [weak self] transition in
-            self?.applyPresentationTransition(transition)
+            guard let self else { return }
+            applyPresentationTransition(transition)
+            onTransition?(transition)
         }
     }
 
@@ -1777,7 +1797,7 @@ extension NostrHomeTimelineStore {
         account: NostrAccount,
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
-    ) {
+    ) async {
         runtimeInteractionWorkflow.ensureLifecycle(accountID: account.pubkey)
         applyAccountContextTransition(.activate(
             account,
@@ -1788,7 +1808,7 @@ extension NostrHomeTimelineStore {
                 .replaceFollowedPubkeys(sourceAuthors)
             )
         )
-        projectionInteractionWorkflow.activateStoredProjection(
+        await projectionInteractionWorkflow.activateStoredProjection(
             definition: definition,
             sourceAuthors: sourceAuthors
         )

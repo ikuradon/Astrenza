@@ -85,7 +85,7 @@ struct HomeTimelineMaterializationCoordinatorTests {
     }
 
     @Test("Anchored projection reload replaces content with the bounded window")
-    func anchoredReloadReplacesContentWindow() throws {
+    func anchoredReloadReplacesContentWindow() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = account()
         let events = (1...5).map { index in
@@ -108,12 +108,17 @@ struct HomeTimelineMaterializationCoordinatorTests {
         try installPersistedProjection(events, account: account, in: system)
         let anchor = events[2]
 
-        #expect(system.coordinator.reloadProjection(
-            account: account,
-            around: anchor.id,
-            mergingWithCurrentWindow: false
-        ))
+        let didReload = await withCheckedContinuation { continuation in
+            system.coordinator.reloadProjection(
+                account: account,
+                around: anchor.id,
+                mergingWithCurrentWindow: false
+            ) {
+                continuation.resume(returning: $0)
+            }
+        }
 
+        #expect(didReload)
         let windowEventIDs = try #require(system.projection.window?.events.map(\.id))
         #expect(windowEventIDs.count == 3)
         #expect(windowEventIDs.contains(anchor.id))

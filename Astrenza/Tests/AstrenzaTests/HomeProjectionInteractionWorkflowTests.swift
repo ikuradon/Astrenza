@@ -104,6 +104,7 @@ struct HomeProjectionInteractionWorkflowTests {
         )
         let liveEvent = event(accountID: account.pubkey)
         let context = HomeFeedRuntimeContext(definition: definition)
+        let reloadProbe = ProjectionReloadProbe()
         let request = HomeTimelineMaterializationRequest(
             account: account,
             nip05Resolutions: [:],
@@ -118,12 +119,7 @@ struct HomeProjectionInteractionWorkflowTests {
             liveEvents: [liveEvent]
         )
         #expect(workflow.isCurrent(context, accountID: account.pubkey))
-        #expect(workflow.reloadNewestProjection(account: account))
-        #expect(workflow.reloadProjection(
-            account: account,
-            around: "anchor",
-            mergingWithCurrentWindow: true
-        ))
+        routeProjectionReloads(through: workflow, account: account, probe: reloadProbe)
         workflow.materialize(request) { _ in }
 
         #expect(projection.ensuredAccountID == account.pubkey)
@@ -136,6 +132,7 @@ struct HomeProjectionInteractionWorkflowTests {
         #expect(materialization.reloadAccountID == account.pubkey)
         #expect(materialization.reloadAnchorEventID == "anchor")
         #expect(materialization.reloadMergesCurrentWindow)
+        #expect(reloadProbe.results == [true, true])
         #expect(materialization.materializationAccountID == account.pubkey)
         #expect(materialization.allowsRealtimeFollow)
     }
@@ -151,6 +148,19 @@ struct HomeProjectionInteractionWorkflowTests {
         workflow.cancelMaterialization()
 
         #expect(materialization.cancelCount == 1)
+    }
+
+    private func routeProjectionReloads(
+        through workflow: HomeProjectionInteractionWorkflow,
+        account: NostrAccount,
+        probe: ProjectionReloadProbe
+    ) {
+        workflow.reloadNewestProjection(account: account) { probe.results.append($0) }
+        workflow.reloadProjection(
+            account: account,
+            around: "anchor",
+            mergingWithCurrentWindow: true
+        ) { probe.results.append($0) }
     }
 
     private func makeWorkflow(
@@ -259,7 +269,7 @@ private final class ProjectionInteractionSpy: HomeFeedProjectionControlling {
     func activateStoredProjection(
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
-    ) {
+    ) async {
         activatedDefinition = definition
         activatedSourceAuthors = sourceAuthors
     }
@@ -353,20 +363,22 @@ private final class MaterializationInteractionSpy:
         self.reloadResult = reloadResult
     }
 
-    func reloadNewestProjection(account: NostrAccount) -> Bool {
+    func reloadNewestProjection(
+        account: NostrAccount, onCompletion: ProjectionReloadHandler?
+    ) {
         newestAccountID = account.pubkey
-        return reloadNewestResult
+        onCompletion?(reloadNewestResult)
     }
 
     func reloadProjection(
-        account: NostrAccount,
-        around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool
-    ) -> Bool {
+        account: NostrAccount, around anchorEventID: String?,
+        mergingWithCurrentWindow: Bool,
+        onCompletion: ProjectionReloadHandler?
+    ) {
         reloadAccountID = account.pubkey
         reloadAnchorEventID = anchorEventID
         reloadMergesCurrentWindow = mergingWithCurrentWindow
-        return reloadResult
+        onCompletion?(reloadResult)
     }
 
     func materialize(
@@ -381,3 +393,6 @@ private final class MaterializationInteractionSpy:
         cancelCount += 1
     }
 }
+
+@MainActor
+private final class ProjectionReloadProbe { var results: [Bool] = [] }

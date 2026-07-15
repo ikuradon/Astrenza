@@ -238,6 +238,7 @@ final class HomeFeedProjectionController {
     let anchorTrailingLimit: Int
 
     private let eventStore: NostrEventStore?
+    private let windowLoader: any HomeFeedWindowLoading
     private(set) var definition: NostrFeedDefinitionRecord?
     private(set) var window: NostrFeedWindow?
     private(set) var generation: UInt64 = 0
@@ -248,9 +249,13 @@ final class HomeFeedProjectionController {
         windowLimit: Int = 240,
         retainedWindowLimit: Int = HomeTimelinePersistenceProjection.retainedEventLimit,
         anchorLeadingLimit: Int = 80,
-        anchorTrailingLimit: Int = 160
+        anchorTrailingLimit: Int = 160,
+        windowLoader: (any HomeFeedWindowLoading)? = nil
     ) {
         self.eventStore = eventStore
+        self.windowLoader = windowLoader ?? HomeFeedWindowLoader(
+            eventStore: eventStore
+        )
         self.windowLimit = windowLimit
         self.retainedWindowLimit = retainedWindowLimit
         self.anchorLeadingLimit = anchorLeadingLimit
@@ -353,22 +358,25 @@ final class HomeFeedProjectionController {
         accountID: String,
         followedPubkeys: [String],
         liveEvents: [NostrEvent]
-    ) -> NostrFeedWindow? {
+    ) async -> NostrFeedWindow? {
         ensureDefinition(
             accountID: accountID,
             followedPubkeys: followedPubkeys,
             liveEvents: liveEvents
         )
-        guard let eventStore,
-              let definition,
-              let loaded = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: windowLimit
-              )
-        else { return nil }
+        guard let definition else { return nil }
+        let loadGeneration = beginWindowLoad()
+        guard let loaded = await windowLoader.load(
+            HomeFeedWindowLoadRequest(
+                definition: definition,
+                selection: .newest(limit: windowLimit),
+                currentWindow: nil
+            )
+        ), canApplyWindow(
+            generation: loadGeneration,
+            definition: definition
+        ) else { return nil }
         window = loaded
-        generation &+= 1
         return loaded
     }
 
@@ -379,51 +387,40 @@ final class HomeFeedProjectionController {
         liveEvents: [NostrEvent],
         around anchorEventID: String?,
         mergingWithCurrentWindow: Bool
-    ) -> NostrFeedWindow? {
+    ) async -> NostrFeedWindow? {
         ensureDefinition(
             accountID: accountID,
             followedPubkeys: followedPubkeys,
             liveEvents: liveEvents
         )
-        guard let eventStore, let definition else { return nil }
-        let loaded: NostrFeedWindow?
+        guard let definition else { return nil }
+        let selection: HomeFeedWindowSelection
+        let currentWindow: NostrFeedWindow?
         if let anchorEventID {
-            loaded = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                aroundEventID: anchorEventID,
+            selection = .anchored(
+                eventID: anchorEventID,
                 leadingLimit: anchorLeadingLimit,
-                trailingLimit: anchorTrailingLimit
-            )
-        } else {
-            loaded = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: windowLimit
-            )
-        }
-        guard let loaded else { return nil }
-        if let anchorEventID,
-           !loaded.memberships.contains(where: { $0.eventID == anchorEventID }) {
-            return nil
-        }
-
-        let nextWindow: NostrFeedWindow
-        if mergingWithCurrentWindow,
-           let window,
-           let anchorEventID {
-            nextWindow = HomeFeedProjectionBuilder.mergedWindow(
-                window,
-                with: loaded,
-                centeredOn: anchorEventID,
+                trailingLimit: anchorTrailingLimit,
                 retainedLimit: retainedWindowLimit
             )
+            currentWindow = mergingWithCurrentWindow ? window : nil
         } else {
-            nextWindow = loaded
+            selection = .newest(limit: windowLimit)
+            currentWindow = nil
         }
-        window = nextWindow
-        generation &+= 1
-        return nextWindow
+        let loadGeneration = beginWindowLoad()
+        guard let loaded = await windowLoader.load(
+            HomeFeedWindowLoadRequest(
+                definition: definition,
+                selection: selection,
+                currentWindow: currentWindow
+            )
+        ), canApplyWindow(
+            generation: loadGeneration,
+            definition: definition
+        ) else { return nil }
+        window = loaded
+        return loaded
     }
 
     func activate(
@@ -440,22 +437,21 @@ final class HomeFeedProjectionController {
     func activateStoredProjection(
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
-    ) {
-        let storedWindow: NostrFeedWindow?
-        if let eventStore {
-            storedWindow = try? eventStore.feedWindow(
-                feedID: definition.feedID,
-                revision: definition.revision,
-                limit: windowLimit
+    ) async {
+        let activationGeneration = beginWindowLoad()
+        let storedWindow = await windowLoader.load(
+            HomeFeedWindowLoadRequest(
+                definition: definition,
+                selection: .newest(limit: windowLimit),
+                currentWindow: nil
             )
-        } else {
-            storedWindow = nil
-        }
-        activate(
-            definition: definition,
-            window: storedWindow,
-            sourceAuthors: sourceAuthors
         )
+        guard !Task.isCancelled,
+              generation == activationGeneration
+        else { return }
+        self.definition = definition
+        self.window = storedWindow
+        self.sourceAuthors = sourceAuthors
     }
 
     func runtimeContext() -> HomeFeedRuntimeContext? {
@@ -465,6 +461,20 @@ final class HomeFeedProjectionController {
     func isCurrent(_ context: HomeFeedRuntimeContext?, accountID: String?) -> Bool {
         guard let context else { return false }
         return context.matches(definition) && accountID == context.accountID
+    }
+
+    private func beginWindowLoad() -> UInt64 {
+        generation &+= 1
+        return generation
+    }
+
+    private func canApplyWindow(
+        generation loadGeneration: UInt64,
+        definition loadedDefinition: NostrFeedDefinitionRecord
+    ) -> Bool {
+        !Task.isCancelled &&
+            generation == loadGeneration &&
+            definition == loadedDefinition
     }
 
     private func repairProjectionIfNeeded(

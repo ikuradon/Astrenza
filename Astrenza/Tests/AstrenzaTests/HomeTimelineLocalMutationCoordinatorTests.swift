@@ -80,7 +80,7 @@ struct HomeTimelineLocalMutationCoordinatorTests {
 
     @Test("Store preserves mutation-specific failure presentation")
     @MainActor
-    func storePreservesFailurePresentation() throws {
+    func storePreservesFailurePresentation() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "f", count: 64),
@@ -97,7 +97,7 @@ struct HomeTimelineLocalMutationCoordinatorTests {
             eventStore: eventStore,
             localMutationPersistence: FailingLocalMutationPersistence()
         )
-        store.testingActivateHomeFeed(
+        await store.testingActivateHomeFeed(
             account: account,
             definition: definition,
             sourceAuthors: [account.pubkey]

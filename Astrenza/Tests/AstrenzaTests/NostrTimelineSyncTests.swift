@@ -247,7 +247,11 @@ struct NostrTimelineSyncTests {
             subscriptionID: "astrenza-older-notes-test-req"
         )
         let store = NostrHomeTimelineStore(eventStore: eventStore)
-        store.testingActivateHomeFeed(account: account, definition: definition, sourceAuthors: [author])
+        await store.testingActivateHomeFeed(
+            account: account,
+            definition: definition,
+            sourceAuthors: [author]
+        )
         store.testingRegisterOlderFeedRequest(
             packet: packet,
             definition: definition,
@@ -310,7 +314,11 @@ struct NostrTimelineSyncTests {
             subscriptionID: "astrenza-older-notes-early-req"
         )
         let store = NostrHomeTimelineStore(eventStore: eventStore)
-        store.testingActivateHomeFeed(account: account, definition: definition, sourceAuthors: [author])
+        await store.testingActivateHomeFeed(
+            account: account,
+            definition: definition,
+            sourceAuthors: [author]
+        )
         store.testingRegisterOlderFeedRequest(packet: packet, definition: definition, anchorEventID: nil)
 
         await store.testingHandleBackwardEvent(
@@ -351,7 +359,11 @@ struct NostrTimelineSyncTests {
             relayURLs: ["wss://relay.example"]
         )
         let store = NostrHomeTimelineStore(eventStore: eventStore)
-        store.testingActivateHomeFeed(account: account, definition: revision1, sourceAuthors: [oldAuthor])
+        await store.testingActivateHomeFeed(
+            account: account,
+            definition: revision1,
+            sourceAuthors: [oldAuthor]
+        )
         store.testingRegisterOlderFeedRequest(packet: packet, definition: revision1, anchorEventID: nil)
         store.testingRegisterForwardFeedRequest(packet: forwardPacket, definition: revision1)
         let forwardAttempt = NostrRelayRequestAttempt(
@@ -370,7 +382,11 @@ struct NostrTimelineSyncTests {
         await store.testingHandleFeedSyncRequestStarted(attempt)
 
         try eventStore.replaceFeedProjection(revision2, memberships: [])
-        store.testingActivateHomeFeed(account: account, definition: revision2, sourceAuthors: [newAuthor])
+        await store.testingActivateHomeFeed(
+            account: account,
+            definition: revision2,
+            sourceAuthors: [newAuthor]
+        )
         let delayed = signedShapeOnlyEvent(
             kind: 1,
             pubkey: oldAuthor,

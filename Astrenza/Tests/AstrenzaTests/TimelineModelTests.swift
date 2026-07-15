@@ -2537,7 +2537,7 @@ struct TimelineModelTests {
         let dependencyEventID = String(repeating: "f", count: 64)
 
         try await relayRuntime.setDefaultRelays(["wss://default.example"])
-        store.testingActivateHomeFeed(
+        await store.testingActivateHomeFeed(
             account: account,
             definition: definition,
             sourceAuthors: [account.pubkey]
@@ -6892,7 +6892,7 @@ struct TimelineModelTests {
         _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        try await waitForTimelinePostIDs(in: store, ids: [mediaEvent.id])
 
         let post = try #require(store.entries.compactMap(\.post).first { $0.id == mediaEvent.id })
         if case .gallery(let tiles) = post.media {

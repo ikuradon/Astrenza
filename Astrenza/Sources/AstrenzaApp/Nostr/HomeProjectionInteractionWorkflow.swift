@@ -21,7 +21,7 @@ protocol HomeFeedProjectionControlling: AnyObject {
     func activateStoredProjection(
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
-    )
+    ) async
 }
 
 extension HomeFeedProjectionController: HomeFeedProjectionControlling {}
@@ -60,16 +60,21 @@ protocol HomeTimelineMaterializationCoordinating: AnyObject {
     typealias TransitionHandler = @MainActor @Sendable (
         _ transition: HomeTimelinePresentationTransition
     ) -> Void
+    typealias ProjectionReloadHandler = @MainActor @Sendable (
+        _ didReload: Bool
+    ) -> Void
 
-    @discardableResult
-    func reloadNewestProjection(account: NostrAccount) -> Bool
+    func reloadNewestProjection(
+        account: NostrAccount,
+        onCompletion: ProjectionReloadHandler?
+    )
 
-    @discardableResult
     func reloadProjection(
         account: NostrAccount,
         around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool
-    ) -> Bool
+        mergingWithCurrentWindow: Bool,
+        onCompletion: ProjectionReloadHandler?
+    )
 
     func materialize(
         _ request: HomeTimelineMaterializationRequest,
@@ -191,21 +196,29 @@ final class HomeProjectionInteractionWorkflow {
         return readState.scheduleReadBoundarySave(write)
     }
 
-    @discardableResult
-    func reloadNewestProjection(account: NostrAccount) -> Bool {
-        materialization.reloadNewestProjection(account: account)
+    func reloadNewestProjection(
+        account: NostrAccount,
+        onCompletion: HomeTimelineMaterializationCoordinating
+            .ProjectionReloadHandler? = nil
+    ) {
+        materialization.reloadNewestProjection(
+            account: account,
+            onCompletion: onCompletion
+        )
     }
 
-    @discardableResult
     func reloadProjection(
         account: NostrAccount,
         around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool
-    ) -> Bool {
+        mergingWithCurrentWindow: Bool,
+        onCompletion: HomeTimelineMaterializationCoordinating
+            .ProjectionReloadHandler? = nil
+    ) {
         materialization.reloadProjection(
             account: account,
             around: anchorEventID,
-            mergingWithCurrentWindow: mergingWithCurrentWindow
+            mergingWithCurrentWindow: mergingWithCurrentWindow,
+            onCompletion: onCompletion
         )
     }
 
@@ -241,8 +254,8 @@ final class HomeProjectionInteractionWorkflow {
     func activateStoredProjection(
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
-    ) {
-        projection.activateStoredProjection(
+    ) async {
+        await projection.activateStoredProjection(
             definition: definition,
             sourceAuthors: sourceAuthors
         )
