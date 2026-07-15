@@ -52,7 +52,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let timelineRepository: HomeTimelineRepository
     private let homeFeedProjection: HomeFeedProjectionController
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
-    private let publishWorkflow: HomeTimelinePublishWorkflow?
+    private let publishInteractionWorkflow:
+        HomeTimelinePublishInteractionWorkflow?
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
@@ -202,7 +203,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.timelineRepository = components.timelineRepository
         self.homeFeedProjection = components.homeFeedProjection
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
-        self.publishWorkflow = components.publishWorkflow
+        self.publishInteractionWorkflow = components.publishInteractionWorkflow
         self.localMutationCoordinator = components.localMutationCoordinator
         self.relayRuntime = components.relayRuntime
         self.outboxCoordinator = components.outboxCoordinator
@@ -414,41 +415,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
-        guard let account, let publishWorkflow else { return }
-        try await publishWorkflow.enqueue(
-            HomeTimelinePublishRequest(
-                input: input,
-                account: account,
-                accountWriteRelays: NostrRelayList.parse(from: relayListEvent).writeRelays,
-                fallbackRelays: resolvedRelays
-            ),
+        guard let account, let publishInteractionWorkflow else { return }
+        try await publishInteractionWorkflow.enqueue(
+            input: input,
             signer: signer,
-            effects: publishEffects()
-        )
-    }
-
-    private func publishEffects() -> HomeTimelinePublishEffects {
-        HomeTimelinePublishEffects(
-            currentAccountID: { [weak self] in self?.account?.pubkey },
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            reloadNewestProjectionWindow: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            persistDatabase: { [weak self] account in
-                await self?.persistDatabase(account: account)
-            },
-            setPhase: { [weak self] phase in
-                guard let self else { return }
-                applyActivityTransition(activityCoordinator.setPhase(phase))
-            },
-            requestImmediateOutboxDrain: { [weak self] in
-                self?.outboxCoordinator.requestImmediateDrain()
-            }
+            context: publishInteractionContext(account: account)
         )
     }
 
@@ -1272,6 +1243,55 @@ final class NostrHomeTimelineStore: ObservableObject {
 }
 
 private extension NostrHomeTimelineStore {
+    func publishInteractionContext(
+        account: NostrAccount
+    ) -> HomeTimelinePublishInteractionContext {
+        HomeTimelinePublishInteractionContext(
+            state: HomeTimelinePublishInteractionState(
+                account: account,
+                accountWriteRelays:
+                    NostrRelayList.parse(from: relayListEvent).writeRelays,
+                fallbackRelays: resolvedRelays
+            ),
+            effects: HomeTimelinePublishInteractionEffects(
+                environment: HomeTimelinePublishEnvironment(
+                    currentAccountID: { [weak self] in self?.account?.pubkey }
+                ),
+                apply: { [weak self] action in
+                    self?.applyPublishAction(action)
+                },
+                perform: { [weak self] action in
+                    guard let self else { return }
+                    await performPublishAsyncAction(action)
+                }
+            )
+        )
+    }
+
+    func applyPublishAction(_ action: HomeTimelinePublishStoreAction) {
+        switch action {
+        case .applyContentSnapshot(let snapshot):
+            applyContentSnapshot(snapshot)
+        case .reloadNewestProjectionWindow(let account):
+            reloadNewestProjectionWindow(account: account)
+        case .materializeEntries:
+            materializeEntries()
+        case .setPhase(let phase):
+            applyActivityTransition(activityCoordinator.setPhase(phase))
+        case .requestImmediateOutboxDrain:
+            outboxCoordinator.requestImmediateDrain()
+        }
+    }
+
+    func performPublishAsyncAction(
+        _ action: HomeTimelinePublishAsyncAction
+    ) async {
+        switch action {
+        case .persistDatabase(let account):
+            await persistDatabase(account: account)
+        }
+    }
+
     func accountResetInteractionContext(
     ) -> HomeAccountResetInteractionContext {
         HomeAccountResetInteractionContext(

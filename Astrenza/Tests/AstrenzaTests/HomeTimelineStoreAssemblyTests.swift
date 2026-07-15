@@ -12,7 +12,7 @@ struct HomeTimelineStoreAssemblyTests {
 
         #expect(components.eventStore == nil)
         #expect(components.relayRuntime == nil)
-        #expect(components.publishWorkflow == nil)
+        #expect(components.publishInteractionWorkflow == nil)
         #expect(components.localMutationCoordinator == nil)
         #expect(components.contentCoordinator.snapshot == .initial)
         #expect(!components.backwardRequestRegistry.hasRequests)
@@ -33,7 +33,7 @@ struct HomeTimelineStoreAssemblyTests {
         )
 
         #expect(components.eventStore === eventStore)
-        #expect(components.publishWorkflow != nil)
+        #expect(components.publishInteractionWorkflow != nil)
         #expect(try eventStore.localBookmarks(accountID: accountID) == [bookmark])
     }
 
@@ -52,7 +52,7 @@ struct HomeTimelineStoreAssemblyTests {
         )
 
         #expect(components.eventStore == nil)
-        #expect(components.publishWorkflow == nil)
+        #expect(components.publishInteractionWorkflow == nil)
         #expect(persistence.savedRules == [rule])
     }
 }

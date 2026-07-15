@@ -39,7 +39,7 @@ struct HomeTimelineStoreComponents {
     let timelineRepository: HomeTimelineRepository
     let homeFeedProjection: HomeFeedProjectionController
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
-    let publishWorkflow: HomeTimelinePublishWorkflow?
+    let publishInteractionWorkflow: HomeTimelinePublishInteractionWorkflow?
     let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     let relayRuntime: NostrRelayRuntime?
     let outboxCoordinator: HomeTimelineOutboxCoordinator
@@ -199,7 +199,9 @@ enum HomeTimelineStoreAssembly {
             timelineRepository: graph.persistence.timelineRepository,
             homeFeedProjection: graph.persistence.homeFeedProjection,
             stateInteractionWorkflow: graph.features.stateInteractionWorkflow,
-            publishWorkflow: graph.features.publishWorkflow,
+            publishInteractionWorkflow: graph.features.publishWorkflow.map {
+                HomeTimelinePublishInteractionWorkflow(publish: $0)
+            },
             localMutationCoordinator: graph.features.localMutationCoordinator,
             relayRuntime: input.relayRuntime,
             outboxCoordinator: graph.features.outboxCoordinator
