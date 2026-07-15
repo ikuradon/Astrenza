@@ -14,7 +14,17 @@ struct HomeTimelineStoreAssemblyTests {
         #expect(components.relayRuntime == nil)
         #expect(components.publishInteractionWorkflow == nil)
         #expect(components.localMutationInteractionWorkflow == nil)
-        #expect(components.contentCoordinator.snapshot == .initial)
+        #expect(components.dataInteractionWorkflow.contentState == .initial)
+        #expect(components.dataInteractionWorkflow.dependencyResolutionState ==
+            HomeTimelineDependencyResolutionState(
+                nip05Resolutions: [:],
+                profileResolutionStates: [:]
+            ))
+        #expect(components.dataInteractionWorkflow.dependencyWorkState ==
+            HomeTimelineDependencyWorkState(
+                hasPendingWork: false,
+                pendingSourceRequestCount: 0
+            ))
         #expect(!components.backwardRequestRegistry.hasRequests)
         #expect(
             components.feedSyncInteractionWorkflow.activeRequestCount == 0

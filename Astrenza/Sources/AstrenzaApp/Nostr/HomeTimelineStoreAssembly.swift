@@ -15,12 +15,11 @@ struct HomeTimelineStoreComponents {
     let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let eventStore: NostrEventStore?
-    let contentCoordinator: HomeTimelineContentCoordinator
+    let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     let runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow
     let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     let backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow
-    let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
     let queryInteractionWorkflow:
@@ -168,7 +167,7 @@ enum HomeTimelineStoreAssembly {
             viewportInteractionWorkflow:
                 graph.features.viewportInteractionWorkflow,
             eventStore: input.eventStore,
-            contentCoordinator: graph.persistence.contentCoordinator,
+            dataInteractionWorkflow: makeDataInteraction(from: graph),
             runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow(
                 runtime: HomeTimelineRuntimeWorkflow(
                     session: graph.runtimeEvents.runtimeSessionCoordinator,
@@ -181,7 +180,6 @@ enum HomeTimelineStoreAssembly {
             backwardInteractionWorkflow: HomeTimelineBackwardInteractionWorkflow(
                 backward: graph.runtimeEvents.backwardCompletionWorkflow
             ),
-            dependencyCoordinator: graph.coordination.dependencyCoordinator,
             filterInteractionWorkflow: makeFilterInteraction(from: graph),
             queryInteractionWorkflow: makeQueryInteraction(from: graph),
             activityInteractionWorkflow:
@@ -252,6 +250,15 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineActivityInteractionWorkflow {
         HomeTimelineActivityInteractionWorkflow(
             activity: graph.coordination.activityCoordinator
+        )
+    }
+
+    private static func makeDataInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeTimelineDataInteractionWorkflow {
+        HomeTimelineDataInteractionWorkflow(
+            content: graph.persistence.contentCoordinator,
+            dependencies: graph.coordination.dependencyCoordinator
         )
     }
 

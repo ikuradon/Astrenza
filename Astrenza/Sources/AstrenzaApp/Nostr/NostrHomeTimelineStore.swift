@@ -26,14 +26,13 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let viewportInteractionWorkflow:
         HomeTimelineViewportInteractionWorkflow
     private let eventStore: NostrEventStore?
-    private let contentCoordinator: HomeTimelineContentCoordinator
+    private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeInteractionWorkflow:
         HomeTimelineRuntimeInteractionWorkflow
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
         HomeTimelineBackwardInteractionWorkflow
-    private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
     private let queryInteractionWorkflow:
@@ -68,31 +67,36 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventStore
     }
 
+    private var contentState: HomeTimelineContentSnapshot {
+        dataInteractionWorkflow.contentState
+    }
+
     private var noteEvents: [NostrEvent] {
-        contentCoordinator.noteEvents
+        contentState.noteEvents
     }
 
     private var metadataEvents: [NostrEvent] {
-        contentCoordinator.metadataEvents
+        contentState.metadataEvents
     }
 
     private var relayListEvent: NostrEvent? {
-        contentCoordinator.relayListEvent
+        contentState.relayListEvent
     }
 
     private var contactListEvent: NostrEvent? {
-        contentCoordinator.contactListEvent
+        contentState.contactListEvent
     }
 
     private func timelineReadContext(
         applyingHomeFilters: Bool = true
     ) -> HomeTimelineReadContext {
-        HomeTimelineReadContext(
+        let dependencies = dataInteractionWorkflow.dependencyResolutionState
+        return HomeTimelineReadContext(
             accountID: account?.pubkey,
             fallbackEntries: entries,
             metadataEvents: metadataEvents,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-            profileResolutionStates: dependencyCoordinator.profileResolutionStates,
+            nip05Resolutions: dependencies.nip05Resolutions,
+            profileResolutionStates: dependencies.profileResolutionStates,
             followedPubkeys: Set(followedPubkeys),
             resolvedRelayCount: resolvedRelays.count,
             filterRules: applyingHomeFilters
@@ -194,12 +198,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.loadInteractionWorkflow = components.loadInteractionWorkflow
         self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
         self.eventStore = components.eventStore
-        self.contentCoordinator = components.contentCoordinator
+        self.dataInteractionWorkflow = components.dataInteractionWorkflow
         self.runtimeInteractionWorkflow = components.runtimeInteractionWorkflow
         self.gapBackfillInteractionWorkflow =
             components.gapBackfillInteractionWorkflow
         self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
-        self.dependencyCoordinator = components.dependencyCoordinator
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
         self.queryInteractionWorkflow = components.queryInteractionWorkflow
@@ -575,14 +578,15 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func replaceRuntimeBootstrapState(
         _ state: NostrHomeTimelineState
     ) {
-        replaceTimelineState(contentCoordinator.runtimeBootstrapState(
-            from: state,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions
-        ))
+        replaceTimelineState(
+            dataInteractionWorkflow.runtimeBootstrapState(from: state)
+        )
     }
 
     private func replaceFollowedPubkeys(_ pubkeys: [String]) {
-        applyContentSnapshot(contentCoordinator.replaceFollowedPubkeys(pubkeys))
+        applyContentSnapshot(
+            dataInteractionWorkflow.perform(.replaceFollowedPubkeys(pubkeys))
+        )
     }
 
     private func timelineEvent(id: String) -> NostrEvent? {
@@ -601,6 +605,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func persistDatabase(account: NostrAccount) async {
+        let dependencies = dataInteractionWorkflow.dependencyResolutionState
         await stateInteractionWorkflow.persistSnapshot(
             HomeTimelineSnapshotInput(
                 accountID: account.pubkey,
@@ -610,7 +615,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 metadataEvents: metadataEvents,
                 relayListEvent: relayListEvent,
                 contactListEvent: contactListEvent,
-                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+                nip05Resolutions: dependencies.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
             ),
             context: stateInteractionContext()
@@ -767,7 +772,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         let provisionalRelays = provisionalDiscoveryRelays(for: account)
         guard !provisionalRelays.isEmpty else { return }
         applyContentSnapshot(
-            contentCoordinator.installProvisionalRelays(provisionalRelays)
+            dataInteractionWorkflow.perform(
+                .installProvisionalRelays(provisionalRelays)
+            )
         )
         updateRelayStatusCounts()
     }
@@ -943,6 +950,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
+}
+
+private extension NostrHomeTimelineStore {
+
     private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
         await runtimeInteractionWorkflow.handleEvent(
             relayURL: relayURL,
@@ -970,11 +981,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func runtimeApplicationState() -> HomeTimelineRuntimeApplicationState {
-        HomeTimelineRuntimeApplicationState(
+        let dependencies = dataInteractionWorkflow.dependencyResolutionState
+        return HomeTimelineRuntimeApplicationState(
             account: account,
             resolvedRelays: resolvedRelays,
             followedPubkeys: followedPubkeys,
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+            nip05Resolutions: dependencies.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
             deferredMaterializationDelayNanoseconds:
                 presentationWorkflow.interactionState
@@ -1016,10 +1028,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             context: backwardInteractionContext()
         )
     }
-
-}
-
-private extension NostrHomeTimelineStore {
 
     private func scheduleLinkPreviewResolution() {
         guard let accountID = account?.pubkey else { return }
@@ -1078,11 +1086,12 @@ private extension NostrHomeTimelineStore {
     }
 
     private func materializeEntries(allowsRealtimeFollow: Bool = false) {
+        let dependencies = dataInteractionWorkflow.dependencyResolutionState
         guard let transition = materializationCoordinator.materialize(
             HomeTimelineMaterializationRequest(
                 account: account,
-                nip05Resolutions: dependencyCoordinator.nip05Resolutions,
-                profileResolutionStates: dependencyCoordinator.profileResolutionStates,
+                nip05Resolutions: dependencies.nip05Resolutions,
+                profileResolutionStates: dependencies.profileResolutionStates,
                 policy: syncPolicy,
                 allowsRealtimeFollow: allowsRealtimeFollow
             )
@@ -1103,8 +1112,7 @@ private extension NostrHomeTimelineStore {
     }
 
     private func loaderState() -> NostrHomeTimelineState {
-        contentCoordinator.loaderState(
-            nip05Resolutions: dependencyCoordinator.nip05Resolutions,
+        dataInteractionWorkflow.loaderState(
             relaySyncEvents: relayStatusCoordinator.events
         )
     }
@@ -1731,7 +1739,8 @@ extension NostrHomeTimelineStore {
                 hasOlderPageRequest: backwardRequestRegistry.hasOlderPageRequest,
                 hasGapWork: backwardRequestRegistry.hasGapWork,
                 hasBackwardRequests: backwardRequestRegistry.hasRequests,
-                hasPendingDependencyWork: dependencyCoordinator.hasPendingWork
+                hasPendingDependencyWork:
+                    dataInteractionWorkflow.dependencyWorkState.hasPendingWork
             )
         )
     }
@@ -1901,7 +1910,9 @@ extension NostrHomeTimelineStore {
             syncPolicy: syncPolicy
         ))
         applyContentSnapshot(
-            contentCoordinator.replaceFollowedPubkeys(sourceAuthors)
+            dataInteractionWorkflow.perform(
+                .replaceFollowedPubkeys(sourceAuthors)
+            )
         )
         homeFeedProjection.activateStoredProjection(
             definition: definition,
@@ -1984,24 +1995,24 @@ extension NostrHomeTimelineStore {
         _ dependencies: NostrEventDependencies,
         availableRelayURLs: [String]
     ) -> Bool {
-        dependencyCoordinator.enqueueSourceDependencies(
+        dataInteractionWorkflow.enqueueSourceDependencies(
             dependencies,
-            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
             availableRelayURLs: availableRelayURLs,
             now: 0
         )
     }
 
     func testingFlushBackwardDependencies() {
-        dependencyCoordinator.flushSourcePacketInstall(onFailure: { _ in })
+        dataInteractionWorkflow.flushSourcePacketInstall(onFailure: { _ in })
     }
 
     var testingPendingBackwardRequestCount: Int {
-        backwardRequestRegistry.requestCount + dependencyCoordinator.pendingSourceRequestCount
+        backwardRequestRegistry.requestCount +
+            dataInteractionWorkflow.dependencyWorkState.pendingSourceRequestCount
     }
 
     var testingHasPendingDependencyWork: Bool {
-        dependencyCoordinator.hasPendingWork
+        dataInteractionWorkflow.dependencyWorkState.hasPendingWork
     }
 
     var testingActiveFeedSyncRequestCount: Int {
