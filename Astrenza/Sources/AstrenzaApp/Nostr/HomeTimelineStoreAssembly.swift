@@ -34,7 +34,7 @@ struct HomeTimelineStoreComponents {
     let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
     let runtimeShutdownCoordinator: HomeTimelineRuntimeShutdownCoordinator
-    let accountStartCoordinator: HomeTimelineAccountStartCoordinator
+    let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let accountResetCoordinator: HomeTimelineAccountResetCoordinator
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -93,7 +93,7 @@ struct HomeTimelineStoreRelayRuntimeGraph {
 
 struct HomeTimelineStoreFeatureGraph {
     let persistenceCoordinator: HomeTimelinePersistenceCoordinator
-    let accountStartCoordinator: HomeTimelineAccountStartCoordinator
+    let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
@@ -188,7 +188,7 @@ enum HomeTimelineStoreAssembly {
             runtimeSessionCoordinator: graph.runtimeEvents.runtimeSessionCoordinator,
             runtimeSetupCoordinator: graph.relayRuntime.runtimeSetupCoordinator,
             runtimeShutdownCoordinator: graph.relayRuntime.runtimeShutdownCoordinator,
-            accountStartCoordinator: graph.features.accountStartCoordinator,
+            accountStartWorkflow: graph.features.accountStartWorkflow,
             accountResetCoordinator: graph.accountReset,
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,

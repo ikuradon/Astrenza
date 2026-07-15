@@ -2,7 +2,7 @@ import AstrenzaCore
 
 private struct HomeTimelineStoreApplicationFeatures {
     let persistenceCoordinator: HomeTimelinePersistenceCoordinator
-    let accountStartCoordinator: HomeTimelineAccountStartCoordinator
+    let accountStartWorkflow: HomeTimelineAccountStartWorkflow
     let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
 }
@@ -45,7 +45,7 @@ extension HomeTimelineStoreAssembly {
         let peripherals = makePeripheralFeatures(input, persistence: persistence)
         return HomeTimelineStoreFeatureGraph(
             persistenceCoordinator: applications.persistenceCoordinator,
-            accountStartCoordinator: applications.accountStartCoordinator,
+            accountStartWorkflow: applications.accountStartWorkflow,
             loadApplicationCoordinator: applications.loadApplicationCoordinator,
             stateApplicationCoordinator: applications.stateApplicationCoordinator,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
@@ -106,14 +106,16 @@ extension HomeTimelineStoreAssembly {
             snapshotPersistence: persistence.snapshotCoordinator,
             lifecycleCoordinator: coordination.lifecycleCoordinator
         )
-        let accountStartCoordinator = HomeTimelineAccountStartCoordinator(
-            lifecycleCoordinator: coordination.lifecycleCoordinator,
-            resolveSyncPolicy: { accountID, fallback in
-                input.syncPolicySettingsStore.policy(
-                    accountID: accountID,
-                    fallback: fallback
-                )
-            }
+        let accountStartWorkflow = HomeTimelineAccountStartWorkflow(
+            coordinator: HomeTimelineAccountStartCoordinator(
+                lifecycleCoordinator: coordination.lifecycleCoordinator,
+                resolveSyncPolicy: { accountID, fallback in
+                    input.syncPolicySettingsStore.policy(
+                        accountID: accountID,
+                        fallback: fallback
+                    )
+                }
+            )
         )
         let loadApplicationCoordinator = HomeTimelineLoadApplicationCoordinator(
             lifecycleCoordinator: coordination.lifecycleCoordinator
@@ -130,7 +132,7 @@ extension HomeTimelineStoreAssembly {
         )
         return HomeTimelineStoreApplicationFeatures(
             persistenceCoordinator: persistenceCoordinator,
-            accountStartCoordinator: accountStartCoordinator,
+            accountStartWorkflow: accountStartWorkflow,
             loadApplicationCoordinator: loadApplicationCoordinator,
             stateApplicationCoordinator: stateApplicationCoordinator
         )
