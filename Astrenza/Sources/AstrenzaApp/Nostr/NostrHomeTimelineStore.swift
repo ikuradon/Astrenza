@@ -32,6 +32,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventCoordinator: HomeTimelineRuntimeEventCoordinator
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
+    private let refreshWorkflow: HomeTimelineRefreshWorkflow
     private let olderPageWorkflow: HomeTimelineOlderPageWorkflow
     private let backwardCompletionApplicationCoordinator: HomeTimelineBackwardCompletionApplicationCoordinator
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
@@ -447,6 +448,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             relayEventPersistence: relayStatusCoordinator
         )
         self.remoteLoadCoordinator = remoteLoadCoordinator
+        self.refreshWorkflow = HomeTimelineRefreshWorkflow(
+            remoteLoader: remoteLoadCoordinator,
+            activityCoordinator: activityCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator
+        )
         self.olderPageWorkflow = HomeTimelineOlderPageWorkflow(
             requester: backwardRequestCoordinator,
             remoteLoader: remoteLoadCoordinator,
@@ -916,41 +922,49 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        guard lifecycleCoordinator.isCurrent(lifecycle) else { return }
-        guard !noteEvents.isEmpty else {
+        await refreshWorkflow.refresh(
+            HomeTimelineRefreshRequest(
+                account: account,
+                lifecycle: lifecycle,
+                hasTimelineEvents: !noteEvents.isEmpty,
+                hasRelayRuntime: relayRuntime != nil
+            ),
+            handlers: refreshHandlers()
+        )
+    }
+
+    private func refreshHandlers() -> HomeTimelineRefreshHandlers {
+        HomeTimelineRefreshHandlers(
+            perform: { [weak self] command in
+                self?.applyRefreshCommand(command)
+            },
+            prepareRemoteInput: { [weak self] _ in
+                guard let self else { return nil }
+                return HomeTimelineRefreshRemoteInput(current: loaderState())
+            },
+            configureRuntime: { [weak self] account in
+                await self?.configureRelayRuntime(account: account)
+            },
+            applyRemoteOutcome: { [weak self] outcome, account, lifecycle in
+                await self?.applyRemoteLoadOutcome(
+                    outcome,
+                    operation: .refresh,
+                    account: account,
+                    lifecycle: lifecycle
+                )
+            }
+        )
+    }
+
+    private func applyRefreshCommand(
+        _ command: HomeTimelineRefreshCommand
+    ) {
+        switch command {
+        case .applyActivityTransition(let transition):
+            applyActivityTransition(transition)
+        case .restartAccount(let account):
             start(account: account)
-            return
         }
-
-        guard let activityTransition = activityCoordinator.beginRefresh() else { return }
-        applyActivityTransition(activityTransition)
-        defer {
-            if lifecycleCoordinator.isCurrent(lifecycle) {
-                applyActivityTransition(activityCoordinator.endRefresh())
-            }
-        }
-
-        if relayRuntime != nil {
-            await configureRelayRuntime(account: account)
-            guard !Task.isCancelled,
-                  lifecycleCoordinator.isCurrent(lifecycle)
-            else { return }
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
-            return
-        }
-
-        let outcome = await remoteLoadCoordinator.load(
-            .refresh(account: account, current: loaderState()),
-            isCurrent: { [weak self] in
-                self?.lifecycleCoordinator.isCurrent(lifecycle) == true
-            }
-        )
-        await applyRemoteLoadOutcome(
-            outcome,
-            operation: .refresh,
-            account: account,
-            lifecycle: lifecycle
-        )
     }
 
     private func loadOlder(
