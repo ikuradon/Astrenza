@@ -159,16 +159,15 @@ enum HomeTimelineStoreAssembly {
         input: HomeTimelineStoreAssemblyInput,
         graph: HomeTimelineStoreAssemblyGraph
     ) -> HomeTimelineStoreComponents {
-        HomeTimelineStoreComponents(
-            publishedStateCoordinator: HomeTimelinePublishedStateCoordinator(
-                syncPolicy: input.initialSyncPolicy
-            ),
+        let dataInteraction = makeDataInteraction(from: graph)
+        return HomeTimelineStoreComponents(
+            publishedStateCoordinator: makePublishedState(input: input),
             remoteLoadCoordinator: graph.features.remoteLoadCoordinator,
             loadInteractionWorkflow: graph.features.loadInteractionWorkflow,
             viewportInteractionWorkflow:
                 graph.features.viewportInteractionWorkflow,
             eventStore: input.eventStore,
-            dataInteractionWorkflow: makeDataInteraction(from: graph),
+            dataInteractionWorkflow: dataInteraction,
             runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow(
                 runtime: HomeTimelineRuntimeWorkflow(
                     session: graph.runtimeEvents.runtimeSessionCoordinator,
@@ -185,7 +184,8 @@ enum HomeTimelineStoreAssembly {
                 relayStatus: graph.relayRuntime.relayStatusCoordinator
             ),
             filterInteractionWorkflow: makeFilterInteraction(from: graph),
-            queryInteractionWorkflow: makeQueryInteraction(from: graph),
+            queryInteractionWorkflow: makeQueryInteraction(
+                from: graph, dataInteraction: dataInteraction),
             activityInteractionWorkflow:
                 makeActivityInteraction(from: graph),
             presentationWorkflow: graph.features.presentationWorkflow,
@@ -208,6 +208,14 @@ enum HomeTimelineStoreAssembly {
             },
             localMutationInteractionWorkflow: makeLocalMutationInteraction(from: graph),
             relayRuntime: input.relayRuntime
+        )
+    }
+
+    private static func makePublishedState(
+        input: HomeTimelineStoreAssemblyInput
+    ) -> HomeTimelinePublishedStateCoordinator {
+        HomeTimelinePublishedStateCoordinator(
+            syncPolicy: input.initialSyncPolicy
         )
     }
 
@@ -239,11 +247,17 @@ enum HomeTimelineStoreAssembly {
     }
 
     private static func makeQueryInteraction(
-        from graph: HomeTimelineStoreAssemblyGraph
+        from graph: HomeTimelineStoreAssemblyGraph,
+        dataInteraction: HomeTimelineDataInteractionWorkflow
     ) -> HomeTimelineQueryInteractionWorkflow {
         HomeTimelineQueryInteractionWorkflow(
             repository: graph.persistence.timelineRepository,
-            listProjectionCache: graph.coordination.listProjectionCache
+            listProjectionCache: graph.coordination.listProjectionCache,
+            profileProjectionCache: HomeTimelineProfileProjectionCache(),
+            readContext: HomeTimelineReadContextCoordinator(
+                data: dataInteraction,
+                filter: graph.persistence.filterCoordinator
+            )
         )
     }
 

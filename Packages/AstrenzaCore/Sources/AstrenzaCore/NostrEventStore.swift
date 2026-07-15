@@ -702,6 +702,33 @@ public final class NostrEventStore: Sendable {
         }
     }
 
+    public func eventCount(
+        kind: Int,
+        authors: [String],
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> Int {
+        guard !authors.isEmpty else { return 0 }
+
+        return try database.read { database in
+            var arguments: StatementArguments = [kind, now]
+            let placeholders = authors.map { _ in "?" }.joined(separator: ", ")
+            for author in authors {
+                arguments += [author]
+            }
+
+            return try Int.fetchOne(
+                database,
+                sql: """
+                SELECT COUNT(*)
+                FROM events
+                WHERE kind = ? AND \(Self.visibleEventPredicate())
+                    AND pubkey IN (\(placeholders))
+                """,
+                arguments: arguments
+            ) ?? 0
+        }
+    }
+
     public func eventsReferencing(
         eventID: String,
         kind: Int,

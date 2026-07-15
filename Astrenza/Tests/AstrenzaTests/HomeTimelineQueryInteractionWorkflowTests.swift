@@ -9,33 +9,36 @@ struct HomeTimelineQueryInteractionTests {
     func routesPublicQueries() {
         let repository = QueryRepositorySpy()
         let workflow = makeWorkflow(repository: repository)
-        let context = readContext(accountID: "account")
+        let contextInput = readContextInput(accountID: "account")
         let post = repository.postResult
 
         let isBookmarked = workflow.isBookmarked(
             eventID: post.id,
             accountID: "account"
         )
-        let resolvedPost = workflow.post(eventID: post.id, context: context)
+        let resolvedPost = workflow.post(
+            eventID: post.id,
+            contextInput: contextInput
+        )
         let profile = workflow.profile(
             pubkey: "author",
             isCurrentUser: true,
-            context: context
+            contextInput: contextInput
         )
         let profilePosts = workflow.profilePosts(
             pubkey: "author",
             limit: 80,
-            context: context
+            contextInput: contextInput
         )
         let ancestors = workflow.replyAncestors(
             for: post,
             limit: 8,
-            context: context
+            contextInput: contextInput
         )
         let replies = workflow.replies(
             for: post,
             limit: 24,
-            context: context
+            contextInput: contextInput
         )
 
         #expect(isBookmarked)
@@ -64,7 +67,9 @@ struct HomeTimelineQueryInteractionTests {
         let cache = HomeTimelineListProjectionCache()
         let workflow = HomeTimelineQueryInteractionWorkflow(
             repository: repository,
-            listProjectionCache: cache
+            listProjectionCache: cache,
+            profileProjectionCache: HomeTimelineProfileProjectionCache(),
+            readContext: ReadContextProviderSpy()
         )
         let firstQuery = listQuery(
             accountID: "account-a",
@@ -151,11 +156,14 @@ struct HomeTimelineQueryInteractionTests {
     }
 
     private func makeWorkflow(
-        repository: QueryRepositorySpy
+        repository: QueryRepositorySpy,
+        readContext: ReadContextProviderSpy = ReadContextProviderSpy()
     ) -> HomeTimelineQueryInteractionWorkflow {
         HomeTimelineQueryInteractionWorkflow(
             repository: repository,
-            listProjectionCache: HomeTimelineListProjectionCache()
+            listProjectionCache: HomeTimelineListProjectionCache(),
+            profileProjectionCache: HomeTimelineProfileProjectionCache(),
+            readContext: readContext
         )
     }
 
@@ -168,20 +176,17 @@ struct HomeTimelineQueryInteractionTests {
             accountID: accountID,
             limit: limit,
             homeContentRevision: revision,
-            context: readContext(accountID: accountID)
+            contextInput: readContextInput(accountID: accountID)
         )
     }
 
-    private func readContext(accountID: String?) -> HomeTimelineReadContext {
-        HomeTimelineReadContext(
+    private func readContextInput(
+        accountID: String?
+    ) -> HomeTimelineReadContextInput {
+        HomeTimelineReadContextInput(
             accountID: accountID,
             fallbackEntries: [],
-            metadataEvents: [],
-            nip05Resolutions: [:],
-            profileResolutionStates: [:],
-            followedPubkeys: [],
             resolvedRelayCount: 0,
-            filterRules: nil,
             syncPolicy: .default()
         )
     }
@@ -359,5 +364,29 @@ private final class QueryRepositorySpy: HomeTimelineQueryRepository {
         events.append(.listEntries(limit: limit, accountID: context.accountID))
         listReadCount += 1
         return [.deleted(TimelineDeletedEntry(id: "list-\(listReadCount)"))]
+    }
+}
+
+@MainActor
+private final class ReadContextProviderSpy:
+    HomeTimelineReadContextProviding {
+    private(set) var appliedHomeFilterValues: [Bool] = []
+
+    func context(
+        for input: HomeTimelineReadContextInput,
+        applyingHomeFilters: Bool
+    ) -> HomeTimelineReadContext {
+        appliedHomeFilterValues.append(applyingHomeFilters)
+        return HomeTimelineReadContext(
+            accountID: input.accountID,
+            fallbackEntries: input.fallbackEntries,
+            metadataEvents: [],
+            nip05Resolutions: [:],
+            profileResolutionStates: [:],
+            followedPubkeys: [],
+            resolvedRelayCount: input.resolvedRelayCount,
+            filterRules: nil,
+            syncPolicy: input.syncPolicy
+        )
     }
 }

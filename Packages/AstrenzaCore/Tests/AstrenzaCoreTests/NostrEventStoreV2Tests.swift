@@ -175,6 +175,78 @@ struct NostrEventStoreV2Tests {
         #expect(try store.mediaAssets(eventID: original.id) == originalAssets)
     }
 
+    @Test("Event counts preserve kind, author, and visibility constraints")
+    func eventCountsMatchVisibleAuthorQueries() throws {
+        let store = try NostrEventStore.inMemory()
+        let firstAuthor = String(repeating: "a", count: 64)
+        let secondAuthor = String(repeating: "b", count: 64)
+        try store.save(events: eventCountFixtureEvents(
+            firstAuthor: firstAuthor,
+            secondAuthor: secondAuthor
+        ))
+
+        #expect(try store.eventCount(
+            kind: 1,
+            authors: [firstAuthor],
+            now: 140
+        ) == 3)
+        #expect(try store.eventCount(
+            kind: 1,
+            authors: [firstAuthor],
+            now: 200
+        ) == 2)
+        #expect(try store.eventCount(
+            kind: 1,
+            authors: [firstAuthor, secondAuthor],
+            now: 200
+        ) == 3)
+        #expect(try store.eventCount(
+            kind: 0,
+            authors: [firstAuthor],
+            now: 200
+        ) == 1)
+        #expect(try store.eventCount(kind: 1, authors: [], now: 200) == 0)
+    }
+
+    private func eventCountFixtureEvents(
+        firstAuthor: String,
+        secondAuthor: String
+    ) -> [NostrEvent] {
+        [
+            event(
+                kind: 1,
+                pubkey: firstAuthor,
+                createdAt: 100,
+                content: "first"
+            ),
+            event(
+                kind: 1,
+                pubkey: firstAuthor,
+                createdAt: 110,
+                content: "second"
+            ),
+            event(
+                kind: 1,
+                pubkey: firstAuthor,
+                createdAt: 120,
+                content: "expired",
+                tags: [["expiration", "150"]]
+            ),
+            event(
+                kind: 1,
+                pubkey: secondAuthor,
+                createdAt: 130,
+                content: "other"
+            ),
+            event(
+                kind: 0,
+                pubkey: firstAuthor,
+                createdAt: 140,
+                content: "metadata"
+            )
+        ]
+    }
+
     @Test("Deletion request received before its target hides the later event")
     func pendingEventDeletionTombstone() throws {
         let store = try NostrEventStore.inMemory()

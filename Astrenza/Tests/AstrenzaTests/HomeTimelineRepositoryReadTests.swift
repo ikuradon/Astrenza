@@ -49,61 +49,6 @@ struct HomeTimelineRepositoryReadTests {
         #expect(fallback?.body == "fallback")
     }
 
-    @Test("Profile reads combine cached metadata, posts, follows, and relays")
-    func profileReadsCombineCachedState() throws {
-        let eventStore = try NostrEventStore.inMemory()
-        let accountID = String(repeating: "a", count: 64)
-        let otherFollow = String(repeating: "b", count: 64)
-        let metadata = event(
-            id: "3",
-            pubkey: accountID,
-            createdAt: 300,
-            kind: 0,
-            content: #"{"name":"Alice","nip05":"_@alice.example"}"#
-        )
-        let newerPost = event(
-            id: "4",
-            pubkey: accountID,
-            createdAt: 200,
-            content: "newer"
-        )
-        let olderPost = event(
-            id: "5",
-            pubkey: accountID,
-            createdAt: 100,
-            content: "older"
-        )
-        try eventStore.save(events: [metadata, newerPost, olderPost])
-        let context = readContext(
-            accountID: accountID,
-            followedPubkeys: [accountID, otherFollow],
-            resolvedRelayCount: 3
-        )
-        let repository = HomeTimelineRepository(eventStore: eventStore)
-
-        let profile = repository.profile(
-            pubkey: accountID,
-            isCurrentUser: true,
-            context: context
-        )
-        let posts = repository.profilePosts(
-            pubkey: accountID,
-            limit: 10,
-            context: context
-        )
-
-        #expect(profile.author.primaryText == "Alice")
-        #expect(profile.author.secondaryText == "alice.example")
-        #expect(profile.author.profileResolutionState == .resolved)
-        #expect(profile.bio == "kind:0 profile metadata is cached.")
-        #expect(profile.isCurrentUser)
-        #expect(profile.isFollowed)
-        #expect(profile.followingCount == 2)
-        #expect(profile.postCount == 2)
-        #expect(profile.relayCount == 3)
-        #expect(posts.map(\.id) == [newerPost.id, olderPost.id])
-    }
-
     @Test("Thread reads preserve materialized ancestor order and exclude non-reply references")
     func threadReadsPreserveMaterializedOrderAndFilterReferences() throws {
         let eventStore = try NostrEventStore.inMemory()
@@ -158,66 +103,6 @@ struct HomeTimelineRepositoryReadTests {
 
         #expect(ancestors.map(\.id) == [parent.id, root.id])
         #expect(replies.map(\.id) == [directReply.id])
-    }
-
-    @Test("List reads materialize cached NIP-51 follow and bookmark sets")
-    func listReadsMaterializeCachedNIP51Sets() throws {
-        let eventStore = try NostrEventStore.inMemory()
-        let accountID = String(repeating: "b", count: 64)
-        let followedAuthor = String(repeating: "c", count: 64)
-        let followedNote = event(
-            id: "b",
-            pubkey: followedAuthor,
-            createdAt: 300,
-            content: "followed"
-        )
-        let bookmarkedNote = event(
-            id: "c",
-            pubkey: accountID,
-            createdAt: 200,
-            content: "bookmarked"
-        )
-        let unrelated = event(
-            id: "d",
-            pubkey: String(repeating: "d", count: 64),
-            createdAt: 400,
-            content: "unrelated"
-        )
-        let followSet = event(
-            id: "e",
-            pubkey: accountID,
-            createdAt: 500,
-            kind: 30_000,
-            tags: [["d", "friends"], ["title", "Friends"], ["p", followedAuthor]]
-        )
-        let bookmarkSet = event(
-            id: "f",
-            pubkey: accountID,
-            createdAt: 450,
-            kind: 30_003,
-            tags: [["d", "reads"], ["title", "Reads"], ["e", bookmarkedNote.id]]
-        )
-        try eventStore.save(events: [
-            followedNote,
-            bookmarkedNote,
-            unrelated,
-            followSet,
-            bookmarkSet
-        ])
-        let repository = HomeTimelineRepository(eventStore: eventStore)
-
-        let entries = repository.listEntries(
-            limit: 10,
-            context: readContext(
-                accountID: accountID,
-                followedPubkeys: [accountID]
-            )
-        )
-
-        #expect(entries.compactMap(\.post).map(\.id) == [
-            followedNote.id,
-            bookmarkedNote.id
-        ])
     }
 
     @Test("Bookmark reads are account-scoped and safe without persistence")

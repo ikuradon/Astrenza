@@ -1637,15 +1637,20 @@ struct TimelineModelTests {
         let repository = HomeTimelineRepository(eventStore: eventStore)
 
         let snapshot = repository.materialize(
-            account: account,
-            noteEvents: [note],
-            contextEvents: [],
-            metadataEvents: [],
-            nip05Resolutions: [:],
-            followedPubkeys: [account.pubkey],
-            resolvedRelays: ["wss://relay.example"],
-            filterRules: nil,
-            filterStatus: TimelineFilterStatus()
+            HomeTimelineRenderInput(
+                noteEvents: [note],
+                feedWindow: nil,
+                contextEvents: [],
+                metadataEvents: [],
+                nip05Resolutions: [:],
+                profileResolutionStates: [:],
+                followedPubkeys: [account.pubkey],
+                resolvedRelayCount: 1,
+                filterRules: nil,
+                filterStatus: TimelineFilterStatus(),
+                timeline: .home,
+                policy: .default()
+            )
         )
 
         #expect(snapshot.entries.compactMap(\.post).map(\.id) == [note.id])

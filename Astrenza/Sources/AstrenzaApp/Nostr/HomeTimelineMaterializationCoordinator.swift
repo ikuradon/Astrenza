@@ -78,18 +78,20 @@ final class HomeTimelineMaterializationCoordinator {
         )
         let contextEvents = repository.contextEvents(for: content.noteEvents)
         let materialized = repository.materialize(
-            account: request.account,
-            noteEvents: content.noteEvents,
-            feedWindow: projectionController.window,
-            contextEvents: contextEvents,
-            metadataEvents: content.metadataEvents,
-            nip05Resolutions: request.nip05Resolutions,
-            profileResolutionStates: request.profileResolutionStates,
-            followedPubkeys: content.followedPubkeys,
-            resolvedRelays: content.resolvedRelays,
-            filterRules: filterProjection.effectiveRuleSet,
-            filterStatus: filterProjection.status,
-            policy: request.policy
+            HomeTimelineRenderInput(
+                noteEvents: content.noteEvents,
+                feedWindow: projectionController.window,
+                contextEvents: contextEvents,
+                metadataEvents: content.metadataEvents,
+                nip05Resolutions: request.nip05Resolutions,
+                profileResolutionStates: request.profileResolutionStates,
+                followedPubkeys: content.followedPubkeys,
+                resolvedRelayCount: content.resolvedRelays.count,
+                filterRules: filterProjection.effectiveRuleSet,
+                filterStatus: filterProjection.status,
+                timeline: .home,
+                policy: request.policy
+            )
         )
         return presentationCoordinator.apply(materialized, pass: pass)
     }

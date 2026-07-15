@@ -344,10 +344,11 @@ private extension HomeTimelineView {
     }
 
     var profileView: some View {
-        NavigationStack(path: $profileNavigationPath) {
+        let projection = currentUserProfileProjection
+        return NavigationStack(path: $profileNavigationPath) {
             UserDetailView(
-                profile: currentUserProfile,
-                posts: currentUserProfilePosts,
+                profile: projection.profile,
+                posts: projection.posts,
                 swipeSettings: swipeSettings,
                 onOpenPost: openProfilePost,
                 onOpenProfile: openProfileFromProfile,
@@ -420,11 +421,11 @@ private extension HomeTimelineView {
         onOpenPost: @escaping (TimelinePost) -> Void,
         onOpenProfile: @escaping (TimelinePost) -> Void
     ) -> some View {
-        let profile = userProfile(for: post)
+        let projection = userProfileProjection(for: post)
 
         return UserDetailView(
-            profile: profile,
-            posts: userProfilePosts(for: profile),
+            profile: projection.profile,
+            posts: projection.posts,
             swipeSettings: swipeSettings,
             onOpenPost: onOpenPost,
             onOpenProfile: onOpenProfile,
@@ -436,20 +437,18 @@ private extension HomeTimelineView {
         )
     }
 
-    var currentUserProfile: UserProfile {
+    var currentUserProfileProjection: HomeTimelineProfileProjection {
         guard let account = sessionStore.account else {
-            return MockTimelineData.selfProfile
+            return HomeTimelineProfileProjection(
+                profile: MockTimelineData.selfProfile,
+                posts: MockTimelineData.selfProfilePosts
+            )
         }
 
-        return liveTimelineStore.profile(pubkey: account.pubkey, isCurrentUser: true)
-    }
-
-    var currentUserProfilePosts: [TimelinePost] {
-        guard let account = sessionStore.account else {
-            return MockTimelineData.selfProfilePosts
-        }
-
-        return liveTimelineStore.profilePosts(pubkey: account.pubkey)
+        return liveTimelineStore.profileProjection(
+            pubkey: account.pubkey,
+            isCurrentUser: true
+        )
     }
 
     func detailPost(for post: TimelinePost) -> TimelinePost {
@@ -467,20 +466,20 @@ private extension HomeTimelineView {
         return liveTimelineStore.replies(for: post)
     }
 
-    func userProfile(for post: TimelinePost) -> UserProfile {
+    func userProfileProjection(
+        for post: TimelinePost
+    ) -> HomeTimelineProfileProjection {
         guard sessionStore.account != nil else {
-            return MockTimelineData.profile(for: post)
+            let profile = MockTimelineData.profile(for: post)
+            return HomeTimelineProfileProjection(
+                profile: profile,
+                posts: MockTimelineData.profilePosts(for: profile)
+            )
         }
 
-        return liveTimelineStore.profile(pubkey: post.author.pubkey)
-    }
-
-    func userProfilePosts(for profile: UserProfile) -> [TimelinePost] {
-        guard sessionStore.account != nil else {
-            return MockTimelineData.profilePosts(for: profile)
-        }
-
-        return liveTimelineStore.profilePosts(pubkey: profile.author.pubkey)
+        return liveTimelineStore.profileProjection(
+            pubkey: post.author.pubkey
+        )
     }
 
     func completeInitialAppearanceIfNeeded() {
