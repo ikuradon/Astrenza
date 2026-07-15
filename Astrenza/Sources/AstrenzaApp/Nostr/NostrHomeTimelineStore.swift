@@ -9,18 +9,16 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var account: NostrAccount?
     @Published private var publishedPresentationState =
         HomeTimelinePublishedPresentationState()
-    @Published private(set) var phase: Phase = .idle
+    @Published private var publishedActivityState =
+        HomeTimelinePublishedActivityState()
     @Published private(set) var resolvedRelays: [String] = []
     @Published private(set) var followedPubkeys: [String] = []
-    @Published private(set) var isRefreshing = false
-    @Published private(set) var isLoadingOlder = false
     @Published private(set) var hasMoreOlder = true
     @Published private(set) var relayStatusRevision = 0
     @Published private(set) var relayRuntimeStates: [String: NostrRelayConnectionState] = [:]
     @Published private(set) var relayStatusCounts: (connected: Int, planned: Int) = (connected: 0, planned: 1)
     @Published private(set) var unmaterializedNewCount = 0
     @Published private(set) var listContentRevision = 0
-    @Published private(set) var isHomeTimelineRealtime = false
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadWorkflow: HomeTimelineLoadWorkflow
@@ -65,6 +63,22 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     var currentSyncPolicy: NostrSyncPolicy {
         syncPolicy
+    }
+
+    var phase: Phase {
+        publishedActivityState.phase
+    }
+
+    var isRefreshing: Bool {
+        publishedActivityState.isRefreshing
+    }
+
+    var isLoadingOlder: Bool {
+        publishedActivityState.isLoadingOlder
+    }
+
+    var isHomeTimelineRealtime: Bool {
+        publishedActivityState.isRealtime
     }
 
     var entries: [TimelineFeedEntry] {
@@ -140,20 +154,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func applyActivityTransition(
         _ transition: HomeTimelineActivityTransition
     ) {
-        let changes = transition.changes
-        let snapshot = transition.snapshot
-        if changes.contains(.phase) {
-            phase = snapshot.phase
-        }
-        if changes.contains(.refreshing) {
-            isRefreshing = snapshot.isRefreshing
-        }
-        if changes.contains(.loadingOlder) {
-            isLoadingOlder = snapshot.isLoadingOlder
-        }
-        if changes.contains(.realtime) {
-            isHomeTimelineRealtime = snapshot.isRealtime
-        }
+        guard let next = publishedActivityState.applying(transition) else { return }
+        publishedActivityState = next
     }
 
     private func applyPresentationTransition(
@@ -1569,6 +1571,10 @@ final class NostrHomeTimelineStore: ObservableObject {
 
 #if DEBUG
 extension NostrHomeTimelineStore {
+    func testingApplyActivityTransition(_ transition: HomeTimelineActivityTransition) {
+        applyActivityTransition(transition)
+    }
+
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
         let testEntries: [TimelineFeedEntry] = ids.map { id in
             .post(TimelinePost(
