@@ -68,7 +68,8 @@ private final class HomeTimelineAccountResetProbe {
         case applyRelayStatusSnapshot
         case resetProjectionRestoreState
         case resetFilters
-        case clearPublishedAccountState
+        case publishRelayStatusChange
+        case applyAccountContextTransition(HomeTimelineAccountContextTransition)
         case scheduleRuntimeShutdown
 
         static let expectedOrder: [Step] = [
@@ -97,7 +98,8 @@ private final class HomeTimelineAccountResetProbe {
             .applyRelayStatusSnapshot,
             .resetProjectionRestoreState,
             .resetFilters,
-            .clearPublishedAccountState,
+            .publishRelayStatusChange,
+            .applyAccountContextTransition(.clear),
             .scheduleRuntimeShutdown
         ]
     }
@@ -208,8 +210,11 @@ private final class HomeTimelineAccountResetProbe {
             resetProjectionRestoreState: { [self] in
                 record(.resetProjectionRestoreState)
             },
-            clearPublishedAccountState: { [self] in
-                record(.clearPublishedAccountState)
+            publishRelayStatusChange: { [self] in
+                record(.publishRelayStatusChange)
+            },
+            applyAccountContextTransition: { [self] transition in
+                record(.applyAccountContextTransition(transition))
             },
             scheduleRuntimeShutdown: { [self] cancellationGeneration in
                 record(.scheduleRuntimeShutdown)

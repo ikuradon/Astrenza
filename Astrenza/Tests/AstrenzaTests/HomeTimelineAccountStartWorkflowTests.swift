@@ -78,7 +78,10 @@ struct HomeTimelineAccountStartWorkflowTests {
 
         #expect(probe.applications == [
             .cancelCurrentAccount,
-            .setAccount(account, syncPolicy),
+            .applyAccountContextTransition(.activate(
+                account,
+                syncPolicy: syncPolicy
+            )),
             .startRuntimeSession,
             .ensureHomeFeedDefinition(account),
             .applyRestoredViewport(viewport),
@@ -158,8 +161,8 @@ private final class AccountStartWorkflowEffectProbe {
             cancelCurrentAccount: { [self] in
                 applications.append(.cancelCurrentAccount)
             },
-            setAccount: { [self] account, syncPolicy in
-                applications.append(.setAccount(account, syncPolicy))
+            applyAccountContextTransition: { [self] transition in
+                applications.append(.applyAccountContextTransition(transition))
             },
             startRuntimeSession: { [self] in
                 applications.append(.startRuntimeSession)
@@ -197,7 +200,7 @@ private final class AccountStartWorkflowEffectProbe {
 
 private enum AccountStartWorkflowApplication: Equatable, Sendable {
     case cancelCurrentAccount
-    case setAccount(NostrAccount, NostrSyncPolicy)
+    case applyAccountContextTransition(HomeTimelineAccountContextTransition)
     case startRuntimeSession
     case ensureHomeFeedDefinition(NostrAccount)
     case applyRestoredViewport(HomeTimelineRestoredViewport)

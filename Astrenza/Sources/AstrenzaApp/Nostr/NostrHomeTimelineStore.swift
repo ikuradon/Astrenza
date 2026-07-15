@@ -6,7 +6,8 @@ import SwiftUI
 final class NostrHomeTimelineStore: ObservableObject {
     typealias Phase = NostrHomeTimelinePhase
 
-    @Published private(set) var account: NostrAccount?
+    @Published private var publishedAccountContextState:
+        HomeTimelinePublishedAccountContextState
     @Published private var publishedPresentationState =
         HomeTimelinePublishedPresentationState()
     @Published private var publishedActivityState =
@@ -53,16 +54,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
     private let outboxCoordinator: HomeTimelineOutboxCoordinator
-    private var syncPolicy: NostrSyncPolicy
     private var isTimelineAtNewestWindow = true
     private var restoreProjectionAnchorEventID: String?
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
-    }
-
-    var currentSyncPolicy: NostrSyncPolicy {
-        syncPolicy
     }
 
     private var noteEvents: [NostrEvent] {
@@ -210,7 +206,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.localMutationCoordinator = components.localMutationCoordinator
         self.relayRuntime = components.relayRuntime
         self.outboxCoordinator = components.outboxCoordinator
-        self.syncPolicy = syncPolicy
+        self.publishedAccountContextState = HomeTimelinePublishedAccountContextState(
+            syncPolicy: syncPolicy
+        )
     }
 
     func start(account: NostrAccount) {
@@ -970,9 +968,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) -> HomeTimelineAccountStartAppEffects {
         HomeTimelineAccountStartAppEffects(
             cancelCurrentAccount: { [weak self] in self?.cancel() },
-            setAccount: { [weak self] account, syncPolicy in
-                self?.account = account
-                self?.syncPolicy = syncPolicy
+            applyAccountContextTransition: { [weak self] transition in
+                self?.applyAccountContextTransition(transition)
             },
             startRuntimeSession: { [weak self] in self?.startRuntimeSession() },
             ensureHomeFeedDefinition: { [weak self] account in
@@ -1038,8 +1035,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             resetProjectionRestoreState: { [weak self] in
                 self?.resetProjectionRestoreState()
             },
-            clearPublishedAccountState: { [weak self] in
-                self?.clearPublishedAccountState()
+            publishRelayStatusChange: { [weak self] in
+                self?.publishRelayStatusChange()
+            },
+            applyAccountContextTransition: { [weak self] transition in
+                self?.applyAccountContextTransition(transition)
             }
         )
     }
@@ -1067,11 +1067,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func resetProjectionRestoreState() {
         restoreProjectionAnchorEventID = nil
         isTimelineAtNewestWindow = true
-    }
-
-    private func clearPublishedAccountState() {
-        publishRelayStatusChange()
-        account = nil
     }
 
     private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
@@ -1488,10 +1483,22 @@ final class NostrHomeTimelineStore: ObservableObject {
             effects: runtimeApplicationEffects()
         )
     }
-
 }
 
 private extension NostrHomeTimelineStore {
+    var syncPolicy: NostrSyncPolicy {
+        publishedAccountContextState.syncPolicy
+    }
+
+    func applyAccountContextTransition(
+        _ transition: HomeTimelineAccountContextTransition
+    ) {
+        guard let next = publishedAccountContextState.applying(transition) else {
+            return
+        }
+        publishedAccountContextState = next
+    }
+
     @discardableResult
     func clearPendingNewEvents() -> Bool {
         pendingEventBuffer.removeAll { [weak self] publication in
@@ -1523,6 +1530,14 @@ private extension NostrHomeTimelineStore {
 }
 
 extension NostrHomeTimelineStore {
+    var account: NostrAccount? {
+        publishedAccountContextState.account
+    }
+
+    var currentSyncPolicy: NostrSyncPolicy {
+        publishedAccountContextState.syncPolicy
+    }
+
     var unmaterializedNewCount: Int {
         publishedPendingEventState.count
     }
@@ -1646,6 +1661,12 @@ extension NostrHomeTimelineStore {
         applyPendingEventCountPublication(publication)
     }
 
+    func testingApplyAccountContextTransition(
+        _ transition: HomeTimelineAccountContextTransition
+    ) {
+        applyAccountContextTransition(transition)
+    }
+
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
         publishHomeTimelineRealtimeState(isRealtime)
     }
@@ -1713,7 +1734,10 @@ extension NostrHomeTimelineStore {
         if lifecycleCoordinator.token(for: account.pubkey) == nil {
             lifecycleCoordinator.begin(accountID: account.pubkey)
         }
-        self.account = account
+        applyAccountContextTransition(.activate(
+            account,
+            syncPolicy: syncPolicy
+        ))
         applyContentSnapshot(
             contentCoordinator.replaceFollowedPubkeys(sourceAuthors)
         )

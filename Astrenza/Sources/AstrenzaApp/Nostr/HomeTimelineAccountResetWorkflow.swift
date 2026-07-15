@@ -40,7 +40,9 @@ struct HomeTimelineAccountResetAppEffects: Sendable {
     let applyRelayStatusSnapshot:
         HomeTimelineAccountResetHandlers.RelayStatusSnapshotHandler
     let resetProjectionRestoreState: HomeTimelineAccountResetHandlers.Action
-    let clearPublishedAccountState: HomeTimelineAccountResetHandlers.Action
+    let publishRelayStatusChange: HomeTimelineAccountResetHandlers.Action
+    let applyAccountContextTransition:
+        HomeTimelineAccountResetHandlers.AccountContextTransitionHandler
 }
 
 struct HomeTimelineRuntimeShutdownEffects: Sendable {
@@ -104,7 +106,8 @@ final class HomeTimelineAccountResetWorkflow {
             applyContentSnapshot: application.applyContentSnapshot,
             applyRelayStatusSnapshot: application.applyRelayStatusSnapshot,
             resetProjectionRestoreState: application.resetProjectionRestoreState,
-            clearPublishedAccountState: application.clearPublishedAccountState,
+            publishRelayStatusChange: application.publishRelayStatusChange,
+            applyAccountContextTransition: application.applyAccountContextTransition,
             scheduleRuntimeShutdown: { [weak self] cancellationGeneration in
                 self?.scheduleRuntimeShutdown(
                     cancellationGeneration: cancellationGeneration,

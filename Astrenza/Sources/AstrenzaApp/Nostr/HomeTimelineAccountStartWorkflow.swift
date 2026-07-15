@@ -18,9 +18,8 @@ struct HomeTimelineAccountStartInput: Equatable, Sendable {
 struct HomeTimelineAccountStartAppEffects: Sendable {
     typealias VoidEffect = @MainActor @Sendable () -> Void
     typealias AccountEffect = @MainActor @Sendable (_ account: NostrAccount) -> Void
-    typealias AccountSetter = @MainActor @Sendable (
-        _ account: NostrAccount,
-        _ syncPolicy: NostrSyncPolicy
+    typealias AccountContextTransitionHandler = @MainActor @Sendable (
+        _ transition: HomeTimelineAccountContextTransition
     ) -> Void
     typealias ViewportEffect = @MainActor @Sendable (
         _ viewport: HomeTimelineRestoredViewport
@@ -31,7 +30,7 @@ struct HomeTimelineAccountStartAppEffects: Sendable {
     typealias OutboxActivator = @MainActor @Sendable (_ accountID: String) -> Void
 
     let cancelCurrentAccount: VoidEffect
-    let setAccount: AccountSetter
+    let applyAccountContextTransition: AccountContextTransitionHandler
     let startRuntimeSession: VoidEffect
     let ensureHomeFeedDefinition: AccountEffect
     let applyRestoredViewport: ViewportEffect
@@ -110,7 +109,10 @@ final class HomeTimelineAccountStartWorkflow {
         case .cancelCurrentAccount:
             effects.cancelCurrentAccount()
         case .setAccount(let account, let syncPolicy):
-            effects.setAccount(account, syncPolicy)
+            effects.applyAccountContextTransition(.activate(
+                account,
+                syncPolicy: syncPolicy
+            ))
         case .startRuntimeSession:
             effects.startRuntimeSession()
         case .ensureHomeFeedDefinition(let account):

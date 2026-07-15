@@ -40,7 +40,8 @@ struct HomeTimelineAccountResetWorkflowTests {
             .applyContentSnapshot,
             .applyRelayStatusSnapshot,
             .resetProjectionRestoreState,
-            .clearPublishedAccountState
+            .publishRelayStatusChange,
+            .applyAccountContextTransition(.clear)
         ])
         #expect(probe.presentationChanges == fixtures.presentationTransition.changes)
         #expect(
@@ -125,7 +126,8 @@ private final class AccountResetWorkflowCoordinatorSpy:
             handlers.applyContentSnapshot(fixtures.contentSnapshot)
             handlers.applyRelayStatusSnapshot(fixtures.relayStatusSnapshot)
             handlers.resetProjectionRestoreState()
-            handlers.clearPublishedAccountState()
+            handlers.publishRelayStatusChange()
+            handlers.applyAccountContextTransition(.clear)
         }
         if let cancellationGeneration {
             handlers.scheduleRuntimeShutdown(cancellationGeneration)
@@ -207,8 +209,11 @@ private final class AccountResetWorkflowEffectProbe {
             resetProjectionRestoreState: { [self] in
                 applicationEvents.append(.resetProjectionRestoreState)
             },
-            clearPublishedAccountState: { [self] in
-                applicationEvents.append(.clearPublishedAccountState)
+            publishRelayStatusChange: { [self] in
+                applicationEvents.append(.publishRelayStatusChange)
+            },
+            applyAccountContextTransition: { [self] transition in
+                applicationEvents.append(.applyAccountContextTransition(transition))
             }
         )
     }
@@ -280,7 +285,8 @@ private enum AccountResetWorkflowApplicationEvent: Equatable {
     case applyContentSnapshot
     case applyRelayStatusSnapshot
     case resetProjectionRestoreState
-    case clearPublishedAccountState
+    case publishRelayStatusChange
+    case applyAccountContextTransition(HomeTimelineAccountContextTransition)
 }
 
 private enum AccountResetWorkflowShutdownEvent: Equatable {
