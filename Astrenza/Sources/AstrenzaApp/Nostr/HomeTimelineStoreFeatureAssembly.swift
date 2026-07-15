@@ -3,15 +3,12 @@ import AstrenzaCore
 private struct HomeTimelineStoreApplicationFeatures {
     let persistenceCoordinator: HomeTimelinePersistenceCoordinator
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
 }
 
 private struct HomeTimelineStoreLoadFeatures {
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    let initialLoadWorkflow: HomeTimelineInitialLoadWorkflow
-    let refreshWorkflow: HomeTimelineRefreshWorkflow
-    let olderPageWorkflow: HomeTimelineOlderPageWorkflow
+    let loadWorkflow: HomeTimelineLoadWorkflow
 }
 
 private struct HomeTimelineStorePeripheralFeatures {
@@ -46,12 +43,9 @@ extension HomeTimelineStoreAssembly {
         return HomeTimelineStoreFeatureGraph(
             persistenceCoordinator: applications.persistenceCoordinator,
             accountStartWorkflow: applications.accountStartWorkflow,
-            loadApplicationCoordinator: applications.loadApplicationCoordinator,
             stateApplicationCoordinator: applications.stateApplicationCoordinator,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
-            initialLoadWorkflow: loads.initialLoadWorkflow,
-            refreshWorkflow: loads.refreshWorkflow,
-            olderPageWorkflow: loads.olderPageWorkflow,
+            loadWorkflow: loads.loadWorkflow,
             linkPreviewCoordinator: peripherals.linkPreviewCoordinator,
             readStateCoordinator: peripherals.readStateCoordinator,
             outboxCoordinator: peripherals.outboxCoordinator,
@@ -121,9 +115,6 @@ extension HomeTimelineStoreAssembly {
                 }
             )
         )
-        let loadApplicationCoordinator = HomeTimelineLoadApplicationCoordinator(
-            lifecycleCoordinator: coordination.lifecycleCoordinator
-        )
         let stateApplicationCoordinator = HomeTimelineStateApplicationCoordinator(
             snapshotCoordinator: persistence.snapshotCoordinator,
             presentationCoordinator: coordination.presentationCoordinator,
@@ -137,7 +128,6 @@ extension HomeTimelineStoreAssembly {
         return HomeTimelineStoreApplicationFeatures(
             persistenceCoordinator: persistenceCoordinator,
             accountStartWorkflow: accountStartWorkflow,
-            loadApplicationCoordinator: loadApplicationCoordinator,
             stateApplicationCoordinator: stateApplicationCoordinator
         )
     }
@@ -152,23 +142,31 @@ extension HomeTimelineStoreAssembly {
             loader: input.timelineLoader,
             relayEventPersistence: relayRuntime.relayStatusCoordinator
         )
+        let initialLoad = HomeTimelineInitialLoadWorkflow(
+            remoteLoader: remoteLoadCoordinator,
+            activityCoordinator: coordination.activityCoordinator,
+            lifecycleCoordinator: coordination.lifecycleCoordinator
+        )
+        let refresh = HomeTimelineRefreshWorkflow(
+            remoteLoader: remoteLoadCoordinator,
+            activityCoordinator: coordination.activityCoordinator,
+            lifecycleCoordinator: coordination.lifecycleCoordinator
+        )
+        let olderPage = HomeTimelineOlderPageWorkflow(
+            requester: coordination.backwardRequestCoordinator,
+            remoteLoader: remoteLoadCoordinator,
+            activityCoordinator: coordination.activityCoordinator,
+            lifecycleCoordinator: coordination.lifecycleCoordinator
+        )
         return HomeTimelineStoreLoadFeatures(
             remoteLoadCoordinator: remoteLoadCoordinator,
-            initialLoadWorkflow: HomeTimelineInitialLoadWorkflow(
-                remoteLoader: remoteLoadCoordinator,
-                activityCoordinator: coordination.activityCoordinator,
-                lifecycleCoordinator: coordination.lifecycleCoordinator
-            ),
-            refreshWorkflow: HomeTimelineRefreshWorkflow(
-                remoteLoader: remoteLoadCoordinator,
-                activityCoordinator: coordination.activityCoordinator,
-                lifecycleCoordinator: coordination.lifecycleCoordinator
-            ),
-            olderPageWorkflow: HomeTimelineOlderPageWorkflow(
-                requester: coordination.backwardRequestCoordinator,
-                remoteLoader: remoteLoadCoordinator,
-                activityCoordinator: coordination.activityCoordinator,
-                lifecycleCoordinator: coordination.lifecycleCoordinator
+            loadWorkflow: HomeTimelineLoadWorkflow(
+                initialLoad: initialLoad,
+                refresh: refresh,
+                olderPage: olderPage,
+                outcomeApplication: HomeTimelineLoadApplicationCoordinator(
+                    lifecycleCoordinator: coordination.lifecycleCoordinator
+                )
             )
         )
     }

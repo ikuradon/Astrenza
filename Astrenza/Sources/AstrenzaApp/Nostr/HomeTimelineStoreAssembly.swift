@@ -12,14 +12,11 @@ struct HomeTimelineStoreAssemblyInput {
 
 struct HomeTimelineStoreComponents {
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
+    let loadWorkflow: HomeTimelineLoadWorkflow
     let eventStore: NostrEventStore?
     let contentCoordinator: HomeTimelineContentCoordinator
     let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
-    let initialLoadWorkflow: HomeTimelineInitialLoadWorkflow
     let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
-    let refreshWorkflow: HomeTimelineRefreshWorkflow
-    let olderPageWorkflow: HomeTimelineOlderPageWorkflow
     let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
     let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     let filterCoordinator: HomeTimelineFilterCoordinator
@@ -93,12 +90,9 @@ struct HomeTimelineStoreRelayRuntimeGraph {
 struct HomeTimelineStoreFeatureGraph {
     let persistenceCoordinator: HomeTimelinePersistenceCoordinator
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
     let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    let initialLoadWorkflow: HomeTimelineInitialLoadWorkflow
-    let refreshWorkflow: HomeTimelineRefreshWorkflow
-    let olderPageWorkflow: HomeTimelineOlderPageWorkflow
+    let loadWorkflow: HomeTimelineLoadWorkflow
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let readStateCoordinator: HomeTimelineReadStateCoordinator
     let outboxCoordinator: HomeTimelineOutboxCoordinator
@@ -165,14 +159,11 @@ enum HomeTimelineStoreAssembly {
     ) -> HomeTimelineStoreComponents {
         HomeTimelineStoreComponents(
             remoteLoadCoordinator: graph.features.remoteLoadCoordinator,
-            loadApplicationCoordinator: graph.features.loadApplicationCoordinator,
+            loadWorkflow: graph.features.loadWorkflow,
             eventStore: input.eventStore,
             contentCoordinator: graph.persistence.contentCoordinator,
             runtimeEventWorkflow: graph.runtimeEvents.runtimeEventWorkflow,
-            initialLoadWorkflow: graph.features.initialLoadWorkflow,
             gapBackfillWorkflow: graph.coordination.gapBackfillWorkflow,
-            refreshWorkflow: graph.features.refreshWorkflow,
-            olderPageWorkflow: graph.features.olderPageWorkflow,
             backwardCompletionWorkflow: graph.runtimeEvents.backwardCompletionWorkflow,
             dependencyCoordinator: graph.coordination.dependencyCoordinator,
             filterCoordinator: graph.persistence.filterCoordinator,

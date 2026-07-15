@@ -27,14 +27,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     @Published private(set) var realtimeFollowSourceRevision: Int?
 
     private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
-    private let loadApplicationCoordinator: HomeTimelineLoadApplicationCoordinator
+    private let loadWorkflow: HomeTimelineLoadWorkflow
     private let eventStore: NostrEventStore?
     private let contentCoordinator: HomeTimelineContentCoordinator
     private let runtimeEventWorkflow: HomeTimelineRuntimeEventWorkflow
-    private let initialLoadWorkflow: HomeTimelineInitialLoadWorkflow
     private let gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow
-    private let refreshWorkflow: HomeTimelineRefreshWorkflow
-    private let olderPageWorkflow: HomeTimelineOlderPageWorkflow
     private let backwardCompletionWorkflow: HomeTimelineBackwardCompletionWorkflow
     private let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     private let filterCoordinator: HomeTimelineFilterCoordinator
@@ -241,14 +238,11 @@ final class NostrHomeTimelineStore: ObservableObject {
             )
         )
         self.remoteLoadCoordinator = components.remoteLoadCoordinator
-        self.loadApplicationCoordinator = components.loadApplicationCoordinator
+        self.loadWorkflow = components.loadWorkflow
         self.eventStore = components.eventStore
         self.contentCoordinator = components.contentCoordinator
         self.runtimeEventWorkflow = components.runtimeEventWorkflow
-        self.initialLoadWorkflow = components.initialLoadWorkflow
         self.gapBackfillWorkflow = components.gapBackfillWorkflow
-        self.refreshWorkflow = components.refreshWorkflow
-        self.olderPageWorkflow = components.olderPageWorkflow
         self.backwardCompletionWorkflow = components.backwardCompletionWorkflow
         self.dependencyCoordinator = components.dependencyCoordinator
         self.filterCoordinator = components.filterCoordinator
@@ -612,215 +606,142 @@ final class NostrHomeTimelineStore: ObservableObject {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await initialLoadWorkflow.load(
+        await loadWorkflow.loadInitial(
             HomeTimelineInitialLoadRequest(
                 account: account,
                 lifecycle: lifecycle,
                 hasRelayRuntime: relayRuntime != nil
             ),
-            handlers: initialLoadHandlers()
+            effects: loadEffects()
         )
-    }
-
-    private func initialLoadHandlers() -> HomeTimelineInitialLoadHandlers {
-        HomeTimelineInitialLoadHandlers(
-            perform: { [weak self] command in
-                self?.applyInitialLoadCommand(command)
-            },
-            hasResolvedRelays: { [weak self] in
-                self?.resolvedRelays.isEmpty == false
-            },
-            configureRuntime: { [weak self] account in
-                await self?.configureRelayRuntime(account: account)
-            },
-            applyOutcome: { [weak self] outcome, operation, account, lifecycle in
-                await self?.applyRemoteLoadOutcome(
-                    outcome,
-                    operation: operation,
-                    account: account,
-                    lifecycle: lifecycle
-                )
-            }
-        )
-    }
-
-    private func applyInitialLoadCommand(
-        _ command: HomeTimelineInitialLoadCommand
-    ) {
-        switch command {
-        case .applyActivityTransition(let transition):
-            applyActivityTransition(transition)
-        case .installProvisionalRuntimeBootstrap(let account):
-            installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        }
     }
 
     private func refreshLatest(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await refreshWorkflow.refresh(
+        await loadWorkflow.refreshLatest(
             HomeTimelineRefreshRequest(
                 account: account,
                 lifecycle: lifecycle,
                 hasTimelineEvents: !noteEvents.isEmpty,
                 hasRelayRuntime: relayRuntime != nil
             ),
-            handlers: refreshHandlers()
+            effects: loadEffects()
         )
-    }
-
-    private func refreshHandlers() -> HomeTimelineRefreshHandlers {
-        HomeTimelineRefreshHandlers(
-            perform: { [weak self] command in
-                self?.applyRefreshCommand(command)
-            },
-            prepareRemoteInput: { [weak self] _ in
-                guard let self else { return nil }
-                return HomeTimelineRefreshRemoteInput(current: loaderState())
-            },
-            configureRuntime: { [weak self] account in
-                await self?.configureRelayRuntime(account: account)
-            },
-            applyRemoteOutcome: { [weak self] outcome, account, lifecycle in
-                await self?.applyRemoteLoadOutcome(
-                    outcome,
-                    operation: .refresh,
-                    account: account,
-                    lifecycle: lifecycle
-                )
-            }
-        )
-    }
-
-    private func applyRefreshCommand(
-        _ command: HomeTimelineRefreshCommand
-    ) {
-        switch command {
-        case .applyActivityTransition(let transition):
-            applyActivityTransition(transition)
-        case .restartAccount(let account):
-            start(account: account)
-        }
     }
 
     private func loadOlder(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await olderPageWorkflow.load(
+        await loadWorkflow.loadOlder(
             HomeTimelineOlderPageRequest(
                 account: account,
                 lifecycle: lifecycle,
                 hasRelayRuntime: relayRuntime != nil
             ),
-            handlers: olderPageHandlers()
+            effects: loadEffects()
         )
     }
 
-    private func olderPageHandlers() -> HomeTimelineOlderPageHandlers {
-        HomeTimelineOlderPageHandlers(
-            perform: { [weak self] command in
-                self?.applyOlderPageCommand(command)
+    private func loadEffects() -> HomeTimelineLoadEffects {
+        HomeTimelineLoadEffects(
+            state: loadStateProviders(),
+            application: loadAppEffects()
+        )
+    }
+
+    private func loadStateProviders() -> HomeTimelineLoadStateProviders {
+        HomeTimelineLoadStateProviders(
+            hasResolvedRelays: { [weak self] in
+                self?.resolvedRelays.isEmpty == false
             },
-            prepareRemoteInput: { [weak self] account in
-                guard let self else { return nil }
-                let current = loaderState()
-                return HomeTimelineOlderPageRemoteInput(
-                    current: current,
-                    localBackfillEvents: databaseBackfillEvents(
-                        account: account,
-                        current: current
-                    )
-                )
+            currentState: { [weak self] in
+                self?.loaderState()
             },
-            applyRemoteOutcome: { [weak self] outcome, account, lifecycle in
-                await self?.applyRemoteLoadOutcome(
-                    outcome,
-                    operation: .older,
-                    account: account,
-                    lifecycle: lifecycle
-                )
+            localBackfillEvents: { [weak self] account, current in
+                self?.databaseBackfillEvents(account: account, current: current)
+            },
+            resolvedRelays: { [weak self] in
+                self?.resolvedRelays ?? []
             }
         )
     }
 
-    private func applyOlderPageCommand(
-        _ command: HomeTimelineOlderPageCommand
-    ) {
-        switch command {
-        case .applyActivityTransition(let transition):
-            applyActivityTransition(transition)
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: .partialFailure,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
-        }
-    }
-
-    private func applyRemoteLoadOutcome(
-        _ outcome: HomeTimelineRemoteLoadOutcome,
-        operation: HomeTimelineLoadOperation,
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken
-    ) async {
-        await loadApplicationCoordinator.apply(
-            outcome,
-            context: HomeTimelineLoadApplicationContext(
-                account: account,
-                lifecycle: lifecycle,
-                operation: operation,
-                resolvedRelays: resolvedRelays
-            ),
-            handlers: remoteLoadApplicationHandlers()
-        )
-    }
-
-    private func remoteLoadApplicationHandlers() -> HomeTimelineLoadApplicationHandlers {
-        HomeTimelineLoadApplicationHandlers(
-            perform: { [weak self] command in
-                self?.performRemoteLoadApplicationCommand(command)
+    private func loadAppEffects() -> HomeTimelineLoadAppEffects {
+        HomeTimelineLoadAppEffects(
+            applyActivityTransition: { [weak self] transition in
+                self?.applyActivityTransition(transition)
+            },
+            installProvisionalRuntimeBootstrap: { [weak self] account in
+                self?.installProvisionalRuntimeBootstrapIfNeeded(account: account)
+            },
+            configureRuntime: { [weak self] account in
+                await self?.configureRelayRuntime(account: account)
+            },
+            restartAccount: { [weak self] account in
+                self?.start(account: account)
+            },
+            recordBackwardDiagnostic: { [weak self] diagnostic in
+                self?.recordBackwardLoadDiagnostic(diagnostic)
+            },
+            replaceTimelineState: { [weak self] state in
+                self?.replaceTimelineState(state)
+            },
+            replaceRuntimeBootstrapState: { [weak self] state in
+                self?.replaceRuntimeBootstrapState(state)
+            },
+            replaceFollowedPubkeys: { [weak self] pubkeys in
+                self?.replaceFollowedPubkeys(pubkeys)
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
             },
             persistDatabase: { [weak self] account in
                 await self?.persistDatabase(account: account)
             },
-            configureRelayRuntime: { [weak self] account in
-                await self?.configureRelayRuntime(account: account)
+            recordLoadDiagnostic: { [weak self] diagnostic in
+                self?.recordLoadDiagnostic(diagnostic)
+            },
+            setPhase: { [weak self] phase in
+                guard let self else { return }
+                applyActivityTransition(activityCoordinator.setPhase(phase))
             }
         )
     }
 
-    private func performRemoteLoadApplicationCommand(
-        _ command: HomeTimelineLoadApplicationCommand
+    private func recordBackwardLoadDiagnostic(
+        _ diagnostic: HomeTimelineBackwardRequestDiagnostic
     ) {
-        switch command {
-        case .replaceState(let state, let replacement):
-            switch replacement {
-            case .complete:
-                replaceTimelineState(state)
-            case .runtimeBootstrap:
-                replaceTimelineState(contentCoordinator.runtimeBootstrapState(
-                    from: state,
-                    nip05Resolutions: dependencyCoordinator.nip05Resolutions
-                ))
-            }
-        case .replaceFollowedPubkeys(let pubkeys):
-            applyContentSnapshot(contentCoordinator.replaceFollowedPubkeys(pubkeys))
-        case .materializeEntries:
-            materializeEntries()
-        case .recordDiagnostic(let diagnostic):
-            recordRuntimeSyncEvent(
-                relayURL: diagnostic.relayURL,
-                kind: diagnostic.kind,
-                subscriptionID: diagnostic.subscriptionID,
-                message: diagnostic.message
-            )
-        case .setPhase(let phase):
-            applyActivityTransition(activityCoordinator.setPhase(phase))
-        }
+        recordRuntimeSyncEvent(
+            relayURL: diagnostic.relayURL,
+            kind: .partialFailure,
+            subscriptionID: diagnostic.subscriptionID,
+            message: diagnostic.message
+        )
+    }
+
+    private func recordLoadDiagnostic(_ diagnostic: HomeTimelineLoadDiagnostic) {
+        recordRuntimeSyncEvent(
+            relayURL: diagnostic.relayURL,
+            kind: diagnostic.kind,
+            subscriptionID: diagnostic.subscriptionID,
+            message: diagnostic.message
+        )
+    }
+
+    private func replaceRuntimeBootstrapState(
+        _ state: NostrHomeTimelineState
+    ) {
+        replaceTimelineState(contentCoordinator.runtimeBootstrapState(
+            from: state,
+            nip05Resolutions: dependencyCoordinator.nip05Resolutions
+        ))
+    }
+
+    private func replaceFollowedPubkeys(_ pubkeys: [String]) {
+        applyContentSnapshot(contentCoordinator.replaceFollowedPubkeys(pubkeys))
     }
 
     private func timelineEvent(id: String) -> NostrEvent? {
