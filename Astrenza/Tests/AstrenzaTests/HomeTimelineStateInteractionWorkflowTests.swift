@@ -305,24 +305,23 @@ private struct StateInteractionFixture {
     }
 
     var context: HomeTimelineStateInteractionContext {
-        HomeTimelineStateInteractionContext(
-            effects: HomeTimelineStateInteractionEffects(
-                environment: HomeTimelineStateInteractionEnvironment(
-                    projection: { [probe, runtimeState] in
-                        probe.projectionReads += 1
-                        guard probe.providesProjection else { return nil }
-                        return HomeTimelineStateContextProjection(
-                            persistenceState: probe.persistenceState,
-                            runtimeApplicationState: runtimeState,
-                            hasPendingEvents: probe.hasPendingEvents
-                        )
-                    }
-                ),
+        HomeStateContextFactory(
+            environment: HomeStateContextEnvironment(
+                projection: { [probe, runtimeState] in
+                    probe.projectionReads += 1
+                    guard probe.providesProjection else { return nil }
+                    return HomeTimelineStateContextProjection(
+                        persistenceState: probe.persistenceState,
+                        runtimeApplicationState: runtimeState,
+                        hasPendingEvents: probe.hasPendingEvents
+                    )
+                },
                 apply: { [probe] application in
                     probe.record(application)
                 }
             )
         )
+        .context()
     }
 
     var timelineState: NostrHomeTimelineState {

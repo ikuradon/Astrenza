@@ -73,6 +73,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeAccountContextFactory()
     private lazy var viewportContextFactory =
         makeViewportContextFactory()
+    private lazy var stateContextFactory =
+        makeStateContextFactory()
+    private lazy var runtimeApplicationEffects =
+        stateInteractionWorkflow.runtimeApplicationEffects(
+            context: stateContextFactory.context()
+        )
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -561,7 +567,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func restoreCachedSnapshot(account: NostrAccount) async -> Bool {
         await stateInteractionWorkflow.restoreCachedState(
             accountID: account.pubkey,
-            context: stateInteractionContext()
+            context: stateContextFactory.context()
         )
     }
 
@@ -579,22 +585,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 nip05Resolutions: dependencies.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
             ),
-            context: stateInteractionContext()
-        )
-    }
-
-    private func stateInteractionContext() -> HomeTimelineStateInteractionContext {
-        HomeTimelineStateInteractionContext(
-            effects: HomeTimelineStateInteractionEffects(
-                environment: HomeTimelineStateInteractionEnvironment(
-                    projection: { [weak self] in
-                        self?.stateContextProjection()
-                    }
-                ),
-                apply: { [weak self] application in
-                    self?.dispatchStoreApplication(application)
-                }
-            )
+            context: stateContextFactory.context()
         )
     }
 
@@ -760,7 +751,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                         )
                     }
                 ),
-                runtimeApplication: runtimeApplicationEffects(),
+                runtimeApplication: runtimeApplicationEffects,
                 apply: { [weak self] application in
                     self?.dispatchStoreApplication(application)
                 },
@@ -820,7 +811,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                         )
                     }
                 ),
-                runtimeApplication: runtimeApplicationEffects(),
+                runtimeApplication: runtimeApplicationEffects,
                 apply: { [weak self] application in
                     self?.dispatchStoreApplication(application)
                 }
@@ -1012,12 +1003,6 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    private func runtimeApplicationEffects() -> HomeTimelineRuntimeApplicationEffects {
-        stateInteractionWorkflow.runtimeApplicationEffects(
-            context: stateInteractionContext()
-        )
-    }
-
     private func stateContextProjection() -> HomeTimelineStateContextProjection {
         stateContextProjector.projection(from: stateStoreSnapshot())
     }
@@ -1040,7 +1025,7 @@ private extension NostrHomeTimelineStore {
         _ = await runtimeInteractionWorkflow.enqueueDependencies(
             for: event,
             state: runtimeDependencyState(),
-            application: runtimeApplicationEffects()
+            application: runtimeApplicationEffects
         )
     }
 
@@ -1048,7 +1033,7 @@ private extension NostrHomeTimelineStore {
         runtimeInteractionWorkflow.resolveNIP05IfNeeded(
             for: metadataEvent,
             state: runtimeDependencyState(),
-            application: runtimeApplicationEffects()
+            application: runtimeApplicationEffects
         )
     }
 
@@ -1122,7 +1107,7 @@ private extension NostrHomeTimelineStore {
         stateInteractionWorkflow.replace(
             state,
             accountID: account?.pubkey,
-            context: stateInteractionContext()
+            context: stateContextFactory.context()
         )
     }
 
@@ -1134,7 +1119,7 @@ private extension NostrHomeTimelineStore {
         runtimeInteractionWorkflow.rememberLatestMetadataEvent(
             event,
             consultEventStore: consultEventStore,
-            application: runtimeApplicationEffects()
+            application: runtimeApplicationEffects
         )
     }
 }
@@ -1156,6 +1141,19 @@ extension NostrHomeTimelineStore {
 }
 
 private extension NostrHomeTimelineStore {
+    func makeStateContextFactory() -> HomeStateContextFactory {
+        HomeStateContextFactory(
+            environment: HomeStateContextEnvironment(
+                projection: { [weak self] in
+                    self?.stateContextProjection()
+                },
+                apply: { [weak self] application in
+                    self?.dispatchStoreApplication(application)
+                }
+            )
+        )
+    }
+
     func makeFeatureInteractionContextFactory(
     ) -> HomeFeatureContextFactory {
         HomeFeatureContextFactory(
@@ -1440,7 +1438,7 @@ private extension NostrHomeTimelineStore {
                 lifecycle: request.lifecycle,
                 hasRelayRuntime: relayRuntime != nil
             ),
-            application: runtimeApplicationEffects()
+            application: runtimeApplicationEffects
         )
     }
 
