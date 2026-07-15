@@ -230,292 +230,54 @@ final class NostrHomeTimelineStore: ObservableObject {
         syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
         syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
     ) {
-        let persistenceWorker = eventStore.map(HomeTimelinePersistenceWorker.init)
-        self.eventStore = eventStore
-        let contentCoordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
-        self.contentCoordinator = contentCoordinator
-        let eventIngestor = HomeTimelineEventIngestor(eventStore: eventStore)
-        let syncPlanner = HomeTimelineSyncPlanner()
-        let profileDirectory = relayRuntime.map {
-            NostrProfileDirectory(eventStore: eventStore, relayRuntime: $0)
-        }
-        let sourcePacketInstaller: HomeTimelineDependencyResolutionCoordinator.SourcePacketInstaller?
-        let backwardPacketInstaller: HomeTimelineBackwardRequestCoordinator.PacketInstaller?
-        if let relayRuntime {
-            sourcePacketInstaller = { packets in
-                try await relayRuntime.installBackward(packets, mergeField: .ids)
-            }
-            backwardPacketInstaller = { packets, mergeField in
-                try await relayRuntime.installBackward(packets, mergeField: mergeField)
-            }
-        } else {
-            sourcePacketInstaller = nil
-            backwardPacketInstaller = nil
-        }
-        let backfillPersistence = HomeTimelineBackfillPersistence(eventStore: eventStore)
-        let timelineRepository = HomeTimelineRepository(eventStore: eventStore)
-        self.timelineRepository = timelineRepository
-        let gapReconciliationCoordinator = HomeTimelineGapReconciliationCoordinator(
-            reconciler: HomeTimelineGapReconciler(
+        let components = HomeTimelineStoreAssembly.assemble(
+            HomeTimelineStoreAssemblyInput(
+                timelineLoader: timelineLoader,
                 eventStore: eventStore,
-                relayClient: timelineLoader.relayClient
-            ),
-            persistence: backfillPersistence
-        )
-        let homeFeedProjection = HomeFeedProjectionController(eventStore: eventStore)
-        self.homeFeedProjection = homeFeedProjection
-        let snapshotCoordinator = HomeTimelineSnapshotCoordinator(
-            eventStore: eventStore,
-            persistenceWorker: persistenceWorker,
-            projectionController: homeFeedProjection
-        )
-        self.publishWorkflow = eventStore.map { eventStore in
-            HomeTimelinePublishWorkflow(
-                publisher: HomeTimelinePublishCoordinator(eventStore: eventStore),
-                contentManager: contentCoordinator,
-                projectionManager: homeFeedProjection
-            )
-        }
-        self.localMutationCoordinator = (localMutationPersistence ?? eventStore).map {
-            HomeTimelineLocalMutationCoordinator(persistence: $0)
-        }
-        let backwardRequestRegistry = HomeTimelineBackwardRequestRegistry()
-        self.backwardRequestRegistry = backwardRequestRegistry
-        let backwardRequestCoordinator = HomeTimelineBackwardRequestCoordinator(
-            contentCoordinator: contentCoordinator,
-            timelineRepository: timelineRepository,
-            projectionController: homeFeedProjection,
-            backwardRequestRegistry: backwardRequestRegistry,
-            syncPlanner: syncPlanner,
-            packetInstaller: backwardPacketInstaller
-        )
-        self.gapBackfillWorkflow = HomeTimelineGapBackfillWorkflow(
-            requester: backwardRequestCoordinator,
-            persistence: backfillPersistence
-        )
-        let feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
-            eventStore: eventStore,
-            backwardRequestRegistry: backwardRequestRegistry
-        )
-        self.feedSyncCoordinator = feedSyncCoordinator
-        let runtimeEventProcessor = HomeTimelineRuntimeEventProcessor(
-            eventIngestor: eventIngestor,
-            backwardRequestRegistry: backwardRequestRegistry,
-            feedSyncCoordinator: feedSyncCoordinator
-        )
-        self.relayRuntime = relayRuntime
-        let dependencyCoordinator = HomeTimelineDependencyResolutionCoordinator(
-            eventIngestor: eventIngestor,
-            profileDirectory: profileDirectory,
-            nip05Resolver: timelineLoader.nip05Resolver,
-            syncPlanner: syncPlanner,
-            sourcePacketInstaller: sourcePacketInstaller
-        )
-        self.dependencyCoordinator = dependencyCoordinator
-        let backwardCompletionApplicationCoordinator =
-            HomeTimelineBackwardCompletionApplicationCoordinator(
-                backwardRequestRegistry: backwardRequestRegistry,
-                dependencyCoordinator: dependencyCoordinator,
-                contentCoordinator: contentCoordinator,
-                projectionController: homeFeedProjection,
-                persistence: backfillPersistence
-            )
-        let filterCoordinator = HomeTimelineFilterCoordinator(eventStore: eventStore)
-        self.filterCoordinator = filterCoordinator
-        let listProjectionCache = HomeTimelineListProjectionCache()
-        self.listProjectionCache = listProjectionCache
-        let activityCoordinator = HomeTimelineActivityCoordinator()
-        self.activityCoordinator = activityCoordinator
-        let presentationCoordinator = HomeTimelinePresentationCoordinator()
-        self.presentationCoordinator = presentationCoordinator
-        self.materializationCoordinator = HomeTimelineMaterializationCoordinator(
-            contentCoordinator: contentCoordinator,
-            filterCoordinator: filterCoordinator,
-            presentationCoordinator: presentationCoordinator,
-            projectionController: homeFeedProjection,
-            repository: timelineRepository
-        )
-        let pendingEventBuffer = HomeTimelinePendingEventBuffer()
-        self.pendingEventBuffer = pendingEventBuffer
-        let lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
-        self.lifecycleCoordinator = lifecycleCoordinator
-        self.persistenceCoordinator = HomeTimelinePersistenceCoordinator(
-            snapshotPersistence: snapshotCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        self.accountStartCoordinator = HomeTimelineAccountStartCoordinator(
-            lifecycleCoordinator: lifecycleCoordinator,
-            resolveSyncPolicy: { accountID, fallback in
-                syncPolicySettingsStore.policy(accountID: accountID, fallback: fallback)
-            }
-        )
-        self.loadApplicationCoordinator = HomeTimelineLoadApplicationCoordinator(
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        let gapReconciliationApplicationCoordinator =
-            HomeTimelineGapReconciliationApplicationCoordinator(
-                reconciliationCoordinator: gapReconciliationCoordinator,
-                contentCoordinator: contentCoordinator,
-                timelineRepository: timelineRepository,
-                projectionController: homeFeedProjection,
-                backwardRequestRegistry: backwardRequestRegistry,
-                lifecycleCoordinator: lifecycleCoordinator
-            )
-        let backwardCompletionWorkflow = HomeTimelineBackwardCompletionWorkflow(
-            completionCoordinator: backwardCompletionApplicationCoordinator,
-            gapReconciliation: gapReconciliationApplicationCoordinator
-        )
-        self.backwardCompletionWorkflow = backwardCompletionWorkflow
-        let runtimeEventApplicationCoordinator = HomeTimelineRuntimeEventApplicationCoordinator(
-            contentCoordinator: contentCoordinator,
-            dependencyCoordinator: dependencyCoordinator,
-            listProjectionCache: listProjectionCache,
-            pendingEventBuffer: pendingEventBuffer,
-            backwardRequestRegistry: backwardRequestRegistry,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        let runtimeEventCoordinator = HomeTimelineRuntimeEventCoordinator(
-            processor: runtimeEventProcessor,
-            applicationCoordinator: runtimeEventApplicationCoordinator,
-            contentCoordinator: contentCoordinator,
-            projectionController: homeFeedProjection,
-            feedEventRecorder: feedSyncCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        let runtimeEventWorkflow = HomeTimelineRuntimeEventWorkflow(
-            coordinator: runtimeEventCoordinator
-        )
-        self.runtimeEventWorkflow = runtimeEventWorkflow
-        let runtimeEventPump = HomeTimelineRuntimeEventPump()
-        let runtimeStream: HomeTimelineRuntimeSessionCoordinator.RuntimeStream?
-        if let relayRuntime {
-            runtimeStream = { await relayRuntime.events() }
-        } else {
-            runtimeStream = nil
-        }
-        let runtimeSessionCoordinator = HomeTimelineRuntimeSessionCoordinator(
-            runtimeEventPump: runtimeEventPump,
-            runtimeStream: runtimeStream,
-            profileUpdateObserver: dependencyCoordinator,
-            profileUpdateApplication: runtimeEventWorkflow,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        self.runtimeSessionCoordinator = runtimeSessionCoordinator
-        let terminateRuntime: HomeTimelineRuntimeShutdownCoordinator.RuntimeTermination?
-        if let relayRuntime {
-            terminateRuntime = { await relayRuntime.terminate() }
-        } else {
-            terminateRuntime = nil
-        }
-        self.runtimeShutdownCoordinator = HomeTimelineRuntimeShutdownCoordinator(
-            scheduler: HomeTimelineRelayRuntimeTerminator(),
-            runtimeSession: runtimeSessionCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator,
-            terminateRuntime: terminateRuntime
-        )
-        let relayRuntimeConfigurator = HomeTimelineRelayRuntimeConfigurator(
-            relayRuntime: relayRuntime,
-            runtimeEventPump: runtimeEventPump,
-            dependencyCoordinator: dependencyCoordinator,
-            syncPlanner: syncPlanner
-        )
-        let runtimeSetupCoordinator = HomeTimelineRuntimeSetupCoordinator(
-            configurator: relayRuntimeConfigurator,
-            contentCoordinator: contentCoordinator,
-            dependencyCoordinator: dependencyCoordinator,
-            projectionController: homeFeedProjection,
-            feedSyncCoordinator: feedSyncCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator,
-            timelineRepository: timelineRepository
-        )
-        self.runtimeSetupCoordinator = runtimeSetupCoordinator
-        let relayStatusCoordinator = HomeTimelineRelayStatusCoordinator(
-            diagnostics: HomeTimelineRelayDiagnosticsLedger(
-                eventStore: eventStore,
-                persistenceWorker: persistenceWorker
+                relayRuntime: relayRuntime,
+                linkPreviewResolver: linkPreviewResolver,
+                outboxPublisher: outboxPublisher,
+                localMutationPersistence: localMutationPersistence,
+                syncPolicySettingsStore: syncPolicySettingsStore
             )
         )
-        self.relayStatusCoordinator = relayStatusCoordinator
-        self.stateApplicationCoordinator = HomeTimelineStateApplicationCoordinator(
-            snapshotCoordinator: snapshotCoordinator,
-            presentationCoordinator: presentationCoordinator,
-            contentCoordinator: contentCoordinator,
-            dependencyCoordinator: dependencyCoordinator,
-            relayStatusCoordinator: relayStatusCoordinator,
-            projectionController: homeFeedProjection,
-            listProjectionCache: listProjectionCache,
-            pendingEventBuffer: pendingEventBuffer
-        )
-        let runtimePacketCoordinator = HomeTimelineRuntimePacketCoordinator(
-            feedSyncCoordinator: feedSyncCoordinator,
-            relayStatusCoordinator: relayStatusCoordinator
-        )
-        self.runtimePacketWorkflow = HomeTimelineRuntimePacketWorkflow(
-            packetHandler: runtimePacketCoordinator
-        )
-        let remoteLoadCoordinator = HomeTimelineRemoteLoadCoordinator(
-            loader: timelineLoader,
-            relayEventPersistence: relayStatusCoordinator
-        )
-        self.remoteLoadCoordinator = remoteLoadCoordinator
-        self.initialLoadWorkflow = HomeTimelineInitialLoadWorkflow(
-            remoteLoader: remoteLoadCoordinator,
-            activityCoordinator: activityCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        self.refreshWorkflow = HomeTimelineRefreshWorkflow(
-            remoteLoader: remoteLoadCoordinator,
-            activityCoordinator: activityCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        self.olderPageWorkflow = HomeTimelineOlderPageWorkflow(
-            requester: backwardRequestCoordinator,
-            remoteLoader: remoteLoadCoordinator,
-            activityCoordinator: activityCoordinator,
-            lifecycleCoordinator: lifecycleCoordinator
-        )
-        let linkPreviewCoordinator = HomeTimelineLinkPreviewCoordinator(
-            eventStore: eventStore,
-            resolver: linkPreviewResolver
-        )
-        self.linkPreviewCoordinator = linkPreviewCoordinator
-        let readStateCoordinator = HomeTimelineReadStateCoordinator(
-            eventStore: eventStore,
-            persistenceWorker: persistenceWorker
-        )
-        self.readStateCoordinator = readStateCoordinator
-        let outboxCoordinator = HomeTimelineOutboxCoordinator(
-            drainer: HomeTimelineOutboxDrainer(
-                eventStore: eventStore,
-                publisher: outboxPublisher
-            )
-        )
-        self.outboxCoordinator = outboxCoordinator
-        self.accountResetCoordinator = HomeTimelineAccountResetCoordinator(
-            dependencies: HomeTimelineAccountResetDependencies(
-                endReadSession: { readBoundaryWrite in
-                    readStateCoordinator.endSession(flushing: readBoundaryWrite)
-                },
-                flushRelayTraffic: relayStatusCoordinator.flushTraffic,
-                cancelLifecycle: lifecycleCoordinator.cancel,
-                cancelGapReconciliation: backwardCompletionWorkflow.cancel,
-                cancelRuntimeEvents: runtimeSessionCoordinator.cancelRuntimeEvents,
-                resetLinkPreviews: linkPreviewCoordinator.reset,
-                resetPresentation: presentationCoordinator.reset,
-                cancelOutbox: outboxCoordinator.cancel,
-                resetDependencies: dependencyCoordinator.reset,
-                resetBackwardRequests: backwardRequestRegistry.reset,
-                resetActivity: activityCoordinator.reset,
-                resetProjection: homeFeedProjection.reset,
-                resetRuntimeSetup: runtimeSetupCoordinator.reset,
-                resetFeedSync: {
-                    feedSyncCoordinator.reset(finishingActiveRequestsWith: .cancelled)
-                },
-                resetContent: contentCoordinator.reset,
-                resetRelayStatus: relayStatusCoordinator.reset,
-                resetFilters: filterCoordinator.reset
-            )
-        )
+        self.remoteLoadCoordinator = components.remoteLoadCoordinator
+        self.loadApplicationCoordinator = components.loadApplicationCoordinator
+        self.eventStore = components.eventStore
+        self.contentCoordinator = components.contentCoordinator
+        self.runtimeEventWorkflow = components.runtimeEventWorkflow
+        self.initialLoadWorkflow = components.initialLoadWorkflow
+        self.gapBackfillWorkflow = components.gapBackfillWorkflow
+        self.refreshWorkflow = components.refreshWorkflow
+        self.olderPageWorkflow = components.olderPageWorkflow
+        self.backwardCompletionWorkflow = components.backwardCompletionWorkflow
+        self.dependencyCoordinator = components.dependencyCoordinator
+        self.filterCoordinator = components.filterCoordinator
+        self.listProjectionCache = components.listProjectionCache
+        self.activityCoordinator = components.activityCoordinator
+        self.presentationCoordinator = components.presentationCoordinator
+        self.materializationCoordinator = components.materializationCoordinator
+        self.pendingEventBuffer = components.pendingEventBuffer
+        self.backwardRequestRegistry = components.backwardRequestRegistry
+        self.feedSyncCoordinator = components.feedSyncCoordinator
+        self.lifecycleCoordinator = components.lifecycleCoordinator
+        self.runtimeSessionCoordinator = components.runtimeSessionCoordinator
+        self.runtimeSetupCoordinator = components.runtimeSetupCoordinator
+        self.runtimeShutdownCoordinator = components.runtimeShutdownCoordinator
+        self.accountStartCoordinator = components.accountStartCoordinator
+        self.accountResetCoordinator = components.accountResetCoordinator
+        self.relayStatusCoordinator = components.relayStatusCoordinator
+        self.linkPreviewCoordinator = components.linkPreviewCoordinator
+        self.readStateCoordinator = components.readStateCoordinator
+        self.timelineRepository = components.timelineRepository
+        self.runtimePacketWorkflow = components.runtimePacketWorkflow
+        self.homeFeedProjection = components.homeFeedProjection
+        self.stateApplicationCoordinator = components.stateApplicationCoordinator
+        self.persistenceCoordinator = components.persistenceCoordinator
+        self.publishWorkflow = components.publishWorkflow
+        self.localMutationCoordinator = components.localMutationCoordinator
+        self.relayRuntime = components.relayRuntime
+        self.outboxCoordinator = components.outboxCoordinator
         self.syncPolicy = syncPolicy
     }
 
