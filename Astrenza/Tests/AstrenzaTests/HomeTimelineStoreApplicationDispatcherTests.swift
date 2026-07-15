@@ -59,7 +59,10 @@ struct HomeStoreApplicationDispatcherTests {
         let fixture = StoreApplicationDispatcherFixture()
         let completion = fixture.backwardCompletion
 
-        fixture.dispatcher.apply(.setRealtime(true), effects: fixture.effects)
+        fixture.dispatcher.apply(
+            HomeTimelineRuntimeStoreAction.setRealtime(true),
+            effects: fixture.effects
+        )
         fixture.dispatcher.apply(
             .applyRelayStatusTransition(nil),
             effects: fixture.effects
@@ -69,7 +72,7 @@ struct HomeStoreApplicationDispatcherTests {
             effects: fixture.effects
         )
         fixture.dispatcher.apply(
-            .invalidateListEntries,
+            HomeTimelineRuntimeStoreAction.invalidateListEntries,
             effects: fixture.effects
         )
         fixture.dispatcher.apply(
@@ -91,6 +94,49 @@ struct HomeStoreApplicationDispatcherTests {
                 allowsRealtimeFollow: nil
             ),
             .scheduleLinkPreviewResolution
+        ])
+    }
+
+    @Test("Feature applications preserve domain payloads and order")
+    func featureApplicationsDispatchEffects() {
+        let fixture = StoreApplicationDispatcherFixture()
+        let relayTransition = fixture.relayTransition
+        let phase = NostrHomeTimelinePhase.failed("mutation failed")
+
+        fixture.dispatcher.apply(
+            HomeTimelineLinkPreviewStoreAction.applyRelayStatusTransition(
+                relayTransition
+            ),
+            effects: fixture.effects
+        )
+        let filterActions: [HomeTimelineFilterStoreAction] = [
+            .invalidateListEntries,
+            .materializeEntries
+        ]
+        for action in filterActions {
+            fixture.dispatcher.apply(action, effects: fixture.effects)
+        }
+        fixture.dispatcher.apply(
+            HomeTimelineSyncStoreAction.setRealtime(true),
+            effects: fixture.effects
+        )
+        let mutationActions: [HomeTimelineLocalMutationStoreAction] = [
+            .invalidateListEntries,
+            .materializeEntries,
+            .setPhase(phase)
+        ]
+        for action in mutationActions {
+            fixture.dispatcher.apply(action, effects: fixture.effects)
+        }
+
+        #expect(fixture.probe.events == [
+            .relayTransition(relayTransition),
+            .invalidateListEntries,
+            .materializeEntries,
+            .setRealtime(true),
+            .invalidateListEntries,
+            .materializeEntries,
+            .setPhase(phase)
         ])
     }
 
@@ -135,6 +181,7 @@ private final class StoreApplicationDispatchProbe {
         case materializeEntries
         case relayTransition(HomeTimelineRelayStatusTransition?)
         case setRealtime(Bool)
+        case setPhase(NostrHomeTimelinePhase)
         case backwardCompletion(NostrBackwardREQCompletion)
         case invalidateListEntries
         case scheduleLinkPreviewResolution
@@ -272,6 +319,9 @@ private struct StoreApplicationDispatcherFixture {
             },
             setRealtime: { [probe] isRealtime in
                 probe.events.append(.setRealtime(isRealtime))
+            },
+            setPhase: { [probe] phase in
+                probe.events.append(.setPhase(phase))
             },
             handleBackwardCompletion: { [probe] completion in
                 probe.events.append(.backwardCompletion(completion))

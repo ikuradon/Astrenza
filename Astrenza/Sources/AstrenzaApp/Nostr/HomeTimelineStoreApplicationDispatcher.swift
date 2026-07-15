@@ -29,6 +29,9 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
         _ transition: HomeTimelineRelayStatusTransition?
     ) -> Void
     typealias Realtime = @MainActor @Sendable (_ isRealtime: Bool) -> Void
+    typealias Phase = @MainActor @Sendable (
+        _ phase: NostrHomeTimelinePhase
+    ) -> Void
     typealias BackwardCompletion = @MainActor @Sendable (
         _ completion: NostrBackwardREQCompletion
     ) -> Void
@@ -49,6 +52,7 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     let materializeEntries: Action
     let applyRelayStatusTransition: RelayStatusTransition
     let setRealtime: Realtime
+    let setPhase: Phase
     let handleBackwardCompletion: BackwardCompletion
     let invalidateListEntries: Action
     let scheduleLinkPreviewResolution: Action
@@ -102,6 +106,52 @@ struct HomeTimelineStoreApplicationDispatcher {
             effects.scheduleMaterialization(nil, nil)
         case .scheduleLinkPreviewResolution:
             effects.scheduleLinkPreviewResolution()
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelineLinkPreviewStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .applyRelayStatusTransition(let transition):
+            effects.applyRelayStatusTransition(transition)
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelineFilterStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .invalidateListEntries:
+            effects.invalidateListEntries()
+        case .materializeEntries:
+            effects.materializeEntries()
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelineSyncStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .setRealtime(let isRealtime):
+            effects.setRealtime(isRealtime)
+        }
+    }
+
+    func apply(
+        _ action: HomeTimelineLocalMutationStoreAction,
+        effects: HomeTimelineStoreApplicationEffects
+    ) {
+        switch action {
+        case .invalidateListEntries:
+            effects.invalidateListEntries()
+        case .materializeEntries:
+            effects.materializeEntries()
+        case .setPhase(let phase):
+            effects.setPhase(phase)
         }
     }
 

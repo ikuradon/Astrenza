@@ -865,6 +865,42 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
+    private func dispatchStoreApplication(
+        _ action: HomeTimelineLinkPreviewStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func dispatchStoreApplication(
+        _ action: HomeTimelineFilterStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func dispatchStoreApplication(
+        _ action: HomeTimelineSyncStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
+    private func dispatchStoreApplication(
+        _ action: HomeTimelineLocalMutationStoreAction
+    ) {
+        storeApplicationDispatcher.apply(
+            action,
+            effects: storeApplicationEffects
+        )
+    }
+
     private func performStoreApplication(
         _ application: HomeTimelineRuntimeStoreAsyncAction
     ) async {
@@ -914,7 +950,10 @@ final class NostrHomeTimelineStore: ObservableObject {
                 self?.applyRelayStatusTransition(transition)
             },
             setRealtime: { [weak self] isRealtime in
-                self?.applySyncAction(.setRealtime(isRealtime))
+                self?.applyActivityIntent(.setRealtime(isRealtime))
+            },
+            setPhase: { [weak self] phase in
+                self?.applyActivityIntent(.setPhase(phase))
             },
             handleBackwardCompletion: { [weak self] completion in
                 self?.handleBackwardCompletion(completion)
@@ -1014,19 +1053,10 @@ private extension NostrHomeTimelineStore {
                     self?.scheduleMaterializeEntries()
                 },
                 apply: { [weak self] action in
-                    self?.applyLinkPreviewAction(action)
+                    self?.dispatchStoreApplication(action)
                 }
             )
         )
-    }
-
-    private func applyLinkPreviewAction(
-        _ action: HomeTimelineLinkPreviewStoreAction
-    ) {
-        switch action {
-        case .applyRelayStatusTransition(let transition):
-            applyRelayStatusTransition(transition)
-        }
     }
 
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
@@ -1122,21 +1152,10 @@ private extension NostrHomeTimelineStore {
         HomeFilterInteractionContext(
             effects: HomeFilterInteractionEffects(
                 apply: { [weak self] action in
-                    self?.applyFilterAction(action)
+                    self?.dispatchStoreApplication(action)
                 }
             )
         )
-    }
-
-    func applyFilterAction(
-        _ action: HomeTimelineFilterStoreAction
-    ) {
-        switch action {
-        case .invalidateListEntries:
-            invalidateListEntries()
-        case .materializeEntries:
-            materializeEntries()
-        }
     }
 
     func syncInteractionContext(
@@ -1144,19 +1163,10 @@ private extension NostrHomeTimelineStore {
         HomeTimelineSyncInteractionContext(
             effects: HomeTimelineSyncInteractionEffects(
                 apply: { [weak self] action in
-                    self?.applySyncAction(action)
+                    self?.dispatchStoreApplication(action)
                 }
             )
         )
-    }
-
-    func applySyncAction(
-        _ action: HomeTimelineSyncStoreAction
-    ) {
-        switch action {
-        case .setRealtime(let isRealtime):
-            applyActivityIntent(.setRealtime(isRealtime))
-        }
     }
 
     func resetHomeTimelineRealtime(
@@ -1192,23 +1202,10 @@ private extension NostrHomeTimelineStore {
             ),
             effects: HomeLocalMutationInteractionEffects(
                 apply: { [weak self] action in
-                    self?.applyLocalMutationAction(action)
+                    self?.dispatchStoreApplication(action)
                 }
             )
         )
-    }
-
-    func applyLocalMutationAction(
-        _ action: HomeTimelineLocalMutationStoreAction
-    ) {
-        switch action {
-        case .invalidateListEntries:
-            invalidateListEntries()
-        case .materializeEntries:
-            materializeEntries()
-        case .setPhase(let phase):
-            applyActivityIntent(.setPhase(phase))
-        }
     }
 
     func gapBackfillInteractionContext(
@@ -1803,7 +1800,9 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        applySyncAction(.setRealtime(isRealtime))
+        dispatchStoreApplication(
+            HomeTimelineSyncStoreAction.setRealtime(isRealtime)
+        )
     }
 
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
