@@ -1,9 +1,8 @@
 import AstrenzaCore
 
 private struct HomeTimelineStoreApplicationFeatures {
-    let persistenceCoordinator: HomeTimelinePersistenceCoordinator
+    let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
 }
 
 private struct HomeTimelineStoreLoadFeatures {
@@ -41,9 +40,8 @@ extension HomeTimelineStoreAssembly {
         )
         let peripherals = makePeripheralFeatures(input, persistence: persistence)
         return HomeTimelineStoreFeatureGraph(
-            persistenceCoordinator: applications.persistenceCoordinator,
+            stateWorkflow: applications.stateWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
-            stateApplicationCoordinator: applications.stateApplicationCoordinator,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
             loadWorkflow: loads.loadWorkflow,
             linkPreviewCoordinator: peripherals.linkPreviewCoordinator,
@@ -126,9 +124,11 @@ extension HomeTimelineStoreAssembly {
             pendingEventBuffer: coordination.pendingEventBuffer
         )
         return HomeTimelineStoreApplicationFeatures(
-            persistenceCoordinator: persistenceCoordinator,
-            accountStartWorkflow: accountStartWorkflow,
-            stateApplicationCoordinator: stateApplicationCoordinator
+            stateWorkflow: HomeTimelineStateWorkflow(
+                stateApplication: stateApplicationCoordinator,
+                persistence: persistenceCoordinator
+            ),
+            accountStartWorkflow: accountStartWorkflow
         )
     }
 

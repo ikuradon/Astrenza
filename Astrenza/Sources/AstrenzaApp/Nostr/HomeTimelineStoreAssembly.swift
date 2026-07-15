@@ -36,8 +36,7 @@ struct HomeTimelineStoreComponents {
     let readStateCoordinator: HomeTimelineReadStateCoordinator
     let timelineRepository: HomeTimelineRepository
     let homeFeedProjection: HomeFeedProjectionController
-    let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
-    let persistenceCoordinator: HomeTimelinePersistenceCoordinator
+    let stateWorkflow: HomeTimelineStateWorkflow
     let publishWorkflow: HomeTimelinePublishWorkflow?
     let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     let relayRuntime: NostrRelayRuntime?
@@ -86,9 +85,8 @@ struct HomeTimelineStoreRelayRuntimeGraph {
 }
 
 struct HomeTimelineStoreFeatureGraph {
-    let persistenceCoordinator: HomeTimelinePersistenceCoordinator
+    let stateWorkflow: HomeTimelineStateWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadWorkflow: HomeTimelineLoadWorkflow
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
@@ -185,8 +183,7 @@ enum HomeTimelineStoreAssembly {
             readStateCoordinator: graph.features.readStateCoordinator,
             timelineRepository: graph.persistence.timelineRepository,
             homeFeedProjection: graph.persistence.homeFeedProjection,
-            stateApplicationCoordinator: graph.features.stateApplicationCoordinator,
-            persistenceCoordinator: graph.features.persistenceCoordinator,
+            stateWorkflow: graph.features.stateWorkflow,
             publishWorkflow: graph.features.publishWorkflow,
             localMutationCoordinator: graph.features.localMutationCoordinator,
             relayRuntime: input.relayRuntime,

@@ -51,8 +51,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
     private let timelineRepository: HomeTimelineRepository
     private let homeFeedProjection: HomeFeedProjectionController
-    private let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
-    private let persistenceCoordinator: HomeTimelinePersistenceCoordinator
+    private let stateWorkflow: HomeTimelineStateWorkflow
     private let publishWorkflow: HomeTimelinePublishWorkflow?
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
@@ -260,8 +259,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.readStateCoordinator = components.readStateCoordinator
         self.timelineRepository = components.timelineRepository
         self.homeFeedProjection = components.homeFeedProjection
-        self.stateApplicationCoordinator = components.stateApplicationCoordinator
-        self.persistenceCoordinator = components.persistenceCoordinator
+        self.stateWorkflow = components.stateWorkflow
         self.publishWorkflow = components.publishWorkflow
         self.localMutationCoordinator = components.localMutationCoordinator
         self.relayRuntime = components.relayRuntime
@@ -746,14 +744,14 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     @discardableResult
     private func restoreCachedSnapshot(account: NostrAccount) -> Bool {
-        stateApplicationCoordinator.restoreCachedState(
+        stateWorkflow.restoreCachedState(
             accountID: account.pubkey,
-            handlers: stateApplicationHandlers()
+            effects: stateWorkflowEffects()
         )
     }
 
     private func persistDatabase(account: NostrAccount) async {
-        await persistenceCoordinator.persistSnapshot(
+        await stateWorkflow.persistSnapshot(
             HomeTimelineSnapshotInput(
                 accountID: account.pubkey,
                 relays: resolvedRelays,
@@ -765,12 +763,12 @@ final class NostrHomeTimelineStore: ObservableObject {
                 nip05Resolutions: dependencyCoordinator.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
             ),
-            handlers: persistenceHandlers()
+            effects: stateWorkflowEffects()
         )
     }
 
     private func persistTimelineMetadata(account: NostrAccount) async {
-        await persistenceCoordinator.persistMetadata(
+        await stateWorkflow.persistMetadata(
             HomeTimelineMetadataSnapshot(
                 accountID: account.pubkey,
                 relays: resolvedRelays,
@@ -778,36 +776,40 @@ final class NostrHomeTimelineStore: ObservableObject {
                 nip05Resolutions: dependencyCoordinator.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
             ),
-            handlers: persistenceHandlers()
+            effects: stateWorkflowEffects()
         )
     }
 
-    private func persistenceHandlers() -> HomeTimelinePersistenceHandlers {
-        HomeTimelinePersistenceHandlers(
-            state: { [unowned self] in persistenceState() },
-            hasPendingEvents: { [unowned self] in
-                !pendingEventBuffer.isEmpty
+    private func stateWorkflowEffects() -> HomeTimelineStateWorkflowEffects {
+        HomeTimelineStateWorkflowEffects(
+            applyPresentationTransition: { [weak self] transition in
+                self?.applyPresentationTransition(transition)
             },
-            perform: { [weak self] command in
-                self?.applyPersistenceCommand(command)
+            applyContentSnapshot: { [weak self] snapshot in
+                self?.applyContentSnapshot(snapshot)
+            },
+            applyRelayStatusSnapshot: { [weak self] snapshot in
+                self?.applyRelayStatusSnapshot(snapshot)
+            },
+            listRevisionChanged: { [weak self] revision in
+                self?.listContentRevision = revision
+            },
+            pendingCountChanged: { [weak self] count in
+                self?.setUnmaterializedNewCount(count)
+            },
+            persistenceState: { [weak self] in
+                HomeTimelinePersistenceState(
+                    accountID: self?.account?.pubkey,
+                    followedPubkeys: self?.followedPubkeys ?? []
+                )
+            },
+            hasPendingEvents: { [weak self] in
+                self?.pendingEventBuffer.isEmpty == false
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
             }
         )
-    }
-
-    private func persistenceState() -> HomeTimelinePersistenceState {
-        HomeTimelinePersistenceState(
-            accountID: account?.pubkey,
-            followedPubkeys: followedPubkeys
-        )
-    }
-
-    private func applyPersistenceCommand(
-        _ command: HomeTimelinePersistenceCommand
-    ) {
-        switch command {
-        case .materializeEntries:
-            materializeEntries()
-        }
     }
 
     private func ensureHomeFeedDefinition(account: NostrAccount) {
@@ -1479,30 +1481,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func replaceTimelineState(_ state: NostrHomeTimelineState) {
-        stateApplicationCoordinator.replace(
+        stateWorkflow.replace(
             state,
             accountID: account?.pubkey,
-            handlers: stateApplicationHandlers()
-        )
-    }
-
-    private func stateApplicationHandlers() -> HomeTimelineStateApplicationHandlers {
-        HomeTimelineStateApplicationHandlers(
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            applyRelayStatusSnapshot: { [weak self] snapshot in
-                self?.applyRelayStatusSnapshot(snapshot)
-            },
-            listRevisionChanged: { [weak self] revision in
-                self?.listContentRevision = revision
-            },
-            pendingCountChanged: { [weak self] count in
-                self?.setUnmaterializedNewCount(count)
-            }
+            effects: stateWorkflowEffects()
         )
     }
 
