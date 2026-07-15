@@ -48,9 +48,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     private let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     private let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
-    private let runtimeShutdownCoordinator: HomeTimelineRuntimeShutdownCoordinator
     private let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    private let accountResetCoordinator: HomeTimelineAccountResetCoordinator
+    private let accountResetWorkflow: HomeTimelineAccountResetWorkflow
     private let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     private let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     private let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -263,9 +262,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.lifecycleCoordinator = components.lifecycleCoordinator
         self.runtimeSessionCoordinator = components.runtimeSessionCoordinator
         self.runtimeSetupCoordinator = components.runtimeSetupCoordinator
-        self.runtimeShutdownCoordinator = components.runtimeShutdownCoordinator
         self.accountStartWorkflow = components.accountStartWorkflow
-        self.accountResetCoordinator = components.accountResetCoordinator
+        self.accountResetWorkflow = components.accountResetWorkflow
         self.relayStatusCoordinator = components.relayStatusCoordinator
         self.linkPreviewCoordinator = components.linkPreviewCoordinator
         self.readStateCoordinator = components.readStateCoordinator
@@ -562,12 +560,12 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func cancel() {
-        accountResetCoordinator.reset(
-            context: HomeTimelineAccountResetContext(
+        accountResetWorkflow.reset(
+            HomeTimelineAccountResetInput(
                 readBoundaryWrite: homeFeedReadBoundaryWrite(),
                 resolvedRelays: resolvedRelays
             ),
-            handlers: accountResetHandlers()
+            effects: accountResetEffects()
         )
     }
 
@@ -982,7 +980,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 account: account,
                 profileRelayURLs: profileRelayURLs,
                 hasRelayRuntime: relayRuntime != nil,
-                isTerminating: runtimeShutdownCoordinator.isTerminating
+                isTerminating: accountResetWorkflow.isRuntimeTerminating
             ),
             handlers: HomeTimelineRuntimeSessionHandlers(
                 isAccountCurrent: { [weak self] accountID in
@@ -1073,8 +1071,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func accountResetHandlers() -> HomeTimelineAccountResetHandlers {
-        HomeTimelineAccountResetHandlers(
+    private func accountResetEffects() -> HomeTimelineAccountResetEffects {
+        HomeTimelineAccountResetEffects(
+            application: accountResetApplicationEffects(),
+            runtimeShutdown: runtimeShutdownEffects()
+        )
+    }
+
+    private func accountResetApplicationEffects() -> HomeTimelineAccountResetAppEffects {
+        HomeTimelineAccountResetAppEffects(
             applyPresentationTransition: { [weak self] transition in
                 self?.applyPresentationTransition(transition)
             },
@@ -1101,12 +1106,25 @@ final class NostrHomeTimelineStore: ObservableObject {
             },
             clearPublishedAccountState: { [weak self] in
                 self?.clearPublishedAccountState()
-            },
-            scheduleRuntimeShutdown: { [weak self] cancellationGeneration in
+            }
+        )
+    }
+
+    private func runtimeShutdownEffects() -> HomeTimelineRuntimeShutdownEffects {
+        HomeTimelineRuntimeShutdownEffects(
+            currentAccount: { [weak self] in self?.account },
+            resetRuntimeState: { [weak self] in
                 guard let self else { return }
-                runtimeShutdownCoordinator.schedule(
-                    cancellationGeneration: cancellationGeneration,
-                    handlers: runtimeShutdownHandlers()
+                runtimeSetupCoordinator.reset()
+                resetHomeTimelineRealtime()
+            },
+            startRuntimeSession: { [weak self] in
+                self?.startRuntimeSession()
+            },
+            configureRuntime: { [weak self] account, forceInstall in
+                await self?.configureRelayRuntime(
+                    account: account,
+                    forceInstall: forceInstall
                 )
             }
         )
@@ -1120,29 +1138,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private func clearPublishedAccountState() {
         relayStatusRevision &+= 1
         account = nil
-    }
-
-    private func runtimeShutdownHandlers() -> HomeTimelineRuntimeShutdownHandlers {
-        HomeTimelineRuntimeShutdownHandlers(
-            currentAccount: { [weak self] in self?.account },
-            perform: { [weak self] command in
-                await self?.applyRuntimeShutdownCommand(command)
-            }
-        )
-    }
-
-    private func applyRuntimeShutdownCommand(
-        _ command: HomeTimelineRuntimeShutdownCommand
-    ) async {
-        switch command {
-        case .resetRuntimeState:
-            runtimeSetupCoordinator.reset()
-            resetHomeTimelineRealtime()
-        case .startRuntimeSession:
-            startRuntimeSession()
-        case .configureRuntime(let account, let forceInstall):
-            await configureRelayRuntime(account: account, forceInstall: forceInstall)
-        }
     }
 
     private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
@@ -1184,7 +1179,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 defaultRelayURLs: runtimeRelayURLs(account: account),
                 policy: syncPolicy,
                 hasRelayRuntime: relayRuntime != nil,
-                isTerminating: runtimeShutdownCoordinator.isTerminating,
+                isTerminating: accountResetWorkflow.isRuntimeTerminating,
                 forceInstall: forceInstall
             ),
             handlers: HomeTimelineRuntimeSetupHandlers(

@@ -60,14 +60,14 @@ extension HomeTimelineStoreAssembly {
         )
     }
 
-    static func makeAccountReset(
+    static func makeAccountResetWorkflow(
         persistence: HomeTimelineStorePersistenceGraph,
         coordination: HomeTimelineStoreCoordinationGraph,
         runtimeEvents: HomeTimelineStoreRuntimeEventGraph,
         relayRuntime: HomeTimelineStoreRelayRuntimeGraph,
         features: HomeTimelineStoreFeatureGraph
-    ) -> HomeTimelineAccountResetCoordinator {
-        HomeTimelineAccountResetCoordinator(
+    ) -> HomeTimelineAccountResetWorkflow {
+        let coordinator = HomeTimelineAccountResetCoordinator(
             dependencies: HomeTimelineAccountResetDependencies(
                 endReadSession: { readBoundaryWrite in
                     features.readStateCoordinator.endSession(flushing: readBoundaryWrite)
@@ -93,6 +93,10 @@ extension HomeTimelineStoreAssembly {
                 resetRelayStatus: relayRuntime.relayStatusCoordinator.reset,
                 resetFilters: persistence.filterCoordinator.reset
             )
+        )
+        return HomeTimelineAccountResetWorkflow(
+            resetCoordinator: coordinator,
+            runtimeShutdownCoordinator: relayRuntime.runtimeShutdownCoordinator
         )
     }
 

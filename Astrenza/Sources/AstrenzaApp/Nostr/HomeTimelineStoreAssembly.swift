@@ -33,9 +33,8 @@ struct HomeTimelineStoreComponents {
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     let runtimeSessionCoordinator: HomeTimelineRuntimeSessionCoordinator
     let runtimeSetupCoordinator: HomeTimelineRuntimeSetupCoordinator
-    let runtimeShutdownCoordinator: HomeTimelineRuntimeShutdownCoordinator
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
-    let accountResetCoordinator: HomeTimelineAccountResetCoordinator
+    let accountResetWorkflow: HomeTimelineAccountResetWorkflow
     let relayStatusCoordinator: HomeTimelineRelayStatusCoordinator
     let linkPreviewCoordinator: HomeTimelineLinkPreviewCoordinator
     let readStateCoordinator: HomeTimelineReadStateCoordinator
@@ -113,7 +112,7 @@ struct HomeTimelineStoreAssemblyGraph {
     let runtimeEvents: HomeTimelineStoreRuntimeEventGraph
     let relayRuntime: HomeTimelineStoreRelayRuntimeGraph
     let features: HomeTimelineStoreFeatureGraph
-    let accountReset: HomeTimelineAccountResetCoordinator
+    let accountResetWorkflow: HomeTimelineAccountResetWorkflow
 }
 
 @MainActor
@@ -140,7 +139,7 @@ enum HomeTimelineStoreAssembly {
             coordination: coordination,
             relayRuntime: relayRuntime
         )
-        let accountReset = makeAccountReset(
+        let accountResetWorkflow = makeAccountResetWorkflow(
             persistence: persistence,
             coordination: coordination,
             runtimeEvents: runtimeEvents,
@@ -155,7 +154,7 @@ enum HomeTimelineStoreAssembly {
                 runtimeEvents: runtimeEvents,
                 relayRuntime: relayRuntime,
                 features: features,
-                accountReset: accountReset
+                accountResetWorkflow: accountResetWorkflow
             )
         )
     }
@@ -187,9 +186,8 @@ enum HomeTimelineStoreAssembly {
             lifecycleCoordinator: graph.coordination.lifecycleCoordinator,
             runtimeSessionCoordinator: graph.runtimeEvents.runtimeSessionCoordinator,
             runtimeSetupCoordinator: graph.relayRuntime.runtimeSetupCoordinator,
-            runtimeShutdownCoordinator: graph.relayRuntime.runtimeShutdownCoordinator,
             accountStartWorkflow: graph.features.accountStartWorkflow,
-            accountResetCoordinator: graph.accountReset,
+            accountResetWorkflow: graph.accountResetWorkflow,
             relayStatusCoordinator: graph.relayRuntime.relayStatusCoordinator,
             linkPreviewCoordinator: graph.features.linkPreviewCoordinator,
             readStateCoordinator: graph.features.readStateCoordinator,
