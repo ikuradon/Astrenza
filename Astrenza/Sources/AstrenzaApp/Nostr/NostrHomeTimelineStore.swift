@@ -34,6 +34,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeLinkPreviewInteractionWorkflow
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
+    private let readBoundaryInteractionWorkflow:
+        HomeReadBoundaryInteractionWorkflow
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -177,6 +179,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             components.linkPreviewInteractionWorkflow
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
+        self.readBoundaryInteractionWorkflow =
+            components.readBoundaryInteractionWorkflow
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
@@ -600,7 +604,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         let positions = entries.compactMap(\.post).map { post in
             HomeTimelineReadPosition(postID: post.id, createdAt: post.createdAt)
         }
-        let boundaryID = await projectionInteractionWorkflow
+        let boundaryID = await readBoundaryInteractionWorkflow
             .restoredReadBoundaryPostID(
                 accountID: account.pubkey,
                 positions: positions
@@ -616,25 +620,23 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private func scheduleHomeFeedReadStateSave() {
         guard let account else { return }
-        projectionInteractionWorkflow.scheduleReadBoundarySave(
+        readBoundaryInteractionWorkflow.scheduleReadBoundarySave(
             accountID: account.pubkey,
-            boundary: currentReadBoundaryCursor()
+            boundaryEvent: currentReadBoundaryEvent()
         )
     }
 
     private func homeFeedReadBoundaryWrite() -> HomeTimelineReadBoundaryWrite? {
         guard let account else { return nil }
-        return projectionInteractionWorkflow.readBoundaryWrite(
+        return readBoundaryInteractionWorkflow.readBoundaryWrite(
             accountID: account.pubkey,
-            boundary: currentReadBoundaryCursor()
+            boundaryEvent: currentReadBoundaryEvent()
         )
     }
 
-    private func currentReadBoundaryCursor() -> NostrTimelineEntryCursor? {
+    private func currentReadBoundaryEvent() -> NostrEvent? {
         let boundaryID = presentationWorkflow.interactionState.readBoundaryPostID
-        return boundaryID.flatMap(timelineEvent(id:)).map {
-            NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
-        }
+        return boundaryID.flatMap(timelineEvent(id:))
     }
 
     private func prepareHomeFeedDefinition(account: NostrAccount) {

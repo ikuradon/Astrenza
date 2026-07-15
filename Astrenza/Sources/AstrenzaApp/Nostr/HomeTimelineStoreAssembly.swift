@@ -34,6 +34,8 @@ struct HomeTimelineStoreComponents {
         HomeLinkPreviewInteractionWorkflow
     let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
+    let readBoundaryInteractionWorkflow:
+        HomeReadBoundaryInteractionWorkflow
     let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -192,8 +194,8 @@ enum HomeTimelineStoreAssembly {
             presentationWorkflow: graph.features.presentationWorkflow,
             linkPreviewInteractionWorkflow:
                 graph.features.linkPreviewInteractionWorkflow,
-            projectionInteractionWorkflow:
-                makeProjectionInteraction(from: graph, input: input),
+            projectionInteractionWorkflow: makeProjectionInteraction(from: graph, input: input),
+            readBoundaryInteractionWorkflow: makeReadBoundaryInteraction(from: graph),
             syncInteractionWorkflow: makeSyncInteraction(from: graph),
             accountStartInteractionWorkflow:
                 HomeAccountStartInteractionWorkflow(
@@ -277,8 +279,16 @@ enum HomeTimelineStoreAssembly {
         HomeProjectionInteractionWorkflow(
             projection: graph.persistence.homeFeedProjection,
             viewportStateRestorer: input.viewportStateRestorer,
-            readState: graph.features.readStateCoordinator,
             materialization: graph.coordination.materializationCoordinator
+        )
+    }
+
+    private static func makeReadBoundaryInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeReadBoundaryInteractionWorkflow {
+        HomeReadBoundaryInteractionWorkflow(
+            feedIdentity: graph.persistence.homeFeedProjection,
+            readState: graph.features.readStateCoordinator
         )
     }
 

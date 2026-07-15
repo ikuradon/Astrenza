@@ -6,51 +6,6 @@ import Testing
 @Suite("Home timeline projection interaction workflow")
 @MainActor
 struct HomeProjectionInteractionWorkflowTests {
-    @Test("Active feed identity gates read state operations")
-    func activeFeedIdentityGatesReadState() async throws {
-        let account = account(character: "a")
-        let definition = definition(accountID: account.pubkey)
-        let projection = ProjectionInteractionSpy(definition: definition)
-        let readState = ReadStateInteractionSpy(
-            restoredReadBoundaryResult: "boundary"
-        )
-        let workflow = makeWorkflow(
-            projection: projection,
-            readState: readState,
-            timestamp: 321
-        )
-        let positions = [
-            HomeTimelineReadPosition(postID: "boundary", createdAt: 100)
-        ]
-        let boundary = NostrTimelineEntryCursor(
-            sortTimestamp: 100,
-            eventID: "boundary"
-        )
-
-        #expect(await workflow.restoredReadBoundaryPostID(
-            accountID: account.pubkey,
-            positions: positions
-        ) == "boundary")
-        #expect(workflow.scheduleReadBoundarySave(
-            accountID: account.pubkey,
-            boundary: boundary
-        ))
-
-        #expect(readState.restoredBoundaryFeedID == definition.feedID)
-        #expect(readState.restoredBoundaryPositions == positions)
-        let boundaryWrite = try #require(readState.readBoundaryWrite)
-        #expect(boundaryWrite.scopeID == account.pubkey)
-        #expect(boundaryWrite.feedID == definition.feedID)
-        #expect(boundaryWrite.boundary == boundary)
-        #expect(boundaryWrite.updatedAt == 321)
-
-        #expect(await workflow.restoredReadBoundaryPostID(
-            accountID: String(repeating: "b", count: 64),
-            positions: positions
-        ) == nil)
-        #expect(readState.restoredBoundaryCallCount == 1)
-    }
-
     @Test("Startup viewport restoration does not require an activated projection")
     func startupViewportRestorationPrecedesProjectionActivation() {
         let account = account(character: "a")
@@ -68,10 +23,6 @@ struct HomeProjectionInteractionWorkflowTests {
         #expect(workflow.restoredViewportState(
             accountID: account.pubkey,
             timelineKey: "lists"
-        ) == nil)
-        #expect(workflow.readBoundaryWrite(
-            accountID: account.pubkey,
-            boundary: nil
         ) == nil)
         #expect(viewportStateRestorer.accountID == account.pubkey)
         #expect(viewportStateRestorer.timelineKey == "home")
@@ -160,7 +111,6 @@ struct HomeProjectionInteractionWorkflowTests {
         projection: ProjectionInteractionSpy,
         viewportStateRestorer: ViewportStateRestorerSpy =
             ViewportStateRestorerSpy(),
-        readState: ReadStateInteractionSpy = ReadStateInteractionSpy(),
         materialization: MaterializationInteractionSpy =
             MaterializationInteractionSpy(),
         timestamp: Int = 100
@@ -168,7 +118,6 @@ struct HomeProjectionInteractionWorkflowTests {
         HomeProjectionInteractionWorkflow(
             projection: projection,
             viewportStateRestorer: viewportStateRestorer,
-            readState: readState,
             materialization: materialization,
             timestamp: { timestamp }
         )
@@ -270,38 +219,6 @@ private final class ProjectionInteractionSpy: HomeFeedProjectionControlling {
     ) async {
         activatedDefinition = definition
         activatedSourceAuthors = sourceAuthors
-    }
-}
-
-@MainActor
-private final class ReadStateInteractionSpy: HomeTimelineReadStateCoordinating {
-    private let restoredReadBoundaryResult: String?
-    private(set) var restoredBoundaryFeedID: String?
-    private(set) var restoredBoundaryPositions: [HomeTimelineReadPosition] = []
-    private(set) var restoredBoundaryCallCount = 0
-    private(set) var readBoundaryWrite: HomeTimelineReadBoundaryWrite?
-
-    init(
-        restoredReadBoundaryResult: String? = nil
-    ) {
-        self.restoredReadBoundaryResult = restoredReadBoundaryResult
-    }
-
-    func restoredReadBoundaryPostID(
-        feedID: String,
-        positions: [HomeTimelineReadPosition]
-    ) async -> String? {
-        restoredBoundaryFeedID = feedID
-        restoredBoundaryPositions = positions
-        restoredBoundaryCallCount += 1
-        return restoredReadBoundaryResult
-    }
-
-    func scheduleReadBoundarySave(
-        _ write: HomeTimelineReadBoundaryWrite
-    ) -> Bool {
-        readBoundaryWrite = write
-        return true
     }
 }
 

@@ -2,7 +2,12 @@ import AstrenzaCore
 import Foundation
 
 @MainActor
-protocol HomeFeedProjectionControlling: AnyObject {
+protocol HomeFeedIdentityResolving: AnyObject {
+    func feedID(accountID: String) -> String?
+}
+
+@MainActor
+protocol HomeFeedProjectionControlling: HomeFeedIdentityResolving {
     var definition: NostrFeedDefinitionRecord? { get }
     var retainedWindowLimit: Int { get }
 
@@ -12,8 +17,6 @@ protocol HomeFeedProjectionControlling: AnyObject {
         liveEvents: [NostrEvent],
         now: Int
     )
-
-    func feedID(accountID: String) -> String?
 
     func isCurrent(
         _ context: HomeFeedRuntimeContext?,
@@ -37,21 +40,6 @@ protocol HomeTimelineViewportStateRestoring: AnyObject {
 }
 
 extension TimelineRestoreStore: HomeTimelineViewportStateRestoring {}
-
-@MainActor
-protocol HomeTimelineReadStateCoordinating: AnyObject {
-    func restoredReadBoundaryPostID(
-        feedID: String,
-        positions: [HomeTimelineReadPosition]
-    ) async -> String?
-
-    @discardableResult
-    func scheduleReadBoundarySave(
-        _ write: HomeTimelineReadBoundaryWrite
-    ) -> Bool
-}
-
-extension HomeTimelineReadStateCoordinator: HomeTimelineReadStateCoordinating {}
 
 @MainActor
 protocol HomeTimelineMaterializationCoordinating: AnyObject {
@@ -93,14 +81,12 @@ final class HomeProjectionInteractionWorkflow {
 
     private let projection: any HomeFeedProjectionControlling
     private let viewportStateRestorer: any HomeTimelineViewportStateRestoring
-    private let readState: any HomeTimelineReadStateCoordinating
     private let materialization: any HomeTimelineMaterializationCoordinating
     private let timestamp: TimestampProvider
 
     init(
         projection: any HomeFeedProjectionControlling,
         viewportStateRestorer: any HomeTimelineViewportStateRestoring,
-        readState: any HomeTimelineReadStateCoordinating,
         materialization: any HomeTimelineMaterializationCoordinating,
         timestamp: @escaping TimestampProvider = {
             Int(Date().timeIntervalSince1970)
@@ -108,7 +94,6 @@ final class HomeProjectionInteractionWorkflow {
     ) {
         self.projection = projection
         self.viewportStateRestorer = viewportStateRestorer
-        self.readState = readState
         self.materialization = materialization
         self.timestamp = timestamp
     }
@@ -146,46 +131,6 @@ final class HomeProjectionInteractionWorkflow {
               state.timelineKey == timelineKey
         else { return nil }
         return state
-    }
-
-    func restoredReadBoundaryPostID(
-        accountID: String,
-        positions: [HomeTimelineReadPosition]
-    ) async -> String? {
-        guard let feedID = activeFeedID(accountID: accountID) else {
-            return nil
-        }
-        return await readState.restoredReadBoundaryPostID(
-            feedID: feedID,
-            positions: positions
-        )
-    }
-
-    func readBoundaryWrite(
-        accountID: String,
-        boundary: NostrTimelineEntryCursor?
-    ) -> HomeTimelineReadBoundaryWrite? {
-        guard let feedID = activeFeedID(accountID: accountID) else {
-            return nil
-        }
-        return HomeTimelineReadBoundaryWrite(
-            scopeID: accountID,
-            feedID: feedID,
-            boundary: boundary,
-            updatedAt: timestamp()
-        )
-    }
-
-    @discardableResult
-    func scheduleReadBoundarySave(
-        accountID: String,
-        boundary: NostrTimelineEntryCursor?
-    ) -> Bool {
-        guard let write = readBoundaryWrite(
-            accountID: accountID,
-            boundary: boundary
-        ) else { return false }
-        return readState.scheduleReadBoundarySave(write)
     }
 
     func reloadNewestProjection(
@@ -257,8 +202,4 @@ final class HomeProjectionInteractionWorkflow {
         )
     }
     #endif
-
-    private func activeFeedID(accountID: String) -> String? {
-        projection.feedID(accountID: accountID)
-    }
 }
