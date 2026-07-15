@@ -29,6 +29,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineAccountApplicationDispatcher()
     private let viewportApplicationDispatcher =
         HomeTimelineViewportDispatcher()
+    private let loadApplicationDispatcher =
+        HomeTimelineLoadDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -63,6 +65,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeAccountApplicationEffects()
     private lazy var viewportApplicationEffects =
         makeViewportApplicationEffects()
+    private lazy var loadApplicationEffects =
+        makeLoadApplicationEffects()
     private var publishedStateObservation: AnyCancellable?
     private var projectionViewportState = HomeTimelineProjectionViewportState()
 
@@ -491,7 +495,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                     }
                 ),
                 apply: { [weak self] application in
-                    self?.applyLoadApplication(application)
+                    self?.dispatchLoadApplication(application)
                 },
                 perform: { [weak self] application in
                     guard let self else { return }
@@ -501,40 +505,63 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func applyLoadApplication(
+    private func dispatchLoadApplication(
         _ application: HomeTimelineLoadApplication
     ) {
-        switch application {
-        case .applyActivityTransition(let transition):
-            applyActivityTransition(transition)
-        case .applyRelayStatusTransition(let transition):
-            applyRelayStatusTransition(transition)
-        case .installProvisionalRuntimeBootstrap(let account):
-            installProvisionalRuntimeBootstrapIfNeeded(account: account)
-        case .restartAccount(let account):
-            start(account: account)
-        case .replaceTimelineState(let state):
-            replaceTimelineState(state)
-        case .replaceRuntimeBootstrapState(let state):
-            replaceRuntimeBootstrapState(state)
-        case .replaceFollowedPubkeys(let pubkeys):
-            replaceFollowedPubkeys(pubkeys)
-        case .materializeEntries:
-            materializeEntries()
-        case .setPhase(let phase):
-            applyActivityIntent(.setPhase(phase))
-        }
+        loadApplicationDispatcher.apply(
+            application,
+            effects: loadApplicationEffects
+        )
     }
 
     private func performLoadApplication(
         _ application: HomeTimelineLoadAsyncApplication
     ) async {
-        switch application {
-        case .configureRuntime(let account):
-            await configureRelayRuntime(account: account)
-        case .persistDatabase(let account):
-            await persistDatabase(account: account)
-        }
+        await loadApplicationDispatcher.perform(
+            application,
+            effects: loadApplicationEffects
+        )
+    }
+
+    private func makeLoadApplicationEffects(
+    ) -> HomeTimelineLoadApplicationEffects {
+        HomeTimelineLoadApplicationEffects(
+            applyActivityTransition: { [weak self] transition in
+                self?.applyActivityTransition(transition)
+            },
+            applyRelayStatusTransition: { [weak self] transition in
+                self?.applyRelayStatusTransition(transition)
+            },
+            installProvisionalRuntimeBootstrap: { [weak self] account in
+                self?.installProvisionalRuntimeBootstrapIfNeeded(
+                    account: account
+                )
+            },
+            restartAccount: { [weak self] account in
+                self?.start(account: account)
+            },
+            replaceTimelineState: { [weak self] state in
+                self?.replaceTimelineState(state)
+            },
+            replaceRuntimeBootstrapState: { [weak self] state in
+                self?.replaceRuntimeBootstrapState(state)
+            },
+            replaceFollowedPubkeys: { [weak self] pubkeys in
+                self?.replaceFollowedPubkeys(pubkeys)
+            },
+            materializeEntries: { [weak self] in
+                self?.materializeEntries()
+            },
+            setPhase: { [weak self] phase in
+                self?.applyActivityIntent(.setPhase(phase))
+            },
+            configureRuntime: { [weak self] account in
+                await self?.configureRelayRuntime(account: account)
+            },
+            persistDatabase: { [weak self] account in
+                await self?.persistDatabase(account: account)
+            }
+        )
     }
 
     private func replaceRuntimeBootstrapState(
