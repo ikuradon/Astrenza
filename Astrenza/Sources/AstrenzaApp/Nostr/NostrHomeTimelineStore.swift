@@ -56,8 +56,8 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let runtimePacketCoordinator: HomeTimelineRuntimePacketCoordinator
     private let gapReconciliationApplicationCoordinator: HomeTimelineGapReconciliationApplicationCoordinator
     private let homeFeedProjection: HomeFeedProjectionController
-    private let snapshotCoordinator: HomeTimelineSnapshotCoordinator
     private let stateApplicationCoordinator: HomeTimelineStateApplicationCoordinator
+    private let persistenceCoordinator: HomeTimelinePersistenceCoordinator
     private let publishCoordinator: HomeTimelinePublishCoordinator?
     private let localMutationCoordinator: HomeTimelineLocalMutationCoordinator?
     private let relayRuntime: NostrRelayRuntime?
@@ -269,7 +269,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             persistenceWorker: persistenceWorker,
             projectionController: homeFeedProjection
         )
-        self.snapshotCoordinator = snapshotCoordinator
         self.publishCoordinator = eventStore.map(HomeTimelinePublishCoordinator.init)
         self.localMutationCoordinator = (localMutationPersistence ?? eventStore).map {
             HomeTimelineLocalMutationCoordinator(persistence: $0)
@@ -330,6 +329,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.pendingEventBuffer = pendingEventBuffer
         let lifecycleCoordinator = HomeTimelineLifecycleCoordinator()
         self.lifecycleCoordinator = lifecycleCoordinator
+        self.persistenceCoordinator = HomeTimelinePersistenceCoordinator(
+            snapshotPersistence: snapshotCoordinator,
+            lifecycleCoordinator: lifecycleCoordinator
+        )
         self.accountStartCoordinator = HomeTimelineAccountStartCoordinator(
             lifecycleCoordinator: lifecycleCoordinator,
             resolveSyncPolicy: { accountID, fallback in
@@ -1047,8 +1050,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func persistDatabase(account: NostrAccount) async {
-        guard let lifecycle = lifecycleCoordinator.token(for: account.pubkey) else { return }
-        guard let receipt = await snapshotCoordinator.persistSnapshot(
+        await persistenceCoordinator.persistSnapshot(
             HomeTimelineSnapshotInput(
                 accountID: account.pubkey,
                 relays: resolvedRelays,
@@ -1059,37 +1061,50 @@ final class NostrHomeTimelineStore: ObservableObject {
                 contactListEvent: contactListEvent,
                 nip05Resolutions: dependencyCoordinator.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
-            )
-        ) else { return }
-        guard !Task.isCancelled,
-              lifecycleCoordinator.isCurrent(lifecycle),
-              self.account?.pubkey == account.pubkey,
-              snapshotCoordinator.activatePersistedSnapshot(
-                receipt,
-                accountID: account.pubkey,
-                followedPubkeys: followedPubkeys
-              )
-        else { return }
-        if pendingEventBuffer.isEmpty {
-            materializeEntries()
-        }
+            ),
+            handlers: persistenceHandlers()
+        )
     }
 
     private func persistTimelineMetadata(account: NostrAccount) async {
-        guard let lifecycle = lifecycleCoordinator.token(for: account.pubkey) else { return }
-        let didPersist = await snapshotCoordinator.persistMetadata(
+        await persistenceCoordinator.persistMetadata(
             HomeTimelineMetadataSnapshot(
                 accountID: account.pubkey,
                 relays: resolvedRelays,
                 followedPubkeys: followedPubkeys,
                 nip05Resolutions: dependencyCoordinator.nip05Resolutions,
                 hasMoreOlder: hasMoreOlder
-            )
+            ),
+            handlers: persistenceHandlers()
         )
-        guard didPersist,
-              lifecycleCoordinator.isCurrent(lifecycle),
-              self.account?.pubkey == account.pubkey
-        else { return }
+    }
+
+    private func persistenceHandlers() -> HomeTimelinePersistenceHandlers {
+        HomeTimelinePersistenceHandlers(
+            state: { [unowned self] in persistenceState() },
+            hasPendingEvents: { [unowned self] in
+                !pendingEventBuffer.isEmpty
+            },
+            perform: { [weak self] command in
+                self?.applyPersistenceCommand(command)
+            }
+        )
+    }
+
+    private func persistenceState() -> HomeTimelinePersistenceState {
+        HomeTimelinePersistenceState(
+            accountID: account?.pubkey,
+            followedPubkeys: followedPubkeys
+        )
+    }
+
+    private func applyPersistenceCommand(
+        _ command: HomeTimelinePersistenceCommand
+    ) {
+        switch command {
+        case .materializeEntries:
+            materializeEntries()
+        }
     }
 
     private func ensureHomeFeedDefinition(account: NostrAccount) {
