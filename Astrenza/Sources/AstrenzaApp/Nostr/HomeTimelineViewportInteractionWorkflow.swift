@@ -16,7 +16,9 @@ enum HomeTimelineViewportApplication {
     case scheduleViewportState(TimelineViewportState)
     case applyPresentationTransition(HomeTimelinePresentationTransition)
     case scheduleReadStateSave
-    case clearBufferedEvents
+    case applyPendingEventCountPublication(
+        HomeTimelinePendingEventCountPublication
+    )
     case clearPendingProjectionReload
     case scheduleLinkPreviewResolution
 }
@@ -57,6 +59,10 @@ final class HomeTimelineViewportInteractionWorkflow {
         self.presentation = presentation
         self.pendingEvents = pendingEvents
         self.pagination = pagination
+    }
+
+    var hasBufferedEvents: Bool {
+        pendingEvents.hasBufferedEvents
     }
 
     func setRestoreProjectionAnchor(
@@ -154,6 +160,15 @@ final class HomeTimelineViewportInteractionWorkflow {
         )
     }
 
+    @discardableResult
+    func clearPendingEvents(
+        _ context: HomeTimelineViewportInteractionContext
+    ) -> Bool {
+        pendingEvents.clear(
+            effects: pendingEventsEffects(for: context.effects)
+        )
+    }
+
     func loadOlder(_ context: HomeTimelineViewportInteractionContext) {
         pagination.loadOlder(
             context.state.pagination,
@@ -201,8 +216,8 @@ final class HomeTimelineViewportInteractionWorkflow {
             reloadNewestProjection: { account in
                 effects.apply(.reloadNewestProjectionWindow(account))
             },
-            clearBufferedEvents: {
-                effects.apply(.clearBufferedEvents)
+            applyPendingEventCountPublication: { publication in
+                effects.apply(.applyPendingEventCountPublication(publication))
             },
             clearPendingProjectionReload: {
                 effects.apply(.clearPendingProjectionReload)
@@ -232,3 +247,17 @@ final class HomeTimelineViewportInteractionWorkflow {
         )
     }
 }
+
+#if DEBUG
+extension HomeTimelineViewportInteractionWorkflow {
+    func replacePendingEventIDs(
+        _ eventIDs: Set<String>,
+        context: HomeTimelineViewportInteractionContext
+    ) {
+        pendingEvents.replaceEventIDs(
+            eventIDs,
+            effects: pendingEventsEffects(for: context.effects)
+        )
+    }
+}
+#endif

@@ -2,7 +2,6 @@ import AstrenzaCore
 
 struct HomeTimelinePendingEventsState: Equatable, Sendable {
     let account: NostrAccount?
-    let hasBufferedEvents: Bool
     let hasPendingProjectionReload: Bool
 }
 
@@ -11,11 +10,14 @@ struct HomeTimelinePendingEventsEffects: Sendable {
     typealias ProjectionViewportTransitionEffect = @MainActor @Sendable (
         _ transition: HomeTimelineProjectionViewportTransition
     ) -> Void
+    typealias PendingEventCountEffect = @MainActor @Sendable (
+        _ publication: HomeTimelinePendingEventCountPublication
+    ) -> Void
     typealias VoidEffect = @MainActor @Sendable () -> Void
 
     let applyProjectionViewportTransition: ProjectionViewportTransitionEffect
     let reloadNewestProjection: AccountEffect
-    let clearBufferedEvents: VoidEffect
+    let applyPendingEventCountPublication: PendingEventCountEffect
     let clearPendingProjectionReload: VoidEffect
     let materializeEntries: VoidEffect
     let scheduleLinkPreviewResolution: VoidEffect
@@ -23,21 +25,50 @@ struct HomeTimelinePendingEventsEffects: Sendable {
 
 @MainActor
 final class HomeTimelinePendingEventsWorkflow {
+    private let buffer: HomeTimelinePendingEventBuffer
+
+    init(buffer: HomeTimelinePendingEventBuffer) {
+        self.buffer = buffer
+    }
+
+    var hasBufferedEvents: Bool {
+        buffer.hasEvents
+    }
+
     @discardableResult
     func apply(
         _ state: HomeTimelinePendingEventsState,
         effects: HomeTimelinePendingEventsEffects
     ) -> Bool {
         guard let account = state.account else { return false }
-        let hadPendingEvents = state.hasBufferedEvents ||
+        let hadPendingEvents = buffer.hasEvents ||
             state.hasPendingProjectionReload
 
         effects.applyProjectionViewportTransition(.resetToNewest)
         effects.reloadNewestProjection(account)
-        effects.clearBufferedEvents()
+        clear(effects: effects)
         effects.clearPendingProjectionReload()
         effects.materializeEntries()
         effects.scheduleLinkPreviewResolution()
         return hadPendingEvents
     }
+
+    @discardableResult
+    func clear(effects: HomeTimelinePendingEventsEffects) -> Bool {
+        buffer.removeAll(
+            onCountPublication: effects.applyPendingEventCountPublication
+        )
+    }
+
+    #if DEBUG
+    func replaceEventIDs(
+        _ eventIDs: Set<String>,
+        effects: HomeTimelinePendingEventsEffects
+    ) {
+        buffer.replaceEventIDs(
+            eventIDs,
+            onCountPublication: effects.applyPendingEventCountPublication
+        )
+    }
+    #endif
 }

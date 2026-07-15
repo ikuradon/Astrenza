@@ -12,37 +12,44 @@ struct HomeTimelinePendingEventsWorkflowTests {
     func appliesPendingSourcesInOrder(_ scenario: PendingEventsScenario) {
         let account = pendingEventsAccount()
         let probe = PendingEventsProbe()
-        let workflow = HomeTimelinePendingEventsWorkflow()
+        let buffer = pendingEventBuffer(eventIDs: scenario.eventIDs)
+        let workflow = HomeTimelinePendingEventsWorkflow(buffer: buffer)
 
         let didApplyPendingEvents = workflow.apply(
             HomeTimelinePendingEventsState(
                 account: account,
-                hasBufferedEvents: scenario.hasBufferedEvents,
                 hasPendingProjectionReload: scenario.hasPendingProjectionReload
             ),
             effects: probe.effects
         )
 
         #expect(didApplyPendingEvents == scenario.expectedResult)
-        #expect(probe.events == [
+        var expectedEvents: [PendingEventsProbe.Event] = [
             .applyProjectionViewportTransition(.resetToNewest),
-            .reloadNewestProjection(account),
-            .clearBufferedEvents,
+            .reloadNewestProjection(account)
+        ]
+        if scenario.hasBufferedEvents {
+            expectedEvents.append(.applyPendingEventCountPublication(0))
+        }
+        expectedEvents += [
             .clearPendingProjectionReload,
             .materializeEntries,
             .scheduleLinkPreviewResolution
-        ])
+        ]
+        #expect(probe.events == expectedEvents)
+        #expect(!workflow.hasBufferedEvents)
     }
 
     @Test("A missing account prevents every state mutation and side effect")
     func missingAccountStopsApplication() {
         let probe = PendingEventsProbe()
-        let workflow = HomeTimelinePendingEventsWorkflow()
+        let workflow = HomeTimelinePendingEventsWorkflow(
+            buffer: pendingEventBuffer(eventIDs: ["event"])
+        )
 
         let didApplyPendingEvents = workflow.apply(
             HomeTimelinePendingEventsState(
                 account: nil,
-                hasBufferedEvents: true,
                 hasPendingProjectionReload: true
             ),
             effects: probe.effects
@@ -50,6 +57,21 @@ struct HomeTimelinePendingEventsWorkflowTests {
 
         #expect(!didApplyPendingEvents)
         #expect(probe.events.isEmpty)
+        #expect(workflow.hasBufferedEvents)
+    }
+
+    @Test("Explicit clearing owns buffered state and count publication")
+    func explicitClearPublishesCount() {
+        let probe = PendingEventsProbe()
+        let workflow = HomeTimelinePendingEventsWorkflow(
+            buffer: pendingEventBuffer(eventIDs: ["first", "second"])
+        )
+
+        #expect(workflow.clear(effects: probe.effects))
+        #expect(!workflow.clear(effects: probe.effects))
+
+        #expect(!workflow.hasBufferedEvents)
+        #expect(probe.events == [.applyPendingEventCountPublication(0)])
     }
 }
 
@@ -65,6 +87,10 @@ enum PendingEventsScenario: CaseIterable, Sendable {
 
     var hasPendingProjectionReload: Bool {
         self == .projectionReload || self == .both
+    }
+
+    var eventIDs: Set<String> {
+        hasBufferedEvents ? ["buffered"] : []
     }
 
     var expectedResult: Bool {
@@ -94,7 +120,7 @@ private final class PendingEventsProbe {
             HomeTimelineProjectionViewportTransition
         )
         case reloadNewestProjection(NostrAccount)
-        case clearBufferedEvents
+        case applyPendingEventCountPublication(Int)
         case clearPendingProjectionReload
         case materializeEntries
         case scheduleLinkPreviewResolution
@@ -110,8 +136,10 @@ private final class PendingEventsProbe {
             reloadNewestProjection: { [self] account in
                 events.append(.reloadNewestProjection(account))
             },
-            clearBufferedEvents: { [self] in
-                events.append(.clearBufferedEvents)
+            applyPendingEventCountPublication: { [self] publication in
+                events.append(.applyPendingEventCountPublication(
+                    publication.count
+                ))
             },
             clearPendingProjectionReload: { [self] in
                 events.append(.clearPendingProjectionReload)
@@ -124,6 +152,15 @@ private final class PendingEventsProbe {
             }
         )
     }
+}
+
+@MainActor
+private func pendingEventBuffer(
+    eventIDs: Set<String>
+) -> HomeTimelinePendingEventBuffer {
+    let buffer = HomeTimelinePendingEventBuffer()
+    buffer.replaceEventIDs(eventIDs) { _ in }
+    return buffer
 }
 
 private func pendingEventsAccount() -> NostrAccount {

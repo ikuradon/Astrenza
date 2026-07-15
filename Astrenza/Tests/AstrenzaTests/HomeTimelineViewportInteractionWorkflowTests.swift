@@ -63,11 +63,12 @@ struct HomeTimelineViewportWorkflowTests {
         #expect(fixture.applicationProbe.events == [
             .applyProjectionViewportTransition(.resetToNewest),
             .reloadNewestProjectionWindow(fixture.account),
-            .clearBufferedEvents,
+            .applyPendingEventCountPublication(0),
             .clearPendingProjectionReload,
             .materializeEntries(false),
             .scheduleLinkPreviewResolution
         ])
+        #expect(!fixture.workflow.hasBufferedEvents)
     }
 
     @Test("Pagination routes scheduled and direct loads through one async boundary")
@@ -108,7 +109,6 @@ private struct ViewportInteractionFixture {
     let lifecycleProbe: ViewportInteractionLifecycleProbe
     let applicationProbe = ViewportInteractionApplicationProbe()
     let workflow: HomeTimelineViewportInteractionWorkflow
-    let hasBufferedEvents: Bool
     let hasPendingProjectionReload: Bool
 
     init(
@@ -122,15 +122,20 @@ private struct ViewportInteractionFixture {
                 generation: 1
             )
         )
+        let pendingEventBuffer = HomeTimelinePendingEventBuffer()
+        pendingEventBuffer.replaceEventIDs(
+            hasBufferedEvents ? ["buffered"] : []
+        ) { _ in }
         self.presentationProbe = presentationProbe
         self.lifecycleProbe = lifecycleProbe
-        self.hasBufferedEvents = hasBufferedEvents
         self.hasPendingProjectionReload = hasPendingProjectionReload
         workflow = HomeTimelineViewportInteractionWorkflow(
             presentation: HomeTimelinePresentationWorkflow(
                 coordinator: presentationProbe
             ),
-            pendingEvents: HomeTimelinePendingEventsWorkflow(),
+            pendingEvents: HomeTimelinePendingEventsWorkflow(
+                buffer: pendingEventBuffer
+            ),
             pagination: HomeTimelinePaginationWorkflow(
                 lifecycleCoordinator: lifecycleProbe
             )
@@ -146,7 +151,6 @@ private struct ViewportInteractionFixture {
                 ),
                 pendingEvents: HomeTimelinePendingEventsState(
                     account: account,
-                    hasBufferedEvents: hasBufferedEvents,
                     hasPendingProjectionReload: hasPendingProjectionReload
                 ),
                 pagination: HomeTimelinePaginationState(
@@ -186,7 +190,7 @@ private final class ViewportInteractionApplicationProbe {
         case scheduleViewportState(TimelineViewportState)
         case applyPresentationTransition(HomeTimelinePresentationChanges, Bool)
         case scheduleReadStateSave
-        case clearBufferedEvents
+        case applyPendingEventCountPublication(Int)
         case clearPendingProjectionReload
         case scheduleLinkPreviewResolution
     }
@@ -226,8 +230,10 @@ private final class ViewportInteractionApplicationProbe {
             ))
         case .scheduleReadStateSave:
             events.append(.scheduleReadStateSave)
-        case .clearBufferedEvents:
-            events.append(.clearBufferedEvents)
+        case .applyPendingEventCountPublication(let publication):
+            events.append(.applyPendingEventCountPublication(
+                publication.count
+            ))
         case .clearPendingProjectionReload:
             events.append(.clearPendingProjectionReload)
         case .scheduleLinkPreviewResolution:

@@ -29,7 +29,6 @@ struct HomeTimelineStoreComponents {
     let presentationWorkflow: HomeTimelinePresentationWorkflow
     let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
-    let pendingEventBuffer: HomeTimelinePendingEventBuffer
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     let feedSyncInteractionWorkflow:
         HomeTimelineFeedSyncInteractionWorkflow
@@ -186,7 +185,6 @@ enum HomeTimelineStoreAssembly {
             presentationWorkflow: graph.features.presentationWorkflow,
             projectionInteractionWorkflow:
                 makeProjectionInteraction(from: graph),
-            pendingEventBuffer: graph.coordination.pendingEventBuffer,
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
             feedSyncInteractionWorkflow: makeFeedSyncInteraction(from: graph),
             lifecycleCoordinator: graph.coordination.lifecycleCoordinator,

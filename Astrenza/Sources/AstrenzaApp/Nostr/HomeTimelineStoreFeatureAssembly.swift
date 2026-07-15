@@ -131,7 +131,9 @@ extension HomeTimelineStoreAssembly {
         let presentationWorkflow = HomeTimelinePresentationWorkflow(
             coordinator: coordination.presentationCoordinator
         )
-        let pendingEventsWorkflow = HomeTimelinePendingEventsWorkflow()
+        let pendingEventsWorkflow = HomeTimelinePendingEventsWorkflow(
+            buffer: coordination.pendingEventBuffer
+        )
         let paginationWorkflow = HomeTimelinePaginationWorkflow(
             lifecycleCoordinator: coordination.lifecycleCoordinator
         )

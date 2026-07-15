@@ -82,7 +82,7 @@ struct HomeTimelinePendingEventBufferTests {
         let buffer = HomeTimelinePendingEventBuffer(delay: { _ in
             await delay.suspend()
         })
-        let publish: HomeTimelinePendingEventBuffer.PublicationHandler = { publication in
+        let publish: HomeTimelinePendingEventCountHandler = { publication in
             probe.counts.append(publication.count)
         }
 
@@ -121,7 +121,7 @@ struct HomeTimelinePendingEventBufferTests {
         let buffer = HomeTimelinePendingEventBuffer(delay: { _ in
             await delay.suspend()
         })
-        let publish: HomeTimelinePendingEventBuffer.PublicationHandler = { publication in
+        let publish: HomeTimelinePendingEventCountHandler = { publication in
             probe.counts.append(publication.count)
         }
 

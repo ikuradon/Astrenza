@@ -42,7 +42,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let presentationWorkflow: HomeTimelinePresentationWorkflow
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
-    private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncInteractionWorkflow:
         HomeTimelineFeedSyncInteractionWorkflow
@@ -210,7 +209,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.presentationWorkflow = components.presentationWorkflow
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
-        self.pendingEventBuffer = components.pendingEventBuffer
         self.backwardRequestRegistry = components.backwardRequestRegistry
         self.feedSyncInteractionWorkflow =
             components.feedSyncInteractionWorkflow
@@ -333,7 +331,6 @@ final class NostrHomeTimelineStore: ObservableObject {
                 ),
                 pendingEvents: HomeTimelinePendingEventsState(
                     account: account,
-                    hasBufferedEvents: pendingEventBuffer.hasEvents,
                     hasPendingProjectionReload:
                         presentationWorkflow.interactionState
                             .hasPendingNewestProjectionReload
@@ -379,8 +376,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             applyPresentationTransition(transition)
         case .scheduleReadStateSave:
             scheduleHomeFeedReadStateSave()
-        case .clearBufferedEvents:
-            clearPendingNewEvents()
+        case .applyPendingEventCountPublication(let publication):
+            applyPendingEventCountPublication(publication)
         case .clearPendingProjectionReload:
             presentationWorkflow.clearNewestProjectionReload()
         case .scheduleLinkPreviewResolution:
@@ -626,7 +623,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                         )
                     },
                     hasPendingEvents: { [weak self] in
-                        self?.pendingEventBuffer.isEmpty == false
+                        self?.viewportInteractionWorkflow.hasBufferedEvents == true
                     },
                     runtimeApplicationState: { [weak self] in
                         self?.runtimeApplicationState()
@@ -887,7 +884,8 @@ final class NostrHomeTimelineStore: ObservableObject {
                             hasRestoreProjectionAnchor:
                                 restoreProjectionAnchorEventID != nil,
                             isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-                            hasPendingEvents: !pendingEventBuffer.isEmpty
+                            hasPendingEvents:
+                                viewportInteractionWorkflow.hasBufferedEvents
                         )
                     },
                     isAccountCurrent: { [self] accountID in
@@ -1599,9 +1597,9 @@ private extension NostrHomeTimelineStore {
 
     @discardableResult
     func clearPendingNewEvents() -> Bool {
-        pendingEventBuffer.removeAll { [weak self] publication in
-            self?.applyPendingEventCountPublication(publication)
-        }
+        viewportInteractionWorkflow.clearPendingEvents(
+            viewportInteractionContext()
+        )
     }
 
     func applyPendingEventCountPublication(
@@ -1872,9 +1870,10 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
-        pendingEventBuffer.replaceEventIDs(ids) { [weak self] publication in
-            self?.applyPendingEventCountPublication(publication)
-        }
+        viewportInteractionWorkflow.replacePendingEventIDs(
+            ids,
+            context: viewportInteractionContext()
+        )
     }
 
     func testingMergedProjectionWindow(
