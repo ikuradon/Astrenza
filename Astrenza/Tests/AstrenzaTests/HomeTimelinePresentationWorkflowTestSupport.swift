@@ -210,13 +210,23 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
         case dismissUnreadBadge
         case markVisiblePostsRead([TimelinePost.ID])
         case markNewestWindowRead
+        case requestNewestProjectionReload
+        case clearNewestProjectionReload
+        case restoreReadBoundary(TimelinePost.ID)
+        case scheduleMaterialization(UInt64?, Bool?)
+        case replaceEntriesForTesting([TimelineFeedEntry.ID])
+        case setReadBoundaryForTesting(TimelinePost.ID)
         case applyPresentationTransition(HomeTimelinePresentationChanges, Bool)
         case scheduleReadStateSave
     }
 
     var scrollMaterializationPermission: Bool?
+    var scheduledMaterializationPermission: Bool?
     var visibleReadTransition: HomeTimelinePresentationTransition?
     var newestReadTransition: HomeTimelinePresentationTransition?
+    var defaultDelayNanoseconds: UInt64 = 16_000_000
+    var hasPendingNewestProjectionReload = false
+    var readBoundaryPostID: TimelinePost.ID?
     private(set) var events: [Event] = []
 
     var effects: HomeTimelinePresentationEffects {
@@ -274,6 +284,52 @@ final class PresentationProbe: HomeTimelinePresentationCoordinating {
         events.append(.markNewestWindowRead)
         return newestReadTransition
     }
+
+    func requestNewestProjectionReload() {
+        events.append(.requestNewestProjectionReload)
+    }
+
+    func clearNewestProjectionReload() {
+        events.append(.clearNewestProjectionReload)
+    }
+
+    func restoreReadBoundary(
+        postID: TimelinePost.ID
+    ) -> HomeTimelinePresentationTransition {
+        events.append(.restoreReadBoundary(postID))
+        return presentationTransition(changes: [.unreadCounts])
+    }
+
+    func schedule(
+        delayNanoseconds: UInt64?,
+        allowsRealtimeFollow: Bool?,
+        materialize: @escaping MaterializeHandler
+    ) {
+        events.append(.scheduleMaterialization(
+            delayNanoseconds,
+            allowsRealtimeFollow
+        ))
+        if let scheduledMaterializationPermission {
+            materialize(scheduledMaterializationPermission)
+        }
+    }
+
+    #if DEBUG
+    func replaceEntriesForTesting(
+        _ entries: [TimelineFeedEntry],
+        renderFingerprint: [Int]
+    ) -> HomeTimelinePresentationTransition {
+        events.append(.replaceEntriesForTesting(entries.map(\.id)))
+        return presentationTransition(changes: [.entries])
+    }
+
+    func setReadBoundaryForTesting(
+        postID: TimelinePost.ID
+    ) -> HomeTimelinePresentationTransition {
+        events.append(.setReadBoundaryForTesting(postID))
+        return presentationTransition(changes: [.unreadCounts])
+    }
+    #endif
 }
 
 @MainActor

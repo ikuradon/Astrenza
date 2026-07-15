@@ -32,6 +32,18 @@ struct HomeTimelineStoreAssemblyTests {
             id: "missing",
             preferring: []
         ) == nil)
+        #expect(components.activityInteractionWorkflow.state ==
+            HomeTimelineActivityInteractionState(
+                phase: .idle,
+                isRealtime: false,
+                canBeginLoadingOlder: true
+            ))
+        #expect(components.presentationWorkflow.interactionState ==
+            HomeTimelinePresentationInteractionState(
+                hasPendingNewestProjectionReload: false,
+                readBoundaryPostID: nil,
+                defaultDelayNanoseconds: 16_000_000
+            ))
     }
 
     @Test("An event store enables publishing and database-backed local mutations")

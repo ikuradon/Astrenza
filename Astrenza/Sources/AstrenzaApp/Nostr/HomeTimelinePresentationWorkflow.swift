@@ -6,6 +6,10 @@ protocol HomeTimelinePresentationCoordinating: AnyObject {
         _ allowsRealtimeFollow: Bool
     ) -> Void
 
+    var defaultDelayNanoseconds: UInt64 { get }
+    var hasPendingNewestProjectionReload: Bool { get }
+    var readBoundaryPostID: TimelinePost.ID? { get }
+
     func setScrollActive(
         _ isActive: Bool,
         materialize: @escaping MaterializeHandler
@@ -18,6 +22,31 @@ protocol HomeTimelinePresentationCoordinating: AnyObject {
     ) -> HomeTimelinePresentationTransition?
 
     func markNewestWindowRead() -> HomeTimelinePresentationTransition?
+
+    func requestNewestProjectionReload()
+
+    func clearNewestProjectionReload()
+
+    func restoreReadBoundary(
+        postID: TimelinePost.ID
+    ) -> HomeTimelinePresentationTransition
+
+    func schedule(
+        delayNanoseconds: UInt64?,
+        allowsRealtimeFollow: Bool?,
+        materialize: @escaping MaterializeHandler
+    )
+
+    #if DEBUG
+    func replaceEntriesForTesting(
+        _ entries: [TimelineFeedEntry],
+        renderFingerprint: [Int]
+    ) -> HomeTimelinePresentationTransition
+
+    func setReadBoundaryForTesting(
+        postID: TimelinePost.ID
+    ) -> HomeTimelinePresentationTransition
+    #endif
 }
 
 extension HomeTimelinePresentationCoordinator: HomeTimelinePresentationCoordinating {}
@@ -26,6 +55,12 @@ struct HomeTimelinePresentationAppState: Sendable {
     let account: NostrAccount?
     let restoreProjectionAnchorEventID: String?
     let homeFeedID: String?
+}
+
+struct HomeTimelinePresentationInteractionState: Equatable, Sendable {
+    let hasPendingNewestProjectionReload: Bool
+    let readBoundaryPostID: TimelinePost.ID?
+    let defaultDelayNanoseconds: UInt64
 }
 
 struct HomeTimelinePresentationEffects: Sendable {
@@ -61,6 +96,41 @@ final class HomeTimelinePresentationWorkflow {
 
     init(coordinator: any HomeTimelinePresentationCoordinating) {
         self.coordinator = coordinator
+    }
+
+    var interactionState: HomeTimelinePresentationInteractionState {
+        HomeTimelinePresentationInteractionState(
+            hasPendingNewestProjectionReload:
+                coordinator.hasPendingNewestProjectionReload,
+            readBoundaryPostID: coordinator.readBoundaryPostID,
+            defaultDelayNanoseconds: coordinator.defaultDelayNanoseconds
+        )
+    }
+
+    func requestNewestProjectionReload() {
+        coordinator.requestNewestProjectionReload()
+    }
+
+    func clearNewestProjectionReload() {
+        coordinator.clearNewestProjectionReload()
+    }
+
+    func restoreReadBoundary(
+        postID: TimelinePost.ID
+    ) -> HomeTimelinePresentationTransition {
+        coordinator.restoreReadBoundary(postID: postID)
+    }
+
+    func scheduleMaterialization(
+        delayNanoseconds: UInt64? = nil,
+        allowsRealtimeFollow: Bool? = nil,
+        materialize: @escaping HomeTimelinePresentationCoordinating.MaterializeHandler
+    ) {
+        coordinator.schedule(
+            delayNanoseconds: delayNanoseconds,
+            allowsRealtimeFollow: allowsRealtimeFollow,
+            materialize: materialize
+        )
     }
 
     func setRestoreProjectionAnchor(
@@ -142,3 +212,23 @@ final class HomeTimelinePresentationWorkflow {
         effects.scheduleReadStateSave()
     }
 }
+
+#if DEBUG
+extension HomeTimelinePresentationWorkflow {
+    func replaceEntriesForTesting(
+        _ entries: [TimelineFeedEntry],
+        renderFingerprint: [Int]
+    ) -> HomeTimelinePresentationTransition {
+        coordinator.replaceEntriesForTesting(
+            entries,
+            renderFingerprint: renderFingerprint
+        )
+    }
+
+    func setReadBoundaryForTesting(
+        postID: TimelinePost.ID
+    ) -> HomeTimelinePresentationTransition {
+        coordinator.setReadBoundaryForTesting(postID: postID)
+    }
+}
+#endif

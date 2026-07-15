@@ -6,6 +6,56 @@ import Testing
 @Suite("Home timeline presentation workflow")
 @MainActor
 struct HomeTimelinePresentationWorkflowTests {
+    @Test("Store-facing scheduling state crosses the presentation boundary")
+    func interactionStatePreservesCoordinatorValues() {
+        let fixture = PresentationFixture()
+        fixture.probe.hasPendingNewestProjectionReload = true
+        fixture.probe.readBoundaryPostID = "boundary"
+        fixture.probe.defaultDelayNanoseconds = 42
+
+        #expect(fixture.workflow.interactionState ==
+            HomeTimelinePresentationInteractionState(
+                hasPendingNewestProjectionReload: true,
+                readBoundaryPostID: "boundary",
+                defaultDelayNanoseconds: 42
+            ))
+    }
+
+    @Test("Projection reload and read-boundary commands remain ordered")
+    func routesProjectionStateCommands() {
+        let fixture = PresentationFixture()
+
+        fixture.workflow.requestNewestProjectionReload()
+        fixture.workflow.clearNewestProjectionReload()
+        let transition = fixture.workflow.restoreReadBoundary(
+            postID: "boundary"
+        )
+
+        #expect(transition.changes == [.unreadCounts])
+        #expect(fixture.probe.events == [
+            .requestNewestProjectionReload,
+            .clearNewestProjectionReload,
+            .restoreReadBoundary("boundary")
+        ])
+    }
+
+    @Test("Scheduled materialization preserves delay and follow permission")
+    func routesMaterializationScheduling() {
+        let fixture = PresentationFixture()
+        fixture.probe.scheduledMaterializationPermission = true
+
+        fixture.workflow.scheduleMaterialization(
+            delayNanoseconds: 123,
+            allowsRealtimeFollow: false,
+            materialize: fixture.effects.materializeEntries
+        )
+
+        #expect(fixture.probe.events == [
+            .scheduleMaterialization(123, false),
+            .materializeEntries(true)
+        ])
+    }
+
     @Test(
         "Projection anchors preserve account and newest-window behavior",
         arguments: ProjectionAnchorScenario.allCases

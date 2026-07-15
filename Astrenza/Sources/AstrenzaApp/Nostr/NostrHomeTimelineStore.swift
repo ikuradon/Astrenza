@@ -38,8 +38,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineFilterInteractionWorkflow
     private let queryInteractionWorkflow:
         HomeTimelineQueryInteractionWorkflow
-    private let activityCoordinator: HomeTimelineActivityCoordinator
-    private let presentationCoordinator: HomeTimelinePresentationCoordinator
+    private let activityInteractionWorkflow:
+        HomeTimelineActivityInteractionWorkflow
+    private let presentationWorkflow: HomeTimelinePresentationWorkflow
     private let materializationCoordinator: HomeTimelineMaterializationCoordinator
     private let pendingEventBuffer: HomeTimelinePendingEventBuffer
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -113,6 +114,14 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) {
         guard let next = publishedActivityState.applying(transition) else { return }
         publishedActivityState = next
+    }
+
+    private func applyActivityIntent(
+        _ intent: HomeTimelineActivityIntent
+    ) {
+        applyActivityTransition(
+            activityInteractionWorkflow.perform(intent)
+        )
     }
 
     private func applyPresentationTransition(
@@ -194,8 +203,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
         self.queryInteractionWorkflow = components.queryInteractionWorkflow
-        self.activityCoordinator = components.activityCoordinator
-        self.presentationCoordinator = components.presentationCoordinator
+        self.activityInteractionWorkflow =
+            components.activityInteractionWorkflow
+        self.presentationWorkflow = components.presentationWorkflow
         self.materializationCoordinator = components.materializationCoordinator
         self.pendingEventBuffer = components.pendingEventBuffer
         self.backwardRequestRegistry = components.backwardRequestRegistry
@@ -325,12 +335,14 @@ final class NostrHomeTimelineStore: ObservableObject {
                     account: account,
                     hasBufferedEvents: pendingEventBuffer.hasEvents,
                     hasPendingProjectionReload:
-                        presentationCoordinator.hasPendingNewestProjectionReload
+                        presentationWorkflow.interactionState
+                            .hasPendingNewestProjectionReload
                 ),
                 pagination: HomeTimelinePaginationState(
                     account: account,
                     canBeginLoadingOlder:
-                        activityCoordinator.canBeginLoadingOlder,
+                        activityInteractionWorkflow.state
+                            .canBeginLoadingOlder,
                     hasMoreOlder: hasMoreOlder,
                     hasTimelineEvents: !noteEvents.isEmpty,
                     hasResolvedRelays: !resolvedRelays.isEmpty,
@@ -374,7 +386,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .clearBufferedEvents:
             clearPendingNewEvents()
         case .clearPendingProjectionReload:
-            presentationCoordinator.clearNewestProjectionReload()
+            presentationWorkflow.clearNewestProjectionReload()
         case .scheduleLinkPreviewResolution:
             scheduleLinkPreviewResolution()
         }
@@ -525,7 +537,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .recordLoadDiagnostic(let diagnostic):
             recordLoadDiagnostic(diagnostic)
         case .setPhase(let phase):
-            applyActivityTransition(activityCoordinator.setPhase(phase))
+            applyActivityIntent(.setPhase(phase))
         }
     }
 
@@ -646,7 +658,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         case .reloadProjection(let account, let anchorEventID):
             reloadProjectionWindow(account: account, around: anchorEventID)
         case .requestNewestProjectionReload:
-            presentationCoordinator.requestNewestProjectionReload()
+            presentationWorkflow.requestNewestProjectionReload()
         case .scheduleMaterialization(let delay, let allowsRealtimeFollow):
             scheduleMaterializeEntries(
                 delayNanoseconds: delay,
@@ -689,7 +701,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         guard let boundaryID else { return }
         applyPresentationTransition(
-            presentationCoordinator.restoreReadBoundary(postID: boundaryID)
+            presentationWorkflow.restoreReadBoundary(postID: boundaryID)
         )
     }
 
@@ -704,7 +716,7 @@ final class NostrHomeTimelineStore: ObservableObject {
               definition.accountID == account.pubkey
         else { return nil }
 
-        let boundaryID = presentationCoordinator.readBoundaryPostID
+        let boundaryID = presentationWorkflow.interactionState.readBoundaryPostID
         let boundaryEvent = boundaryID.flatMap(timelineEvent(id:))
         let readBoundary = boundaryEvent.map {
             NostrTimelineEntryCursor(sortTimestamp: $0.createdAt, eventID: $0.id)
@@ -740,7 +752,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         materializeEntries()
         scheduleLinkPreviewResolution()
         if !entries.isEmpty {
-            applyActivityTransition(activityCoordinator.setPhase(.loaded))
+            applyActivityIntent(.setPhase(.loaded))
         }
     }
 
@@ -817,7 +829,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     ) -> HomeTimelineRuntimePacketContext {
         HomeTimelineRuntimePacketContext(
             isActive: isActive ?? (
-                activityCoordinator.snapshot.phase != .idle
+                activityInteractionWorkflow.state.phase != .idle
             ),
             accountID: account?.pubkey,
             resolvedRelays: resolvedRelays,
@@ -864,7 +876,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             state: HomeTimelineRuntimeEventInteractionState(
                 account: account,
                 hasRelayRuntime: relayRuntime != nil,
-                receivedWhileRealtime: activityCoordinator.snapshot.isRealtime
+                receivedWhileRealtime:
+                    activityInteractionWorkflow.state.isRealtime
             ),
             effects: HomeTimelineRuntimeEventStoreEffects(
                 environment: HomeTimelineRuntimeEventEnvironment(
@@ -964,7 +977,8 @@ final class NostrHomeTimelineStore: ObservableObject {
             nip05Resolutions: dependencyCoordinator.nip05Resolutions,
             hasMoreOlder: hasMoreOlder,
             deferredMaterializationDelayNanoseconds:
-                presentationCoordinator.defaultDelayNanoseconds * 2
+                presentationWorkflow.interactionState
+                    .defaultDelayNanoseconds * 2
         )
     }
 
@@ -1002,6 +1016,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             context: backwardInteractionContext()
         )
     }
+
+}
+
+private extension NostrHomeTimelineStore {
 
     private func scheduleLinkPreviewResolution() {
         guard let accountID = account?.pubkey else { return }
@@ -1076,7 +1094,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         delayNanoseconds: UInt64? = nil,
         allowsRealtimeFollow: Bool? = nil
     ) {
-        presentationCoordinator.schedule(
+        presentationWorkflow.scheduleMaterialization(
             delayNanoseconds: delayNanoseconds,
             allowsRealtimeFollow: allowsRealtimeFollow
         ) { [weak self] allowsRealtimeFollow in
@@ -1167,9 +1185,7 @@ private extension NostrHomeTimelineStore {
     ) {
         switch action {
         case .setRealtime(let isRealtime):
-            applyActivityTransition(
-                activityCoordinator.setRealtime(isRealtime)
-            )
+            applyActivityIntent(.setRealtime(isRealtime))
         }
     }
 
@@ -1221,7 +1237,7 @@ private extension NostrHomeTimelineStore {
         case .materializeEntries:
             materializeEntries()
         case .setPhase(let phase):
-            applyActivityTransition(activityCoordinator.setPhase(phase))
+            applyActivityIntent(.setPhase(phase))
         }
     }
 
@@ -1296,7 +1312,7 @@ private extension NostrHomeTimelineStore {
         case .materializeEntries:
             materializeEntries()
         case .setPhase(let phase):
-            applyActivityTransition(activityCoordinator.setPhase(phase))
+            applyActivityIntent(.setPhase(phase))
         case .requestImmediateOutboxDrain:
             outboxCoordinator.requestImmediateDrain()
         }
@@ -1454,7 +1470,7 @@ private extension NostrHomeTimelineStore {
         case .restoreHomeFeedReadState(let account):
             restoreHomeFeedReadState(account: account)
         case .setPhase(let phase):
-            applyActivityTransition(activityCoordinator.setPhase(phase))
+            applyActivityIntent(.setPhase(phase))
         case .activateOutbox(let accountID):
             activateOutbox(accountID: accountID)
         case .applyProjectionViewportTransition,
@@ -1708,7 +1724,7 @@ extension NostrHomeTimelineStore {
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        activityCoordinator.activityStatus(
+        activityInteractionWorkflow.status(
             context: HomeTimelineActivityContext(
                 connectedRelayCount: relayStatusCounts.connected,
                 plannedRelayCount: relayStatusCounts.planned,
@@ -1840,7 +1856,7 @@ extension NostrHomeTimelineStore {
             ))
         }
         applyPresentationTransition(
-            presentationCoordinator.replaceEntriesForTesting(
+            presentationWorkflow.replaceEntriesForTesting(
                 testEntries,
                 renderFingerprint: testEntries.map { $0.id.hashValue }
             )
@@ -1849,7 +1865,7 @@ extension NostrHomeTimelineStore {
 
     func testingSetReadBoundary(postID: TimelinePost.ID) {
         applyPresentationTransition(
-            presentationCoordinator.setReadBoundaryForTesting(postID: postID)
+            presentationWorkflow.setReadBoundaryForTesting(postID: postID)
         )
     }
 

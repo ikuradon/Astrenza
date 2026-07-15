@@ -3,6 +3,7 @@ import AstrenzaCore
 private struct HomeTimelineStoreApplicationFeatures {
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
+    let presentationWorkflow: HomeTimelinePresentationWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
 }
 
@@ -43,6 +44,7 @@ extension HomeTimelineStoreAssembly {
         return HomeTimelineStoreFeatureGraph(
             stateInteractionWorkflow: applications.stateInteractionWorkflow,
             accountStartWorkflow: applications.accountStartWorkflow,
+            presentationWorkflow: applications.presentationWorkflow,
             viewportInteractionWorkflow:
                 applications.viewportInteractionWorkflow,
             remoteLoadCoordinator: loads.remoteLoadCoordinator,
@@ -142,6 +144,7 @@ extension HomeTimelineStoreAssembly {
                 stateWorkflow: stateWorkflow
             ),
             accountStartWorkflow: accountStartWorkflow,
+            presentationWorkflow: presentationWorkflow,
             viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow(
                 presentation: presentationWorkflow,
                 pendingEvents: pendingEventsWorkflow,

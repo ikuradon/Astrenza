@@ -25,8 +25,9 @@ struct HomeTimelineStoreComponents {
         HomeTimelineFilterInteractionWorkflow
     let queryInteractionWorkflow:
         HomeTimelineQueryInteractionWorkflow
-    let activityCoordinator: HomeTimelineActivityCoordinator
-    let presentationCoordinator: HomeTimelinePresentationCoordinator
+    let activityInteractionWorkflow:
+        HomeTimelineActivityInteractionWorkflow
+    let presentationWorkflow: HomeTimelinePresentationWorkflow
     let materializationCoordinator: HomeTimelineMaterializationCoordinator
     let pendingEventBuffer: HomeTimelinePendingEventBuffer
     let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
@@ -93,6 +94,7 @@ struct HomeTimelineStoreRelayRuntimeGraph {
 struct HomeTimelineStoreFeatureGraph {
     let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     let accountStartWorkflow: HomeTimelineAccountStartWorkflow
+    let presentationWorkflow: HomeTimelinePresentationWorkflow
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
@@ -182,8 +184,9 @@ enum HomeTimelineStoreAssembly {
             dependencyCoordinator: graph.coordination.dependencyCoordinator,
             filterInteractionWorkflow: makeFilterInteraction(from: graph),
             queryInteractionWorkflow: makeQueryInteraction(from: graph),
-            activityCoordinator: graph.coordination.activityCoordinator,
-            presentationCoordinator: graph.coordination.presentationCoordinator,
+            activityInteractionWorkflow:
+                makeActivityInteraction(from: graph),
+            presentationWorkflow: graph.features.presentationWorkflow,
             materializationCoordinator: graph.coordination.materializationCoordinator,
             pendingEventBuffer: graph.coordination.pendingEventBuffer,
             backwardRequestRegistry: graph.coordination.backwardRequestRegistry,
@@ -241,6 +244,14 @@ enum HomeTimelineStoreAssembly {
         HomeTimelineQueryInteractionWorkflow(
             repository: graph.persistence.timelineRepository,
             listProjectionCache: graph.coordination.listProjectionCache
+        )
+    }
+
+    private static func makeActivityInteraction(
+        from graph: HomeTimelineStoreAssemblyGraph
+    ) -> HomeTimelineActivityInteractionWorkflow {
+        HomeTimelineActivityInteractionWorkflow(
+            activity: graph.coordination.activityCoordinator
         )
     }
 
