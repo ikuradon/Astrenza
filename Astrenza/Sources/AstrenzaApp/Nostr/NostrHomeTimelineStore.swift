@@ -13,7 +13,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishedStateCoordinator
     private let viewportCoordinator: HomeStoreViewportCoordinator
     private let eventStore: NostrEventStore?
-    private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeCoordinator: HomeStoreRuntimeCoordinator
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let projectionCoordinator: HomeStoreProjectionCoordinator
@@ -21,9 +20,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let lifecycleCoordinator: HomeStoreLifecycleCoordinator
     private let featureActionCoordinator: HomeStoreFeatureActionCoordinator
     private let syncCoordinator: HomeStoreSyncCoordinator
+    private let stateCoordinator: HomeStoreStateCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private lazy var restoreProjectionAnchorWorkflow =
         HomeRestoreProjectionAnchorWorkflow(target: self)
     private var publishedStateObservation: AnyCancellable?
@@ -104,7 +103,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             components.publishedStateCoordinator
         self.viewportCoordinator = composition.viewport
         self.eventStore = components.eventStore
-        self.dataInteractionWorkflow = components.dataInteractionWorkflow
         self.runtimeCoordinator = composition.runtime
         self.queryStoreCoordinator = composition.query
         self.projectionCoordinator = composition.projection
@@ -112,9 +110,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.lifecycleCoordinator = composition.lifecycle
         self.featureActionCoordinator = composition.featureActions
         self.syncCoordinator = composition.sync
+        self.stateCoordinator = composition.state
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
-        self.stateInteractionWorkflow = components.stateInteractionWorkflow
         bindContextComposition()
     }
 }
@@ -225,14 +223,12 @@ extension NostrHomeTimelineStore {
     func replaceRuntimeBootstrapState(
         _ state: NostrHomeTimelineState
     ) {
-        replaceTimelineState(
-            dataInteractionWorkflow.runtimeBootstrapState(from: state)
-        )
+        stateCoordinator.replaceRuntimeBootstrapState(state)
     }
 
     func replaceFollowedPubkeys(_ pubkeys: [String]) {
         applyContentSnapshot(
-            dataInteractionWorkflow.perform(.replaceFollowedPubkeys(pubkeys))
+            stateCoordinator.replaceFollowedPubkeys(pubkeys)
         )
     }
 
@@ -241,12 +237,7 @@ extension NostrHomeTimelineStore {
     }
 
     func persistDatabase(account: NostrAccount) async {
-        await stateInteractionWorkflow.persistSnapshot(
-            dataInteractionWorkflow.persistenceSnapshotInput(
-                accountID: account.pubkey
-            ),
-            context: contextCoordinator.stateContext()
-        )
+        await stateCoordinator.persistDatabase(accountID: account.pubkey)
     }
 
     func scheduleHomeFeedReadStateSave() {
@@ -293,9 +284,7 @@ extension NostrHomeTimelineStore {
             .provisionalBootstrapRelayURLs(account: account)
         else { return }
         applyContentSnapshot(
-            dataInteractionWorkflow.perform(
-                .installProvisionalRelays(provisionalRelays)
-            )
+            stateCoordinator.installProvisionalRelays(provisionalRelays)
         )
         statusCoordinator.refreshRelayStatusCounts()
     }
@@ -357,11 +346,7 @@ extension NostrHomeTimelineStore {
     }
 
     func replaceTimelineState(_ state: NostrHomeTimelineState) {
-        stateInteractionWorkflow.replace(
-            state,
-            accountID: account?.pubkey,
-            context: contextCoordinator.stateContext()
-        )
+        stateCoordinator.replaceTimelineState(state)
     }
 
 }
@@ -481,7 +466,7 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore: HomeStoreQueryTarget {
     var queryPreferredEvents: [NostrEvent] {
-        dataInteractionWorkflow.contentState.noteEvents
+        stateCoordinator.preferredEvents
     }
 }
 
@@ -735,9 +720,7 @@ extension NostrHomeTimelineStore {
             syncPolicy: syncPolicy
         ))
         applyContentSnapshot(
-            dataInteractionWorkflow.perform(
-                .replaceFollowedPubkeys(sourceAuthors)
-            )
+            stateCoordinator.replaceFollowedPubkeys(sourceAuthors)
         )
         await projectionCoordinator.activateStoredProjection(
             definition: definition,
@@ -819,7 +802,7 @@ extension NostrHomeTimelineStore {
         _ dependencies: NostrEventDependencies,
         availableRelayURLs: [String]
     ) -> Bool {
-        dataInteractionWorkflow.enqueueSourceDependencies(
+        stateCoordinator.enqueueSourceDependencies(
             dependencies,
             availableRelayURLs: availableRelayURLs,
             now: 0
@@ -827,16 +810,16 @@ extension NostrHomeTimelineStore {
     }
 
     func testingFlushBackwardDependencies() {
-        dataInteractionWorkflow.flushSourcePacketInstall(onFailure: { _ in })
+        stateCoordinator.flushSourcePacketInstall(onFailure: { _ in })
     }
 
     var testingPendingBackwardRequestCount: Int {
         syncCoordinator.backwardRequestCount +
-            dataInteractionWorkflow.dependencyWorkState.pendingSourceRequestCount
+            stateCoordinator.pendingDependencyRequestCount
     }
 
     var testingHasPendingDependencyWork: Bool {
-        dataInteractionWorkflow.dependencyWorkState.hasPendingWork
+        stateCoordinator.hasPendingDependencyWork
     }
 
     var testingActiveFeedSyncRequestCount: Int {

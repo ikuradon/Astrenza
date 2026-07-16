@@ -8,6 +8,7 @@ struct HomeStoreComposition {
     let lifecycle: HomeStoreLifecycleCoordinator
     let featureActions: HomeStoreFeatureActionCoordinator
     let sync: HomeStoreSyncCoordinator
+    let state: HomeStoreStateCoordinator
     let runtime: HomeStoreRuntimeCoordinator
     let viewport: HomeStoreViewportCoordinator
     let presentation: HomeStorePresentationCoordinator
@@ -43,6 +44,10 @@ struct HomeStoreComposition {
                 contexts: context
             ),
             sync: HomeStoreSyncCoordinator.live(
+                components: components,
+                contexts: context
+            ),
+            state: HomeStoreStateCoordinator.live(
                 components: components,
                 contexts: context
             ),
