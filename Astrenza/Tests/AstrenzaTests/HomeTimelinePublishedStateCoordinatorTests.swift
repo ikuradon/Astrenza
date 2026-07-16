@@ -1,5 +1,4 @@
 import AstrenzaCore
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -11,10 +10,7 @@ struct PublishedStateCoordinatorTests {
         let coordinator = HomeTimelinePublishedStateCoordinator(
             syncPolicy: .default(networkType: .unknown)
         )
-        var publicationCount = 0
-        let observation = coordinator.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(coordinator.resolvedRelays)
         let changed = HomeTimelineContentSnapshot(
             resolvedRelays: ["wss://relay.example"],
             followedPubkeys: ["follow"],
@@ -29,13 +25,12 @@ struct PublishedStateCoordinatorTests {
         coordinator.applyContentSnapshot(changed)
         coordinator.applyContentSnapshot(changed)
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(coordinator.content.resolvedRelays == [
             "wss://relay.example"
         ])
         #expect(coordinator.content.followedPubkeys == ["follow"])
         #expect(!coordinator.content.hasMoreOlder)
-        withExtendedLifetime(observation) {}
     }
 
     @Test("Account context owns its initial policy and atomic transitions")
@@ -74,10 +69,9 @@ struct PublishedStateCoordinatorTests {
         let coordinator = HomeTimelinePublishedStateCoordinator(
             syncPolicy: .default(networkType: .unknown)
         )
-        var publicationCount = 0
-        let observation = coordinator.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(
+            coordinator.relayStatusRevision
+        )
         let snapshot = HomeTimelineRelayStatusSnapshot(
             runtimeStates: [:],
             connectedRelayCount: 0,
@@ -93,7 +87,7 @@ struct PublishedStateCoordinatorTests {
         )
 
         #expect(invalidatedRelay == "wss://relay.example")
-        #expect(publicationCount == 0)
+        #expect(observation.count == 0)
 
         let secondInvalidation = coordinator.applyRelayStatusTransition(
             HomeTimelineRelayStatusTransition(
@@ -104,8 +98,30 @@ struct PublishedStateCoordinatorTests {
         )
 
         #expect(secondInvalidation == nil)
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(coordinator.relayStatus.revision == 1)
-        withExtendedLifetime(observation) {}
+    }
+
+    @Test("Entry observation ignores unrelated published state")
+    func entryObservationIsIsolated() {
+        let coordinator = HomeTimelinePublishedStateCoordinator(
+            syncPolicy: .default(networkType: .unknown)
+        )
+        let observation = observePublishedState(coordinator.entries)
+
+        coordinator.applyActivityTransition(HomeTimelineActivityTransition(
+            snapshot: HomeTimelineActivitySnapshot(
+                phase: .loaded,
+                isRefreshing: false,
+                isLoadingOlder: false,
+                isRealtime: false
+            ),
+            changes: [.phase]
+        ))
+        coordinator.applyPendingEventCountPublication(
+            HomeTimelinePendingEventCountPublication(count: 2)
+        )
+
+        #expect(observation.count == 0)
     }
 }

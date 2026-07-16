@@ -1,4 +1,3 @@
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -25,20 +24,16 @@ struct PublishedListProjectionStateTests {
         ) == nil)
     }
 
-    @Test("The Store publishes a list invalidation once")
-    func storePublishesInvalidationOnce() {
+    @Test("A changed list revision notifies its observer once")
+    func changedListRevisionNotifiesOnce() {
         let store = NostrHomeTimelineStore(eventStore: nil)
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(store.listContentRevision)
         let invalidation = HomeTimelineListProjectionInvalidation(revision: 7)
 
         store.testingApplyListProjectionInvalidation(invalidation)
         store.testingApplyListProjectionInvalidation(invalidation)
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(store.listContentRevision == 7)
-        withExtendedLifetime(observation) {}
     }
 }

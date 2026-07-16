@@ -1,5 +1,4 @@
 import AstrenzaCore
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -58,8 +57,8 @@ struct PublishedAccountContextStateTests {
         )) == nil)
     }
 
-    @Test("The Store publishes each account context transition once")
-    func storePublishesTransitionOnce() {
+    @Test("Each changed account value notifies its current observer once")
+    func changedAccountNotifiesCurrentObserverOnce() {
         let fallbackPolicy = NostrSyncPolicy.default(networkType: .wifi)
         let activePolicy = NostrSyncPolicy.default(
             networkType: .cellular,
@@ -70,10 +69,7 @@ struct PublishedAccountContextStateTests {
             eventStore: nil,
             syncPolicy: fallbackPolicy
         )
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let activationObservation = observePublishedState(store.account)
         let transition = HomeTimelineAccountContextTransition.activate(
             account,
             syncPolicy: activePolicy
@@ -82,16 +78,16 @@ struct PublishedAccountContextStateTests {
         store.testingApplyAccountContextTransition(transition)
         store.testingApplyAccountContextTransition(transition)
 
-        #expect(publicationCount == 1)
+        #expect(activationObservation.count == 1)
         #expect(store.account == account)
         #expect(store.currentSyncPolicy == activePolicy)
 
+        let clearingObservation = observePublishedState(store.account)
         store.testingApplyAccountContextTransition(.clear)
 
-        #expect(publicationCount == 2)
+        #expect(clearingObservation.count == 1)
         #expect(store.account == nil)
         #expect(store.currentSyncPolicy == activePolicy)
-        withExtendedLifetime(observation) {}
     }
 
     private func account() -> NostrAccount {

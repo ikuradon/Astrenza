@@ -1,4 +1,3 @@
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -57,13 +56,10 @@ struct PublishedActivityStateTests {
         #expect(next.phase == .idle)
     }
 
-    @Test("A multi-field activity transition publishes from the Store once")
-    func storePublishesTransitionAtomically() {
+    @Test("A selected activity field notifies its observer once")
+    func selectedActivityFieldNotifiesOnce() {
         let store = NostrHomeTimelineStore(eventStore: nil)
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(store.phase)
         let transition = activityTransition(
             phase: .loaded,
             isRefreshing: true,
@@ -74,12 +70,11 @@ struct PublishedActivityStateTests {
 
         store.testingApplyActivityTransition(transition)
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(store.phase == .loaded)
         #expect(store.isRefreshing)
         #expect(store.isLoadingOlder)
         #expect(store.isHomeTimelineRealtime)
-        withExtendedLifetime(observation) {}
     }
 }
 

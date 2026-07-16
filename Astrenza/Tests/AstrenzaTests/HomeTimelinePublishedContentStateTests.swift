@@ -1,4 +1,3 @@
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -41,16 +40,13 @@ struct PublishedContentStateTests {
         #expect(state.applying(snapshot) == nil)
     }
 
-    @Test("A multi-field content snapshot publishes from the Store once")
-    func storePublishesSnapshotAtomically() {
+    @Test("A selected content field notifies its observer once")
+    func selectedContentFieldNotifiesOnce() {
         let store = NostrHomeTimelineStore(eventStore: nil)
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(store.resolvedRelays)
 
         store.testingApplyContentSnapshot(.initial)
-        #expect(publicationCount == 0)
+        #expect(observation.count == 0)
 
         store.testingApplyContentSnapshot(contentSnapshot(
             resolvedRelays: ["wss://relay.example"],
@@ -58,11 +54,10 @@ struct PublishedContentStateTests {
             hasMoreOlder: false
         ))
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(store.resolvedRelays == ["wss://relay.example"])
         #expect(store.followedPubkeys == ["follow"])
         #expect(!store.hasMoreOlder)
-        withExtendedLifetime(observation) {}
     }
 }
 

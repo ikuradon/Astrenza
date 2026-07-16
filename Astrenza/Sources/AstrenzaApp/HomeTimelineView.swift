@@ -3,7 +3,7 @@ import SwiftUI
 
 struct HomeTimelineView: View {
     @ObservedObject var sessionStore: NostrSessionStore
-    @ObservedObject var liveTimelineStore: NostrHomeTimelineStore
+    let liveTimelineStore: NostrHomeTimelineStore
     let onInitialPresentationReady: () -> Void
     @State private var selectedTab: TimelineTab = .home
     @State private var previousTab: TimelineTab = .home
@@ -97,62 +97,6 @@ struct HomeTimelineView: View {
         guard sessionStore.account != nil else { return nil }
         return { request in
             await submitCompose(request)
-        }
-    }
-
-    private var timelineEntries: [TimelineFeedEntry] {
-        guard sessionStore.account != nil else {
-            return MockTimelineData.entries(for: selectedTimeline)
-        }
-
-        switch selectedTimeline {
-        case .home:
-            return liveTimelineStore.entries
-        case .relays:
-            return MockTimelineData.entries(for: selectedTimeline)
-        case .lists:
-            let listEntries = liveTimelineStore.listEntries()
-            return listEntries.isEmpty ? MockTimelineData.entries(for: selectedTimeline) : listEntries
-        }
-    }
-
-    private var timelineEntriesSourceRevision: Int {
-        switch selectedTimeline {
-        case .home:
-            liveTimelineStore.resolvedContentRevision
-        case .relays:
-            0
-        case .lists:
-            liveTimelineStore.listContentRevision
-        }
-    }
-
-    private var followsRealtimeTimelineEntries: Bool {
-        guard selectedTimeline == .home else { return false }
-        return HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
-            isRealtime: liveTimelineStore.isHomeTimelineRealtime &&
-                liveTimelineStore.realtimeFollowSourceRevision == timelineEntriesSourceRevision,
-            isAtNewestWindow: isTimelineAtNewestWindow,
-            isRestoreProtected: isViewportRestoreProtectionActive,
-            isDetachedFromLiveEdge: isTimelineDetachedFromLiveEdge
-        )
-    }
-
-    private var timelineEmptyState: TimelineEmptyState {
-        guard sessionStore.account != nil, selectedTimeline == .home else {
-            return selectedTimeline.emptyState
-        }
-
-        switch liveTimelineStore.phase {
-        case .resolvingRelays, .resolvingContacts, .loadingHome:
-            return .loadingHome(message: liveTimelineStore.phase.copy)
-        case .failed(let message):
-            return .liveError(message: message)
-        case .idle, .loaded:
-            if liveTimelineStore.followedPubkeys.isEmpty {
-                return .noContacts
-            }
-            return .home
         }
     }
 
@@ -300,18 +244,19 @@ private extension HomeTimelineView {
 
     var timelineList: some View {
         NavigationStack(path: $postNavigationPath) {
-            TimelineFeedView(
-                entries: timelineEntries,
+            HomeTimelineFeedContentView(
+                store: liveTimelineStore,
+                hasLiveAccount: sessionStore.account != nil,
+                selectedTimeline: selectedTimeline,
                 sourceIdentity: "\(accountID)/\(selectedTimeline.id)",
-                sourceRevision: timelineEntriesSourceRevision,
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: homeViewportState,
                 scrollCommand: homeScrollCommand,
                 viewportRestoreProtectionActive: isViewportRestoreProtectionActive,
-                followsRealtimeEntries: followsRealtimeTimelineEntries,
+                isTimelineAtNewestWindow: isTimelineAtNewestWindow,
+                isTimelineDetachedFromLiveEdge: isTimelineDetachedFromLiveEdge,
                 layoutCache: homeLayoutCache,
-                emptyState: timelineEmptyState,
                 onEmptyStatePrimaryAction: handleTimelineEmptyStatePrimaryAction,
                 onEmptyStateSecondaryAction: handleTimelineEmptyStateSecondaryAction,
                 onOpenPost: openPost,

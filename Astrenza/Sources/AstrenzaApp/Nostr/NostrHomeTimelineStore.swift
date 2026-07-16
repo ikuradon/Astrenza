@@ -1,13 +1,9 @@
 import Foundation
 import AstrenzaCore
-import Combine
-import SwiftUI
 
 @MainActor
-final class NostrHomeTimelineStore: ObservableObject {
+final class NostrHomeTimelineStore {
     typealias Phase = NostrHomeTimelinePhase
-
-    @Published private var publishedStateRevision = 0
 
     private let publishedStateCoordinator:
         HomeTimelinePublishedStateCoordinator
@@ -23,7 +19,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let stateCoordinator: HomeStoreStateCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private var publishedStateObservation: AnyCancellable?
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -71,7 +66,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.stateCoordinator = composition.state
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
-        observePublishedState()
     }
 }
 
@@ -169,18 +163,9 @@ extension NostrHomeTimelineStore {
     }
 }
 
-private extension NostrHomeTimelineStore {
-    func observePublishedState() {
-        publishedStateObservation =
-            publishedStateCoordinator.objectWillChange.sink { [weak self] in
-                self?.publishedStateRevision &+= 1
-            }
-    }
-}
-
 extension NostrHomeTimelineStore {
     var syncPolicy: NostrSyncPolicy {
-        publishedStateCoordinator.accountContext.syncPolicy
+        publishedStateCoordinator.syncPolicy
     }
 
     var restoreProjectionAnchorEventID: String? {
@@ -251,31 +236,31 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore {
     var account: NostrAccount? {
-        publishedStateCoordinator.accountContext.account
+        publishedStateCoordinator.account
     }
 
     var currentSyncPolicy: NostrSyncPolicy {
-        publishedStateCoordinator.accountContext.syncPolicy
+        publishedStateCoordinator.syncPolicy
     }
 
     var unmaterializedNewCount: Int {
-        publishedStateCoordinator.pendingEvents.count
+        publishedStateCoordinator.pendingEventCount
     }
 
     var listContentRevision: Int {
-        publishedStateCoordinator.listProjection.revision
+        publishedStateCoordinator.listProjectionRevision
     }
 
     var relayStatusRevision: Int {
-        statusCoordinator.relayStatusRevision
+        publishedStateCoordinator.relayStatusRevision
     }
 
     var relayRuntimeStates: [String: NostrRelayConnectionState] {
-        statusCoordinator.relayStatusSnapshot.runtimeStates
+        publishedStateCoordinator.relayStatusSnapshot.runtimeStates
     }
 
     var relayStatusCounts: (connected: Int, planned: Int) {
-        let snapshot = statusCoordinator.relayStatusSnapshot
+        let snapshot = publishedStateCoordinator.relayStatusSnapshot
         return (
             connected: snapshot.connectedRelayCount,
             planned: snapshot.plannedRelayCount
@@ -291,55 +276,55 @@ extension NostrHomeTimelineStore {
     }
 
     var phase: Phase {
-        statusCoordinator.activitySnapshot.phase
+        publishedStateCoordinator.phase
     }
 
     var isRefreshing: Bool {
-        statusCoordinator.activitySnapshot.isRefreshing
+        publishedStateCoordinator.isRefreshing
     }
 
     var isLoadingOlder: Bool {
-        statusCoordinator.activitySnapshot.isLoadingOlder
+        publishedStateCoordinator.isLoadingOlder
     }
 
     var isHomeTimelineRealtime: Bool {
-        statusCoordinator.activitySnapshot.isRealtime
+        publishedStateCoordinator.isRealtime
     }
 
     var resolvedRelays: [String] {
-        publishedStateCoordinator.content.resolvedRelays
+        publishedStateCoordinator.resolvedRelays
     }
 
     var followedPubkeys: [String] {
-        publishedStateCoordinator.content.followedPubkeys
+        publishedStateCoordinator.followedPubkeys
     }
 
     var hasMoreOlder: Bool {
-        publishedStateCoordinator.content.hasMoreOlder
+        publishedStateCoordinator.hasMoreOlder
     }
 
     var entries: [TimelineFeedEntry] {
-        publishedStateCoordinator.presentation.entries
+        publishedStateCoordinator.entries
     }
 
     var filterStatus: TimelineFilterStatus {
-        publishedStateCoordinator.presentation.filterStatus
+        publishedStateCoordinator.filterStatus
     }
 
     var materializedUnreadCount: Int {
-        publishedStateCoordinator.presentation.materializedUnreadCount
+        publishedStateCoordinator.materializedUnreadCount
     }
 
     var visibleUnreadBadgeCount: Int {
-        publishedStateCoordinator.presentation.visibleUnreadBadgeCount
+        publishedStateCoordinator.visibleUnreadBadgeCount
     }
 
     var resolvedContentRevision: Int {
-        publishedStateCoordinator.presentation.resolvedContentRevision
+        publishedStateCoordinator.resolvedContentRevision
     }
 
     var realtimeFollowSourceRevision: Int? {
-        publishedStateCoordinator.presentation.realtimeFollowSourceRevision
+        publishedStateCoordinator.realtimeFollowSourceRevision
     }
 }
 

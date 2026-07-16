@@ -1,4 +1,3 @@
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -25,20 +24,16 @@ struct PublishedPendingEventStateTests {
         ) == nil)
     }
 
-    @Test("The Store publishes a pending event count once")
-    func storePublishesCountOnce() {
+    @Test("A changed pending event count notifies its observer once")
+    func changedPendingEventCountNotifiesOnce() {
         let store = NostrHomeTimelineStore(eventStore: nil)
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(store.unmaterializedNewCount)
         let publication = HomeTimelinePendingEventCountPublication(count: 4)
 
         store.testingApplyPendingEventCountPublication(publication)
         store.testingApplyPendingEventCountPublication(publication)
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(store.unmaterializedNewCount == 4)
-        withExtendedLifetime(observation) {}
     }
 }

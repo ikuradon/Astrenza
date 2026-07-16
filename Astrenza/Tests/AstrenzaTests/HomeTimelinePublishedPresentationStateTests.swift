@@ -1,4 +1,3 @@
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -84,23 +83,19 @@ struct PublishedPresentationStateTests {
         #expect(state.applying(equalUnread) == nil)
     }
 
-    @Test("A multi-field presentation transition publishes from the Store once")
-    func storePublishesTransitionAtomically() {
+    @Test("A selected presentation field notifies its observer once")
+    func selectedPresentationFieldNotifiesOnce() {
         let store = NostrHomeTimelineStore(eventStore: nil)
         store.testingSetMaterializedPostIDs(["old"])
         store.testingSetReadBoundary(postID: "old")
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(store.entries)
 
         store.testingSetMaterializedPostIDs(["new", "old"])
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(store.entries.map(\.id) == ["new", "old"])
         #expect(store.materializedUnreadCount == 1)
         #expect(store.visibleUnreadBadgeCount == 1)
-        withExtendedLifetime(observation) {}
     }
 }
 

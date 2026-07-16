@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AstrenzaRootView: View {
     @StateObject private var sessionStore: NostrSessionStore
-    @StateObject private var homeTimelineStore: NostrHomeTimelineStore
+    @State private var homeTimelineStore: NostrHomeTimelineStore
     @State private var isStartupSplashVisible = true
     @State private var hasPresentedStartupTimeline = false
     @State private var startupSplashStartDate = Date()
@@ -17,7 +17,7 @@ struct AstrenzaRootView: View {
         _sessionStore = StateObject(
             wrappedValue: NostrSessionStore(restoreAccount: !isRunningUnitTests)
         )
-        _homeTimelineStore = StateObject(wrappedValue: NostrHomeTimelineStore(
+        _homeTimelineStore = State(initialValue: NostrHomeTimelineStore(
             relayRuntime: NostrRelayRuntime { _ in
                 NostrURLSessionRelayTransport()
             },

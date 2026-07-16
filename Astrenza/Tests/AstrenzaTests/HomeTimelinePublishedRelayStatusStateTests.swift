@@ -1,5 +1,4 @@
 import AstrenzaCore
-import Combine
 import Testing
 @testable import Astrenza
 
@@ -45,16 +44,13 @@ struct PublishedRelayStatusStateTests {
         #expect(next.snapshot == state.snapshot)
     }
 
-    @Test("A status transition publishes all relay fields from the Store once")
-    func storePublishesTransitionAtomically() {
+    @Test("A selected relay field notifies its observer once")
+    func selectedRelayFieldNotifiesOnce() {
         let store = NostrHomeTimelineStore(eventStore: nil)
-        var publicationCount = 0
-        let observation = store.objectWillChange.sink { _ in
-            publicationCount += 1
-        }
+        let observation = observePublishedState(store.relayStatusRevision)
 
         store.testingApplyRelayStatusSnapshot(relayStatusSnapshot())
-        #expect(publicationCount == 0)
+        #expect(observation.count == 0)
 
         store.testingApplyRelayStatusTransition(HomeTimelineRelayStatusTransition(
             snapshot: relayStatusSnapshot(
@@ -66,12 +62,11 @@ struct PublishedRelayStatusStateTests {
             publishesStatusChange: true
         ))
 
-        #expect(publicationCount == 1)
+        #expect(observation.count == 1)
         #expect(store.relayStatusRevision == 1)
         #expect(store.relayRuntimeStates == ["wss://relay.example": .connected])
         #expect(store.relayStatusCounts.connected == 1)
         #expect(store.relayStatusCounts.planned == 2)
-        withExtendedLifetime(observation) {}
     }
 
     @Test("Realtime invalidation runs even when relay publication state is unchanged")
