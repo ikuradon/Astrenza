@@ -138,14 +138,12 @@ extension NostrHomeTimelineStore {
         )
     }
 
-    func muteAuthor(of post: TimelinePost) {
-        featureActionCoordinator.muteAuthor(
-            authorPubkey: post.author.pubkey
-        )
+    func muteAuthor(authorPubkey: String) {
+        featureActionCoordinator.muteAuthor(authorPubkey: authorPubkey)
     }
 
-    func bookmark(_ post: TimelinePost) {
-        featureActionCoordinator.bookmark(eventID: post.id)
+    func bookmark(eventID: String) {
+        featureActionCoordinator.bookmark(eventID: eventID)
     }
 
     func cancel() {

@@ -121,10 +121,10 @@ struct HomeTimelineLocalMutationCoordinatorTests {
             context: nil
         )
 
-        store.muteAuthor(of: post)
+        store.muteAuthor(authorPubkey: post.author.pubkey)
         #expect(store.phase == .failed("Mute failed: local mutation persistence failed"))
 
-        store.bookmark(post)
+        store.bookmark(eventID: post.id)
         #expect(store.phase == .failed("Bookmark failed: local mutation persistence failed"))
     }
 
@@ -186,10 +186,10 @@ struct HomeTimelineLocalMutationCoordinatorTests {
         }
         #expect(post.bodyPresentation.collapseReason == nil)
 
-        store.bookmark(post)
+        store.bookmark(eventID: post.id)
         #expect(store.isBookmarked(post))
 
-        store.muteAuthor(of: post)
+        store.muteAuthor(authorPubkey: post.author.pubkey)
         let mutedPost = try await waitForPost(in: store) {
             $0.bodyPresentation.collapseReason == .filtered
         }

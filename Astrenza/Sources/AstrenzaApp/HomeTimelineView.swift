@@ -5,6 +5,7 @@ struct HomeTimelineView: View {
     @ObservedObject var sessionStore: NostrSessionStore
     let liveTimelineStore: NostrHomeTimelineStore
     let onInitialPresentationReady: () -> Void
+    private let userActions: HomeTimelineUserActionCoordinator
     @State private var selectedTab: TimelineTab = .home
     @State private var previousTab: TimelineTab = .home
     @State private var selectedTimeline: TimelineKind = .home
@@ -76,6 +77,9 @@ struct HomeTimelineView: View {
         self.sessionStore = sessionStore
         self.liveTimelineStore = liveTimelineStore
         self.onInitialPresentationReady = onInitialPresentationReady
+        self.userActions = HomeTimelineUserActionCoordinator(
+            actions: liveTimelineStore
+        )
 
         let viewportPersistence = HomeViewportPersistenceCoordinator(
             persistence: TimelineRestoreStore(),
@@ -489,41 +493,11 @@ private extension HomeTimelineView {
 
     func handlePostActionChoice(_ post: TimelinePost, choice: PostActionChoice) {
         guard sessionStore.account != nil else { return }
-
-        switch choice {
-        case .mute:
-            liveTimelineStore.muteAuthor(of: post)
-        case .bookmark:
-            liveTimelineStore.bookmark(post)
-        case .report, .translate, .copyLink, .shareLink, .viewDetails:
-            break
-        }
+        userActions.perform(choice, on: post)
     }
 
     func submitCompose(_ request: ComposeSubmitRequest) async -> Bool {
-        guard let signer = sessionStore.signer else { return false }
-        var tags: [[String]] = []
-        if request.isSensitive {
-            tags.append(["content-warning", request.sensitiveReason])
-        }
-
-        do {
-            switch request.mode {
-            case .post:
-                try await liveTimelineStore.enqueuePublish(
-                    .post(content: request.text, tags: tags),
-                    signer: signer
-                )
-            case .reply:
-                try await liveTimelineStore.enqueuePublish(
-                    .post(content: request.text, tags: tags),
-                    signer: signer
-                )
-            }
-            return true
-        } catch {
-            return false
-        }
+        await userActions.submit(request, signer: sessionStore.signer)
     }
 
     func presentComposer(mode: ComposeSheetMode) {
