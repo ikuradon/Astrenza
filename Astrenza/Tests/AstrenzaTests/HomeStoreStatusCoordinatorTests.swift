@@ -118,7 +118,7 @@ struct HomeStoreStatusCoordinatorTests {
                 pendingSourceRequestCount: 3
             )
 
-        let status = fixture.coordinator.activityStatus()
+        let status = fixture.coordinator.activityStatus
 
         #expect(status == expectedStatus)
         #expect(fixture.activity.statusContexts == [
@@ -131,6 +131,36 @@ struct HomeStoreStatusCoordinatorTests {
                 hasPendingDependencyWork: true
             )
         ])
+    }
+
+    @Test("Presentation reads project relay state through one boundary")
+    func presentationReadsProjectRelayState() {
+        let fixture = StoreStatusFixture()
+        let expectedStatus = NostrTimelineActivityStatus(
+            title: "Updating Home timeline",
+            detail: "Receiving events from Home relays",
+            compactLabel: "Updating"
+        )
+        fixture.activity.statusResult = expectedStatus
+
+        let counts = fixture.coordinator.relayStatusCounts
+
+        #expect(fixture.coordinator.relayRuntimeStates == [
+            "wss://one.example": .connected
+        ])
+        #expect(counts.connected == 1)
+        #expect(counts.planned == 3)
+        #expect(fixture.coordinator.relayStatusRevision == 0)
+        #expect(fixture.coordinator.activityStatus == expectedStatus)
+        #expect(fixture.coordinator.isRelayProcessing)
+    }
+
+    @Test("Processing projection is false when activity has no status")
+    func processingProjectionReflectsMissingStatus() {
+        let fixture = StoreStatusFixture()
+
+        #expect(fixture.coordinator.activityStatus == nil)
+        #expect(!fixture.coordinator.isRelayProcessing)
     }
 }
 

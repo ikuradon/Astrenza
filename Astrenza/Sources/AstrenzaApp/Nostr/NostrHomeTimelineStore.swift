@@ -250,28 +250,23 @@ extension NostrHomeTimelineStore {
     }
 
     var relayStatusRevision: Int {
-        publishedStateCoordinator.relayStatusRevision
+        statusCoordinator.relayStatusRevision
     }
 
     var relayRuntimeStates: [String: NostrRelayConnectionState] {
-        publishedStateCoordinator.relayStatusSnapshot.runtimeStates
+        statusCoordinator.relayRuntimeStates
     }
 
     var relayStatusCounts: (connected: Int, planned: Int) {
-        let snapshot = publishedStateCoordinator.relayStatusSnapshot
-        return (
-            connected: snapshot.connectedRelayCount,
-            planned: snapshot.plannedRelayCount
-        )
+        statusCoordinator.relayStatusCounts
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        _ = publishedStateCoordinator.relayStatusRevision
-        return statusCoordinator.activityStatus()
+        statusCoordinator.activityStatus
     }
 
     var isRelayProcessing: Bool {
-        activityStatus != nil
+        statusCoordinator.isRelayProcessing
     }
 
     var phase: Phase {

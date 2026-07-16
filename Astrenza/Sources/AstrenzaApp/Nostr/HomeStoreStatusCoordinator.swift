@@ -103,6 +103,41 @@ final class HomeStoreStatusCoordinator {
         publisher.relayStatus.revision
     }
 
+    var relayRuntimeStates: [String: NostrRelayConnectionState] {
+        relayStatusSnapshot.runtimeStates
+    }
+
+    var relayStatusCounts: (connected: Int, planned: Int) {
+        let snapshot = relayStatusSnapshot
+        return (
+            connected: snapshot.connectedRelayCount,
+            planned: snapshot.plannedRelayCount
+        )
+    }
+
+    var activityStatus: NostrTimelineActivityStatus? {
+        // Diagnostic-only changes also advance this revision and must
+        // invalidate presentation even when the relay counts stay unchanged.
+        _ = relayStatusRevision
+        let backward = sync.backwardRequestState
+        let relay = relayStatusSnapshot
+        return activity.status(
+            context: HomeTimelineActivityContext(
+                connectedRelayCount: relay.connectedRelayCount,
+                plannedRelayCount: relay.plannedRelayCount,
+                hasOlderPageRequest: backward.hasOlderPageRequest,
+                hasGapWork: backward.hasGapWork,
+                hasBackwardRequests: backward.hasRequests,
+                hasPendingDependencyWork:
+                    dependencies.dependencyWorkState.hasPendingWork
+            )
+        )
+    }
+
+    var isRelayProcessing: Bool {
+        activityStatus != nil
+    }
+
     func applyActivityTransition(
         _ transition: HomeTimelineActivityTransition
     ) {
@@ -138,21 +173,5 @@ final class HomeStoreStatusCoordinator {
 
     func publishRelayStatusChange() {
         publisher.publishRelayStatusChange()
-    }
-
-    func activityStatus() -> NostrTimelineActivityStatus? {
-        let backward = sync.backwardRequestState
-        let relay = publisher.relayStatus.snapshot
-        return activity.status(
-            context: HomeTimelineActivityContext(
-                connectedRelayCount: relay.connectedRelayCount,
-                plannedRelayCount: relay.plannedRelayCount,
-                hasOlderPageRequest: backward.hasOlderPageRequest,
-                hasGapWork: backward.hasGapWork,
-                hasBackwardRequests: backward.hasRequests,
-                hasPendingDependencyWork:
-                    dependencies.dependencyWorkState.hasPendingWork
-            )
-        )
     }
 }
