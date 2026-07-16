@@ -18,9 +18,15 @@ struct AstrenzaRootView: View {
             wrappedValue: NostrSessionStore(restoreAccount: !isRunningUnitTests)
         )
         _homeTimelineStore = State(initialValue: HomeTimelineStoreFactory.make(
-            relayRuntime: NostrRelayRuntime { _ in
-                NostrURLSessionRelayTransport()
-            },
+            relayRuntime: NostrRelayRuntime(
+                transportFactory: { _ in
+                    NostrURLSessionRelayTransport()
+                },
+                relayInformationFetcher: NostrRelayInformationClient(),
+                workSchedulerPolicy: NostrRelayWorkSchedulerPolicy(
+                    fallbackMaxSubscriptions: 16
+                )
+            ),
             linkPreviewResolver: NostrLinkPreviewResolver(
                 serviceClientProvider: {
                     let serviceConfiguration = NostrMediaResolverSettingsStore.shared.configuration()

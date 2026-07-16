@@ -2,6 +2,14 @@ import Foundation
 import Testing
 @testable import AstrenzaCore
 
+private struct RelayConcurrencyInformationFetcher: NostrRelayInformationFetching {
+    let informationDocument: NostrRelayInformationDocument
+
+    func information(for relayURL: String) async throws -> NostrRelayInformationDocument {
+        informationDocument
+    }
+}
+
 @Suite("Nostr relay runtime concurrency")
 struct NostrRelayRuntimeConcurrencyTests {
     @Test("Relay demand registry releases independent owners without disconnecting early")
@@ -23,6 +31,135 @@ struct NostrRelayRuntimeConcurrencyTests {
 
         registry.release(subscription, from: [relayURL])
         #expect(!registry.hasDemand(for: relayURL))
+    }
+
+    @Test("Runtime applies NIP-11 capacity before scheduling later REQs")
+    func runtimeAppliesFetchedRelayCapacity() async throws {
+        let relayURL = "wss://relay.example"
+        let connection = RelayConcurrencyTestConnection()
+        let information = NostrRelayInformationDocument(
+            name: "Limited relay",
+            description: nil,
+            pubkey: nil,
+            contact: nil,
+            supportedNips: [11],
+            software: nil,
+            version: nil,
+            limitation: NostrRelayLimitation(maxSubscriptions: 1)
+        )
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in RelayConcurrencyTestTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled,
+            relayInformationFetcher: RelayConcurrencyInformationFetcher(
+                informationDocument: information
+            ),
+            workSchedulerPolicy: NostrRelayWorkSchedulerPolicy(
+                fallbackMaxSubscriptions: 3,
+                queueTimeoutMilliseconds: 10
+            )
+        )
+        let first = NostrREQPacket.backward(
+            purpose: "profile",
+            filters: [["ids": .strings([String(repeating: "a", count: 64)])]],
+            relayURLs: [relayURL],
+            groupID: "profile-first",
+            subscriptionID: "profile-first-req"
+        )
+        let second = NostrREQPacket.backward(
+            purpose: "profile",
+            filters: [["ids": .strings([String(repeating: "b", count: 64)])]],
+            relayURLs: [relayURL],
+            groupID: "profile-second",
+            subscriptionID: "profile-second-req"
+        )
+
+        try await runtime.setDefaultRelays([relayURL])
+        for _ in 0..<100 where await runtime.relayWorkSnapshot(relayURL: relayURL)?.maxSubscriptions != 1 {
+            await Task.yield()
+        }
+        #expect(await runtime.relayWorkSnapshot(relayURL: relayURL)?.maxSubscriptions == 1)
+
+        try await runtime.installBackward([first], mergeField: .ids)
+        var receivedError: NostrRelayWorkSchedulerError?
+        do {
+            try await runtime.installBackward([second], mergeField: .ids)
+        } catch let error as NostrRelayWorkSchedulerError {
+            receivedError = error
+        }
+
+        #expect(receivedError == .queueTimedOut(
+            relayURL: relayURL,
+            subscriptionID: second.subscriptionID
+        ))
+        #expect(await connection.sentFrames().filter { $0.contains(#""REQ""#) }.count == 1)
+        let snapshot = try #require(await runtime.relayWorkSnapshot(relayURL: relayURL))
+        #expect(snapshot.activeSubscriptionIDs == [first.subscriptionID])
+        #expect(snapshot.queuedCount == 0)
+
+        await runtime.terminate()
+    }
+
+    @Test("A queued forward REQ installs after relay capacity becomes available")
+    func queuedForwardInstallsAfterBackwardCompletion() async throws {
+        let relayURL = "wss://relay.example"
+        let connection = RelayConcurrencyTestConnection(
+            inboundFrames: [#"["EOSE","profile-backward"]"#]
+        )
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in RelayConcurrencyTestTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let backward = NostrREQPacket.backward(
+            purpose: "profile",
+            filters: [["kinds": .ints([0])]],
+            relayURLs: [relayURL],
+            groupID: "profile-backward-group",
+            subscriptionID: "profile-backward"
+        )
+        let forward = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1])]]
+        )
+
+        try await runtime.setDefaultRelays([relayURL])
+        await runtime.applyRelayInformation(
+            NostrRelayInformationDocument(
+                name: nil,
+                description: nil,
+                pubkey: nil,
+                contact: nil,
+                supportedNips: [11],
+                software: nil,
+                version: nil,
+                limitation: NostrRelayLimitation(maxSubscriptions: 1)
+            ),
+            relayURL: relayURL
+        )
+        try await runtime.installBackward([backward], mergeField: .authors)
+        try await runtime.installForward(forward)
+
+        var snapshot = try #require(await runtime.relayWorkSnapshot(relayURL: relayURL))
+        #expect(snapshot.activeSubscriptionIDs == [backward.subscriptionID])
+        #expect(snapshot.queuedSubscriptionIDs == [forward.subscriptionID])
+        #expect(await connection.sentFrames().filter { $0.contains(#""REQ""#) }.count == 1)
+
+        try await runtime.receiveNext(relayURL: relayURL)
+        for _ in 0..<100 where await connection.sentFrames().filter({
+            $0.contains(#""REQ""#)
+        }).count == 1 {
+            await Task.yield()
+        }
+
+        snapshot = try #require(await runtime.relayWorkSnapshot(relayURL: relayURL))
+        #expect(snapshot.activeSubscriptionIDs == [forward.subscriptionID])
+        #expect(snapshot.queuedCount == 0)
+        #expect(await connection.sentFrames().filter { $0.contains(#""REQ""#) }.count == 2)
+
+        await runtime.terminate()
     }
 
     @Test("Session accepts an EVENT that arrives before REQ send returns")

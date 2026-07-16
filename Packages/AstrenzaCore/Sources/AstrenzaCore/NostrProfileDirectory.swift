@@ -324,7 +324,13 @@ public actor NostrProfileDirectory {
             )
 
             do {
-                try await relayRuntime.installBackward([packet], mergeField: .authors)
+                try await relayRuntime.installBackward(
+                    [packet],
+                    mergeField: .authors,
+                    priority: priority == .foreground
+                        ? .visibleDependency
+                        : .backgroundDependency
+                )
             } catch {
                 guard lifecycleGeneration == generation else { return }
                 failRequestGroup(

@@ -51,6 +51,24 @@ public struct NostrRelayLimitation: Codable, Equatable, Sendable {
     public let paymentRequired: Bool?
     public let restrictedWrites: Bool?
 
+    public init(
+        maxMessageLength: Int? = nil,
+        maxSubscriptions: Int? = nil,
+        maxLimit: Int? = nil,
+        maxSubIDLength: Int? = nil,
+        authRequired: Bool? = nil,
+        paymentRequired: Bool? = nil,
+        restrictedWrites: Bool? = nil
+    ) {
+        self.maxMessageLength = maxMessageLength
+        self.maxSubscriptions = maxSubscriptions
+        self.maxLimit = maxLimit
+        self.maxSubIDLength = maxSubIDLength
+        self.authRequired = authRequired
+        self.paymentRequired = paymentRequired
+        self.restrictedWrites = restrictedWrites
+    }
+
     enum CodingKeys: String, CodingKey {
         case maxMessageLength = "max_message_length"
         case maxSubscriptions = "max_subscriptions"
@@ -76,18 +94,25 @@ public actor NostrRelayInformationCache {
         self.key = key
         if let data = defaults?.data(forKey: key),
            let cached = try? JSONDecoder().decode([String: NostrRelayInformationDocument].self, from: data) {
-            documents = cached
+            documents = Dictionary(
+                cached.compactMap { key, value in
+                    NostrRelayURL(key, mode: .userFacing).map { ($0.rawValue, value) }
+                },
+                uniquingKeysWith: { _, latest in latest }
+            )
         } else {
             documents = [:]
         }
     }
 
     public func document(for relayURL: String) -> NostrRelayInformationDocument? {
-        documents[relayURL]
+        guard let identity = NostrRelayURL(relayURL, mode: .userFacing) else { return nil }
+        return documents[identity.rawValue]
     }
 
     public func store(_ document: NostrRelayInformationDocument, for relayURL: String) {
-        documents[relayURL] = document
+        guard let identity = NostrRelayURL(relayURL, mode: .userFacing) else { return }
+        documents[identity.rawValue] = document
         persist()
     }
 

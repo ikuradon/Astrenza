@@ -9,6 +9,8 @@ public actor NostrRelayRuntime {
     private let retryPolicy: NostrRelayRuntimeRetryPolicy
     private let heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy
     private let backwardPolicy: NostrRelayRuntimeBackwardPolicy
+    private let relayInformationFetcher: (any NostrRelayInformationFetching)?
+    private let workScheduler: NostrRelayWorkScheduler
     private var sessions: [String: NostrRelaySession] = [:]
     private var relayURLs: [String] = []
     private var activeForwardPackets: [String: NostrREQPacket] = [:]
@@ -17,10 +19,13 @@ public actor NostrRelayRuntime {
     private var heartbeatLoopTasks: [String: Task<Void, Never>] = [:]
     private var heartbeatMissCounts: [String: Int] = [:]
     private var forwardClosedRetryTasks: [String: Task<Void, Never>] = [:]
+    private var forwardWorkTickets: [String: NostrRelayWorkTicket] = [:]
+    private var forwardActivationTasks: [String: Task<Void, Never>] = [:]
     private var backwardTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var backwardProgressBySubscriptionKey: [String: BackwardSubscriptionProgress] = [:]
     private var backwardSubscriptionKeysByGroupID: [String: Set<String>] = [:]
     private var relayDemands = NostrRelayDemandRegistry()
+    private var relayInformationTasks: [String: Task<Void, Never>] = [:]
     private var nextBackwardProgressGeneration: UInt64 = 0
     private var trafficAccountID: String?
     private var trafficPolicy = NostrSyncPolicy.default()
@@ -32,7 +37,9 @@ public actor NostrRelayRuntime {
         autoReceive: Bool = true,
         retryPolicy: NostrRelayRuntimeRetryPolicy = NostrRelayRuntimeRetryPolicy(),
         heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy = NostrRelayRuntimeHeartbeatPolicy(),
-        backwardPolicy: NostrRelayRuntimeBackwardPolicy = NostrRelayRuntimeBackwardPolicy()
+        backwardPolicy: NostrRelayRuntimeBackwardPolicy = NostrRelayRuntimeBackwardPolicy(),
+        relayInformationFetcher: (any NostrRelayInformationFetching)? = nil,
+        workSchedulerPolicy: NostrRelayWorkSchedulerPolicy = NostrRelayWorkSchedulerPolicy()
     ) {
         self.transportFactory = transportFactory
         self.eventValidator = eventValidator
@@ -40,6 +47,8 @@ public actor NostrRelayRuntime {
         self.retryPolicy = retryPolicy
         self.heartbeatPolicy = heartbeatPolicy
         self.backwardPolicy = backwardPolicy
+        self.relayInformationFetcher = relayInformationFetcher
+        workScheduler = NostrRelayWorkScheduler(policy: workSchedulerPolicy)
     }
 
     public func events() -> AsyncStream<NostrRelayRuntimePacket> {
@@ -77,6 +86,22 @@ public actor NostrRelayRuntime {
         await sessions[relayURL]?.state() ?? .initialized
     }
 
+    public func relayWorkSnapshot(relayURL: String) async -> NostrRelayWorkSnapshot? {
+        guard let identity = NostrRelayURL(relayURL) else { return nil }
+        return await workScheduler.snapshot(for: identity)
+    }
+
+    public func applyRelayInformation(
+        _ information: NostrRelayInformationDocument,
+        relayURL: String
+    ) async {
+        guard let identity = NostrRelayURL(relayURL) else { return }
+        await workScheduler.setPublishedMaxSubscriptions(
+            information.limitation?.maxSubscriptions,
+            for: identity
+        )
+    }
+
     public func setTrafficContext(accountID: String?, policy: NostrSyncPolicy) async {
         trafficAccountID = accountID
         trafficPolicy = policy
@@ -105,18 +130,23 @@ public actor NostrRelayRuntime {
             heartbeatMissCounts[relayURL] = nil
             cancelForwardClosedRetries(relayURL: relayURL)
 
-            if let session = sessions[relayURL] {
-                let forwardSubscriptionIDs = activeForwardPackets.values
-                    .filter { $0.relayURLs.isEmpty || canonicalRelayURLs($0.relayURLs).contains(relayURL) }
-                    .map(\.subscriptionID)
-                for subscriptionID in forwardSubscriptionIDs {
+            let forwardSubscriptionIDs = activeForwardPackets.values
+                .filter { $0.relayURLs.isEmpty || canonicalRelayURLs($0.relayURLs).contains(relayURL) }
+                .map(\.subscriptionID)
+            for subscriptionID in forwardSubscriptionIDs {
+                if let session = sessions[relayURL] {
                     try? await session.close(subscriptionID: subscriptionID)
                 }
+                await releaseForwardWorkTicket(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
             }
             await releaseRelaySessionIfUnneeded(relayURL)
         }
 
         for relayURL in addedRelays {
+            scheduleRelayInformationFetch(relayURL: relayURL)
             let session: NostrRelaySession
             if let existingSession = sessions[relayURL] {
                 session = existingSession
@@ -153,8 +183,16 @@ public actor NostrRelayRuntime {
             for packet in activeForwardPackets.values
             where packet.relayURLs.isEmpty || canonicalRelayURLs(packet.relayURLs).contains(relayURL) {
                 do {
-                    try await session.install(packet)
+                    try await installOrQueueForward(
+                        packet,
+                        relayURL: relayURL,
+                        session: session
+                    )
                 } catch {
+                    await releaseForwardWorkTicket(
+                        relayURL: relayURL,
+                        subscriptionID: packet.subscriptionID
+                    )
                     guard autoReceive else { throw error }
                     scheduleForwardRetryAfterClosed(
                         relayURL: relayURL,
@@ -194,18 +232,33 @@ public actor NostrRelayRuntime {
         replacing shouldReplace: (NostrREQPacket) -> Bool
     ) async throws {
         let previousPackets = activeForwardPackets.values.filter(shouldReplace)
-        let installSubscriptionIDs = Set(installPackets.map(\.subscriptionID))
+        let installKeys = Set(installPackets.flatMap { packet in
+            forwardRelayURLs(for: packet).map { relayURL in
+                forwardClosedRetryKey(
+                    relayURL: relayURL,
+                    subscriptionID: packet.subscriptionID
+                )
+            }
+        })
         activeForwardPackets = activeForwardPackets.filter { !shouldReplace($0.value) }
         for packet in installPackets {
             activeForwardPackets[packet.subscriptionID] = packet
         }
 
-        for packet in previousPackets where !installSubscriptionIDs.contains(packet.subscriptionID) {
+        for packet in previousPackets {
             let targetRelays = forwardRelayURLs(for: packet)
-            for relayURL in targetRelays {
+            for relayURL in targetRelays where !installKeys.contains(forwardClosedRetryKey(
+                relayURL: relayURL,
+                subscriptionID: packet.subscriptionID
+            )) {
                 cancelForwardClosedRetry(relayURL: relayURL, subscriptionID: packet.subscriptionID)
-                guard let session = sessions[relayURL] else { continue }
-                try? await session.close(subscriptionID: packet.subscriptionID)
+                if let session = sessions[relayURL] {
+                    try? await session.close(subscriptionID: packet.subscriptionID)
+                }
+                await releaseForwardWorkTicket(
+                    relayURL: relayURL,
+                    subscriptionID: packet.subscriptionID
+                )
             }
         }
 
@@ -214,9 +267,17 @@ public actor NostrRelayRuntime {
             for relayURL in targetRelays {
                 guard let session = sessions[relayURL] else { continue }
                 do {
-                    try await session.install(packet)
+                    try await installOrQueueForward(
+                        packet,
+                        relayURL: relayURL,
+                        session: session
+                    )
                     cancelForwardClosedRetry(relayURL: relayURL, subscriptionID: packet.subscriptionID)
                 } catch {
+                    await releaseForwardWorkTicket(
+                        relayURL: relayURL,
+                        subscriptionID: packet.subscriptionID
+                    )
                     guard autoReceive else { throw error }
                     scheduleForwardRetryAfterClosed(
                         relayURL: relayURL,
@@ -230,7 +291,8 @@ public actor NostrRelayRuntime {
     public func installBackward(
         _ packets: [NostrREQPacket],
         mergeField: NostrREQMergeField,
-        chunkPolicy: NostrREQChunkPolicy = NostrREQChunkPolicy()
+        chunkPolicy: NostrREQChunkPolicy = NostrREQChunkPolicy(),
+        priority: NostrRelayWorkPriority? = nil
     ) async throws {
         let backwardPackets = packets.map { packet in
             packet.strategy == .backward ? packet : NostrREQPacket.backward(
@@ -263,7 +325,10 @@ public actor NostrRelayRuntime {
 
         do {
             await prepareDemandRelaySessions(installationRelayURLs)
-            try await installScheduledBackward(scheduledPackets)
+            try await installScheduledBackward(
+                scheduledPackets,
+                priorityOverride: priority
+            )
         } catch {
             await releaseRelayDemand(installationDemand, from: installationRelayURLs)
             throw error
@@ -272,7 +337,8 @@ public actor NostrRelayRuntime {
     }
 
     private func installScheduledBackward(
-        _ scheduledPackets: [BackwardScheduledPacket]
+        _ scheduledPackets: [BackwardScheduledPacket],
+        priorityOverride: NostrRelayWorkPriority?
     ) async throws {
         let unavailableGroupIDs = scheduledPackets
             .filter { scheduledPacket in
@@ -289,17 +355,29 @@ public actor NostrRelayRuntime {
             let packet = scheduledPacket.packet
             let targetRelays = eligibleRelayURLs(for: packet)
             for relayURL in targetRelays {
-                guard let session = sessions[relayURL] else { continue }
-                let generation = registerBackwardSubscription(
+                guard let session = sessions[relayURL],
+                      let identity = NostrRelayURL(relayURL)
+                else { continue }
+                let workTicket = await workScheduler.enqueue(
+                    relayURL: identity,
+                    subscriptionID: packet.subscriptionID,
+                    priority: priorityOverride ?? backwardWorkPriority(for: packet)
+                )
+                let registration = registerBackwardSubscription(
                     relayURL: relayURL,
                     packet: packet,
-                    logicalGroupIDs: scheduledPacket.logicalGroupIDs
+                    logicalGroupIDs: scheduledPacket.logicalGroupIDs,
+                    workTicket: workTicket
                 )
+                if let replacedWorkTicket = registration.replacedWorkTicket {
+                    await workScheduler.release(replacedWorkTicket)
+                }
                 installTargets.append(BackwardInstallTarget(
                     relayURL: relayURL,
                     packet: packet,
                     session: session,
-                    generation: generation
+                    generation: registration.generation,
+                    workTicket: workTicket
                 ))
             }
         }
@@ -308,6 +386,7 @@ public actor NostrRelayRuntime {
         var firstInstallError: (any Error)?
         for target in installTargets {
             do {
+                try await workScheduler.waitUntilActiveWithPolicyTimeout(target.workTicket)
                 try await target.session.install(target.packet)
             } catch {
                 guard autoReceive else {
@@ -322,11 +401,14 @@ public actor NostrRelayRuntime {
                     relayURL: target.relayURL,
                     subscriptionID: target.packet.subscriptionID
                 )
-                _ = rollbackBackwardSubscription(
+                let didRollback = rollbackBackwardSubscription(
                     relayURL: target.relayURL,
                     subscriptionID: target.packet.subscriptionID,
                     generation: target.generation
                 )
+                if didRollback {
+                    await workScheduler.release(target.workTicket)
+                }
                 continue
             }
             successfullyInstalledTargets.append(target)
@@ -378,6 +460,9 @@ public actor NostrRelayRuntime {
                 subscriptionID: target.packet.subscriptionID,
                 generation: target.generation
             )
+            if didRollback {
+                await workScheduler.release(target.workTicket)
+            }
             let key = backwardTimeoutKey(
                 relayURL: target.relayURL,
                 subscriptionID: target.packet.subscriptionID
@@ -416,6 +501,12 @@ public actor NostrRelayRuntime {
         for task in forwardClosedRetryTasks.values {
             task.cancel()
         }
+        for task in forwardActivationTasks.values {
+            task.cancel()
+        }
+        for task in relayInformationTasks.values {
+            task.cancel()
+        }
         for task in backwardTimeoutTasks.values {
             task.cancel()
         }
@@ -424,6 +515,9 @@ public actor NostrRelayRuntime {
         heartbeatLoopTasks = [:]
         heartbeatMissCounts = [:]
         forwardClosedRetryTasks = [:]
+        forwardWorkTickets = [:]
+        forwardActivationTasks = [:]
+        relayInformationTasks = [:]
         backwardTimeoutTasks = [:]
         backwardProgressBySubscriptionKey = [:]
         backwardSubscriptionKeysByGroupID = [:]
@@ -435,6 +529,7 @@ public actor NostrRelayRuntime {
             continuation.finish()
         }
         continuations = [:]
+        await workScheduler.cancelAll()
         for session in sessionsToTerminate {
             await session.terminate()
         }
@@ -464,9 +559,14 @@ public actor NostrRelayRuntime {
             let wasBackwardSubscription = hasBackwardProgress(relayURL: relayURL, subscriptionID: subscriptionID)
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             await completeBackwardSubscription(relayURL: relayURL, subscriptionID: subscriptionID, terminal: .closed)
-            if !wasBackwardSubscription,
-               NostrRelayClosedDisposition(message: message) == .retryAfterDelay {
-                scheduleForwardRetryAfterClosed(relayURL: relayURL, subscriptionID: subscriptionID)
+            if !wasBackwardSubscription {
+                await releaseForwardWorkTicket(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
+                if NostrRelayClosedDisposition(message: message) == .retryAfterDelay {
+                    scheduleForwardRetryAfterClosed(relayURL: relayURL, subscriptionID: subscriptionID)
+                }
             }
         case .timeout(let relayURL, let subscriptionID, _):
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
@@ -580,8 +680,16 @@ public actor NostrRelayRuntime {
               let session = sessions[relayURL]
         else { return }
         do {
-            try await session.install(packet)
+            try await installOrQueueForward(
+                packet,
+                relayURL: relayURL,
+                session: session
+            )
         } catch {
+            await releaseForwardWorkTicket(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID
+            )
             await session.markWaitingForRetry(message: "forward REQ retry failed: \(String(describing: error))")
             scheduleForwardRetryAfterClosed(relayURL: relayURL, subscriptionID: subscriptionID)
         }
@@ -653,10 +761,13 @@ public actor NostrRelayRuntime {
     private func registerBackwardSubscription(
         relayURL: String,
         packet: NostrREQPacket,
-        logicalGroupIDs: [String]
-    ) -> UInt64 {
+        logicalGroupIDs: [String],
+        workTicket: NostrRelayWorkTicket
+    ) -> BackwardSubscriptionRegistration {
         let key = backwardTimeoutKey(relayURL: relayURL, subscriptionID: packet.subscriptionID)
+        var replacedWorkTicket: NostrRelayWorkTicket?
         if let previousProgress = backwardProgressBySubscriptionKey[key] {
+            replacedWorkTicket = previousProgress.workTicket
             releaseBackwardSubscriptionDemand(previousProgress)
             backwardSubscriptionKeysByGroupID[previousProgress.groupID]?.remove(key)
             if backwardSubscriptionKeysByGroupID[previousProgress.groupID]?.isEmpty == true {
@@ -670,7 +781,8 @@ public actor NostrRelayRuntime {
             logicalGroupIDs: logicalGroupIDs,
             relayURL: relayURL,
             subscriptionID: packet.subscriptionID,
-            generation: generation
+            generation: generation,
+            workTicket: workTicket
         )
         acquireBackwardSubscriptionDemand(
             relayURL: relayURL,
@@ -678,7 +790,10 @@ public actor NostrRelayRuntime {
             generation: generation
         )
         backwardSubscriptionKeysByGroupID[packet.groupID, default: []].insert(key)
-        return generation
+        return BackwardSubscriptionRegistration(
+            generation: generation,
+            replacedWorkTicket: replacedWorkTicket
+        )
     }
 
     @discardableResult
@@ -728,6 +843,7 @@ public actor NostrRelayRuntime {
         progress.terminal = terminal
         backwardProgressBySubscriptionKey[key] = progress
         releaseBackwardSubscriptionDemand(progress)
+        await workScheduler.release(progress.workTicket)
 
         await emitBackwardCompletionIfGroupFinished(groupID: progress.groupID)
         await releaseRelaySessionIfUnneeded(relayURL)
@@ -824,6 +940,7 @@ public actor NostrRelayRuntime {
 
     private func prepareDemandRelaySessions(_ relayURLs: [String]) async {
         for relayURL in relayURLs where sessions[relayURL] == nil {
+            scheduleRelayInformationFetch(relayURL: relayURL)
             let session = NostrRelaySession(
                 relayURL: relayURL,
                 transport: transportFactory(relayURL),
@@ -869,6 +986,137 @@ public actor NostrRelayRuntime {
         )
     }
 
+    private func installOrQueueForward(
+        _ packet: NostrREQPacket,
+        relayURL: String,
+        session: NostrRelaySession
+    ) async throws {
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: packet.subscriptionID
+        )
+        let ticket: NostrRelayWorkTicket
+        if let existingTicket = forwardWorkTickets[key] {
+            ticket = existingTicket
+        } else {
+            guard let identity = NostrRelayURL(relayURL) else {
+                throw NostrRelayRuntimeError.connectionUnavailable(relayURL: relayURL)
+            }
+            ticket = await workScheduler.enqueue(
+                relayURL: identity,
+                subscriptionID: packet.subscriptionID,
+                priority: .realtime
+            )
+            forwardWorkTickets[key] = ticket
+        }
+
+        if await workScheduler.isActive(ticket) {
+            forwardActivationTasks.removeValue(forKey: key)?.cancel()
+            try await session.install(packet)
+            return
+        }
+        scheduleForwardActivation(
+            ticket: ticket,
+            packet: packet,
+            relayURL: relayURL,
+            session: session
+        )
+    }
+
+    private func scheduleForwardActivation(
+        ticket: NostrRelayWorkTicket,
+        packet: NostrREQPacket,
+        relayURL: String,
+        session: NostrRelaySession
+    ) {
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: packet.subscriptionID
+        )
+        forwardActivationTasks[key]?.cancel()
+        forwardActivationTasks[key] = Task {
+            do {
+                try await self.workScheduler.waitUntilActive(ticket)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self.installActivatedForward(
+                ticket: ticket,
+                packet: packet,
+                relayURL: relayURL,
+                session: session
+            )
+        }
+    }
+
+    private func installActivatedForward(
+        ticket: NostrRelayWorkTicket,
+        packet: NostrREQPacket,
+        relayURL: String,
+        session: NostrRelaySession
+    ) async {
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: packet.subscriptionID
+        )
+        forwardActivationTasks[key] = nil
+        guard forwardWorkTickets[key] == ticket,
+              activeForwardPackets[packet.subscriptionID] == packet,
+              sessions[relayURL] === session
+        else {
+            await releaseForwardWorkTicket(
+                relayURL: relayURL,
+                subscriptionID: packet.subscriptionID
+            )
+            return
+        }
+        do {
+            try await session.install(packet)
+            cancelForwardClosedRetry(
+                relayURL: relayURL,
+                subscriptionID: packet.subscriptionID
+            )
+        } catch {
+            await releaseForwardWorkTicket(
+                relayURL: relayURL,
+                subscriptionID: packet.subscriptionID
+            )
+            await session.markWaitingForRetry(
+                message: "queued forward REQ failed: \(String(describing: error))"
+            )
+            if autoReceive {
+                scheduleForwardRetryAfterClosed(
+                    relayURL: relayURL,
+                    subscriptionID: packet.subscriptionID
+                )
+            }
+        }
+    }
+
+    private func releaseForwardWorkTicket(relayURL: String, subscriptionID: String) async {
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+        forwardActivationTasks.removeValue(forKey: key)?.cancel()
+        guard let ticket = forwardWorkTickets.removeValue(forKey: key) else { return }
+        await workScheduler.release(ticket)
+    }
+
+    private func releaseForwardWorkTickets(relayURL: String) async {
+        let prefix = relayURL + "\n"
+        let subscriptionIDs = forwardWorkTickets
+            .filter { $0.key.hasPrefix(prefix) }
+            .map(\.value.subscriptionID)
+        for subscriptionID in subscriptionIDs {
+            await releaseForwardWorkTicket(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID
+            )
+        }
+    }
+
     private func releaseRelaySessionIfUnneeded(_ relayURL: String) async {
         guard let identity = NostrRelayURL(relayURL),
               !relayDemands.hasDemand(for: identity),
@@ -879,10 +1127,48 @@ public actor NostrRelayRuntime {
         heartbeatLoopTasks.removeValue(forKey: relayURL)?.cancel()
         heartbeatMissCounts[relayURL] = nil
         cancelForwardClosedRetries(relayURL: relayURL)
+        await releaseForwardWorkTickets(relayURL: relayURL)
         cancelBackwardTimeouts(relayURL: relayURL)
         let sessionPumpTask = sessionPumpTasks.removeValue(forKey: relayURL)
         await session.terminate()
         await sessionPumpTask?.value
+    }
+
+    private func scheduleRelayInformationFetch(relayURL: String) {
+        guard let relayInformationFetcher,
+              relayInformationTasks[relayURL] == nil
+        else { return }
+        relayInformationTasks[relayURL] = Task { [weak self] in
+            let information = try? await relayInformationFetcher.information(for: relayURL)
+            guard !Task.isCancelled else { return }
+            await self?.finishRelayInformationFetch(
+                relayURL: relayURL,
+                information: information
+            )
+        }
+    }
+
+    private func finishRelayInformationFetch(
+        relayURL: String,
+        information: NostrRelayInformationDocument?
+    ) async {
+        relayInformationTasks[relayURL] = nil
+        guard let information else { return }
+        await applyRelayInformation(information, relayURL: relayURL)
+    }
+
+    private func backwardWorkPriority(for packet: NostrREQPacket) -> NostrRelayWorkPriority {
+        let purpose = packet.groupID.lowercased()
+        if purpose.contains("heartbeat") {
+            return .maintenance
+        }
+        if purpose.contains("older") || purpose.contains("gap") || purpose.contains("backfill") {
+            return .backfill
+        }
+        if purpose.contains("profile") || purpose.contains("kind0") || purpose.contains("source") {
+            return .visibleDependency
+        }
+        return .userInitiated
     }
 
     private func canonicalRelayURLs(for packet: NostrREQPacket) -> [String] {
@@ -939,6 +1225,7 @@ private struct BackwardSubscriptionProgress: Equatable {
     let relayURL: String
     let subscriptionID: String
     let generation: UInt64
+    let workTicket: NostrRelayWorkTicket
     var eventCount: Int = 0
     var terminal: BackwardSubscriptionTerminal?
 }
@@ -948,6 +1235,12 @@ private struct BackwardInstallTarget: Sendable {
     let packet: NostrREQPacket
     let session: NostrRelaySession
     let generation: UInt64
+    let workTicket: NostrRelayWorkTicket
+}
+
+private struct BackwardSubscriptionRegistration: Sendable {
+    let generation: UInt64
+    let replacedWorkTicket: NostrRelayWorkTicket?
 }
 
 private struct BackwardScheduledPacket: Sendable {
