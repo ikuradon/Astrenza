@@ -62,7 +62,7 @@ struct HomeTimelineViewportState {
         return true
     }
 
-    func newestWindowUpdate(
+    mutating func updateNewestWindow(
         for offset: CGFloat,
         forceStoreSync: Bool = false
     ) -> NewestWindowUpdate {
@@ -72,14 +72,18 @@ struct HomeTimelineViewportState {
             isDetachedFromLiveEdge: isDetachedFromLiveEdge
         )
         let shouldUpdateState = isAtNewestWindow != nextIsAtNewestWindow
-        return NewestWindowUpdate(
+        let update = NewestWindowUpdate(
             isAtNewestWindow: nextIsAtNewestWindow,
             shouldUpdateState: shouldUpdateState,
             shouldPublishToStore: forceStoreSync || shouldUpdateState
         )
+        if update.shouldUpdateState {
+            applyNewestWindowUpdate(update)
+        }
+        return update
     }
 
-    mutating func applyNewestWindowUpdate(_ update: NewestWindowUpdate) {
+    private mutating func applyNewestWindowUpdate(_ update: NewestWindowUpdate) {
         isAtNewestWindow = update.isAtNewestWindow
     }
 
@@ -108,11 +112,7 @@ struct HomeTimelineViewportState {
         clearReturnAnchor()
         releaseRestoreProtection(clearViewportState: true)
         isDetachedFromLiveEdge = false
-        let update = newestWindowUpdate(for: scrollOffset, forceStoreSync: true)
-        if update.shouldUpdateState {
-            applyNewestWindowUpdate(update)
-        }
-        return update
+        return updateNewestWindow(for: scrollOffset, forceStoreSync: true)
     }
 
     mutating func clearReturnAnchor() {

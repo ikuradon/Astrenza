@@ -7,6 +7,7 @@ struct HomeTimelineView: View {
     let onInitialPresentationReady: () -> Void
     private let feedActions: HomeTimelineFeedActionCoordinator
     private let userActions: HomeTimelineUserActionCoordinator
+    private let viewportStoreSynchronizer: HomeTimelineViewportStoreSynchronizer
     @State private var selectedTab: TimelineTab = .home
     @State private var previousTab: TimelineTab = .home
     @State private var selectedTimeline: TimelineKind = .home
@@ -48,8 +49,8 @@ struct HomeTimelineView: View {
         }
     }
 
-    private var feedInteractionContext: HomeTimelineFeedInteractionContext {
-        HomeTimelineFeedInteractionContext(
+    private var timelineInteractionContext: HomeTimelineInteractionContext {
+        HomeTimelineInteractionContext(
             hasLiveAccount: sessionStore.account != nil,
             timeline: selectedTimeline
         )
@@ -90,6 +91,9 @@ struct HomeTimelineView: View {
         )
         self.userActions = HomeTimelineUserActionCoordinator(
             actions: liveTimelineStore
+        )
+        self.viewportStoreSynchronizer = HomeTimelineViewportStoreSynchronizer(
+            store: liveTimelineStore
         )
 
         let viewportPersistence = HomeViewportPersistenceCoordinator(
@@ -304,14 +308,14 @@ private extension HomeTimelineView {
     func handleTimelineScrollActivityChanged(_ isActive: Bool) {
         feedActions.setTimelineScrollActive(
             isActive,
-            context: feedInteractionContext
+            context: timelineInteractionContext
         )
     }
 
     func handleReadablePostIDsChanged(_ ids: [TimelinePost.ID]) {
         feedActions.markMaterializedPostsRead(
             visiblePostIDs: ids,
-            context: feedInteractionContext
+            context: timelineInteractionContext
         )
     }
 
@@ -327,25 +331,15 @@ private extension HomeTimelineView {
         for offset: CGFloat,
         forceStoreSync: Bool = false
     ) {
-        guard sessionStore.account != nil, selectedTimeline == .home else { return }
-        let update = viewport.newestWindowUpdate(
+        guard timelineInteractionContext.canMutateLiveHome else { return }
+        let update = viewport.updateNewestWindow(
             for: offset,
             forceStoreSync: forceStoreSync
         )
-        if update.shouldUpdateState {
-            viewport.applyNewestWindowUpdate(update)
-        }
-        applyNewestWindowUpdate(update)
-    }
-
-    func applyNewestWindowUpdate(
-        _ update: HomeTimelineViewportState.NewestWindowUpdate
-    ) {
-        if update.isAtNewestWindow {
-            liveTimelineStore.markNewestMaterializedWindowRead()
-        }
-        guard update.shouldPublishToStore else { return }
-        liveTimelineStore.setTimelineAtNewestWindow(update.isAtNewestWindow)
+        viewportStoreSynchronizer.applyNewestWindowUpdate(
+            update,
+            context: timelineInteractionContext
+        )
     }
 
     func openPost(_ post: TimelinePost) {
@@ -414,19 +408,13 @@ private extension HomeTimelineView {
                 accountID: accountID,
                 timelineKey: selectedTimeline.id
             )
-        switch viewport.prepareHomeRetap(
+        let action = viewport.prepareHomeRetap(
             latestSavedViewportState: latestSavedViewportState
-        ) {
-        case .restore(let returnAnchor):
-            // DBの表示windowを復元対象へ切り替えてからSwiftUIへscrollを指示する。
-            liveTimelineStore.setTimelineAtNewestWindow(false)
-            liveTimelineStore.setRestoreProjectionAnchor(returnAnchor.anchorPostID)
-        case .showNewest:
-            liveTimelineStore.markNewestMaterializedWindowRead()
-            // ページング後の先頭Rowは最新とは限らないため、Generic Feedの最新windowを先に復元する。
-            liveTimelineStore.setRestoreProjectionAnchor(nil)
-            liveTimelineStore.setTimelineAtNewestWindow(true)
-        }
+        )
+        viewportStoreSynchronizer.applyHomeRetap(
+            action,
+            context: timelineInteractionContext
+        )
     }
 
     func clearHomeReturnAnchor() {
@@ -493,20 +481,23 @@ private extension HomeTimelineView {
     }
 
     func refreshVisibleTimeline() async -> Bool {
-        await feedActions.refresh(context: feedInteractionContext) {
-            applyNewestWindowUpdate(viewport.prepareRefresh())
+        await feedActions.refresh(context: timelineInteractionContext) {
+            viewportStoreSynchronizer.applyNewestWindowUpdate(
+                viewport.prepareRefresh(),
+                context: timelineInteractionContext
+            )
         }
     }
 
     func loadOlderVisibleTimeline(_: TimelinePost.ID) {
-        feedActions.loadOlder(context: feedInteractionContext)
+        feedActions.loadOlder(context: timelineInteractionContext)
     }
 
     func backfillVisibleTimelineGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
         await feedActions.backfillGap(
             gap,
             direction: direction,
-            context: feedInteractionContext
+            context: timelineInteractionContext
         )
     }
 
@@ -549,10 +540,10 @@ private extension HomeTimelineView {
             restoredViewportState: snapshot.viewportState,
             layoutCache: snapshot.layoutCache
         )
-        if sessionStore.account != nil, selectedTimeline == .home {
-            liveTimelineStore.setRestoreProjectionAnchor(snapshot.viewportState?.anchorPostID)
-            liveTimelineStore.setTimelineAtNewestWindow(snapshot.viewportState == nil)
-        }
+        viewportStoreSynchronizer.applyRestoreSnapshot(
+            snapshot,
+            context: timelineInteractionContext
+        )
     }
 
     func saveTimelineViewportState(_ state: TimelineViewportState) {

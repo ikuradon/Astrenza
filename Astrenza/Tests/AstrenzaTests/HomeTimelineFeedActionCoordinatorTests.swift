@@ -31,11 +31,11 @@ struct HomeTimelineFeedActionCoordinatorTests {
         var prepareCount = 0
 
         for context in [
-            HomeTimelineFeedInteractionContext(
+            HomeTimelineInteractionContext(
                 hasLiveAccount: false,
                 timeline: .home
             ),
-            HomeTimelineFeedInteractionContext(
+            HomeTimelineInteractionContext(
                 hasLiveAccount: true,
                 timeline: .relays
             )
@@ -104,8 +104,8 @@ struct HomeTimelineFeedActionCoordinatorTests {
     }
 }
 
-private extension HomeTimelineFeedInteractionContext {
-    static let liveHome = HomeTimelineFeedInteractionContext(
+private extension HomeTimelineInteractionContext {
+    static let liveHome = HomeTimelineInteractionContext(
         hasLiveAccount: true,
         timeline: .home
     )

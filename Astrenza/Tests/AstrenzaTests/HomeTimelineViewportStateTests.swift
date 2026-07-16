@@ -47,7 +47,7 @@ struct HomeTimelineViewportStateTests {
         var state = makeState(restoredViewportState: makeViewport(postID: "anchor"))
 
         let didCompleteRestore = state.completeRestore()
-        let update = state.newestWindowUpdate(for: 0, forceStoreSync: true)
+        let update = state.updateNewestWindow(for: 0, forceStoreSync: true)
         let didCompleteRestoreAgain = state.completeRestore()
 
         #expect(didCompleteRestore)
@@ -66,12 +66,11 @@ struct HomeTimelineViewportStateTests {
     func newestWindowUpdatesPublishOnlyWhenRequired() {
         var state = makeState()
 
-        let detachedUpdate = applyNewestWindowUpdate(to: &state, offset: 24)
-        let unchangedUpdate = applyNewestWindowUpdate(to: &state, offset: 32)
-        let newestUpdate = applyNewestWindowUpdate(to: &state, offset: 0)
-        let forcedUpdate = applyNewestWindowUpdate(
-            to: &state,
-            offset: 0,
+        let detachedUpdate = state.updateNewestWindow(for: 24)
+        let unchangedUpdate = state.updateNewestWindow(for: 32)
+        let newestUpdate = state.updateNewestWindow(for: 0)
+        let forcedUpdate = state.updateNewestWindow(
+            for: 0,
             forceStoreSync: true
         )
 
@@ -168,20 +167,5 @@ struct HomeTimelineViewportStateTests {
     ) {
         guard let newChromeOffset = state.scrollOffsetUpdate(for: offset) else { return }
         state.applyScrollOffset(newChromeOffset)
-    }
-
-    private func applyNewestWindowUpdate(
-        to state: inout HomeTimelineViewportState,
-        offset: CGFloat,
-        forceStoreSync: Bool = false
-    ) -> HomeTimelineViewportState.NewestWindowUpdate {
-        let update = state.newestWindowUpdate(
-            for: offset,
-            forceStoreSync: forceStoreSync
-        )
-        if update.shouldUpdateState {
-            state.applyNewestWindowUpdate(update)
-        }
-        return update
     }
 }

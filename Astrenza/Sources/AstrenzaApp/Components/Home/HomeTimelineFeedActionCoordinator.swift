@@ -1,14 +1,5 @@
 import AstrenzaCore
 
-struct HomeTimelineFeedInteractionContext {
-    let hasLiveAccount: Bool
-    let timeline: TimelineKind
-
-    var canMutateLiveHome: Bool {
-        hasLiveAccount && timeline == .home
-    }
-}
-
 @MainActor
 protocol HomeTimelineFeedActionHandling: AnyObject {
     @discardableResult
@@ -39,7 +30,7 @@ final class HomeTimelineFeedActionCoordinator {
     }
 
     func refresh(
-        context: HomeTimelineFeedInteractionContext,
+        context: HomeTimelineInteractionContext,
         prepareViewport: () -> Void
     ) async -> Bool {
         guard context.canMutateLiveHome else { return false }
@@ -47,7 +38,7 @@ final class HomeTimelineFeedActionCoordinator {
         return await actions.applyPendingNewEvents()
     }
 
-    func loadOlder(context: HomeTimelineFeedInteractionContext) {
+    func loadOlder(context: HomeTimelineInteractionContext) {
         guard context.canMutateLiveHome else { return }
         actions.loadOlder()
     }
@@ -55,7 +46,7 @@ final class HomeTimelineFeedActionCoordinator {
     func backfillGap(
         _ gap: TimelineGap,
         direction: TimelineGapFillDirection,
-        context: HomeTimelineFeedInteractionContext
+        context: HomeTimelineInteractionContext
     ) async -> Bool {
         guard context.canMutateLiveHome else { return false }
         return await actions.backfillGap(gap, direction: direction)
@@ -63,7 +54,7 @@ final class HomeTimelineFeedActionCoordinator {
 
     func setTimelineScrollActive(
         _ isActive: Bool,
-        context: HomeTimelineFeedInteractionContext
+        context: HomeTimelineInteractionContext
     ) {
         guard context.canMutateLiveHome else { return }
         actions.setTimelineScrollActive(isActive)
@@ -71,7 +62,7 @@ final class HomeTimelineFeedActionCoordinator {
 
     func markMaterializedPostsRead(
         visiblePostIDs: [TimelinePost.ID],
-        context: HomeTimelineFeedInteractionContext
+        context: HomeTimelineInteractionContext
     ) {
         guard context.canMutateLiveHome else { return }
         actions.markMaterializedPostsRead(visiblePostIDs: visiblePostIDs)
