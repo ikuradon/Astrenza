@@ -147,6 +147,15 @@ final class StoreProjectionViewportSpy:
 }
 
 @MainActor
+final class StoreViewportStateSpy: HomeStoreViewportStateSourcing {
+    var pendingEventCount: Int
+
+    init(pendingEventCount: Int) {
+        self.pendingEventCount = pendingEventCount
+    }
+}
+
+@MainActor
 final class StoreViewportContextProviderSpy:
     HomeStoreViewportContextProviding {
     private let context: HomeTimelineViewportInteractionContext
@@ -167,12 +176,14 @@ struct StoreViewportCoordinatorFixture {
     let accountID: String
     let interaction: StoreViewportInteractionSpy
     let projection: StoreProjectionViewportSpy
+    let state: StoreViewportStateSpy
     let contexts: StoreViewportContextProviderSpy
     let coordinator: HomeStoreViewportCoordinator
 
     init(
         restoreAnchorEventID: String? = nil,
-        isAtNewestWindow: Bool = true
+        isAtNewestWindow: Bool = true,
+        pendingEventCount: Int = 0
     ) {
         let contextFixture = StoreContextCoordinatorFixture()
         contextFixture.installSnapshots()
@@ -181,16 +192,21 @@ struct StoreViewportCoordinatorFixture {
             restoreAnchorEventID: restoreAnchorEventID,
             isAtNewestWindow: isAtNewestWindow
         )
+        let state = StoreViewportStateSpy(
+            pendingEventCount: pendingEventCount
+        )
         let contexts = StoreViewportContextProviderSpy(
             context: contextFixture.coordinator.viewportContext()
         )
         accountID = contextFixture.account.pubkey
         self.interaction = interaction
         self.projection = projection
+        self.state = state
         self.contexts = contexts
         coordinator = HomeStoreViewportCoordinator(
             interaction: interaction,
             projection: projection,
+            state: state,
             contexts: contexts
         )
     }

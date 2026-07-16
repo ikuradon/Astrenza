@@ -92,6 +92,31 @@ struct HomeStorePresentationCoordinatorTests {
         ])
     }
 
+    @Test("Published presentation reads stay behind the source")
+    func routesPublishedPresentationReads() {
+        let fixture = StorePresentationFixture()
+        let post = MockTimelineData.posts[0]
+        fixture.source.entries = [.post(post)]
+        fixture.source.filterStatus = TimelineFilterStatus(
+            activeRuleCount: 2
+        )
+        fixture.source.materializedUnreadCount = 7
+        fixture.source.visibleUnreadBadgeCount = 5
+        fixture.source.resolvedContentRevision = 11
+        fixture.source.profileMetadataRevision = 13
+        fixture.source.realtimeFollowSourceRevision = 17
+
+        #expect(fixture.coordinator.entries.map(\.id) == [post.id])
+        #expect(fixture.coordinator.filterStatus.activeRuleCount == 2)
+        #expect(fixture.coordinator.materializedUnreadCount == 7)
+        #expect(fixture.coordinator.visibleUnreadBadgeCount == 5)
+        #expect(fixture.coordinator.resolvedContentRevision == 11)
+        #expect(fixture.coordinator.profileMetadataRevision == 13)
+        #expect(fixture.coordinator.realtimeFollowSourceRevision == 17)
+        #expect(fixture.projection.requests.isEmpty)
+        #expect(fixture.scheduler.commands.isEmpty)
+    }
+
     @Test("Retained callbacks do not retain the coordinator")
     func retainedCallbacksDoNotRetainCoordinator() {
         let scheduled = RetainedStorePresentationFixture()

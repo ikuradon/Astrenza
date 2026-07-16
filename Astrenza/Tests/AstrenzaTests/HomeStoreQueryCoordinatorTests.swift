@@ -118,6 +118,7 @@ struct HomeStoreQueryCoordinatorTests {
         )
         let invalidation = fixture.coordinator.invalidateListEntries()
 
+        #expect(fixture.coordinator.listContentRevision == 19)
         #expect(event?.id == fixture.interaction.eventResult.id)
         #expect(backfill?.map(\.id) == [fixture.interaction.eventResult.id])
         #expect(invalidation.revision == 29)

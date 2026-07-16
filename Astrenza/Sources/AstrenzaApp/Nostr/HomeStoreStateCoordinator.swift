@@ -53,12 +53,18 @@ extension HomeTimelineStateInteractionWorkflow:
     HomeStoreTimelineStateInteracting {}
 
 @MainActor
-protocol HomeStoreStateAccountSourcing: AnyObject {
+protocol HomeStoreStateSourcing: AnyObject {
+    var account: NostrAccount? { get }
+    var syncPolicy: NostrSyncPolicy { get }
+    var resolvedRelays: [String] { get }
+    var followedPubkeys: [String] { get }
+    var hasMoreOlder: Bool { get }
+
     func currentAccountID() -> String?
 }
 
 extension HomeTimelinePublishedStateCoordinator:
-    HomeStoreStateAccountSourcing {
+    HomeStoreStateSourcing {
     func currentAccountID() -> String? {
         accountContext.account?.pubkey
     }
@@ -75,18 +81,18 @@ extension HomeStoreContextCoordinator: HomeStoreStateContextProviding {}
 final class HomeStoreStateCoordinator {
     private let data: any HomeStoreStateDataInteracting
     private let state: any HomeStoreTimelineStateInteracting
-    private let accountSource: any HomeStoreStateAccountSourcing
+    private let source: any HomeStoreStateSourcing
     private let contexts: any HomeStoreStateContextProviding
 
     init(
         data: any HomeStoreStateDataInteracting,
         state: any HomeStoreTimelineStateInteracting,
-        accountSource: any HomeStoreStateAccountSourcing,
+        source: any HomeStoreStateSourcing,
         contexts: any HomeStoreStateContextProviding
     ) {
         self.data = data
         self.state = state
-        self.accountSource = accountSource
+        self.source = source
         self.contexts = contexts
     }
 
@@ -97,9 +103,29 @@ final class HomeStoreStateCoordinator {
         HomeStoreStateCoordinator(
             data: components.dataInteractionWorkflow,
             state: components.stateInteractionWorkflow,
-            accountSource: components.publishedStateCoordinator,
+            source: components.publishedStateCoordinator,
             contexts: contexts
         )
+    }
+
+    var account: NostrAccount? {
+        source.account
+    }
+
+    var currentSyncPolicy: NostrSyncPolicy {
+        source.syncPolicy
+    }
+
+    var resolvedRelays: [String] {
+        source.resolvedRelays
+    }
+
+    var followedPubkeys: [String] {
+        source.followedPubkeys
+    }
+
+    var hasMoreOlder: Bool {
+        source.hasMoreOlder
     }
 
     func installProvisionalRelays(
@@ -127,7 +153,7 @@ final class HomeStoreStateCoordinator {
     ) {
         state.replace(
             timelineState,
-            accountID: accountSource.currentAccountID(),
+            accountID: source.currentAccountID(),
             context: contexts.stateContext()
         )
     }

@@ -46,12 +46,14 @@ struct HomeStoreViewportCoordinatorTests {
     func routesProjectionStateWithoutContext() {
         let fixture = StoreViewportCoordinatorFixture(
             restoreAnchorEventID: "anchor",
-            isAtNewestWindow: false
+            isAtNewestWindow: false,
+            pendingEventCount: 4
         )
         fixture.projection.applyResult = true
 
         #expect(fixture.coordinator.restoreProjectionAnchorEventID == "anchor")
         #expect(!fixture.coordinator.isTimelineAtNewestWindow)
+        #expect(fixture.coordinator.pendingEventCount == 4)
         #expect(fixture.coordinator.applyProjectionViewportTransition(
             .resetToNewest
         ))

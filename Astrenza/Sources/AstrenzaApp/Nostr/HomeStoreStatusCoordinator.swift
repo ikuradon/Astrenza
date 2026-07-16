@@ -107,6 +107,22 @@ final class HomeStoreStatusCoordinator {
         relayStatusSnapshot.runtimeStates
     }
 
+    var phase: NostrHomeTimelinePhase {
+        activitySnapshot.phase
+    }
+
+    var isRefreshing: Bool {
+        activitySnapshot.isRefreshing
+    }
+
+    var isLoadingOlder: Bool {
+        activitySnapshot.isLoadingOlder
+    }
+
+    var isRealtime: Bool {
+        activitySnapshot.isRealtime
+    }
+
     var relayStatusCounts: (connected: Int, planned: Int) {
         let snapshot = relayStatusSnapshot
         return (

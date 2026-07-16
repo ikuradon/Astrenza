@@ -25,7 +25,7 @@ struct HomeStoreStateCoordinatorTests {
             .perform(.replaceFollowedPubkeys(["requested-follow"]))
         ])
         #expect(fixture.state.calls.isEmpty)
-        #expect(fixture.accountSource.readCount == 0)
+        #expect(fixture.source.readCount == 0)
         #expect(fixture.contexts.contextIDs.isEmpty)
     }
 
@@ -33,11 +33,11 @@ struct HomeStoreStateCoordinatorTests {
     func routesStateReplacement() {
         let fixture = StoreStateCoordinatorFixture()
 
-        fixture.accountSource.accountID = "bootstrap-account"
+        fixture.source.accountID = "bootstrap-account"
         fixture.coordinator.replaceRuntimeBootstrapState(
             fixture.bootstrapInput
         )
-        fixture.accountSource.accountID = nil
+        fixture.source.accountID = nil
         fixture.coordinator.replaceTimelineState(fixture.replacementState)
 
         #expect(fixture.data.calls == [
@@ -60,7 +60,7 @@ struct HomeStoreStateCoordinatorTests {
             .readAccount,
             .replaceState
         ])
-        #expect(fixture.accountSource.readCount == 2)
+        #expect(fixture.source.readCount == 2)
         #expect(fixture.contexts.contextIDs == [1, 2])
         #expect(fixture.contexts.applications == [
             .requestNewestProjectionReload(contextID: 1),
@@ -71,7 +71,7 @@ struct HomeStoreStateCoordinatorTests {
     @Test("persistはdata snapshotとfresh contextをstateへ渡す")
     func routesPersistence() async {
         let fixture = StoreStateCoordinatorFixture()
-        fixture.accountSource.accountID = "replacement-account"
+        fixture.source.accountID = "replacement-account"
         fixture.coordinator.replaceTimelineState(
             fixture.replacementState
         )
@@ -91,12 +91,38 @@ struct HomeStoreStateCoordinatorTests {
             ),
             .persist(accountID: "persisted-account")
         ])
-        #expect(fixture.accountSource.readCount == 1)
+        #expect(fixture.source.readCount == 1)
         #expect(fixture.contexts.contextIDs == [1, 2])
         #expect(fixture.contexts.applications == [
             .requestNewestProjectionReload(contextID: 1),
             .materializeEntries(contextID: 2)
         ])
+    }
+
+    @Test("published state reads stay behind the state source")
+    func routesPublishedStateReads() throws {
+        let fixture = StoreStateCoordinatorFixture()
+        let account = try #require(fixture.source.account)
+
+        #expect(fixture.coordinator.account == account)
+        #expect(
+            fixture.coordinator.currentSyncPolicy ==
+                fixture.source.syncPolicy
+        )
+        #expect(
+            fixture.coordinator.resolvedRelays ==
+                fixture.source.resolvedRelays
+        )
+        #expect(
+            fixture.coordinator.followedPubkeys ==
+                fixture.source.followedPubkeys
+        )
+        #expect(
+            fixture.coordinator.hasMoreOlder ==
+                fixture.source.hasMoreOlder
+        )
+        #expect(fixture.source.readCount == 0)
+        #expect(fixture.contexts.contextIDs.isEmpty)
     }
 
     @Test("dependency操作とmetricsはstate境界内に留める")

@@ -162,6 +162,17 @@ struct HomeStoreStatusCoordinatorTests {
         #expect(fixture.coordinator.activityStatus == nil)
         #expect(!fixture.coordinator.isRelayProcessing)
     }
+
+    @Test("Published activity reads stay behind the status boundary")
+    func routesPublishedActivityReads() {
+        let fixture = StoreStatusFixture()
+
+        #expect(fixture.coordinator.phase == .idle)
+        #expect(!fixture.coordinator.isRefreshing)
+        #expect(fixture.coordinator.isLoadingOlder)
+        #expect(!fixture.coordinator.isRealtime)
+        #expect(fixture.activity.statusContexts.isEmpty)
+    }
 }
 
 private enum StoreStatusPublisherEvent: Equatable {

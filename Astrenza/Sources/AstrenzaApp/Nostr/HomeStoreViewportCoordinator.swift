@@ -62,6 +62,14 @@ extension HomeProjectionViewportCoordinator:
     HomeStoreProjectionViewportCoordinating {}
 
 @MainActor
+protocol HomeStoreViewportStateSourcing: AnyObject {
+    var pendingEventCount: Int { get }
+}
+
+extension HomeTimelinePublishedStateCoordinator:
+    HomeStoreViewportStateSourcing {}
+
+@MainActor
 protocol HomeStoreViewportContextProviding: AnyObject {
     func viewportContext() -> HomeTimelineViewportInteractionContext
 }
@@ -72,15 +80,18 @@ extension HomeStoreContextCoordinator: HomeStoreViewportContextProviding {}
 final class HomeStoreViewportCoordinator {
     private let interaction: any HomeStoreViewportInteracting
     private let projection: any HomeStoreProjectionViewportCoordinating
+    private let state: any HomeStoreViewportStateSourcing
     private let contexts: any HomeStoreViewportContextProviding
 
     init(
         interaction: any HomeStoreViewportInteracting,
         projection: any HomeStoreProjectionViewportCoordinating,
+        state: any HomeStoreViewportStateSourcing,
         contexts: any HomeStoreViewportContextProviding
     ) {
         self.interaction = interaction
         self.projection = projection
+        self.state = state
         self.contexts = contexts
     }
 
@@ -92,8 +103,13 @@ final class HomeStoreViewportCoordinator {
         HomeStoreViewportCoordinator(
             interaction: components.viewportInteractionWorkflow,
             projection: projection,
+            state: components.publishedStateCoordinator,
             contexts: contexts
         )
+    }
+
+    var pendingEventCount: Int {
+        state.pendingEventCount
     }
 
     var restoreProjectionAnchorEventID: String? {

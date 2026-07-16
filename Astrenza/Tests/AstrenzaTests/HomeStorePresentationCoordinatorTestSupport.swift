@@ -20,6 +20,13 @@ enum StorePresentationCommand: Equatable {
 @MainActor
 final class StorePresentationSourceSpy: HomeStorePresentationSourcing {
     var snapshot: HomeStoreMaterializationSnapshot
+    var entries: [TimelineFeedEntry] = []
+    var filterStatus = TimelineFilterStatus()
+    var materializedUnreadCount = 0
+    var visibleUnreadBadgeCount = 0
+    var resolvedContentRevision = 0
+    var profileMetadataRevision = 0
+    var realtimeFollowSourceRevision: Int?
     var onApply: ((HomeTimelinePresentationTransition) -> Void)?
     private(set) var appliedTransitions:
         [HomeTimelinePresentationTransition] = []

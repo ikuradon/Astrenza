@@ -62,6 +62,7 @@ extension HomeTimelineQueryInteractionWorkflow: HomeStoreQueryInteracting {}
 @MainActor
 protocol HomeStoreQuerySourcing: AnyObject {
     var preferredEvents: [NostrEvent] { get }
+    var listContentRevision: Int { get }
 
     func snapshot() -> HomeTimelineQueryStoreSnapshot
 }
@@ -92,6 +93,10 @@ final class HomeStoreQuerySource: HomeStoreQuerySourcing {
 
     var preferredEvents: [NostrEvent] {
         events.preferredEvents
+    }
+
+    var listContentRevision: Int {
+        publishedState.listProjectionRevision
     }
 
     func snapshot() -> HomeTimelineQueryStoreSnapshot {
@@ -136,6 +141,10 @@ final class HomeStoreQueryCoordinator {
             id: id,
             preferring: source.preferredEvents
         )
+    }
+
+    var listContentRevision: Int {
+        source.listContentRevision
     }
 
     func olderBackfillEvents(

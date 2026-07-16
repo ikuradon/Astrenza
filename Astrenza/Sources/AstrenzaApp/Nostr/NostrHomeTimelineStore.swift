@@ -5,8 +5,6 @@ import AstrenzaCore
 final class NostrHomeTimelineStore {
     typealias Phase = NostrHomeTimelinePhase
 
-    private let publishedStateCoordinator:
-        HomeTimelinePublishedStateCoordinator
     private let viewportCoordinator: HomeStoreViewportCoordinator
     private let eventStore: NostrEventStore?
     private let runtimeCoordinator: HomeStoreRuntimeCoordinator
@@ -52,8 +50,6 @@ final class NostrHomeTimelineStore {
         let composition = HomeStoreComposition.make(
             components: components
         )
-        self.publishedStateCoordinator =
-            components.publishedStateCoordinator
         self.viewportCoordinator = composition.viewport
         self.eventStore = components.eventStore
         self.runtimeCoordinator = composition.runtime
@@ -216,19 +212,19 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore {
     var account: NostrAccount? {
-        publishedStateCoordinator.account
+        stateCoordinator.account
     }
 
     var currentSyncPolicy: NostrSyncPolicy {
-        publishedStateCoordinator.syncPolicy
+        stateCoordinator.currentSyncPolicy
     }
 
     var unmaterializedNewCount: Int {
-        publishedStateCoordinator.pendingEventCount
+        viewportCoordinator.pendingEventCount
     }
 
     var listContentRevision: Int {
-        publishedStateCoordinator.listProjectionRevision
+        queryStoreCoordinator.listContentRevision
     }
 
     var relayStatusRevision: Int {
@@ -252,59 +248,59 @@ extension NostrHomeTimelineStore {
     }
 
     var phase: Phase {
-        publishedStateCoordinator.phase
+        statusCoordinator.phase
     }
 
     var isRefreshing: Bool {
-        publishedStateCoordinator.isRefreshing
+        statusCoordinator.isRefreshing
     }
 
     var isLoadingOlder: Bool {
-        publishedStateCoordinator.isLoadingOlder
+        statusCoordinator.isLoadingOlder
     }
 
     var isHomeTimelineRealtime: Bool {
-        publishedStateCoordinator.isRealtime
+        statusCoordinator.isRealtime
     }
 
     var resolvedRelays: [String] {
-        publishedStateCoordinator.resolvedRelays
+        stateCoordinator.resolvedRelays
     }
 
     var followedPubkeys: [String] {
-        publishedStateCoordinator.followedPubkeys
+        stateCoordinator.followedPubkeys
     }
 
     var hasMoreOlder: Bool {
-        publishedStateCoordinator.hasMoreOlder
+        stateCoordinator.hasMoreOlder
     }
 
     var entries: [TimelineFeedEntry] {
-        publishedStateCoordinator.entries
+        presentationCoordinator.entries
     }
 
     var filterStatus: TimelineFilterStatus {
-        publishedStateCoordinator.filterStatus
+        presentationCoordinator.filterStatus
     }
 
     var materializedUnreadCount: Int {
-        publishedStateCoordinator.materializedUnreadCount
+        presentationCoordinator.materializedUnreadCount
     }
 
     var visibleUnreadBadgeCount: Int {
-        publishedStateCoordinator.visibleUnreadBadgeCount
+        presentationCoordinator.visibleUnreadBadgeCount
     }
 
     var resolvedContentRevision: Int {
-        publishedStateCoordinator.resolvedContentRevision
+        presentationCoordinator.resolvedContentRevision
     }
 
     var profileMetadataRevision: Int {
-        publishedStateCoordinator.profileMetadataRevision
+        presentationCoordinator.profileMetadataRevision
     }
 
     var realtimeFollowSourceRevision: Int? {
-        publishedStateCoordinator.realtimeFollowSourceRevision
+        presentationCoordinator.realtimeFollowSourceRevision
     }
 }
 

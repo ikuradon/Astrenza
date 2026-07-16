@@ -8,6 +8,14 @@ struct HomeStoreMaterializationSnapshot: Equatable, Sendable {
 
 @MainActor
 protocol HomeStorePresentationSourcing: AnyObject {
+    var entries: [TimelineFeedEntry] { get }
+    var filterStatus: TimelineFilterStatus { get }
+    var materializedUnreadCount: Int { get }
+    var visibleUnreadBadgeCount: Int { get }
+    var resolvedContentRevision: Int { get }
+    var profileMetadataRevision: Int { get }
+    var realtimeFollowSourceRevision: Int? { get }
+
     func materializationSnapshot() -> HomeStoreMaterializationSnapshot
     func applyPresentationTransition(
         _ transition: HomeTimelinePresentationTransition
@@ -25,6 +33,34 @@ final class HomeStorePresentationSource: HomeStorePresentationSourcing {
     ) {
         self.publishedState = publishedState
         self.dataInteraction = dataInteraction
+    }
+
+    var entries: [TimelineFeedEntry] {
+        publishedState.entries
+    }
+
+    var filterStatus: TimelineFilterStatus {
+        publishedState.filterStatus
+    }
+
+    var materializedUnreadCount: Int {
+        publishedState.materializedUnreadCount
+    }
+
+    var visibleUnreadBadgeCount: Int {
+        publishedState.visibleUnreadBadgeCount
+    }
+
+    var resolvedContentRevision: Int {
+        publishedState.resolvedContentRevision
+    }
+
+    var profileMetadataRevision: Int {
+        publishedState.profileMetadataRevision
+    }
+
+    var realtimeFollowSourceRevision: Int? {
+        publishedState.realtimeFollowSourceRevision
     }
 
     func materializationSnapshot() -> HomeStoreMaterializationSnapshot {
@@ -111,6 +147,34 @@ final class HomeStorePresentationCoordinator {
             projection: components.projectionInteractionWorkflow,
             scheduler: components.presentationWorkflow
         )
+    }
+
+    var entries: [TimelineFeedEntry] {
+        source.entries
+    }
+
+    var filterStatus: TimelineFilterStatus {
+        source.filterStatus
+    }
+
+    var materializedUnreadCount: Int {
+        source.materializedUnreadCount
+    }
+
+    var visibleUnreadBadgeCount: Int {
+        source.visibleUnreadBadgeCount
+    }
+
+    var resolvedContentRevision: Int {
+        source.resolvedContentRevision
+    }
+
+    var profileMetadataRevision: Int {
+        source.profileMetadataRevision
+    }
+
+    var realtimeFollowSourceRevision: Int? {
+        source.realtimeFollowSourceRevision
     }
 
     var currentReadBoundaryPostID: TimelinePost.ID? {

@@ -143,9 +143,16 @@ final class StoreTimelineStateInteractionSpy:
 }
 
 @MainActor
-final class StoreStateAccountSourceSpy: HomeStoreStateAccountSourcing {
+final class StoreStateSourceSpy: HomeStoreStateSourcing {
     private let order: StoreStateOrderProbe
     var accountID: String?
+    var syncPolicy = NostrSyncPolicy.default(
+        networkType: .wifi,
+        lowPowerMode: true
+    )
+    var resolvedRelays = ["wss://state.example"]
+    var followedPubkeys = ["followed-author"]
+    var hasMoreOlder = false
     private(set) var readCount = 0
 
     init(
@@ -154,6 +161,16 @@ final class StoreStateAccountSourceSpy: HomeStoreStateAccountSourcing {
     ) {
         self.accountID = accountID
         self.order = order
+    }
+
+    var account: NostrAccount? {
+        accountID.map {
+            NostrAccount(
+                pubkey: $0,
+                displayIdentifier: "state-account",
+                readOnly: true
+            )
+        }
     }
 
     func currentAccountID() -> String? {
@@ -216,14 +233,14 @@ struct StoreStateCoordinatorFixture {
     let order: StoreStateOrderProbe
     let data: StoreStateDataSpy
     let state: StoreTimelineStateInteractionSpy
-    let accountSource: StoreStateAccountSourceSpy
+    let source: StoreStateSourceSpy
     let contexts: StoreStateContextProviderSpy
     let coordinator: HomeStoreStateCoordinator
 
     init() {
         let order = StoreStateOrderProbe()
         let state = StoreTimelineStateInteractionSpy(order: order)
-        let accountSource = StoreStateAccountSourceSpy(
+        let source = StoreStateSourceSpy(
             accountID: "initial-account",
             order: order
         )
@@ -242,12 +259,12 @@ struct StoreStateCoordinatorFixture {
         self.order = order
         self.data = data
         self.state = state
-        self.accountSource = accountSource
+        self.source = source
         self.contexts = contexts
         coordinator = HomeStoreStateCoordinator(
             data: data,
             state: state,
-            accountSource: accountSource,
+            source: source,
             contexts: contexts
         )
     }
