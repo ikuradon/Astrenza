@@ -3378,6 +3378,23 @@ struct NostrCorePackageTests {
         ])
     }
 
+    @Test("Relay runtime batching preserves filters without the selected merge field")
+    func relayRuntimeBatchingPreservesMissingMergeField() {
+        let packet = NostrREQPacket.backward(
+            purpose: "recent-notes",
+            filters: [["kinds": .ints([1]), "limit": .int(50)]],
+            relayURLs: ["wss://relay.example"],
+            groupID: "recent-notes",
+            subscriptionID: "recent-notes-1"
+        )
+
+        let batched = NostrREQScheduler.batch([packet], mergeField: .authors)
+
+        #expect(batched.count == 1)
+        #expect(batched[0].filters == [["kinds": .ints([1]), "limit": .int(50)]])
+        #expect(batched[0].filters[0]["authors"] == nil)
+    }
+
     @Test("Relay runtime chunks large id requests without dropping ids")
     func relayRuntimeChunksLargeIDRequests() {
         let ids = (0..<7).map { String(repeating: String($0), count: 64) }

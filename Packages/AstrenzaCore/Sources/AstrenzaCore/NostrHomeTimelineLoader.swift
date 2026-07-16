@@ -72,6 +72,20 @@ public struct NostrHomeTimelineLoader: Sendable {
         policy: NostrSyncPolicy = .default(),
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
     ) async throws -> NostrHomeTimelineState {
+        try await withBootstrapScope {
+            try await bootstrapStateWithoutScope(
+                account: account,
+                policy: policy,
+                onStage: onStage
+            )
+        }
+    }
+
+    private func bootstrapStateWithoutScope(
+        account: NostrAccount,
+        policy: NostrSyncPolicy,
+        onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
+    ) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
         let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
         await onStage?(.resolvingRelayList)
@@ -137,6 +151,20 @@ public struct NostrHomeTimelineLoader: Sendable {
         account: NostrAccount,
         policy: NostrSyncPolicy = .default(),
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
+    ) async throws -> NostrHomeTimelineState {
+        try await withBootstrapScope {
+            try await initialStateWithoutScope(
+                account: account,
+                policy: policy,
+                onStage: onStage
+            )
+        }
+    }
+
+    private func initialStateWithoutScope(
+        account: NostrAccount,
+        policy: NostrSyncPolicy,
+        onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
         let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
@@ -852,6 +880,30 @@ public struct NostrHomeTimelineLoader: Sendable {
                 return lhs.id < rhs.id
             }
             return lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    private func withBootstrapScope<T>(
+        _ operation: () async throws -> T
+    ) async throws -> T {
+        guard let scopedClient = relayClient as? any NostrRelayBootstrapScoping else {
+            return try await operation()
+        }
+
+        let scopeID = await scopedClient.beginBootstrapScope()
+        do {
+            let result = try await operation()
+            await scopedClient.finishBootstrapScope(
+                scopeID,
+                retainUntilDefaultRelayHandoff: true
+            )
+            return result
+        } catch {
+            await scopedClient.finishBootstrapScope(
+                scopeID,
+                retainUntilDefaultRelayHandoff: false
+            )
+            throw error
         }
     }
 

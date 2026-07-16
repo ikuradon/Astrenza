@@ -3,7 +3,7 @@ import AstrenzaCore
 @MainActor
 enum HomeTimelineStoreFactory {
     static func make(
-        timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
+        timelineLoader: NostrHomeTimelineLoader? = nil,
         eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(
             appDirectory: "Astrenza"
         ),
@@ -20,12 +20,17 @@ enum HomeTimelineStoreFactory {
         ),
         syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
     ) -> NostrHomeTimelineStore {
+        let resolvedTimelineLoader = timelineLoader ?? relayRuntime.map {
+            NostrHomeTimelineLoader(
+                relayClient: NostrRelayRuntimeClient(runtime: $0)
+            )
+        } ?? NostrHomeTimelineLoader()
         let resolvedOutboxPublisher = outboxPublisher ?? relayRuntime.map {
             NostrOutboxRelayPublisher(relayRuntime: $0)
         } ?? NostrOutboxRelayPublisher()
         let components = HomeTimelineStoreAssembly.assemble(
             HomeTimelineStoreAssemblyInput(
-                timelineLoader: timelineLoader,
+                timelineLoader: resolvedTimelineLoader,
                 eventStore: eventStore,
                 relayRuntime: relayRuntime,
                 linkPreviewResolver: linkPreviewResolver,

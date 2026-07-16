@@ -24,6 +24,9 @@ public actor NostrRelayRuntime {
     private var backwardTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var backwardProgressBySubscriptionKey: [String: BackwardSubscriptionProgress] = [:]
     private var backwardSubscriptionKeysByGroupID: [String: Set<String>] = [:]
+    private var pendingFetchesBySubscriptionKey: [String: PendingRelayFetch] = [:]
+    private var bootstrapRelayURLsByScopeID: [UUID: Set<String>] = [:]
+    private var completedBootstrapScopeIDs: Set<UUID> = []
     private var relayDemands = NostrRelayDemandRegistry()
     private var relayInformationTasks: [String: Task<Void, Never>] = [:]
     private var nextBackwardProgressGeneration: UInt64 = 0
@@ -128,6 +131,76 @@ public actor NostrRelayRuntime {
         }
     }
 
+    public func fetch(
+        relayURL: String,
+        request: NostrRelayRequest
+    ) async throws -> [NostrEvent] {
+        guard let relayIdentity = NostrRelayURL(relayURL) else {
+            throw NostrRelayClientError.invalidRelayURL(relayURL)
+        }
+        try Task.checkCancellation()
+
+        let fetchID = UUID()
+        let subscriptionID = "af-" + fetchID.uuidString.replacingOccurrences(of: "-", with: "")
+        let packet = NostrREQPacket.backward(
+            purpose: request.subscriptionID,
+            filters: request.filters,
+            relayURLs: [relayIdentity.rawValue],
+            groupID: "astrenza-fetch-\(fetchID.uuidString)",
+            subscriptionID: subscriptionID
+        )
+        let key = backwardTimeoutKey(
+            relayURL: relayIdentity.rawValue,
+            subscriptionID: subscriptionID
+        )
+        let channel = AsyncThrowingStream<[NostrEvent], any Error>.makeStream()
+        pendingFetchesBySubscriptionKey[key] = PendingRelayFetch(
+            relayURL: relayIdentity.rawValue,
+            subscriptionID: subscriptionID,
+            continuation: channel.continuation
+        )
+
+        return try await withTaskCancellationHandler {
+            do {
+                try await installBackward(
+                    [packet],
+                    mergeField: fetchMergeField(for: request),
+                    chunkPolicy: NostrREQChunkPolicy(
+                        maxIDsPerFilter: .max,
+                        maxAuthorsPerFilter: .max,
+                        maxFiltersPerRequest: .max
+                    ),
+                    priority: fetchWorkPriority(for: request)
+                )
+                try Task.checkCancellation()
+                for try await events in channel.stream {
+                    return events
+                }
+                throw NostrRelayRuntimeError.connectionUnavailable(
+                    relayURL: relayIdentity.rawValue
+                )
+            } catch {
+                let terminalError: any Error = Task.isCancelled
+                    ? CancellationError()
+                    : error
+                await cancelFetch(
+                    relayURL: relayIdentity.rawValue,
+                    subscriptionID: subscriptionID,
+                    error: terminalError
+                )
+                throw terminalError
+            }
+        } onCancel: {
+            Task {
+                await self.cancelFetch(
+                    relayURL: relayIdentity.rawValue,
+                    subscriptionID: subscriptionID,
+                    error: CancellationError()
+                )
+            }
+        }
+    }
+
     public func setTrafficContext(accountID: String?, policy: NostrSyncPolicy) async {
         trafficAccountID = accountID
         trafficPolicy = policy
@@ -145,6 +218,7 @@ public actor NostrRelayRuntime {
         relayDemands.release(.persistentDefault, from: relayIdentities(removedRelays))
         relayDemands.acquire(.persistentDefault, for: relayIdentities(addedRelays))
         relayURLs = normalizedRelays
+        await releaseCompletedBootstrapScopes()
 
         for relayURL in removedRelays {
             guard let identity = NostrRelayURL(relayURL),
@@ -547,6 +621,9 @@ public actor NostrRelayRuntime {
         backwardTimeoutTasks = [:]
         backwardProgressBySubscriptionKey = [:]
         backwardSubscriptionKeysByGroupID = [:]
+        finishAllPendingFetches(with: CancellationError())
+        bootstrapRelayURLsByScopeID = [:]
+        completedBootstrapScopeIDs = []
         relayDemands.removeAll()
         sessions = [:]
         relayURLs = []
@@ -573,15 +650,29 @@ public actor NostrRelayRuntime {
 
     private func handleSessionPacket(_ packet: NostrRelayRuntimePacket) async {
         switch packet {
-        case .event(let relayURL, let subscriptionID, _):
+        case .event(let relayURL, let subscriptionID, let event):
+            appendPendingFetchEvent(
+                event,
+                relayURL: relayURL,
+                subscriptionID: subscriptionID
+            )
             if hasPendingBackwardProgress(relayURL: relayURL, subscriptionID: subscriptionID) {
                 incrementBackwardEventCount(relayURL: relayURL, subscriptionID: subscriptionID)
                 scheduleBackwardIdleTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             }
         case .eose(let relayURL, let subscriptionID):
+            finishPendingFetch(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID
+            )
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             await completeBackwardSubscription(relayURL: relayURL, subscriptionID: subscriptionID, terminal: .eose)
         case .closed(let relayURL, let subscriptionID, let message):
+            failPendingFetch(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                error: relayFetchError(forClosedMessage: message)
+            )
             let wasBackwardSubscription = hasBackwardProgress(relayURL: relayURL, subscriptionID: subscriptionID)
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             await completeBackwardSubscription(relayURL: relayURL, subscriptionID: subscriptionID, terminal: .closed)
@@ -595,10 +686,20 @@ public actor NostrRelayRuntime {
                 }
             }
         case .timeout(let relayURL, let subscriptionID, _):
+            failPendingFetch(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                error: NostrRelayClientError.timeout
+            )
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             await completeBackwardSubscription(relayURL: relayURL, subscriptionID: subscriptionID, terminal: .timeout)
+        case .auth(let relayURL, let challenge):
+            await failPendingFetches(
+                relayURL: relayURL,
+                error: NostrRelayClientError.authRequired(challenge: challenge)
+            )
         case .stateChanged, .traffic, .requestStarted, .requestInstalled, .requestEnded,
-             .notice, .auth, .backwardCompleted:
+             .notice, .backwardCompleted:
             break
         }
 
@@ -964,6 +1065,51 @@ public actor NostrRelayRuntime {
         }
     }
 
+    func retainBootstrapRelay(
+        _ relayURL: String,
+        scopeID: UUID
+    ) async throws {
+        guard let identity = NostrRelayURL(relayURL) else {
+            throw NostrRelayClientError.invalidRelayURL(relayURL)
+        }
+        let didInsert = bootstrapRelayURLsByScopeID[scopeID, default: []]
+            .insert(identity.rawValue)
+            .inserted
+        guard didInsert else { return }
+
+        relayDemands.acquire(.bootstrap(scopeID), for: [identity])
+        await prepareDemandRelaySessions([identity.rawValue])
+    }
+
+    func finishBootstrapScope(
+        _ scopeID: UUID,
+        retainUntilDefaultRelayHandoff: Bool
+    ) async {
+        guard bootstrapRelayURLsByScopeID[scopeID] != nil else { return }
+        if retainUntilDefaultRelayHandoff {
+            completedBootstrapScopeIDs.insert(scopeID)
+            return
+        }
+        await releaseBootstrapScope(scopeID)
+    }
+
+    private func releaseCompletedBootstrapScopes() async {
+        let scopeIDs = completedBootstrapScopeIDs
+        for scopeID in scopeIDs {
+            await releaseBootstrapScope(scopeID)
+        }
+    }
+
+    private func releaseBootstrapScope(_ scopeID: UUID) async {
+        completedBootstrapScopeIDs.remove(scopeID)
+        let scopedRelayURLs = bootstrapRelayURLsByScopeID.removeValue(forKey: scopeID) ?? []
+        let demand = NostrRelayDemand.bootstrap(scopeID)
+        relayDemands.release(demand, from: relayIdentities(scopedRelayURLs))
+        for relayURL in scopedRelayURLs {
+            await releaseRelaySessionIfUnneeded(relayURL)
+        }
+    }
+
     private func prepareDemandRelaySessions(_ relayURLs: [String]) async {
         for relayURL in relayURLs where sessions[relayURL] == nil {
             scheduleRelayInformationFetch(relayURL: relayURL)
@@ -1065,6 +1211,132 @@ public actor NostrRelayRuntime {
             ),
             from: [identity]
         )
+    }
+
+    private func fetchMergeField(for request: NostrRelayRequest) -> NostrREQMergeField {
+        request.filters.contains { $0["ids"] != nil } ? .ids : .authors
+    }
+
+    private func fetchWorkPriority(for request: NostrRelayRequest) -> NostrRelayWorkPriority {
+        let purpose = request.subscriptionID.lowercased()
+        if purpose.contains("older") || purpose.contains("gap") || purpose.contains("backfill") {
+            return .backfill
+        }
+        if purpose.contains("profile") || purpose.contains("kind0") ||
+            purpose.contains("nip65") || purpose.contains("kind3") ||
+            purpose.contains("outbox") {
+            return .visibleDependency
+        }
+        return .userInitiated
+    }
+
+    private func appendPendingFetchEvent(
+        _ event: NostrEvent,
+        relayURL: String,
+        subscriptionID: String
+    ) {
+        let key = backwardTimeoutKey(relayURL: relayURL, subscriptionID: subscriptionID)
+        pendingFetchesBySubscriptionKey[key]?.eventsByID[event.id] = event
+    }
+
+    private func finishPendingFetch(
+        relayURL: String,
+        subscriptionID: String
+    ) {
+        let key = backwardTimeoutKey(relayURL: relayURL, subscriptionID: subscriptionID)
+        guard let pending = pendingFetchesBySubscriptionKey.removeValue(forKey: key) else { return }
+        pending.continuation.yield(pending.eventsByID.values.sorted(by: Self.fetchEventOrder))
+        pending.continuation.finish()
+    }
+
+    private func failPendingFetch(
+        relayURL: String,
+        subscriptionID: String,
+        error: any Error
+    ) {
+        let key = backwardTimeoutKey(relayURL: relayURL, subscriptionID: subscriptionID)
+        guard let pending = pendingFetchesBySubscriptionKey.removeValue(forKey: key) else { return }
+        pending.continuation.finish(throwing: error)
+    }
+
+    private func failPendingFetches(
+        relayURL: String,
+        error: any Error
+    ) async {
+        let pending = pendingFetchesBySubscriptionKey.values.filter { $0.relayURL == relayURL }
+        for fetch in pending {
+            failPendingFetch(
+                relayURL: fetch.relayURL,
+                subscriptionID: fetch.subscriptionID,
+                error: error
+            )
+            await abandonBackwardSubscription(
+                relayURL: fetch.relayURL,
+                subscriptionID: fetch.subscriptionID
+            )
+        }
+    }
+
+    private func finishAllPendingFetches(with error: any Error) {
+        let pending = pendingFetchesBySubscriptionKey.values
+        pendingFetchesBySubscriptionKey = [:]
+        for fetch in pending {
+            fetch.continuation.finish(throwing: error)
+        }
+    }
+
+    private func cancelFetch(
+        relayURL: String,
+        subscriptionID: String,
+        error: any Error
+    ) async {
+        failPendingFetch(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID,
+            error: error
+        )
+        await abandonBackwardSubscription(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+    }
+
+    private func abandonBackwardSubscription(
+        relayURL: String,
+        subscriptionID: String
+    ) async {
+        let key = backwardTimeoutKey(relayURL: relayURL, subscriptionID: subscriptionID)
+        cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
+        guard let progress = backwardProgressBySubscriptionKey.removeValue(forKey: key) else {
+            return
+        }
+
+        releaseBackwardSubscriptionDemand(progress)
+        backwardSubscriptionKeysByGroupID[progress.groupID]?.remove(key)
+        if backwardSubscriptionKeysByGroupID[progress.groupID]?.isEmpty == true {
+            backwardSubscriptionKeysByGroupID[progress.groupID] = nil
+        }
+        await workScheduler.release(progress.workTicket)
+        try? await sessions[relayURL]?.close(subscriptionID: subscriptionID)
+        await releaseRelaySessionIfUnneeded(relayURL)
+    }
+
+    private func relayFetchError(forClosedMessage message: String) -> NostrRelayClientError {
+        let lowercaseMessage = message.lowercased()
+        if lowercaseMessage.contains("auth-required") {
+            return .authRequired(challenge: message)
+        }
+        if lowercaseMessage.contains("payment-required") {
+            return .paymentRequired(message)
+        }
+        return .relayClosed(message)
+    }
+
+    private static func fetchEventOrder(_ lhs: NostrEvent, _ rhs: NostrEvent) -> Bool {
+        if lhs.createdAt == rhs.createdAt {
+            return lhs.id < rhs.id
+        }
+        return lhs.createdAt > rhs.createdAt
     }
 
     private func installOrQueueForward(
@@ -1309,6 +1581,13 @@ private struct BackwardSubscriptionProgress: Equatable {
     let workTicket: NostrRelayWorkTicket
     var eventCount: Int = 0
     var terminal: BackwardSubscriptionTerminal?
+}
+
+private struct PendingRelayFetch {
+    let relayURL: String
+    let subscriptionID: String
+    let continuation: AsyncThrowingStream<[NostrEvent], any Error>.Continuation
+    var eventsByID: [String: NostrEvent] = [:]
 }
 
 private struct BackwardInstallTarget: Sendable {

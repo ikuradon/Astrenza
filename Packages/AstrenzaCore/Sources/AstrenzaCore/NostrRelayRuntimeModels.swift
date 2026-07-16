@@ -323,7 +323,10 @@ public enum NostrREQScheduler {
                 .dedupedSorted()
 
             let mergedFilters = first.filters.map { filter in
-                filter.settingStrings(mergedValues, for: mergeField.rawValue)
+                guard filter[mergeField.rawValue] != nil else {
+                    return filter
+                }
+                return filter.settingStrings(mergedValues, for: mergeField.rawValue)
             }
 
             return NostrREQScheduledBatch(
