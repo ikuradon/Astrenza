@@ -36,7 +36,7 @@ struct HomeStoreApplicationEffectsFactoryTests {
     func doesNotRetainTarget() throws {
         var target: StoreApplicationEffectTargetSpy? =
             StoreApplicationEffectTargetSpy()
-        weak var weakTarget = target
+        weak let weakTarget = target
         let effects = HomeStoreApplicationEffectsFactory.make(
             target: try #require(target)
         )

@@ -109,7 +109,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         publishedStateCoordinator.applyContentSnapshot(snapshot)
     }
 
-    private func applyActivityTransition(
+    func applyActivityTransition(
         _ transition: HomeTimelineActivityTransition
     ) {
         publishedStateCoordinator.applyActivityTransition(transition)
@@ -552,7 +552,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         return boundaryID.flatMap(timelineEvent(id:))
     }
 
-    private func prepareHomeFeedDefinition(account: NostrAccount) {
+    func prepareHomeFeedDefinition(account: NostrAccount) {
         projectionInteractionWorkflow.prepareDefinition(
             account: account,
             followedPubkeys: followedPubkeys,
@@ -583,7 +583,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         presentationWorkflow.requestNewestProjectionReload()
     }
 
-    private func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
+    func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
         guard let restoreProjectionAnchorEventID else { return }
         reloadProjectionWindow(
             account: account,
@@ -605,13 +605,13 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func startRuntimeSession() {
+    func startRuntimeSession() {
         runtimeInteractionWorkflow.startSession(
             context: runtimeContextFactory.interactionContext()
         )
     }
 
-    private func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
+    func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
         guard let provisionalRelays = runtimeInteractionWorkflow
             .provisionalBootstrapRelayURLs(
                 account: account,
@@ -626,7 +626,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         updateRelayStatusCounts()
     }
 
-    private func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
+    func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
         await runtimeInteractionWorkflow.configure(
             account: account,
             forceInstall: forceInstall,
@@ -903,15 +903,6 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    func resetHomeTimelineRealtime(
-        expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
-    ) {
-        syncInteractionWorkflow.prepareForwardSubscriptions(
-            runtimeKeys,
-            context: featureInteractionContextFactory.syncContext()
-        )
-    }
-
     func invalidateHomeTimelineRealtime(
         for key: RuntimeSubscriptionKey
     ) {
@@ -964,7 +955,9 @@ private extension NostrHomeTimelineStore {
                         lifecycle: request.lifecycle
                     )
                 },
-                applications: makeAccountApplicationEffects()
+                applications: HomeAccountApplicationEffectsFactory.make(
+                    target: self
+                )
             )
         )
     }
@@ -1007,77 +1000,6 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    func makeAccountApplicationEffects(
-    ) -> HomeTimelineAccountApplicationEffects {
-        HomeTimelineAccountApplicationEffects(
-            cancelCurrentAccount: { [weak self] in
-                self?.cancel()
-            },
-            applyAccountContextTransition: { [weak self] transition in
-                self?.applyAccountContextTransition(transition)
-            },
-            startRuntimeSession: { [weak self] in
-                self?.startRuntimeSession()
-            },
-            prepareHomeFeedDefinition: { [weak self] account in
-                self?.prepareHomeFeedDefinition(account: account)
-            },
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            reloadNewestProjectionWindow: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            applyRestoreProjectionAnchor: { [weak self] account in
-                self?.applyRestoreProjectionAnchorIfPossible(account: account)
-            },
-            installProvisionalRuntimeBootstrap: { [weak self] account in
-                self?.installProvisionalRuntimeBootstrapIfNeeded(
-                    account: account
-                )
-            },
-            setPhase: { [weak self] phase in
-                self?.applyActivityIntent(.setPhase(phase))
-            },
-            publishRelayStatusChange: { [weak self] in
-                self?.publishRelayStatusChange()
-            },
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            clearPendingEvents: { [weak self] in
-                self?.clearPendingNewEvents()
-            },
-            applyActivityTransition: { [weak self] transition in
-                self?.applyActivityTransition(transition)
-            },
-            invalidateListEntries: { [weak self] in
-                self?.invalidateListEntries()
-            },
-            resetRealtimeState: { [weak self] in
-                self?.resetHomeTimelineRealtime()
-            },
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            applyRelayStatusSnapshot: { [weak self] snapshot in
-                self?.applyRelayStatusSnapshot(snapshot)
-            },
-            resetRuntimeSetup: { [weak self] in
-                self?.runtimeInteractionWorkflow.resetSetup()
-            },
-            configureRuntime: { [weak self] account, forceInstall in
-                await self?.configureRelayRuntime(
-                    account: account,
-                    forceInstall: forceInstall
-                )
-            }
-        )
-    }
-
     func resolveBackwardDependencies(
         _ request: HomeTimelineBackwardDependencyRequest
     ) async -> Bool {
@@ -1104,6 +1026,18 @@ private extension NostrHomeTimelineStore {
         projectionViewportState.isAtNewestWindow
     }
 
+}
+
+extension NostrHomeTimelineStore {
+    func resetHomeTimelineRealtime(
+        expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
+    ) {
+        syncInteractionWorkflow.prepareForwardSubscriptions(
+            runtimeKeys,
+            context: featureInteractionContextFactory.syncContext()
+        )
+    }
+
     func applyProjectionViewportTransition(
         _ transition: HomeTimelineProjectionViewportTransition
     ) {
@@ -1125,9 +1059,11 @@ private extension NostrHomeTimelineStore {
             viewportContextFactory.context()
         )
     }
-}
 
-extension NostrHomeTimelineStore {
+    func resetRuntimeSetup() {
+        runtimeInteractionWorkflow.resetSetup()
+    }
+
     func applyPendingEventCountPublication(
         _ publication: HomeTimelinePendingEventCountPublication
     ) {
@@ -1151,6 +1087,9 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore:
     HomeStoreApplicationEffectTarget {}
+
+extension NostrHomeTimelineStore:
+    HomeAccountApplicationEffectTarget {}
 
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {
