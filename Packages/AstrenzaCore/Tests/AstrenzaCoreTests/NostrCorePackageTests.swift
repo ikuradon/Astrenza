@@ -4063,6 +4063,12 @@ struct NostrCorePackageTests {
 
     @Test("Relay runtime reconnects and restores forward subscriptions after heartbeat misses")
     func relayRuntimeReconnectsAfterHeartbeatMisses() async throws {
+        let event = try signedEvent(
+            kind: 1,
+            createdAt: 500,
+            tags: [],
+            content: "cursor"
+        )
         let connection = FakeRelayRuntimeConnection()
         let transport = FakeRelayRuntimeTransport(connection: connection)
         let runtime = NostrRelayRuntime(
@@ -4082,11 +4088,22 @@ struct NostrCorePackageTests {
 
         let forward = NostrREQPacket.forward(
             subscriptionID: "home-forward",
-            filters: [["kinds": .ints([1])]]
+            filters: [[
+                "kinds": .ints([1]),
+                "authors": .strings([event.pubkey]),
+                "since": .int(100),
+                "limit": .int(250)
+            ]]
         )
 
         try await runtime.setDefaultRelays(["wss://relay.example"])
         try await runtime.installForward(forward)
+        await connection.appendInboundFrames([
+            try relayRuntimeEventFrame(subscriptionID: forward.subscriptionID, event: event),
+            #"["EOSE","home-forward"]"#
+        ])
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
         try await runtime.sendHeartbeat(relayURL: "wss://relay.example")
         try await Task.sleep(nanoseconds: 100_000_000)
 
@@ -4100,7 +4117,9 @@ struct NostrCorePackageTests {
         #expect(sent[0].contains(#""home-forward""#))
         #expect(sent[1].contains(#""ids":["0000000000000000000000000000000000000000000000000000000000000000"]"#))
         #expect(sent[2].contains(#"["CLOSE","astrenza-heartbeat-"#))
-        #expect(sent[3] == sent[0])
+        #expect(sent[3] != sent[0])
+        #expect(sent[3].contains(#""since":490"#))
+        #expect(!sent[3].contains(#""limit""#))
         #expect(packets.contains { packet in
             if case .stateChanged("wss://relay.example", .waitingForRetry) = packet {
                 return true

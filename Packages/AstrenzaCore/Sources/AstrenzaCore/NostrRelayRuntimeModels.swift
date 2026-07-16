@@ -121,21 +121,57 @@ public struct NostrRelayRuntimeRetryPolicy: Equatable, Sendable {
     public let maxAttempts: Int
     public let initialDelayMilliseconds: Int
     public let delayStepMilliseconds: Int
+    public let maximumDelayMilliseconds: Int
+    public let jitterPercentage: Int
 
-    public init(maxAttempts: Int = 5, initialDelayMilliseconds: Int = 1_000, delayStepMilliseconds: Int = 2_000) {
+    public init(
+        maxAttempts: Int = 5,
+        initialDelayMilliseconds: Int = 1_000,
+        delayStepMilliseconds: Int = 2_000,
+        maximumDelayMilliseconds: Int = 30_000,
+        jitterPercentage: Int = 20
+    ) {
         self.maxAttempts = max(0, maxAttempts)
         self.initialDelayMilliseconds = max(0, initialDelayMilliseconds)
         self.delayStepMilliseconds = max(0, delayStepMilliseconds)
+        self.maximumDelayMilliseconds = max(0, maximumDelayMilliseconds)
+        self.jitterPercentage = min(100, max(0, jitterPercentage))
     }
 
-    public func delayNanoseconds(forAttempt attempt: Int) -> UInt64 {
+    /// `delayStepMilliseconds`を指数的に増幅し、relay群が同時に再接続しないようjitterを加えます。
+    /// `jitterUnit`は0...1で、0.5ならjitterなし、0/1なら許容範囲の下限/上限です。
+    public func delayNanoseconds(
+        forAttempt attempt: Int,
+        jitterUnit: Double = 0.5
+    ) -> UInt64 {
         let safeAttempt = max(1, attempt)
-        let delayMilliseconds = initialDelayMilliseconds + ((safeAttempt - 1) * delayStepMilliseconds)
-        return UInt64(max(0, delayMilliseconds)) * 1_000_000
+        let exponent = min(30, safeAttempt - 1)
+        let multiplier = pow(2.0, Double(exponent))
+        let exponentialMilliseconds = Double(initialDelayMilliseconds) +
+            (Double(delayStepMilliseconds) * (multiplier - 1))
+        let cappedMilliseconds = min(
+            Double(maximumDelayMilliseconds),
+            max(0, exponentialMilliseconds)
+        )
+        let normalizedJitter = min(1, max(0, jitterUnit))
+        let jitterScale = (normalizedJitter * 2) - 1
+        let jitterRatio = Double(jitterPercentage) / 100
+        let jitteredMilliseconds = cappedMilliseconds * (1 + (jitterScale * jitterRatio))
+        let boundedMilliseconds = min(
+            Double(maximumDelayMilliseconds),
+            max(0, jitteredMilliseconds)
+        )
+        return UInt64(boundedMilliseconds.rounded()) * 1_000_000
     }
 
-    public func recoveryDelayNanoseconds(forAttempt attempt: Int) -> UInt64 {
-        max(delayNanoseconds(forAttempt: attempt), 10_000_000)
+    public func recoveryDelayNanoseconds(
+        forAttempt attempt: Int,
+        jitterUnit: Double = 0.5
+    ) -> UInt64 {
+        max(
+            delayNanoseconds(forAttempt: attempt, jitterUnit: jitterUnit),
+            10_000_000
+        )
     }
 }
 

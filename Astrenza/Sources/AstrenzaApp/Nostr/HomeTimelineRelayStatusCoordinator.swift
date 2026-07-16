@@ -120,11 +120,20 @@ final class HomeTimelineRelayStatusCoordinator {
         message: String
     ) -> HomeTimelineRelayStatusTransition? {
         guard let accountID else { return nil }
+        let normalizedMessage = message.lowercased()
+        let kind: NostrRelaySyncEventKind = if normalizedMessage.contains("timeout") {
+            .timeout
+        } else if normalizedMessage.contains("reconnect") ||
+            normalizedMessage.contains("req retry") {
+            .reconnect
+        } else {
+            .partialFailure
+        }
         return record(
             accountID: accountID,
             resolvedRelays: resolvedRelays,
             relayURL: relayURL,
-            kind: message.lowercased().contains("timeout") ? .timeout : .partialFailure,
+            kind: kind,
             subscriptionID: NostrHomeForwardREQBuilder.subscriptionID,
             message: message
         )

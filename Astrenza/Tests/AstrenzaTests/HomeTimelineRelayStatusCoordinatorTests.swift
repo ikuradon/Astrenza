@@ -145,6 +145,12 @@ struct HomeTimelineRelayStatusCoordinatorTests {
             relayURL: relayURL,
             message: "relay maintenance"
         ))
+        let retry = try #require(coordinator.handleNotice(
+            accountID: accountID,
+            resolvedRelays: resolvedRelays,
+            relayURL: relayURL,
+            message: "forward REQ retry attempt 2 scheduled in 3000 ms"
+        ))
         let authentication = try #require(coordinator.handleAuthenticationChallenge(
             accountID: accountID,
             resolvedRelays: resolvedRelays,
@@ -160,11 +166,13 @@ struct HomeTimelineRelayStatusCoordinatorTests {
 
         #expect(timeout.publishesStatusChange)
         #expect(failure.publishesStatusChange)
+        #expect(retry.publishesStatusChange)
         #expect(authentication.publishesStatusChange)
         #expect(duplicate == nil)
         #expect(coordinator.events.map(\.kind) == [
             .timeout,
             .partialFailure,
+            .reconnect,
             .authRequired
         ])
     }

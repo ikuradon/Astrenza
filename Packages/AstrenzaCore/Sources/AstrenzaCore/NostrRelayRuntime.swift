@@ -2,11 +2,14 @@ import Foundation
 
 public actor NostrRelayRuntime {
     public typealias TransportFactory = @Sendable (String) -> any NostrRelayTransport
+    public typealias RetryJitterSource = @Sendable () -> Double
 
     private let transportFactory: TransportFactory
     private let eventValidator: NostrEventValidator
     private let autoReceive: Bool
     private let retryPolicy: NostrRelayRuntimeRetryPolicy
+    private let retryJitterSource: RetryJitterSource
+    private let reconnectOverlapSeconds: Int
     private let heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy
     private let backwardPolicy: NostrRelayRuntimeBackwardPolicy
     private let relayInformationFetcher: (any NostrRelayInformationFetching)?
@@ -19,6 +22,7 @@ public actor NostrRelayRuntime {
     private var heartbeatLoopTasks: [String: Task<Void, Never>] = [:]
     private var heartbeatMissCounts: [String: Int] = [:]
     private var forwardClosedRetryTasks: [String: Task<Void, Never>] = [:]
+    private var forwardClosedRetryAttempts: [String: Int] = [:]
     private var forwardWorkTickets: [String: NostrRelayWorkTicket] = [:]
     private var forwardActivationTasks: [String: Task<Void, Never>] = [:]
     private var backwardTimeoutTasks: [String: Task<Void, Never>] = [:]
@@ -28,6 +32,7 @@ public actor NostrRelayRuntime {
     private var bootstrapRelayURLsByScopeID: [UUID: Set<String>] = [:]
     private var completedBootstrapScopeIDs: Set<UUID> = []
     private var relayDemands = NostrRelayDemandRegistry()
+    private var forwardReconnectTracker = NostrForwardReconnectTracker()
     private var relayInformationTasks: [String: Task<Void, Never>] = [:]
     private var nextBackwardProgressGeneration: UInt64 = 0
     private var trafficAccountID: String?
@@ -39,6 +44,10 @@ public actor NostrRelayRuntime {
         eventValidator: NostrEventValidator = NostrEventValidator(),
         autoReceive: Bool = true,
         retryPolicy: NostrRelayRuntimeRetryPolicy = NostrRelayRuntimeRetryPolicy(),
+        retryJitterSource: @escaping RetryJitterSource = {
+            Double.random(in: 0...1)
+        },
+        reconnectOverlapSeconds: Int = 10,
         heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy = NostrRelayRuntimeHeartbeatPolicy(),
         backwardPolicy: NostrRelayRuntimeBackwardPolicy = NostrRelayRuntimeBackwardPolicy(),
         relayInformationFetcher: (any NostrRelayInformationFetching)? = nil,
@@ -48,6 +57,8 @@ public actor NostrRelayRuntime {
         self.eventValidator = eventValidator
         self.autoReceive = autoReceive
         self.retryPolicy = retryPolicy
+        self.retryJitterSource = retryJitterSource
+        self.reconnectOverlapSeconds = max(0, reconnectOverlapSeconds)
         self.heartbeatPolicy = heartbeatPolicy
         self.backwardPolicy = backwardPolicy
         self.relayInformationFetcher = relayInformationFetcher
@@ -221,6 +232,7 @@ public actor NostrRelayRuntime {
         await releaseCompletedBootstrapScopes()
 
         for relayURL in removedRelays {
+            forwardReconnectTracker.removeRelay(relayURL)
             guard let identity = NostrRelayURL(relayURL),
                   !relayDemands.contains(.persistentDefault, for: identity)
             else { continue }
@@ -332,6 +344,9 @@ public actor NostrRelayRuntime {
         replacing shouldReplace: (NostrREQPacket) -> Bool
     ) async throws {
         let previousPackets = activeForwardPackets.values.filter(shouldReplace)
+        forwardReconnectTracker.reset(subscriptionIDs: Set(
+            previousPackets.map(\.subscriptionID)
+        ))
         let installKeys = Set(installPackets.flatMap { packet in
             forwardRelayURLs(for: packet).map { relayURL in
                 forwardClosedRetryKey(
@@ -615,6 +630,7 @@ public actor NostrRelayRuntime {
         heartbeatLoopTasks = [:]
         heartbeatMissCounts = [:]
         forwardClosedRetryTasks = [:]
+        forwardClosedRetryAttempts = [:]
         forwardWorkTickets = [:]
         forwardActivationTasks = [:]
         relayInformationTasks = [:]
@@ -628,6 +644,7 @@ public actor NostrRelayRuntime {
         sessions = [:]
         relayURLs = []
         activeForwardPackets = [:]
+        forwardReconnectTracker.removeAll()
         for continuation in continuations.values {
             continuation.finish()
         }
@@ -651,6 +668,15 @@ public actor NostrRelayRuntime {
     private func handleSessionPacket(_ packet: NostrRelayRuntimePacket) async {
         switch packet {
         case .event(let relayURL, let subscriptionID, let event):
+            if let forwardPacket = activeForwardPackets[subscriptionID],
+               forwardPacket.relayURLs.isEmpty ||
+                canonicalRelayURLs(forwardPacket.relayURLs).contains(relayURL) {
+                forwardReconnectTracker.record(
+                    event: event,
+                    relayURL: relayURL,
+                    packet: forwardPacket
+                )
+            }
             appendPendingFetchEvent(
                 event,
                 relayURL: relayURL,
@@ -661,6 +687,16 @@ public actor NostrRelayRuntime {
                 scheduleBackwardIdleTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             }
         case .eose(let relayURL, let subscriptionID):
+            if activeForwardPackets[subscriptionID] != nil {
+                forwardReconnectTracker.reachedEOSE(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
+                cancelForwardClosedRetry(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
+            }
             finishPendingFetch(
                 relayURL: relayURL,
                 subscriptionID: subscriptionID
@@ -709,6 +745,7 @@ public actor NostrRelayRuntime {
     private func startReceiveLoop(for session: NostrRelaySession, relayURL: String) {
         receiveLoopTasks[relayURL]?.cancel()
         let retryPolicy = retryPolicy
+        let retryJitterSource = retryJitterSource
         receiveLoopTasks[relayURL] = Task {
             var retryAttempt = 0
             while !Task.isCancelled {
@@ -720,32 +757,54 @@ public actor NostrRelayRuntime {
                     break
                 } catch {
                     guard !Task.isCancelled else { break }
-                    await session.markWaitingForRetry(message: String(describing: error))
                     retryAttempt += 1
+                    let failureMessage = String(describing: error)
                     if retryAttempt > retryPolicy.maxAttempts {
-                        await session.markSuspended(message: "retry attempts exhausted")
+                        await session.markWaitingForRetry(
+                            message: "relay receive failed after \(retryAttempt) attempt(s): \(failureMessage)"
+                        )
+                        let recoveryDelay = retryPolicy.recoveryDelayNanoseconds(
+                            forAttempt: retryAttempt,
+                            jitterUnit: retryJitterSource()
+                        )
+                        await session.markSuspended(
+                            message: "reconnect retry budget exhausted; recovery scheduled in \(Self.milliseconds(recoveryDelay)) ms"
+                        )
                         do {
-                            try await Task.sleep(nanoseconds: retryPolicy.recoveryDelayNanoseconds(forAttempt: retryAttempt))
+                            try await Task.sleep(nanoseconds: recoveryDelay)
                         } catch {
                             break
                         }
                         retryAttempt = 0
-                    }
-
-                    let delay = retryPolicy.delayNanoseconds(forAttempt: retryAttempt)
-                    if delay > 0 {
-                        do {
-                            try await Task.sleep(nanoseconds: delay)
-                        } catch {
-                            break
+                    } else {
+                        let delay = retryPolicy.delayNanoseconds(
+                            forAttempt: retryAttempt,
+                            jitterUnit: retryJitterSource()
+                        )
+                        await session.markWaitingForRetry(
+                            message: "reconnect attempt \(retryAttempt)/\(retryPolicy.maxAttempts) scheduled in \(Self.milliseconds(delay)) ms: \(failureMessage)"
+                        )
+                        if delay > 0 {
+                            do {
+                                try await Task.sleep(nanoseconds: delay)
+                            } catch {
+                                break
+                            }
                         }
                     }
                     guard !Task.isCancelled else { break }
 
                     do {
-                        try await session.reconnectRestoringSubscriptions()
+                        let replacements = self.prepareForwardReconnectPackets(
+                            relayURL: relayURL
+                        )
+                        try await session.reconnectRestoringSubscriptions(
+                            replacingPackets: replacements
+                        )
                     } catch {
-                        await session.markWaitingForRetry(message: String(describing: error))
+                        await session.markWaitingForRetry(
+                            message: "reconnect failed: \(String(describing: error))"
+                        )
                     }
                 }
             }
@@ -787,7 +846,19 @@ public actor NostrRelayRuntime {
         guard activeForwardPackets[subscriptionID] != nil else { return }
         let key = forwardClosedRetryKey(relayURL: relayURL, subscriptionID: subscriptionID)
         forwardClosedRetryTasks[key]?.cancel()
-        let delay = max(retryPolicy.delayNanoseconds(forAttempt: 1), 10_000_000)
+        let attempt = (forwardClosedRetryAttempts[key] ?? 0) + 1
+        forwardClosedRetryAttempts[key] = attempt
+        let delay = max(
+            retryPolicy.delayNanoseconds(
+                forAttempt: attempt,
+                jitterUnit: retryJitterSource()
+            ),
+            10_000_000
+        )
+        emit(.notice(
+            relayURL: relayURL,
+            message: "forward REQ retry attempt \(attempt) scheduled in \(Self.milliseconds(delay)) ms for \(subscriptionID)"
+        ))
         forwardClosedRetryTasks[key] = Task {
             do {
                 try await Task.sleep(nanoseconds: delay)
@@ -807,10 +878,20 @@ public actor NostrRelayRuntime {
               let session = sessions[relayURL]
         else { return }
         do {
+            let reconnectPacket = prepareForwardReconnectPackets(
+                relayURL: relayURL,
+                packets: [packet]
+            )[subscriptionID] ?? packet
             try await installOrQueueForward(
                 packet,
                 relayURL: relayURL,
-                session: session
+                session: session,
+                installationPacket: reconnectPacket
+            )
+            cancelForwardClosedRetry(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                resetAttempts: false
             )
         } catch {
             await releaseForwardWorkTicket(
@@ -822,17 +903,28 @@ public actor NostrRelayRuntime {
         }
     }
 
-    private func cancelForwardClosedRetry(relayURL: String, subscriptionID: String) {
+    private func cancelForwardClosedRetry(
+        relayURL: String,
+        subscriptionID: String,
+        resetAttempts: Bool = true
+    ) {
         let key = forwardClosedRetryKey(relayURL: relayURL, subscriptionID: subscriptionID)
         forwardClosedRetryTasks[key]?.cancel()
         forwardClosedRetryTasks[key] = nil
+        if resetAttempts {
+            forwardClosedRetryAttempts[key] = nil
+        }
     }
 
     private func cancelForwardClosedRetries(relayURL: String) {
         let prefix = relayURL + "\n"
-        for key in forwardClosedRetryTasks.keys where key.hasPrefix(prefix) {
+        let keys = Set(forwardClosedRetryTasks.keys)
+            .union(forwardClosedRetryAttempts.keys)
+            .filter { $0.hasPrefix(prefix) }
+        for key in keys {
             forwardClosedRetryTasks[key]?.cancel()
             forwardClosedRetryTasks[key] = nil
+            forwardClosedRetryAttempts[key] = nil
         }
     }
 
@@ -1042,7 +1134,9 @@ public actor NostrRelayRuntime {
 
         await session.markWaitingForRetry(message: "heartbeat \(status.noticeDescription) \(missCount) time(s)")
         do {
-            try await session.reconnectRestoringSubscriptions()
+            try await session.reconnectRestoringSubscriptions(
+                replacingPackets: prepareForwardReconnectPackets(relayURL: relayURL)
+            )
         } catch {
             await session.markWaitingForRetry(message: "heartbeat reconnect failed: \(String(describing: error))")
         }
@@ -1342,7 +1436,8 @@ public actor NostrRelayRuntime {
     private func installOrQueueForward(
         _ packet: NostrREQPacket,
         relayURL: String,
-        session: NostrRelaySession
+        session: NostrRelaySession,
+        installationPacket: NostrREQPacket? = nil
     ) async throws {
         let key = forwardClosedRetryKey(
             relayURL: relayURL,
@@ -1365,12 +1460,13 @@ public actor NostrRelayRuntime {
 
         if await workScheduler.isActive(ticket) {
             forwardActivationTasks.removeValue(forKey: key)?.cancel()
-            try await session.install(packet)
+            try await session.install(installationPacket ?? packet)
             return
         }
         scheduleForwardActivation(
             ticket: ticket,
-            packet: packet,
+            desiredPacket: packet,
+            installationPacket: installationPacket ?? packet,
             relayURL: relayURL,
             session: session
         )
@@ -1378,13 +1474,14 @@ public actor NostrRelayRuntime {
 
     private func scheduleForwardActivation(
         ticket: NostrRelayWorkTicket,
-        packet: NostrREQPacket,
+        desiredPacket: NostrREQPacket,
+        installationPacket: NostrREQPacket,
         relayURL: String,
         session: NostrRelaySession
     ) {
         let key = forwardClosedRetryKey(
             relayURL: relayURL,
-            subscriptionID: packet.subscriptionID
+            subscriptionID: desiredPacket.subscriptionID
         )
         forwardActivationTasks[key]?.cancel()
         forwardActivationTasks[key] = Task {
@@ -1396,7 +1493,8 @@ public actor NostrRelayRuntime {
             guard !Task.isCancelled else { return }
             await self.installActivatedForward(
                 ticket: ticket,
-                packet: packet,
+                desiredPacket: desiredPacket,
+                installationPacket: installationPacket,
                 relayURL: relayURL,
                 session: session
             )
@@ -1405,35 +1503,37 @@ public actor NostrRelayRuntime {
 
     private func installActivatedForward(
         ticket: NostrRelayWorkTicket,
-        packet: NostrREQPacket,
+        desiredPacket: NostrREQPacket,
+        installationPacket: NostrREQPacket,
         relayURL: String,
         session: NostrRelaySession
     ) async {
         let key = forwardClosedRetryKey(
             relayURL: relayURL,
-            subscriptionID: packet.subscriptionID
+            subscriptionID: desiredPacket.subscriptionID
         )
         forwardActivationTasks[key] = nil
         guard forwardWorkTickets[key] == ticket,
-              activeForwardPackets[packet.subscriptionID] == packet,
+              activeForwardPackets[desiredPacket.subscriptionID] == desiredPacket,
               sessions[relayURL] === session
         else {
             await releaseForwardWorkTicket(
                 relayURL: relayURL,
-                subscriptionID: packet.subscriptionID
+                subscriptionID: desiredPacket.subscriptionID
             )
             return
         }
         do {
-            try await session.install(packet)
+            try await session.install(installationPacket)
             cancelForwardClosedRetry(
                 relayURL: relayURL,
-                subscriptionID: packet.subscriptionID
+                subscriptionID: desiredPacket.subscriptionID,
+                resetAttempts: false
             )
         } catch {
             await releaseForwardWorkTicket(
                 relayURL: relayURL,
-                subscriptionID: packet.subscriptionID
+                subscriptionID: desiredPacket.subscriptionID
             )
             await session.markWaitingForRetry(
                 message: "queued forward REQ failed: \(String(describing: error))"
@@ -1441,7 +1541,7 @@ public actor NostrRelayRuntime {
             if autoReceive {
                 scheduleForwardRetryAfterClosed(
                     relayURL: relayURL,
-                    subscriptionID: packet.subscriptionID
+                    subscriptionID: desiredPacket.subscriptionID
                 )
             }
         }
@@ -1479,6 +1579,7 @@ public actor NostrRelayRuntime {
         receiveLoopTasks.removeValue(forKey: relayURL)?.cancel()
         heartbeatLoopTasks.removeValue(forKey: relayURL)?.cancel()
         heartbeatMissCounts[relayURL] = nil
+        forwardReconnectTracker.removeRelay(relayURL)
         cancelForwardClosedRetries(relayURL: relayURL)
         await releaseForwardWorkTickets(relayURL: relayURL)
         cancelBackwardTimeouts(relayURL: relayURL)
@@ -1522,6 +1623,34 @@ public actor NostrRelayRuntime {
             return .visibleDependency
         }
         return .userInitiated
+    }
+
+    private func prepareForwardReconnectPackets(
+        relayURL: String
+    ) -> [String: NostrREQPacket] {
+        let packets = activeForwardPackets.values.filter { packet in
+            packet.relayURLs.isEmpty ||
+                canonicalRelayURLs(packet.relayURLs).contains(relayURL)
+        }
+        return prepareForwardReconnectPackets(
+            relayURL: relayURL,
+            packets: packets
+        )
+    }
+
+    private func prepareForwardReconnectPackets(
+        relayURL: String,
+        packets: [NostrREQPacket]
+    ) -> [String: NostrREQPacket] {
+        forwardReconnectTracker.prepareReconnectPackets(
+            relayURL: relayURL,
+            packets: packets,
+            overlapSeconds: reconnectOverlapSeconds
+        )
+    }
+
+    private static func milliseconds(_ nanoseconds: UInt64) -> UInt64 {
+        nanoseconds / 1_000_000
     }
 
     private func canonicalRelayURLs(for packet: NostrREQPacket) -> [String] {

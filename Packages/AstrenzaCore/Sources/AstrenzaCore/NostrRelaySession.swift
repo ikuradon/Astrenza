@@ -109,7 +109,9 @@ public actor NostrRelaySession {
         }
     }
 
-    public func reconnectRestoringSubscriptions() async throws {
+    public func reconnectRestoringSubscriptions(
+        replacingPackets: [String: NostrREQPacket] = [:]
+    ) async throws {
         guard connectionState != .terminated else {
             throw NostrRelayRuntimeError.connectionUnavailable(relayURL: relayURL)
         }
@@ -122,6 +124,7 @@ public actor NostrRelaySession {
         setState(.retrying)
         await previousConnection?.close()
         do {
+            replaceActiveSubscriptionPackets(replacingPackets)
             let restoredConnection = try await establishConnection(startingState: nil)
             let restoredConnectionGeneration = connectionGeneration
             let registrations = Array(activeSubscriptions.values)
@@ -474,6 +477,16 @@ public actor NostrRelaySession {
         return generation
     }
 
+    private func replaceActiveSubscriptionPackets(
+        _ packets: [String: NostrREQPacket]
+    ) {
+        for (subscriptionID, packet) in packets
+        where packet.subscriptionID == subscriptionID &&
+            activeSubscriptions[subscriptionID] != nil {
+            activeSubscriptions[subscriptionID]?.packet = packet
+        }
+    }
+
     private func rollbackInstallation(
         subscriptionID: String,
         generation: UInt64,
@@ -661,7 +674,7 @@ public actor NostrRelaySession {
 }
 
 private struct SubscriptionRegistration: Sendable {
-    let packet: NostrREQPacket
+    var packet: NostrREQPacket
     let generation: UInt64
     var requestID: String?
 }

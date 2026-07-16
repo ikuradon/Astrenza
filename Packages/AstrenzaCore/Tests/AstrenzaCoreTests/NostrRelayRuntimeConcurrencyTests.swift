@@ -988,6 +988,14 @@ struct NostrRelayRuntimeConcurrencyTests {
             ),
             heartbeatPolicy: .disabled
         )
+        let collector = RelayConcurrencyPacketCollector()
+        let stream = await runtime.events()
+        let collectTask = Task {
+            for await packet in stream {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
         let packet = NostrREQPacket.forward(
             subscriptionID: "home-forward",
             filters: [["kinds": .ints([1])]]
@@ -998,10 +1006,27 @@ struct NostrRelayRuntimeConcurrencyTests {
         try await runtime.receiveNext(relayURL: "wss://relay.example")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        let requestFrames = await connection.sentFrames().filter { $0.contains(#""REQ""#) }
+        var requestFrames = await connection.sentFrames().filter { $0.contains(#""REQ""#) }
         #expect(requestFrames.count == 2)
         #expect(requestFrames[0] == requestFrames[1])
         #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://relay.example") == ["home-forward"])
+        #expect(await collector.packets().contains { packet in
+            guard case .notice(_, let message) = packet else { return false }
+            return message.contains("forward REQ retry attempt 1 scheduled in 10 ms")
+        })
+
+        await connection.enqueueInboundFrame(
+            #"["CLOSED","home-forward","error: still unavailable"]"#
+        )
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        requestFrames = await connection.sentFrames().filter { $0.contains(#""REQ""#) }
+        #expect(requestFrames.count == 3)
+        #expect(await collector.packets().contains { packet in
+            guard case .notice(_, let message) = packet else { return false }
+            return message.contains("forward REQ retry attempt 2 scheduled in 10 ms")
+        })
     }
 
     @Test("A newly added relay does not receive forward subscriptions scoped to another relay")
@@ -1229,6 +1254,36 @@ struct NostrRelayRuntimeConcurrencyTests {
         #expect(ends.first?.requestID == starts.first?.requestID)
         #expect(ends.first?.reason == .superseded)
         #expect(installedRequestIDs == starts.map(\.requestID))
+    }
+
+    @Test("Reconnect can replace a forward filter without changing subscription identity")
+    func reconnectReplacesForwardFilter() async throws {
+        let connection = RelayConcurrencyTestConnection()
+        let session = NostrRelaySession(
+            relayURL: "wss://relay.example",
+            transport: RelayConcurrencyTestTransport(connection: connection)
+        )
+        let original = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1]), "since": .int(100), "limit": .int(250)]]
+        )
+        let reconnect = original.replacing(filters: [[
+            "kinds": .ints([1]),
+            "since": .int(290)
+        ]])
+
+        try await session.install(original)
+        try await session.reconnectRestoringSubscriptions(
+            replacingPackets: [original.subscriptionID: reconnect]
+        )
+
+        let frames = await connection.sentFrames().filter { $0.contains(#""REQ""#) }
+        let originalFrame = try original.relayRequest.textFrame()
+        let reconnectFrame = try reconnect.relayRequest.textFrame()
+        #expect(frames.count == 2)
+        #expect(frames[0] == originalFrame)
+        #expect(frames[1] == reconnectFrame)
+        #expect(await session.activeSubscriptionIDs() == [original.subscriptionID])
     }
 
     private func eventFrame(subscriptionID: String, event: NostrEvent) throws -> String {
