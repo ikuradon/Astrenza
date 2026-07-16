@@ -1,6 +1,6 @@
 struct HomeStateContextEnvironment: Sendable {
     let projection: HomeTimelineStateInteractionEnvironment.ProjectionProvider
-    let apply: HomeTimelineStateInteractionEffects.ApplicationEffect
+    let applications: HomeTimelineStoreApplicationEffects
 }
 
 @MainActor
@@ -8,12 +8,17 @@ struct HomeStateContextFactory {
     private let stateContext: HomeTimelineStateInteractionContext
 
     init(environment: HomeStateContextEnvironment) {
+        let router = HomeTimelineStoreApplicationRouter(
+            applications: environment.applications
+        )
         stateContext = HomeTimelineStateInteractionContext(
             effects: HomeTimelineStateInteractionEffects(
                 environment: HomeTimelineStateInteractionEnvironment(
                     projection: environment.projection
                 ),
-                apply: environment.apply
+                apply: { application in
+                    router.apply(application)
+                }
             )
         )
     }

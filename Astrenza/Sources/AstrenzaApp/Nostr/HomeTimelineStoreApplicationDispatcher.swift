@@ -70,6 +70,60 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
 }
 
 @MainActor
+struct HomeTimelineStoreApplicationRouter {
+    private let applications: HomeTimelineStoreApplicationEffects
+    private let dispatcher = HomeTimelineStoreApplicationDispatcher()
+
+    init(applications: HomeTimelineStoreApplicationEffects) {
+        self.applications = applications
+    }
+
+    func apply(_ application: HomeTimelineStateInteractionApplication) {
+        dispatcher.apply(application, effects: applications)
+    }
+
+    func apply(_ application: HomeTimelineRuntimeStoreAction) {
+        dispatcher.apply(application, effects: applications)
+    }
+
+    func perform(_ application: HomeTimelineRuntimeStoreAsyncAction) async {
+        await dispatcher.perform(application, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineLinkPreviewStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineFilterStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineSyncStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineLocalMutationStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineGapBackfillStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelinePublishStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func perform(_ action: HomeTimelinePublishAsyncAction) async {
+        await dispatcher.perform(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineBackwardStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+}
+
+@MainActor
 struct HomeTimelineStoreApplicationDispatcher {
     func apply(
         _ application: HomeTimelineStateInteractionApplication,

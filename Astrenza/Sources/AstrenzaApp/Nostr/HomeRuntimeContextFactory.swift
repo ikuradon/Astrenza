@@ -10,8 +10,7 @@ struct HomeRuntimeContextEnvironment: Sendable {
     let snapshot: SnapshotProvider
     let isCurrentFeedContext: FeedContextValidity
     let runtimeApplication: HomeTimelineRuntimeApplicationEffects
-    let apply: HomeTimelineRuntimeInteractionEffects.ApplicationEffect
-    let perform: HomeTimelineRuntimeInteractionEffects.AsyncApplicationEffect
+    let applications: HomeTimelineStoreApplicationEffects
 }
 
 @MainActor
@@ -26,6 +25,9 @@ struct HomeRuntimeContextFactory {
 
         let snapshot = environment.snapshot
         let projector = HomeTimelineRuntimeContextProjector()
+        let router = HomeTimelineStoreApplicationRouter(
+            applications: environment.applications
+        )
         let isCurrentFeedContext = environment.isCurrentFeedContext
         let isAccountCurrent:
             HomeTimelineRuntimeStoreEnvironment.AccountValidity = { accountID in
@@ -47,8 +49,12 @@ struct HomeRuntimeContextFactory {
                 isAccountCurrent: isAccountCurrent
             ),
             runtimeApplication: environment.runtimeApplication,
-            apply: environment.apply,
-            perform: environment.perform
+            apply: { application in
+                router.apply(application)
+            },
+            perform: { application in
+                await router.perform(application)
+            }
         )
         eventEffects = HomeTimelineRuntimeEventStoreEffects(
             environment: HomeTimelineRuntimeEventEnvironment(
@@ -61,7 +67,9 @@ struct HomeRuntimeContextFactory {
                 isAccountCurrent: isAccountCurrent
             ),
             runtimeApplication: environment.runtimeApplication,
-            apply: environment.apply
+            apply: { application in
+                router.apply(application)
+            }
         )
     }
 

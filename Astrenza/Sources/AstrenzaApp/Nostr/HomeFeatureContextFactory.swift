@@ -49,7 +49,7 @@ struct HomeFeatureContextFactory {
         snapshot = environment.snapshot
 
         let snapshot = environment.snapshot
-        let router = HomeFeatureApplicationRouter(
+        let router = HomeTimelineStoreApplicationRouter(
             applications: environment.applications
         )
         filterEffects = HomeFilterInteractionEffects(
@@ -174,47 +174,5 @@ struct HomeFeatureContextFactory {
 
     private func currentSnapshot() -> HomeTimelineFeatureInteractionSnapshot {
         snapshot() ?? .empty
-    }
-}
-
-@MainActor
-private struct HomeFeatureApplicationRouter {
-    private let applications: HomeTimelineStoreApplicationEffects
-    private let dispatcher = HomeTimelineStoreApplicationDispatcher()
-
-    init(applications: HomeTimelineStoreApplicationEffects) {
-        self.applications = applications
-    }
-
-    func apply(_ action: HomeTimelineFilterStoreAction) {
-        dispatcher.apply(action, effects: applications)
-    }
-
-    func apply(_ action: HomeTimelineSyncStoreAction) {
-        dispatcher.apply(action, effects: applications)
-    }
-
-    func apply(_ action: HomeTimelineLocalMutationStoreAction) {
-        dispatcher.apply(action, effects: applications)
-    }
-
-    func apply(_ action: HomeTimelineGapBackfillStoreAction) {
-        dispatcher.apply(action, effects: applications)
-    }
-
-    func apply(_ action: HomeTimelinePublishStoreAction) {
-        dispatcher.apply(action, effects: applications)
-    }
-
-    func perform(_ action: HomeTimelinePublishAsyncAction) async {
-        await dispatcher.perform(action, effects: applications)
-    }
-
-    func apply(_ action: HomeTimelineBackwardStoreAction) {
-        dispatcher.apply(action, effects: applications)
-    }
-
-    func apply(_ action: HomeTimelineLinkPreviewStoreAction) {
-        dispatcher.apply(action, effects: applications)
     }
 }

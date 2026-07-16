@@ -21,8 +21,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineRuntimeInteractionWorkflow
     private let stateContextProjector =
         HomeTimelineStateContextProjector()
-    private let storeApplicationDispatcher =
-        HomeTimelineStoreApplicationDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -508,15 +506,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func dispatchStoreApplication(
-        _ application: HomeTimelineStateInteractionApplication
-    ) {
-        storeApplicationDispatcher.apply(
-            application,
-            effects: storeApplicationEffects
-        )
-    }
-
     private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
         projectionInteractionWorkflow.isCurrent(
             context,
@@ -659,24 +648,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             isTimelineAtNewestWindow: isTimelineAtNewestWindow,
             hasPendingEvents:
                 viewportInteractionWorkflow.hasBufferedEvents
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ application: HomeTimelineRuntimeStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            application,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func performStoreApplication(
-        _ application: HomeTimelineRuntimeStoreAsyncAction
-    ) async {
-        await storeApplicationDispatcher.perform(
-            application,
-            effects: storeApplicationEffects
         )
     }
 
@@ -952,12 +923,7 @@ private extension NostrHomeTimelineStore {
                     self?.isCurrentHomeFeedContext(context) == true
                 },
                 runtimeApplication: runtimeApplicationEffects,
-                apply: { [weak self] application in
-                    self?.dispatchStoreApplication(application)
-                },
-                perform: { [weak self] application in
-                    await self?.performStoreApplication(application)
-                }
+                applications: storeApplicationEffects
             )
         )
     }
@@ -968,9 +934,7 @@ private extension NostrHomeTimelineStore {
                 projection: { [weak self] in
                     self?.stateContextProjection()
                 },
-                apply: { [weak self] application in
-                    self?.dispatchStoreApplication(application)
-                }
+                applications: storeApplicationEffects
             )
         )
     }

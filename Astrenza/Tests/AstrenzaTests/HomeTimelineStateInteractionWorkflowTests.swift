@@ -82,16 +82,17 @@ struct HomeTimelineStateInteractionTests {
             context: fixture.context
         )
 
-        #expect(fixture.probe.events == [
-            .presentationTransition,
+        #expect(fixture.probe.applicationFixture.probe.events == [
+            .presentation(changes: 0),
             .contentRelays(["wss://content.example"]),
-            .plannedRelayCount(2),
+            .relaySnapshot(plannedCount: 2),
             .listRevision(4),
             .pendingCount(3),
             .materializeEntries,
             .reloadProjection(
                 accountID: fixture.router.applicationAccount.pubkey,
-                anchorEventID: "anchor"
+                anchorEventID: "anchor",
+                mergingWithCurrentWindow: false
             ),
             .requestNewestProjectionReload,
             .scheduleMaterialization(
@@ -99,7 +100,7 @@ struct HomeTimelineStateInteractionTests {
                 allowsRealtimeFollow: true
             ),
             .materializeEntries,
-            .relayStatusTransition(fixture.relayStatus.transition)
+            .relayTransition(fixture.relayStatus.transition)
         ])
         #expect(fixture.relayStatus.records == [
             HomeTimelineRelayStatusRecord(
@@ -259,22 +260,6 @@ private final class StateInteractionRouterSpy: HomeTimelineStateRouting {
 
 @MainActor
 private final class StateInteractionProbe {
-    enum Event: Equatable {
-        case presentationTransition
-        case contentRelays([String])
-        case plannedRelayCount(Int)
-        case listRevision(Int)
-        case pendingCount(Int)
-        case reloadProjection(accountID: String, anchorEventID: String?)
-        case requestNewestProjectionReload
-        case scheduleMaterialization(
-            delayNanoseconds: UInt64?,
-            allowsRealtimeFollow: Bool?
-        )
-        case materializeEntries
-        case relayStatusTransition(HomeTimelineRelayStatusTransition)
-    }
-
     var persistenceState = HomeTimelinePersistenceState(
         accountID: "initial",
         followedPubkeys: []
@@ -282,7 +267,7 @@ private final class StateInteractionProbe {
     var hasPendingEvents = true
     var providesProjection = true
     var projectionReads = 0
-    var events: [Event] = []
+    let applicationFixture = StoreApplicationDispatcherFixture()
 }
 
 @MainActor
@@ -316,9 +301,7 @@ private struct StateInteractionFixture {
                         hasPendingEvents: probe.hasPendingEvents
                     )
                 },
-                apply: { [probe] application in
-                    probe.record(application)
-                }
+                applications: probe.applicationFixture.effects
             )
         )
         .context()
@@ -356,39 +339,5 @@ private struct StateInteractionFixture {
             hasMoreOlder: true,
             deferredMaterializationDelayNanoseconds: 240
         )
-    }
-}
-
-@MainActor
-private extension StateInteractionProbe {
-    func record(_ application: HomeTimelineStateInteractionApplication) {
-        switch application {
-        case .applyPresentationTransition:
-            events.append(.presentationTransition)
-        case .applyContentSnapshot(let snapshot):
-            events.append(.contentRelays(snapshot.resolvedRelays))
-        case .applyRelayStatusSnapshot(let snapshot):
-            events.append(.plannedRelayCount(snapshot.plannedRelayCount))
-        case .applyListProjectionInvalidation(let invalidation):
-            events.append(.listRevision(invalidation.revision))
-        case .applyPendingEventCountPublication(let publication):
-            events.append(.pendingCount(publication.count))
-        case .reloadProjection(let account, let anchorEventID):
-            events.append(.reloadProjection(
-                accountID: account.pubkey,
-                anchorEventID: anchorEventID
-            ))
-        case .requestNewestProjectionReload:
-            events.append(.requestNewestProjectionReload)
-        case .scheduleMaterialization(let delay, let allowsRealtimeFollow):
-            events.append(.scheduleMaterialization(
-                delayNanoseconds: delay,
-                allowsRealtimeFollow: allowsRealtimeFollow
-            ))
-        case .materializeEntries:
-            events.append(.materializeEntries)
-        case .applyRelayStatusTransition(let transition):
-            events.append(.relayStatusTransition(transition))
-        }
     }
 }

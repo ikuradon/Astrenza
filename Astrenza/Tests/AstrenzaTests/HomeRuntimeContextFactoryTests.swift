@@ -94,7 +94,7 @@ struct HomeRuntimeContextFactoryTests {
         ))
     }
 
-    @Test("Runtime applications route through injected sinks")
+    @Test("Runtime applications route through supplied applications")
     func routesRuntimeApplications() async {
         let fixture = RuntimeContextFactoryFixture()
         let interaction = fixture.factory.interactionContext()
@@ -113,16 +113,14 @@ struct HomeRuntimeContextFactoryTests {
             )
         event.effects.runtimeApplication.sourceInstallFailed("install failed")
 
-        #expect(fixture.probe.actions == [
+        #expect(fixture.probe.applicationFixture.probe.events == [
             .setRealtime(true),
-            .scheduleLinkPreviewResolution
-        ])
-        #expect(fixture.probe.asyncActions == [
-            .handleEvent(
+            .runtimeEvent(
                 relayURL: "wss://relay.example",
                 subscriptionID: "runtime-context",
-                event: fixture.event
-            )
+                eventID: fixture.event.id
+            ),
+            .scheduleLinkPreviewResolution
         ])
         #expect(fixture.probe.runtimeApplications == [
             .listProjectionInvalidation(7),
@@ -134,8 +132,7 @@ struct HomeRuntimeContextFactoryTests {
 @MainActor
 private final class RuntimeContextFactoryProbe {
     var snapshot: HomeTimelineRuntimeStoreSnapshot?
-    private(set) var actions: [HomeTimelineRuntimeStoreAction] = []
-    private(set) var asyncActions: [HomeTimelineRuntimeStoreAsyncAction] = []
+    let applicationFixture = StoreApplicationDispatcherFixture()
     private(set) var runtimeApplications: [RuntimeContextApplication] = []
     private(set) var validatedFeedIDs: [String] = []
 
@@ -151,12 +148,7 @@ private final class RuntimeContextFactoryProbe {
                 return context.feedID == "home:replacement"
             },
             runtimeApplication: runtimeApplicationEffects,
-            apply: { [self] action in
-                actions.append(action)
-            },
-            perform: { [self] action in
-                asyncActions.append(action)
-            }
+            applications: applicationFixture.effects
         )
     }
 

@@ -25,7 +25,7 @@ struct HomeStateContextFactoryTests {
         #expect(context.effects.environment.projection() == nil)
     }
 
-    @Test("State applications route through the injected sink")
+    @Test("State applications route through supplied applications")
     func contextRoutesApplications() {
         let fixture = StateContextFactoryFixture()
         let context = fixture.factory.context()
@@ -36,7 +36,7 @@ struct HomeStateContextFactoryTests {
         ))
         context.effects.apply(.materializeEntries)
 
-        #expect(fixture.probe.events == [
+        #expect(fixture.probe.applicationFixture.probe.events == [
             .scheduleMaterialization(
                 delayNanoseconds: 120,
                 allowsRealtimeFollow: true
@@ -48,17 +48,8 @@ struct HomeStateContextFactoryTests {
 
 @MainActor
 private final class StateContextFactoryProbe {
-    enum Event: Equatable {
-        case scheduleMaterialization(
-            delayNanoseconds: UInt64?,
-            allowsRealtimeFollow: Bool?
-        )
-        case materializeEntries
-        case other
-    }
-
     var projection: HomeTimelineStateContextProjection?
-    private(set) var events: [Event] = []
+    let applicationFixture = StoreApplicationDispatcherFixture()
 
     init(projection: HomeTimelineStateContextProjection) {
         self.projection = projection
@@ -67,26 +58,8 @@ private final class StateContextFactoryProbe {
     var environment: HomeStateContextEnvironment {
         HomeStateContextEnvironment(
             projection: { [self] in projection },
-            apply: { [self] application in
-                events.append(Self.event(for: application))
-            }
+            applications: applicationFixture.effects
         )
-    }
-
-    private static func event(
-        for application: HomeTimelineStateInteractionApplication
-    ) -> Event {
-        switch application {
-        case .scheduleMaterialization(let delay, let allowsRealtimeFollow):
-            .scheduleMaterialization(
-                delayNanoseconds: delay,
-                allowsRealtimeFollow: allowsRealtimeFollow
-            )
-        case .materializeEntries:
-            .materializeEntries
-        default:
-            .other
-        }
     }
 }
 
