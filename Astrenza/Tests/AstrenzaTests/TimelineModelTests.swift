@@ -532,6 +532,48 @@ struct TimelineModelTests {
         } == false)
     }
 
+    @Test("Timeline content projection preserves adjacent custom emoji")
+    func timelineContentProjectionPreservesAdjacentCustomEmoji() {
+        let shortcodes = [
+            "tiger_upper_left",
+            "tiger_upper_right",
+            "tiger_middle_left",
+            "tiger_middle_right",
+            "tiger_lower_left",
+            "tiger_lower_right"
+        ]
+        let content = """
+        :tiger_middle_left::tiger_middle_right:
+        :tiger_upper_left::tiger_lower_left:
+        :tiger_lower_right::tiger_upper_right:
+        """
+        let event = timelineEvent(
+            idSeed: "adjacent-custom-emoji",
+            pubkey: String(repeating: "a", count: 64),
+            createdAt: 120,
+            tags: shortcodes.map { shortcode in
+                ["emoji", shortcode, "https://emoji.example.test/\(shortcode).webp"]
+            },
+            content: content
+        )
+
+        let projection = NostrTimelineContentProjection(event: event)
+        let projectedShortcodes = projection.richBody.tokens.compactMap { token -> String? in
+            guard case .customEmoji(let shortcode, _) = token else { return nil }
+            return shortcode
+        }
+
+        #expect(projection.richBody.displayText == content)
+        #expect(projectedShortcodes == [
+            "tiger_middle_left",
+            "tiger_middle_right",
+            "tiger_upper_left",
+            "tiger_lower_left",
+            "tiger_lower_right",
+            "tiger_upper_right"
+        ])
+    }
+
     @Test("Nostr materializer resolves inline profile rich content display names")
     func nostrMaterializerResolvesInlineProfileRichContentDisplayNames() throws {
         let author = String(repeating: "a", count: 64)

@@ -168,8 +168,11 @@ public enum NostrRichContentParser {
                 continue
             }
 
-            if let emojiToken = customEmojiToken(from: token.value, customEmojis: customEmojis, trailing: token.trailing) {
-                tokens.append(emojiToken)
+            if let emojiTokens = customEmojiTokens(
+                from: token.value,
+                customEmojis: customEmojis
+            ) {
+                tokens.append(contentsOf: emojiTokens)
                 appendTrailing(token.trailing, to: &tokens)
                 continue
             }
@@ -264,18 +267,42 @@ public enum NostrRichContentParser {
         return result
     }
 
-    private static func customEmojiToken(
+    private static func customEmojiTokens(
         from token: String,
-        customEmojis: [String: URL],
-        trailing: String
-    ) -> NostrRichContentToken? {
-        guard token.hasPrefix(":"),
-              token.hasSuffix(":"),
-              token.count > 2
-        else { return nil }
-        let shortcode = String(token.dropFirst().dropLast())
-        guard let url = customEmojis[shortcode] else { return nil }
-        return .customEmoji(shortcode: shortcode, url: url)
+        customEmojis: [String: URL]
+    ) -> [NostrRichContentToken]? {
+        guard !customEmojis.isEmpty else { return nil }
+
+        var tokens: [NostrRichContentToken] = []
+        var plainTextStart = token.startIndex
+        var cursor = token.startIndex
+        var openingColon: String.Index?
+        var foundEmoji = false
+
+        while cursor < token.endIndex {
+            if token[cursor] == ":" {
+                if let candidateStart = openingColon {
+                    let shortcodeStart = token.index(after: candidateStart)
+                    let shortcode = String(token[shortcodeStart..<cursor])
+                    if let url = customEmojis[shortcode] {
+                        appendText(String(token[plainTextStart..<candidateStart]), to: &tokens)
+                        tokens.append(.customEmoji(shortcode: shortcode, url: url))
+                        foundEmoji = true
+                        plainTextStart = token.index(after: cursor)
+                        openingColon = nil
+                    } else {
+                        openingColon = cursor
+                    }
+                } else {
+                    openingColon = cursor
+                }
+            }
+            cursor = token.index(after: cursor)
+        }
+
+        guard foundEmoji else { return nil }
+        appendText(String(token[plainTextStart...]), to: &tokens)
+        return tokens
     }
 
     private static func hashtag(from token: String) -> String? {
