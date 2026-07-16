@@ -49,6 +49,11 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let localMutationInteractionWorkflow:
         HomeLocalMutationInteractionWorkflow?
     private let relayRuntime: NostrRelayRuntime?
+    private lazy var readBoundaryStoreCoordinator =
+        HomeStoreReadBoundaryCoordinator(
+            interaction: readBoundaryInteractionWorkflow,
+            target: self
+        )
     private lazy var storeApplicationEffects =
         HomeStoreApplicationEffectsFactory.make(target: self)
     private lazy var featureInteractionContextFactory =
@@ -388,7 +393,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func timelineEvent(id: String) -> NostrEvent? {
+    func timelineEvent(id: String) -> NostrEvent? {
         queryInteractionWorkflow.event(
             id: id,
             preferring: noteEvents
@@ -404,18 +409,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func persistDatabase(account: NostrAccount) async {
-        let dependencies = dataInteractionWorkflow.dependencyResolutionState
         await stateInteractionWorkflow.persistSnapshot(
-            HomeTimelineSnapshotInput(
-                accountID: account.pubkey,
-                relays: resolvedRelays,
-                followedPubkeys: followedPubkeys,
-                noteEvents: noteEvents,
-                metadataEvents: metadataEvents,
-                relayListEvent: relayListEvent,
-                contactListEvent: contactListEvent,
-                nip05Resolutions: dependencies.nip05Resolutions,
-                hasMoreOlder: hasMoreOlder
+            dataInteractionWorkflow.persistenceSnapshotInput(
+                accountID: account.pubkey
             ),
             context: stateContextFactory.context()
         )
@@ -429,42 +425,15 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     private func restoreHomeFeedReadState(account: NostrAccount) async {
-        let positions = entries.compactMap(\.post).map { post in
-            HomeTimelineReadPosition(postID: post.id, createdAt: post.createdAt)
-        }
-        let boundaryID = await readBoundaryInteractionWorkflow
-            .restoredReadBoundaryPostID(
-                accountID: account.pubkey,
-                positions: positions
-            )
-        guard !Task.isCancelled,
-              self.account?.pubkey == account.pubkey,
-              let boundaryID
-        else { return }
-        applyPresentationTransition(
-            presentationWorkflow.restoreReadBoundary(postID: boundaryID)
-        )
+        await readBoundaryStoreCoordinator.restore(account: account)
     }
 
     func scheduleHomeFeedReadStateSave() {
-        guard let account else { return }
-        readBoundaryInteractionWorkflow.scheduleReadBoundarySave(
-            accountID: account.pubkey,
-            boundaryEvent: currentReadBoundaryEvent()
-        )
+        readBoundaryStoreCoordinator.scheduleSave()
     }
 
     private func homeFeedReadBoundaryWrite() -> HomeTimelineReadBoundaryWrite? {
-        guard let account else { return nil }
-        return readBoundaryInteractionWorkflow.readBoundaryWrite(
-            accountID: account.pubkey,
-            boundaryEvent: currentReadBoundaryEvent()
-        )
-    }
-
-    private func currentReadBoundaryEvent() -> NostrEvent? {
-        let boundaryID = presentationWorkflow.interactionState.readBoundaryPostID
-        return boundaryID.flatMap(timelineEvent(id:))
+        readBoundaryStoreCoordinator.boundaryWrite()
     }
 
     func prepareHomeFeedDefinition(account: NostrAccount) {
@@ -921,6 +890,10 @@ extension NostrHomeTimelineStore {
         publishedStateCoordinator.accountContext.syncPolicy
     }
 
+    var currentReadBoundaryPostID: String? {
+        presentationWorkflow.interactionState.readBoundaryPostID
+    }
+
     var restoreProjectionAnchorEventID: String? {
         projectionViewportCoordinator.restoreAnchorEventID
     }
@@ -944,6 +917,12 @@ extension NostrHomeTimelineStore {
         _ transition: HomeTimelineProjectionViewportTransition
     ) {
         projectionViewportCoordinator.apply(transition)
+    }
+
+    func applyRestoredReadBoundary(postID: String) {
+        applyPresentationTransition(
+            presentationWorkflow.restoreReadBoundary(postID: postID)
+        )
     }
 
     func applyAccountContextTransition(
@@ -1000,6 +979,9 @@ extension NostrHomeTimelineStore:
 
 extension NostrHomeTimelineStore:
     HomeRestoreProjectionAnchorTarget {}
+
+extension NostrHomeTimelineStore:
+    HomeStoreReadBoundaryTarget {}
 
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {

@@ -127,6 +127,23 @@ final class HomeTimelineDataInteractionWorkflow {
             relaySyncEvents: relaySyncEvents
         )
     }
+
+    func persistenceSnapshotInput(
+        accountID: String
+    ) -> HomeTimelineSnapshotInput {
+        let snapshot = content.snapshot
+        return HomeTimelineSnapshotInput(
+            accountID: accountID,
+            relays: snapshot.resolvedRelays,
+            followedPubkeys: snapshot.followedPubkeys,
+            noteEvents: snapshot.noteEvents,
+            metadataEvents: snapshot.metadataEvents,
+            relayListEvent: snapshot.relayListEvent,
+            contactListEvent: snapshot.contactListEvent,
+            nip05Resolutions: dependencies.nip05Resolutions,
+            hasMoreOlder: snapshot.hasMoreOlder
+        )
+    }
 }
 
 #if DEBUG
