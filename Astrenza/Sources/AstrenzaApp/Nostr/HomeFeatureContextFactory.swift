@@ -23,20 +23,10 @@ struct HomeFeatureInteractionEnvironment: Sendable {
     ) -> HomeTimelineFeatureInteractionSnapshot?
 
     let snapshot: SnapshotProvider
-    let applyFilter: HomeFilterInteractionEffects.ApplicationEffect
-    let applySync: HomeTimelineSyncInteractionEffects.ApplicationEffect
-    let applyLocalMutation:
-        HomeLocalMutationInteractionEffects.ApplicationEffect
-    let applyGapBackfill: HomeGapBackfillInteractionEffects.ApplicationEffect
-    let applyPublish: HomeTimelinePublishInteractionEffects.ApplicationEffect
-    let performPublish:
-        HomeTimelinePublishInteractionEffects.AsyncApplicationEffect
-    let applyBackward:
-        HomeTimelineBackwardInteractionEffects.ApplicationEffect
+    let applications: HomeTimelineStoreApplicationEffects
     let resolveBackwardDependencies:
         HomeTimelineBackwardInteractionEffects.DependencyEffect
     let didUpdateLinkPreview: HomeLinkPreviewInteractionEffects.UpdateEffect
-    let applyLinkPreview: HomeLinkPreviewInteractionEffects.ApplicationEffect
 }
 
 struct HomeTimelineLinkPreviewStoreInteraction: Sendable {
@@ -46,25 +36,78 @@ struct HomeTimelineLinkPreviewStoreInteraction: Sendable {
 
 @MainActor
 struct HomeFeatureContextFactory {
-    private let environment: HomeFeatureInteractionEnvironment
+    private let snapshot: HomeFeatureInteractionEnvironment.SnapshotProvider
+    private let filterEffects: HomeFilterInteractionEffects
+    private let syncEffects: HomeTimelineSyncInteractionEffects
+    private let localMutationEffects: HomeLocalMutationInteractionEffects
+    private let gapBackfillEffects: HomeGapBackfillInteractionEffects
+    private let publishEffects: HomeTimelinePublishInteractionEffects
+    private let backwardEffects: HomeTimelineBackwardInteractionEffects
+    private let linkPreviewEffects: HomeLinkPreviewInteractionEffects
 
     init(environment: HomeFeatureInteractionEnvironment) {
-        self.environment = environment
+        snapshot = environment.snapshot
+
+        let snapshot = environment.snapshot
+        let router = HomeFeatureApplicationRouter(
+            applications: environment.applications
+        )
+        filterEffects = HomeFilterInteractionEffects(
+            apply: { action in
+                router.apply(action)
+            }
+        )
+        syncEffects = HomeTimelineSyncInteractionEffects(
+            apply: { action in
+                router.apply(action)
+            }
+        )
+        localMutationEffects = HomeLocalMutationInteractionEffects(
+            apply: { action in
+                router.apply(action)
+            }
+        )
+        gapBackfillEffects = HomeGapBackfillInteractionEffects(
+            apply: { action in
+                router.apply(action)
+            }
+        )
+        publishEffects = HomeTimelinePublishInteractionEffects(
+            environment: HomeTimelinePublishEnvironment(
+                currentAccountID: {
+                    snapshot()?.account?.pubkey
+                }
+            ),
+            apply: { action in
+                router.apply(action)
+            },
+            perform: { action in
+                await router.perform(action)
+            }
+        )
+        backwardEffects = HomeTimelineBackwardInteractionEffects(
+            apply: { action in
+                router.apply(action)
+            },
+            resolveDependencies: environment.resolveBackwardDependencies
+        )
+        linkPreviewEffects = HomeLinkPreviewInteractionEffects(
+            didUpdate: environment.didUpdateLinkPreview,
+            apply: { action in
+                router.apply(action)
+            }
+        )
     }
 
     func filterContext() -> HomeFilterInteractionContext {
         HomeFilterInteractionContext(
-            effects: HomeFilterInteractionEffects(
-                apply: environment.applyFilter
-            )
+            effects: filterEffects
         )
     }
 
     func syncContext() -> HomeTimelineSyncInteractionContext {
         HomeTimelineSyncInteractionContext(
-            effects: HomeTimelineSyncInteractionEffects(
-                apply: environment.applySync
-            )
+            effects: syncEffects
         )
     }
 
@@ -73,9 +116,7 @@ struct HomeFeatureContextFactory {
             state: HomeLocalMutationInteractionState(
                 accountID: currentSnapshot().account?.pubkey
             ),
-            effects: HomeLocalMutationInteractionEffects(
-                apply: environment.applyLocalMutation
-            )
+            effects: localMutationEffects
         )
     }
 
@@ -87,9 +128,7 @@ struct HomeFeatureContextFactory {
                 hasRelayRuntime: snapshot.hasRelayRuntime,
                 resolvedRelays: snapshot.resolvedRelays
             ),
-            effects: HomeGapBackfillInteractionEffects(
-                apply: environment.applyGapBackfill
-            )
+            effects: gapBackfillEffects
         )
     }
 
@@ -97,7 +136,6 @@ struct HomeFeatureContextFactory {
         account: NostrAccount
     ) -> HomeTimelinePublishInteractionContext {
         let snapshot = currentSnapshot()
-        let snapshotProvider = environment.snapshot
         return HomeTimelinePublishInteractionContext(
             state: HomeTimelinePublishInteractionState(
                 account: account,
@@ -106,15 +144,7 @@ struct HomeFeatureContextFactory {
                 ).writeRelays,
                 fallbackRelays: snapshot.resolvedRelays
             ),
-            effects: HomeTimelinePublishInteractionEffects(
-                environment: HomeTimelinePublishEnvironment(
-                    currentAccountID: {
-                        snapshotProvider()?.account?.pubkey
-                    }
-                ),
-                apply: environment.applyPublish,
-                perform: environment.performPublish
-            )
+            effects: publishEffects
         )
     }
 
@@ -125,10 +155,7 @@ struct HomeFeatureContextFactory {
                 account: snapshot.account,
                 resolvedRelays: snapshot.resolvedRelays
             ),
-            effects: HomeTimelineBackwardInteractionEffects(
-                apply: environment.applyBackward,
-                resolveDependencies: environment.resolveBackwardDependencies
-            )
+            effects: backwardEffects
         )
     }
 
@@ -141,14 +168,53 @@ struct HomeFeatureContextFactory {
                 resolvedRelays: snapshot.resolvedRelays,
                 policy: snapshot.syncPolicy
             ),
-            effects: HomeLinkPreviewInteractionEffects(
-                didUpdate: environment.didUpdateLinkPreview,
-                apply: environment.applyLinkPreview
-            )
+            effects: linkPreviewEffects
         )
     }
 
     private func currentSnapshot() -> HomeTimelineFeatureInteractionSnapshot {
-        environment.snapshot() ?? .empty
+        snapshot() ?? .empty
+    }
+}
+
+@MainActor
+private struct HomeFeatureApplicationRouter {
+    private let applications: HomeTimelineStoreApplicationEffects
+    private let dispatcher = HomeTimelineStoreApplicationDispatcher()
+
+    init(applications: HomeTimelineStoreApplicationEffects) {
+        self.applications = applications
+    }
+
+    func apply(_ action: HomeTimelineFilterStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineSyncStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineLocalMutationStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineGapBackfillStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelinePublishStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func perform(_ action: HomeTimelinePublishAsyncAction) async {
+        await dispatcher.perform(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineBackwardStoreAction) {
+        dispatcher.apply(action, effects: applications)
+    }
+
+    func apply(_ action: HomeTimelineLinkPreviewStoreAction) {
+        dispatcher.apply(action, effects: applications)
     }
 }

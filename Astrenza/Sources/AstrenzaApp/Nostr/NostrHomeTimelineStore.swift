@@ -671,78 +671,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func dispatchStoreApplication(
-        _ action: HomeTimelineLinkPreviewStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ action: HomeTimelineFilterStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ action: HomeTimelineSyncStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ action: HomeTimelineLocalMutationStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ action: HomeTimelineGapBackfillStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ action: HomeTimelinePublishStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func dispatchStoreApplication(
-        _ action: HomeTimelineBackwardStoreAction
-    ) {
-        storeApplicationDispatcher.apply(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
-    private func performStoreApplication(
-        _ action: HomeTimelinePublishAsyncAction
-    ) async {
-        await storeApplicationDispatcher.perform(
-            action,
-            effects: storeApplicationEffects
-        )
-    }
-
     private func performStoreApplication(
         _ application: HomeTimelineRuntimeStoreAsyncAction
     ) async {
@@ -1054,28 +982,7 @@ private extension NostrHomeTimelineStore {
                 snapshot: { [weak self] in
                     self?.featureInteractionSnapshot()
                 },
-                applyFilter: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                applySync: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                applyLocalMutation: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                applyGapBackfill: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                applyPublish: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
-                performPublish: { [weak self] action in
-                    guard let self else { return }
-                    await performStoreApplication(action)
-                },
-                applyBackward: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
-                },
+                applications: storeApplicationEffects,
                 resolveBackwardDependencies: { [weak self] request in
                     guard let self else { return false }
                     return await resolveBackwardDependencies(request)
@@ -1083,9 +990,6 @@ private extension NostrHomeTimelineStore {
                 didUpdateLinkPreview: { [weak self] in
                     self?.invalidateListEntries()
                     self?.scheduleMaterializeEntries()
-                },
-                applyLinkPreview: { [weak self] action in
-                    self?.dispatchStoreApplication(action)
                 }
             )
         )
@@ -1562,8 +1466,8 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        dispatchStoreApplication(
-            HomeTimelineSyncStoreAction.setRealtime(isRealtime)
+        featureInteractionContextFactory.syncContext().effects.apply(
+            .setRealtime(isRealtime)
         )
     }
 

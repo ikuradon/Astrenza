@@ -37,7 +37,7 @@ struct HomeFeatureContextFactoryTests {
         ))
     }
 
-    @Test("Every typed effect routes through its injected sink")
+    @Test("Every typed effect routes through supplied applications")
     func routesFeatureEffects() async {
         let fixture = FeatureInteractionContextFactoryFixture()
         let factory = fixture.factory
@@ -66,19 +66,19 @@ struct HomeFeatureContextFactoryTests {
         ))
 
         #expect(!didResolve)
+        #expect(fixture.probe.applicationFixture.probe.events == [
+            .invalidateListEntries,
+            .setRealtime(true),
+            .materializeEntries,
+            .materializeEntries,
+            .materializeEntries,
+            .persistDatabase(fixture.account.pubkey),
+            .scheduleLinkPreviewResolution,
+            .relayTransition(fixture.relayTransition)
+        ])
         #expect(fixture.probe.events == [
-            .filter(.invalidateListEntries),
-            .sync(.setRealtime(true)),
-            .localMutation(.materializeEntries),
-            .gapBackfill(.materializeEntries),
-            .publish(.materializeEntries),
-            .publishAsync(.persistDatabase(fixture.account)),
-            .backward(.scheduleLinkPreviewResolution),
             .backwardDependency(dependencyRequest),
-            .linkPreviewUpdated,
-            .linkPreview(.applyRelayStatusTransition(
-                fixture.relayTransition
-            ))
+            .linkPreviewUpdated
         ])
     }
 
@@ -112,19 +112,12 @@ struct HomeFeatureContextFactoryTests {
 @MainActor
 private final class FeatureInteractionContextFactoryProbe {
     enum Event: Equatable {
-        case filter(HomeTimelineFilterStoreAction)
-        case sync(HomeTimelineSyncStoreAction)
-        case localMutation(HomeTimelineLocalMutationStoreAction)
-        case gapBackfill(HomeTimelineGapBackfillStoreAction)
-        case publish(HomeTimelinePublishStoreAction)
-        case publishAsync(HomeTimelinePublishAsyncAction)
-        case backward(HomeTimelineBackwardStoreAction)
         case backwardDependency(HomeTimelineBackwardDependencyRequest)
         case linkPreviewUpdated
-        case linkPreview(HomeTimelineLinkPreviewStoreAction)
     }
 
     var snapshot: HomeTimelineFeatureInteractionSnapshot?
+    let applicationFixture = StoreApplicationDispatcherFixture()
     private(set) var events: [Event] = []
 
     init(snapshot: HomeTimelineFeatureInteractionSnapshot) {
@@ -134,36 +127,13 @@ private final class FeatureInteractionContextFactoryProbe {
     var environment: HomeFeatureInteractionEnvironment {
         HomeFeatureInteractionEnvironment(
             snapshot: { [self] in snapshot },
-            applyFilter: { [self] action in
-                events.append(.filter(action))
-            },
-            applySync: { [self] action in
-                events.append(.sync(action))
-            },
-            applyLocalMutation: { [self] action in
-                events.append(.localMutation(action))
-            },
-            applyGapBackfill: { [self] action in
-                events.append(.gapBackfill(action))
-            },
-            applyPublish: { [self] action in
-                events.append(.publish(action))
-            },
-            performPublish: { [self] action in
-                events.append(.publishAsync(action))
-            },
-            applyBackward: { [self] action in
-                events.append(.backward(action))
-            },
+            applications: applicationFixture.effects,
             resolveBackwardDependencies: { [self] request in
                 events.append(.backwardDependency(request))
                 return false
             },
             didUpdateLinkPreview: { [self] in
                 events.append(.linkPreviewUpdated)
-            },
-            applyLinkPreview: { [self] action in
-                events.append(.linkPreview(action))
             }
         )
     }
