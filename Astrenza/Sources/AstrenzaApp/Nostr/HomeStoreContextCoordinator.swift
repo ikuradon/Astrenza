@@ -3,6 +3,7 @@ import AstrenzaCore
 @MainActor
 struct HomeStoreComposition {
     let query: HomeStoreQueryCoordinator
+    let projection: HomeStoreProjectionCoordinator
     let context: HomeStoreContextCoordinator
     let runtime: HomeStoreRuntimeCoordinator
     let viewport: HomeStoreViewportCoordinator
@@ -24,6 +25,9 @@ struct HomeStoreComposition {
         )
         return HomeStoreComposition(
             query: query,
+            projection: HomeStoreProjectionCoordinator.live(
+                components: components
+            ),
             context: context,
             runtime: HomeStoreRuntimeCoordinator.live(
                 components: components,

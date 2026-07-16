@@ -21,11 +21,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
+    private let projectionCoordinator: HomeStoreProjectionCoordinator
     private let contextCoordinator: HomeStoreContextCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private let projectionInteractionWorkflow:
-        HomeProjectionInteractionWorkflow
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -42,10 +41,6 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
-    }
-
-    private var noteEvents: [NostrEvent] {
-        dataInteractionWorkflow.contentState.noteEvents
     }
 
     func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
@@ -128,11 +123,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
         self.queryStoreCoordinator = composition.query
+        self.projectionCoordinator = composition.projection
         self.contextCoordinator = composition.context
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
-        self.projectionInteractionWorkflow =
-            components.projectionInteractionWorkflow
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
@@ -159,7 +153,7 @@ extension NostrHomeTimelineStore {
     }
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
-        projectionInteractionWorkflow.restoredViewportState(
+        projectionCoordinator.restoredViewportState(
             accountID: accountID,
             timelineKey: timelineKey
         )
@@ -238,7 +232,7 @@ extension NostrHomeTimelineStore {
     }
 
     func cancel() {
-        projectionInteractionWorkflow.cancelMaterialization()
+        projectionCoordinator.cancelMaterialization()
         accountResetInteractionWorkflow.reset(
             context: contextCoordinator.accountResetContext()
         )
@@ -298,15 +292,11 @@ extension NostrHomeTimelineStore {
     }
 
     func prepareHomeFeedDefinition(account: NostrAccount) {
-        projectionInteractionWorkflow.prepareDefinition(
-            account: account,
-            followedPubkeys: followedPubkeys,
-            liveEvents: noteEvents
-        )
+        projectionCoordinator.prepareDefinition(account: account)
     }
 
     func reloadNewestProjectionWindow(account: NostrAccount) {
-        projectionInteractionWorkflow.reloadNewestProjection(account: account)
+        projectionCoordinator.reloadNewestProjection(account: account)
     }
 
     func reloadProjectionWindow(
@@ -316,7 +306,7 @@ extension NostrHomeTimelineStore {
         onCompletion: HomeTimelineMaterializationCoordinating
             .ProjectionReloadHandler? = nil
     ) {
-        projectionInteractionWorkflow.reloadProjection(
+        projectionCoordinator.reloadProjection(
             account: account,
             around: anchorEventID,
             mergingWithCurrentWindow: mergingWithCurrentWindow,
@@ -544,7 +534,7 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore: HomeStoreQueryTarget {
     var queryPreferredEvents: [NostrEvent] {
-        noteEvents
+        dataInteractionWorkflow.contentState.noteEvents
     }
 }
 
@@ -782,7 +772,7 @@ extension NostrHomeTimelineStore {
         with loaded: NostrFeedWindow,
         centeredOn anchorEventID: String
     ) -> NostrFeedWindow {
-        projectionInteractionWorkflow.mergedWindow(
+        projectionCoordinator.mergedWindow(
             current,
             with: loaded,
             centeredOn: anchorEventID
@@ -804,7 +794,7 @@ extension NostrHomeTimelineStore {
                 .replaceFollowedPubkeys(sourceAuthors)
             )
         )
-        await projectionInteractionWorkflow.activateStoredProjection(
+        await projectionCoordinator.activateStoredProjection(
             definition: definition,
             sourceAuthors: sourceAuthors
         )
