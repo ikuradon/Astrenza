@@ -20,9 +20,9 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let contextCoordinator: HomeStoreContextCoordinator
     private let lifecycleCoordinator: HomeStoreLifecycleCoordinator
     private let featureActionCoordinator: HomeStoreFeatureActionCoordinator
+    private let syncCoordinator: HomeStoreSyncCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private lazy var restoreProjectionAnchorWorkflow =
         HomeRestoreProjectionAnchorWorkflow(target: self)
@@ -111,9 +111,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.contextCoordinator = composition.context
         self.lifecycleCoordinator = composition.lifecycle
         self.featureActionCoordinator = composition.featureActions
+        self.syncCoordinator = composition.sync
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
-        self.syncInteractionWorkflow = components.syncInteractionWorkflow
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
         bindContextComposition()
     }
@@ -396,17 +396,11 @@ private extension NostrHomeTimelineStore {
     func invalidateHomeTimelineRealtime(
         for key: RuntimeSubscriptionKey
     ) {
-        syncInteractionWorkflow.invalidateForwardSubscription(
-            key,
-            context: contextCoordinator.syncContext()
-        )
+        syncCoordinator.invalidateForwardSubscription(key)
     }
 
     func invalidateHomeTimelineRealtime(relayURL: String) {
-        syncInteractionWorkflow.invalidateForwardSubscriptions(
-            relayURL: relayURL,
-            context: contextCoordinator.syncContext()
-        )
+        syncCoordinator.invalidateForwardSubscriptions(relayURL: relayURL)
     }
 }
 
@@ -432,10 +426,7 @@ extension NostrHomeTimelineStore {
     func resetHomeTimelineRealtime(
         expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
     ) {
-        syncInteractionWorkflow.prepareForwardSubscriptions(
-            runtimeKeys,
-            context: contextCoordinator.syncContext()
-        )
+        syncCoordinator.prepareForwardSubscriptions(runtimeKeys)
     }
 
     func applyProjectionViewportTransition(
@@ -682,9 +673,7 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        contextCoordinator.syncContext().effects.apply(
-            .setRealtime(isRealtime)
-        )
+        syncCoordinator.setRealtimeForTesting(isRealtime)
     }
 
     func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
@@ -761,9 +750,9 @@ extension NostrHomeTimelineStore {
         definition: NostrFeedDefinitionRecord,
         anchorEventID: String?
     ) {
-        syncInteractionWorkflow.registerOlderPage(
-            groupID: packet.groupID,
-            context: HomeFeedRuntimeContext(definition: definition),
+        syncCoordinator.registerOlderFeedRequest(
+            packet: packet,
+            definition: definition,
             anchorEventID: anchorEventID
         )
     }
@@ -772,9 +761,9 @@ extension NostrHomeTimelineStore {
         packet: NostrREQPacket,
         definition: NostrFeedDefinitionRecord
     ) {
-        syncInteractionWorkflow.registerForwardContext(
-            HomeFeedRuntimeContext(definition: definition),
-            groupID: packet.groupID
+        syncCoordinator.registerForwardFeedRequest(
+            packet: packet,
+            definition: definition
         )
     }
 
@@ -785,9 +774,9 @@ extension NostrHomeTimelineStore {
         olderEventID: String,
         direction: TimelineGapFillDirection
     ) {
-        syncInteractionWorkflow.registerGap(
-            groupID: packet.groupID,
-            context: HomeFeedRuntimeContext(definition: definition),
+        syncCoordinator.registerGapFeedRequest(
+            packet: packet,
+            definition: definition,
             newerEventID: newerEventID,
             olderEventID: olderEventID,
             direction: direction
@@ -842,7 +831,7 @@ extension NostrHomeTimelineStore {
     }
 
     var testingPendingBackwardRequestCount: Int {
-        syncInteractionWorkflow.backwardRequestState.requestCount +
+        syncCoordinator.backwardRequestCount +
             dataInteractionWorkflow.dependencyWorkState.pendingSourceRequestCount
     }
 
@@ -851,11 +840,11 @@ extension NostrHomeTimelineStore {
     }
 
     var testingActiveFeedSyncRequestCount: Int {
-        syncInteractionWorkflow.activeRequestCount
+        syncCoordinator.activeRequestCount
     }
 
     var testingActiveFeedSyncContextCount: Int {
-        syncInteractionWorkflow.activeContextCount
+        syncCoordinator.activeContextCount
     }
 }
 #endif
