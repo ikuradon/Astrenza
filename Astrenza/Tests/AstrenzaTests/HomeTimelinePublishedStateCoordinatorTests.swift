@@ -102,6 +102,23 @@ struct PublishedStateCoordinatorTests {
         #expect(coordinator.relayStatus.revision == 1)
     }
 
+    @Test("Profile metadata has an independent observation revision")
+    func profileMetadataRevisionIsIndependent() {
+        let coordinator = HomeTimelinePublishedStateCoordinator(
+            syncPolicy: .default(networkType: .unknown)
+        )
+        let observation = observePublishedState(
+            coordinator.profileMetadataRevision
+        )
+
+        coordinator.publishProfileMetadataChange()
+        coordinator.publishProfileMetadataChange()
+
+        #expect(observation.count == 1)
+        #expect(coordinator.profileMetadataRevision == 2)
+        #expect(coordinator.resolvedContentRevision == 0)
+    }
+
     @Test("Entry observation ignores unrelated published state")
     func entryObservationIsIsolated() {
         let coordinator = HomeTimelinePublishedStateCoordinator(

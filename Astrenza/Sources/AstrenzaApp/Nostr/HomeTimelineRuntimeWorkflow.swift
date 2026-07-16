@@ -55,6 +55,7 @@ struct HomeTimelineRuntimeSessionEffects: Sendable {
     let isAccountCurrent: HomeTimelineRuntimeSessionHandlers.AccountValidity
     let application: HomeTimelineRuntimeApplicationEffects
     let packet: HomeTimelineRuntimePacketEffects
+    let publishProfileMetadataChange: Action
     let invalidateListEntries: Action
     let scheduleMaterialization: Action
 }
@@ -164,6 +165,8 @@ final class HomeTimelineRuntimeWorkflow {
         effects: HomeTimelineRuntimeSessionEffects
     ) {
         switch command {
+        case .profileMetadataChanged:
+            effects.publishProfileMetadataChange()
         case .profileDirectoryChanged:
             effects.invalidateListEntries()
             effects.scheduleMaterialization()

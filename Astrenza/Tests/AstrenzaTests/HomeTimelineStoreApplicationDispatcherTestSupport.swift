@@ -27,6 +27,7 @@ final class StoreApplicationDispatchProbe {
         case backwardCompletion(NostrBackwardREQCompletion)
         case invalidateListEntries
         case scheduleLinkPreviewResolution
+        case publishProfileMetadataChange
         case publishRelayStatusChange
         case runtimeEvent(
             relayURL: String,
@@ -181,6 +182,9 @@ struct StoreApplicationDispatcherFixture {
             },
             scheduleLinkPreviewResolution: { [probe] in
                 probe.events.append(.scheduleLinkPreviewResolution)
+            },
+            publishProfileMetadataChange: { [probe] in
+                probe.events.append(.publishProfileMetadataChange)
             },
             publishRelayStatusChange: { [probe] in
                 probe.events.append(.publishRelayStatusChange)

@@ -25,6 +25,7 @@ struct HomeTimelineRuntimeInteractionTests {
         #expect(fixture.runtime.accountValidity == [true])
         #expect(fixture.runtime.resetCount == 1)
         #expect(fixture.probe.applications == [
+            .publishProfileMetadataChange,
             .invalidateListEntries,
             .scheduleMaterialization,
             .setRealtime(false),

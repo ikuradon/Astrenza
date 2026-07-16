@@ -31,6 +31,21 @@ struct HomeTimelineRuntimeWorkflowTests {
         #expect(fixture.packetRouter.contexts == [fixture.observedContext])
     }
 
+    @Test("Profile metadata commands publish their dedicated revision")
+    func profileMetadataCommandPublishesRevision() {
+        let fixture = RuntimeWorkflowFixture()
+        fixture.session.command = .profileMetadataChanged
+
+        _ = fixture.workflow.startSession(
+            fixture.sessionRequest,
+            effects: fixture.sessionEffects
+        )
+
+        #expect(fixture.probe.profileChangeActions == [
+            .publishProfileMetadataChange
+        ])
+    }
+
     @Test("Packet application routes state, events, and backward completion")
     func packetRoutesEffects() async {
         let fixture = RuntimeWorkflowFixture()
@@ -175,6 +190,7 @@ private struct RuntimeWorkflowObservedContext: Equatable, Sendable {
 }
 
 private enum RuntimeProfileChangeAction: Equatable, Sendable {
+    case publishProfileMetadataChange
     case invalidateListEntries
     case scheduleMaterialization
 }
@@ -268,6 +284,11 @@ private struct RuntimeWorkflowFixture {
             },
             application: runtimeApplicationEffects,
             packet: packetEffects,
+            publishProfileMetadataChange: { [probe] in
+                probe.profileChangeActions.append(
+                    .publishProfileMetadataChange
+                )
+            },
             invalidateListEntries: { [probe] in
                 probe.profileChangeActions.append(.invalidateListEntries)
             },

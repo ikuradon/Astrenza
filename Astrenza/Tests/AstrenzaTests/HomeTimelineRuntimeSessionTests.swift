@@ -100,6 +100,27 @@ struct HomeTimelineRuntimeSessionTests {
         #expect(context.account == system.account)
         #expect(context.lifecycle == system.lifecycleToken)
         #expect(context.hasRelayRuntime)
+        #expect(system.probe.commands == [
+            .profileMetadataChanged,
+            .profileDirectoryChanged
+        ])
+    }
+
+    @Test("Profile state updates do not publish a metadata revision")
+    func profileStateDoesNotPublishMetadataRevision() throws {
+        let system = RuntimeSessionTestSystem()
+        _ = system.coordinator.start(
+            system.request(),
+            handlers: system.probe.handlers
+        )
+        let updateHandler = try #require(
+            system.profileObserver.updateHandlers.first
+        )
+
+        updateHandler(NostrProfileDirectoryUpdate(
+            states: [system.account.pubkey: .fetching]
+        ))
+
         #expect(system.probe.commands == [.profileDirectoryChanged])
     }
 

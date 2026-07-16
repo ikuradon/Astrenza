@@ -38,6 +38,7 @@ protocol HomeStoreApplicationEffectTarget: AnyObject {
     func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion)
     func invalidateListEntries()
     func scheduleLinkPreviewResolution()
+    func publishProfileMetadataChange()
     func publishRelayStatusChange()
     func handleRuntimeEvent(
         relayURL: String,
@@ -75,6 +76,8 @@ enum HomeStoreApplicationEffectsFactory {
             invalidateListEntries: bindings.invalidateListEntries,
             scheduleLinkPreviewResolution:
                 bindings.scheduleLinkPreviewResolution,
+            publishProfileMetadataChange:
+                bindings.publishProfileMetadataChange,
             publishRelayStatusChange: bindings.publishRelayStatusChange,
             handleRuntimeEvent: bindings.handleRuntimeEvent,
             persistDatabase: bindings.persistDatabase
@@ -208,6 +211,13 @@ private struct Bindings {
         HomeTimelineStoreApplicationEffects.Action {
         { [weak target] in
             target?.publishRelayStatusChange()
+        }
+    }
+
+    var publishProfileMetadataChange:
+        HomeTimelineStoreApplicationEffects.Action {
+        { [weak target] in
+            target?.publishProfileMetadataChange()
         }
     }
 

@@ -28,9 +28,9 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     }
 
     private var accountSummaries: [NostrAccountSummary] {
-        _ = timelineStore.resolvedContentRevision
-        return sessionStore.accountSummaries(
-            eventStore: timelineStore.presentationEventStore
+        sessionStore.accountSummaries(
+            eventStore: timelineStore.presentationEventStore,
+            metadataRevision: timelineStore.profileMetadataRevision
         )
     }
 

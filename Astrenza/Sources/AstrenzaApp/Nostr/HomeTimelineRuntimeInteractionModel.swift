@@ -230,6 +230,7 @@ enum HomeTimelineRuntimeStoreAction: Equatable, Sendable {
     case setRealtime(Bool)
     case applyRelayStatusTransition(HomeTimelineRelayStatusTransition?)
     case handleBackwardCompletion(NostrBackwardREQCompletion)
+    case publishProfileMetadataChange
     case invalidateListEntries
     case scheduleMaterialization
     case scheduleLinkPreviewResolution

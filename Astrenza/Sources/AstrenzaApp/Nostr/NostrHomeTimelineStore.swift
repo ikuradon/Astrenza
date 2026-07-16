@@ -299,6 +299,10 @@ extension NostrHomeTimelineStore {
         publishedStateCoordinator.resolvedContentRevision
     }
 
+    var profileMetadataRevision: Int {
+        publishedStateCoordinator.profileMetadataRevision
+    }
+
     var realtimeFollowSourceRevision: Int? {
         publishedStateCoordinator.realtimeFollowSourceRevision
     }

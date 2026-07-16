@@ -32,6 +32,7 @@ final class RuntimeInteractionRoutingSpy: HomeTimelineRuntimeRouting {
             effects.application.applyListProjectionInvalidation(
                 HomeTimelineListProjectionInvalidation(revision: 5)
             )
+            effects.publishProfileMetadataChange()
             effects.invalidateListEntries()
             effects.scheduleMaterialization()
         }

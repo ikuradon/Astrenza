@@ -11,6 +11,7 @@ final class HomeTimelinePublishedStateCoordinator {
     private(set) var materializedUnreadCount = 0
     private(set) var visibleUnreadBadgeCount = 0
     private(set) var resolvedContentRevision = 0
+    private(set) var profileMetadataRevision = 0
     private(set) var realtimeFollowSourceRevision: Int?
     private(set) var phase = NostrHomeTimelinePhase.idle
     private(set) var isRefreshing = false
@@ -177,6 +178,10 @@ extension HomeTimelinePublishedStateCoordinator {
 
     func publishRelayStatusChange() {
         relayStatusRevision &+= 1
+    }
+
+    func publishProfileMetadataChange() {
+        profileMetadataRevision &+= 1
     }
 
     func applyAccountContextTransition(

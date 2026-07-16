@@ -101,6 +101,10 @@ extension HomeStoreApplicationCoordinator {
         collaborators.status.publishRelayStatusChange()
     }
 
+    func publishProfileMetadataChange() {
+        collaborators.publishedState.publishProfileMetadataChange()
+    }
+
     func resetHomeTimelineRealtime(
         expecting runtimeKeys: Set<RuntimeSubscriptionKey>
     ) {

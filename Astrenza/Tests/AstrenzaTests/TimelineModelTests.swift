@@ -87,7 +87,10 @@ struct TimelineModelTests {
         store.loginInput = pubkey
         await store.login()
 
-        let summary = try #require(store.accountSummaries(eventStore: eventStore).first)
+        let summary = try #require(store.accountSummaries(
+            eventStore: eventStore,
+            metadataRevision: 0
+        ).first)
         #expect(summary.title == "User Real")
         #expect(summary.subtitle == "_@real.example")
         #expect(summary.npub.hasPrefix("npub1"))

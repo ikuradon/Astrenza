@@ -76,6 +76,10 @@ struct HomeStoreApplicationDispatcherTests {
             effects: fixture.effects
         )
         fixture.dispatcher.apply(
+            HomeTimelineRuntimeStoreAction.publishProfileMetadataChange,
+            effects: fixture.effects
+        )
+        fixture.dispatcher.apply(
             HomeTimelineRuntimeStoreAction.invalidateListEntries,
             effects: fixture.effects
         )
@@ -92,6 +96,7 @@ struct HomeStoreApplicationDispatcherTests {
             .setRealtime(true),
             .relayTransition(nil),
             .backwardCompletion(completion),
+            .publishProfileMetadataChange,
             .invalidateListEntries,
             .scheduleMaterialization(
                 delayNanoseconds: nil,

@@ -236,6 +236,9 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             isAccountCurrent: effects.environment.isAccountCurrent,
             application: effects.runtimeApplication,
             packet: packetEffects(isActive: nil, effects: effects),
+            publishProfileMetadataChange: {
+                effects.apply(.publishProfileMetadataChange)
+            },
             invalidateListEntries: {
                 effects.apply(.invalidateListEntries)
             },

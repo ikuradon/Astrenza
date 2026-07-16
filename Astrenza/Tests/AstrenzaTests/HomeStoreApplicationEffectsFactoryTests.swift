@@ -79,6 +79,7 @@ private func applyRuntimeEffects(
     effects.setRealtime(true)
     effects.setPhase(phase)
     effects.handleBackwardCompletion(fixture.backwardCompletion)
+    effects.publishProfileMetadataChange()
     effects.invalidateListEntries()
     effects.scheduleLinkPreviewResolution()
     effects.publishRelayStatusChange()
@@ -136,6 +137,7 @@ private func expectedRuntimeEvents(
         .setRealtime(true),
         .setPhase(phase),
         .backwardCompletion(fixture.backwardCompletion),
+        .publishProfileMetadataChange,
         .invalidateListEntries,
         .scheduleLinkPreviewResolution,
         .publishRelayStatusChange
@@ -264,6 +266,10 @@ private final class StoreApplicationEffectTargetSpy:
 
     func scheduleLinkPreviewResolution() {
         events.append(.scheduleLinkPreviewResolution)
+    }
+
+    func publishProfileMetadataChange() {
+        events.append(.publishProfileMetadataChange)
     }
 
     func publishRelayStatusChange() {

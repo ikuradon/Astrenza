@@ -58,6 +58,7 @@ struct HomeTimelineRuntimeSessionStart: Equatable, Sendable {
 }
 
 enum HomeTimelineRuntimeSessionCommand: Equatable, Sendable {
+    case profileMetadataChanged
     case profileDirectoryChanged
 }
 
@@ -177,6 +178,9 @@ final class HomeTimelineRuntimeSessionCoordinator {
                 context: context,
                 effects: handlers.applicationEffects
             )
+        }
+        if !update.metadataEvents.isEmpty {
+            handlers.perform(.profileMetadataChanged)
         }
         if !update.states.isEmpty || !update.metadataEvents.isEmpty {
             handlers.perform(.profileDirectoryChanged)

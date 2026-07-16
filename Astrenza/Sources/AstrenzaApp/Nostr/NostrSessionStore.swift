@@ -1,21 +1,5 @@
 import Foundation
 import AstrenzaCore
-import SwiftUI
-
-struct NostrAccountSummary: Identifiable {
-    let id: String
-    let account: NostrAccount
-    let title: String
-    let subtitle: String
-    let npub: String
-    let avatarStyle: AvatarStyle
-    let isSelected: Bool
-    let isReadOnly: Bool
-
-    var signerLabel: String {
-        isReadOnly ? "Read-only" : "Local signer"
-    }
-}
 
 @MainActor
 final class NostrSessionStore: ObservableObject {
@@ -28,14 +12,17 @@ final class NostrSessionStore: ObservableObject {
 
     private let resolver: NostrLoginResolver
     private let accountStorage: NostrSessionAccountStorage
+    private let accountSummaryCoordinator: NostrAccountSummaryCoordinator
 
     init(
         resolver: NostrLoginResolver = NostrLoginResolver(),
         defaults: UserDefaults = .standard,
-        restoreAccount: Bool = true
+        restoreAccount: Bool = true,
+        accountSummaryCoordinator: NostrAccountSummaryCoordinator = .init()
     ) {
         self.resolver = resolver
         accountStorage = NostrSessionAccountStorage(defaults: defaults)
+        self.accountSummaryCoordinator = accountSummaryCoordinator
         if restoreAccount {
             let restored = accountStorage.restore()
             accounts = restored.accounts
@@ -86,26 +73,15 @@ final class NostrSessionStore: ObservableObject {
         persistAccounts()
     }
 
-    func accountSummaries(eventStore: NostrEventStore?) -> [NostrAccountSummary] {
-        accounts.map { accountSummary(for: $0, eventStore: eventStore) }
-    }
-
-    func accountSummary(for account: NostrAccount, eventStore: NostrEventStore?) -> NostrAccountSummary {
-        let metadataEvent = try? eventStore?.latestReplaceableEvent(pubkey: account.pubkey, kind: 0)
-        let metadata = metadataEvent.flatMap(Self.profileMetadata)
-        let npub = NIP19Display.npub(fromHexPubkey: account.pubkey) ?? account.pubkey
-        let title = metadata?.bestName ?? fallbackTitle(for: account, npub: npub)
-        let subtitle = clean(metadata?.nip05) ?? (account.readOnly ? "Read-only" : "Local signer")
-
-        return NostrAccountSummary(
-            id: account.pubkey,
-            account: account,
-            title: title,
-            subtitle: subtitle,
-            npub: abbreviated(npub),
-            avatarStyle: avatarStyle(pubkey: account.pubkey, pictureURL: metadata?.pictureURL),
-            isSelected: self.account?.pubkey == account.pubkey,
-            isReadOnly: account.readOnly
+    func accountSummaries(
+        eventStore: NostrEventStore?,
+        metadataRevision: Int
+    ) -> [NostrAccountSummary] {
+        accountSummaryCoordinator.summaries(
+            accounts: accounts,
+            selectedPubkey: account?.pubkey,
+            eventStore: eventStore,
+            metadataRevision: metadataRevision
         )
     }
 
@@ -133,78 +109,6 @@ final class NostrSessionStore: ObservableObject {
 
     private func persistAccounts() {
         accountStorage.persist(accounts: accounts, selectedPubkey: account?.pubkey)
-    }
-
-    private func fallbackTitle(for account: NostrAccount, npub: String) -> String {
-        guard let identifier = clean(account.displayIdentifier),
-              identifier != "nsec account"
-        else {
-            return abbreviated(npub)
-        }
-        return identifier
-    }
-
-    private func avatarStyle(pubkey: String, pictureURL: URL?) -> AvatarStyle {
-        let palette = Self.avatarPalette(for: pubkey)
-        return AvatarStyle(
-            primary: palette.primary,
-            secondary: palette.secondary,
-            symbolName: palette.symbolName,
-            pictureState: pictureURL == nil ? .missing : .resolved,
-            placeholderSeed: pubkey,
-            imageURL: pictureURL
-        )
-    }
-
-    private static func profileMetadata(from event: NostrEvent) -> NostrProfileMetadata? {
-        guard let data = event.content.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(NostrProfileMetadata.self, from: data)
-    }
-
-    private static func avatarPalette(for pubkey: String) -> (primary: Color, secondary: Color, symbolName: String) {
-        let colors: [(Color, Color)] = [
-            (.purple, .cyan),
-            (.indigo, .pink),
-            (.mint, .blue),
-            (.orange, .yellow),
-            (.teal, .green),
-            (.red, .purple),
-            (.blue, .white)
-        ]
-        let symbols = [
-            "sparkles",
-            "antenna.radiowaves.left.and.right",
-            "quote.bubble.fill",
-            "arrow.2.circlepath",
-            "terminal.fill",
-            "camera.aperture",
-            "person.fill"
-        ]
-        let index = deterministicIndex(for: pubkey, modulo: colors.count)
-        let symbolIndex = deterministicIndex(for: String(pubkey.reversed()), modulo: symbols.count)
-        return (colors[index].0, colors[index].1, symbols[symbolIndex])
-    }
-
-    private static func deterministicIndex(for value: String, modulo: Int) -> Int {
-        guard modulo > 0 else { return 0 }
-        let total = value.unicodeScalars.reduce(0) { partial, scalar in
-            (partial &* 31 &+ Int(scalar.value)) & 0x7fffffff
-        }
-        return total % modulo
-    }
-
-    private func abbreviated(_ value: String) -> String {
-        guard value.count > 18 else { return value }
-        return "\(value.prefix(12))...\(value.suffix(6))"
-    }
-
-    private func clean(_ value: String?) -> String? {
-        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty
-        else {
-            return nil
-        }
-        return trimmed
     }
 
     private func loginErrorCopy(for error: Error) -> String {

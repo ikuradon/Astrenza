@@ -64,6 +64,7 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     let handleBackwardCompletion: BackwardCompletion
     let invalidateListEntries: Action
     let scheduleLinkPreviewResolution: Action
+    let publishProfileMetadataChange: Action
     let publishRelayStatusChange: Action
     let handleRuntimeEvent: RuntimeEvent
     let persistDatabase: AsyncAccount
@@ -164,6 +165,8 @@ struct HomeTimelineStoreApplicationDispatcher {
             effects.applyRelayStatusTransition(transition)
         case .handleBackwardCompletion(let completion):
             effects.handleBackwardCompletion(completion)
+        case .publishProfileMetadataChange:
+            effects.publishProfileMetadataChange()
         case .invalidateListEntries:
             effects.invalidateListEntries()
         case .scheduleMaterialization:
