@@ -23,8 +23,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineStateContextProjector()
     private let storeApplicationDispatcher =
         HomeTimelineStoreApplicationDispatcher()
-    private let viewportApplicationDispatcher =
-        HomeTimelineViewportDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -55,8 +53,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let relayRuntime: NostrRelayRuntime?
     private lazy var storeApplicationEffects =
         makeStoreApplicationEffects()
-    private lazy var viewportApplicationEffects =
-        makeViewportApplicationEffects()
     private lazy var featureInteractionContextFactory =
         makeFeatureInteractionContextFactory()
     private lazy var accountContextFactory =
@@ -301,24 +297,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     func loadOlder() {
         viewportInteractionWorkflow.loadOlder(
             viewportContextFactory.context()
-        )
-    }
-
-    private func dispatchViewportApplication(
-        _ application: HomeTimelineViewportApplication
-    ) {
-        viewportApplicationDispatcher.apply(
-            application,
-            effects: viewportApplicationEffects
-        )
-    }
-
-    private func performViewportApplication(
-        _ load: HomeTimelineViewportInteractionLoad
-    ) async {
-        await viewportApplicationDispatcher.perform(
-            load,
-            effects: viewportApplicationEffects
         )
     }
 
@@ -1207,15 +1185,7 @@ private extension NostrHomeTimelineStore {
                 snapshot: { [weak self] in
                     self?.viewportStoreSnapshot()
                 },
-                effects: HomeTimelineViewportInteractionEffects(
-                    apply: { [weak self] application in
-                        self?.dispatchViewportApplication(application)
-                    },
-                    load: { [weak self] load in
-                        guard let self else { return }
-                        await performViewportApplication(load)
-                    }
-                )
+                applications: makeViewportApplicationEffects()
             )
         )
     }

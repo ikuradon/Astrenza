@@ -115,41 +115,45 @@ private final class ViewportContextFactoryProbe {
     var environment: HomeViewportContextEnvironment {
         HomeViewportContextEnvironment(
             snapshot: { [self] in snapshot },
-            effects: HomeTimelineViewportInteractionEffects(
-                apply: { [self] application in
-                    record(application)
+            applications: HomeTimelineViewportApplicationEffects(
+                applyProjectionViewportTransition: { [self] transition in
+                    events.append(.projection(transition))
                 },
-                load: { [self] load in
-                    loads.append(load)
+                reloadNewestProjectionWindow: { [self] account in
+                    events.append(.reloadNewest(account))
+                },
+                materializeEntries: { [self] allowsRealtimeFollow in
+                    events.append(.materialize(allowsRealtimeFollow))
+                },
+                applyRestoreProjectionAnchor: { [self] account in
+                    events.append(.applyRestoreAnchor(account))
+                },
+                applyPresentationTransition: { [self] transition in
+                    events.append(.presentationTransition(
+                        transition.changes,
+                        transition.didChangeReadState
+                    ))
+                },
+                scheduleReadStateSave: { [self] in
+                    events.append(.scheduleReadStateSave)
+                },
+                applyPendingEventCountPublication: { [self] publication in
+                    events.append(.pendingEventCount(publication.count))
+                },
+                clearPendingProjectionReload: { [self] in
+                    events.append(.clearPendingProjectionReload)
+                },
+                scheduleLinkPreviewResolution: { [self] in
+                    events.append(.scheduleLinkPreviewResolution)
+                },
+                refreshLatest: { [self] account, lifecycle in
+                    loads.append(.refreshLatest(account, lifecycle))
+                },
+                loadOlder: { [self] account, lifecycle in
+                    loads.append(.loadOlder(account, lifecycle))
                 }
             )
         )
-    }
-
-    private func record(_ application: HomeTimelineViewportApplication) {
-        switch application {
-        case .applyProjectionViewportTransition(let transition):
-            events.append(.projection(transition))
-        case .reloadNewestProjectionWindow(let account):
-            events.append(.reloadNewest(account))
-        case .materializeEntries(let allowsRealtimeFollow):
-            events.append(.materialize(allowsRealtimeFollow))
-        case .applyRestoreProjectionAnchor(let account):
-            events.append(.applyRestoreAnchor(account))
-        case .applyPresentationTransition(let transition):
-            events.append(.presentationTransition(
-                transition.changes,
-                transition.didChangeReadState
-            ))
-        case .scheduleReadStateSave:
-            events.append(.scheduleReadStateSave)
-        case .applyPendingEventCountPublication(let publication):
-            events.append(.pendingEventCount(publication.count))
-        case .clearPendingProjectionReload:
-            events.append(.clearPendingProjectionReload)
-        case .scheduleLinkPreviewResolution:
-            events.append(.scheduleLinkPreviewResolution)
-        }
     }
 }
 

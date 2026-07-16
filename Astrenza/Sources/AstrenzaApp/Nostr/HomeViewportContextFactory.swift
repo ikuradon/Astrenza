@@ -29,7 +29,7 @@ struct HomeViewportContextEnvironment: Sendable {
     ) -> HomeViewportStoreSnapshot?
 
     let snapshot: SnapshotProvider
-    let effects: HomeTimelineViewportInteractionEffects
+    let applications: HomeTimelineViewportApplicationEffects
 }
 
 @MainActor
@@ -41,14 +41,29 @@ struct HomeViewportContextFactory {
 
     init(environment: HomeViewportContextEnvironment) {
         snapshot = environment.snapshot
+        let dispatcher = HomeTimelineViewportDispatcher()
+        let effects = HomeTimelineViewportInteractionEffects(
+            apply: { application in
+                dispatcher.apply(
+                    application,
+                    effects: environment.applications
+                )
+            },
+            load: { load in
+                await dispatcher.perform(
+                    load,
+                    effects: environment.applications
+                )
+            }
+        )
         presentationEffects = Self.presentationEffects(
-            from: environment.effects
+            from: effects
         )
         pendingEventsEffects = Self.pendingEventsEffects(
-            from: environment.effects
+            from: effects
         )
         paginationEffects = Self.paginationEffects(
-            from: environment.effects
+            from: effects
         )
     }
 

@@ -151,7 +151,7 @@ private struct ViewportInteractionFixture {
                         hasFollowedPubkeys: true
                     )
                 },
-                effects: applicationProbe.effects
+                applications: applicationProbe.applications
             )
         )
         .context()
@@ -177,45 +177,47 @@ private final class ViewportInteractionApplicationProbe {
     private(set) var events: [Event] = []
     private(set) var loads: [HomeTimelineViewportInteractionLoad] = []
 
-    var effects: HomeTimelineViewportInteractionEffects {
-        HomeTimelineViewportInteractionEffects(
-            apply: { [self] application in
-                record(application)
+    var applications: HomeTimelineViewportApplicationEffects {
+        HomeTimelineViewportApplicationEffects(
+            applyProjectionViewportTransition: { [self] transition in
+                events.append(.applyProjectionViewportTransition(transition))
             },
-            load: { [self] load in
-                loads.append(load)
+            reloadNewestProjectionWindow: { [self] account in
+                events.append(.reloadNewestProjectionWindow(account))
+            },
+            materializeEntries: { [self] allowsRealtimeFollow in
+                events.append(.materializeEntries(allowsRealtimeFollow))
+            },
+            applyRestoreProjectionAnchor: { [self] account in
+                events.append(.applyRestoreProjectionAnchor(account))
+            },
+            applyPresentationTransition: { [self] transition in
+                events.append(.applyPresentationTransition(
+                    transition.changes,
+                    transition.didChangeReadState
+                ))
+            },
+            scheduleReadStateSave: { [self] in
+                events.append(.scheduleReadStateSave)
+            },
+            applyPendingEventCountPublication: { [self] publication in
+                events.append(.applyPendingEventCountPublication(
+                    publication.count
+                ))
+            },
+            clearPendingProjectionReload: { [self] in
+                events.append(.clearPendingProjectionReload)
+            },
+            scheduleLinkPreviewResolution: { [self] in
+                events.append(.scheduleLinkPreviewResolution)
+            },
+            refreshLatest: { [self] account, lifecycle in
+                loads.append(.refreshLatest(account, lifecycle))
+            },
+            loadOlder: { [self] account, lifecycle in
+                loads.append(.loadOlder(account, lifecycle))
             }
         )
-    }
-
-    private func record(
-        _ application: HomeTimelineViewportApplication
-    ) {
-        switch application {
-        case .applyProjectionViewportTransition(let transition):
-            events.append(.applyProjectionViewportTransition(transition))
-        case .reloadNewestProjectionWindow(let account):
-            events.append(.reloadNewestProjectionWindow(account))
-        case .materializeEntries(let allowsRealtimeFollow):
-            events.append(.materializeEntries(allowsRealtimeFollow))
-        case .applyRestoreProjectionAnchor(let account):
-            events.append(.applyRestoreProjectionAnchor(account))
-        case .applyPresentationTransition(let transition):
-            events.append(.applyPresentationTransition(
-                transition.changes,
-                transition.didChangeReadState
-            ))
-        case .scheduleReadStateSave:
-            events.append(.scheduleReadStateSave)
-        case .applyPendingEventCountPublication(let publication):
-            events.append(.applyPendingEventCountPublication(
-                publication.count
-            ))
-        case .clearPendingProjectionReload:
-            events.append(.clearPendingProjectionReload)
-        case .scheduleLinkPreviewResolution:
-            events.append(.scheduleLinkPreviewResolution)
-        }
     }
 }
 
