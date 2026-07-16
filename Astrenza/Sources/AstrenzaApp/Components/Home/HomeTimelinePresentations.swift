@@ -1,17 +1,6 @@
 import AstrenzaCore
 import SwiftUI
 
-struct HomeTimelinePresentationBindings {
-    let isComposerPresented: Binding<Bool>
-    let isSettingsPresented: Binding<Bool>
-    let isFiltersSettingsPresented: Binding<Bool>
-    let isRelayStatusPresented: Binding<Bool>
-    let composeSheetMode: Binding<ComposeSheetMode>
-    let fullscreenMedia: Binding<TimelineFullscreenMediaRequest?>
-    let browserDestination: Binding<TimelineBrowserDestination?>
-    let swipeSettings: Binding<TimelineSwipeSettings>
-}
-
 struct HomeTimelinePresentationActions {
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
@@ -21,9 +10,10 @@ struct HomeTimelinePresentationActions {
 
 struct HomeTimelinePresentationModifier: ViewModifier {
     let timelineStore: NostrHomeTimelineStore
-    let bindings: HomeTimelinePresentationBindings
     let actions: HomeTimelinePresentationActions
     @ObservedObject var sessionStore: NostrSessionStore
+    @Binding var presentation: HomeTimelinePresentationState
+    @Binding var swipeSettings: TimelineSwipeSettings
 
     private var hasLiveAccount: Bool {
         sessionStore.account != nil
@@ -58,22 +48,22 @@ struct HomeTimelinePresentationModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: bindings.isComposerPresented) {
+            .sheet(isPresented: $presentation.isComposerPresented) {
                 composerSheet
             }
-            .sheet(isPresented: bindings.isSettingsPresented) {
+            .sheet(isPresented: $presentation.isSettingsPresented) {
                 settingsSheet
             }
-            .sheet(isPresented: bindings.isFiltersSettingsPresented) {
+            .sheet(isPresented: $presentation.isFiltersSettingsPresented) {
                 filtersSheet
             }
-            .sheet(isPresented: bindings.isRelayStatusPresented) {
+            .sheet(isPresented: $presentation.isRelayStatusPresented) {
                 relayStatusSheet
             }
             .fullScreenCover(isPresented: isFullscreenMediaPresented) {
                 fullscreenMediaViewer
             }
-            .sheet(item: bindings.browserDestination) { destination in
+            .sheet(item: $presentation.browserDestination) { destination in
                 TimelineInAppBrowserView(url: destination.url)
                     .ignoresSafeArea()
             }
@@ -81,7 +71,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
 
     private var composerSheet: some View {
         ComposeSheetView(
-            mode: bindings.composeSheetMode.wrappedValue,
+            mode: presentation.composeSheetMode,
             isSubmitAvailable: isComposeSubmitAvailable,
             onSubmit: actions.onComposeSubmit,
             accountID: accountID,
@@ -95,7 +85,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     private var settingsSheet: some View {
         SettingsView(
             onClose: dismissSettings,
-            swipeSettings: bindings.swipeSettings,
+            swipeSettings: $swipeSettings,
             accountID: accountID,
             eventStore: eventStore,
             accountSummaries: accountSummaries,
@@ -136,7 +126,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
 
     @ViewBuilder
     private var fullscreenMediaViewer: some View {
-        if let request = bindings.fullscreenMedia.wrappedValue {
+        if let request = presentation.fullscreenMedia {
             TimelineFullscreenMediaViewer(
                 media: request.media,
                 initialTileIndex: request.initialTileIndex,
@@ -147,7 +137,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
 
     private var isFullscreenMediaPresented: Binding<Bool> {
         Binding(
-            get: { bindings.fullscreenMedia.wrappedValue != nil },
+            get: { presentation.fullscreenMedia != nil },
             set: { isPresented in
                 if !isPresented {
                     dismissFullscreenMedia()
@@ -157,15 +147,15 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     }
 
     private func dismissSettings() {
-        bindings.isSettingsPresented.wrappedValue = false
+        presentation.dismissSettings()
     }
 
     private func dismissFiltersSettings() {
-        bindings.isFiltersSettingsPresented.wrappedValue = false
+        presentation.dismissFiltersSettings()
     }
 
     private func dismissFullscreenMedia() {
-        bindings.fullscreenMedia.wrappedValue = nil
+        presentation.dismissFullscreenMedia()
     }
 }
 
@@ -173,15 +163,17 @@ extension View {
     func homeTimelinePresentations(
         timelineStore: NostrHomeTimelineStore,
         sessionStore: NostrSessionStore,
-        bindings: HomeTimelinePresentationBindings,
+        presentation: Binding<HomeTimelinePresentationState>,
+        swipeSettings: Binding<TimelineSwipeSettings>,
         actions: HomeTimelinePresentationActions
     ) -> some View {
         modifier(
             HomeTimelinePresentationModifier(
                 timelineStore: timelineStore,
-                bindings: bindings,
                 actions: actions,
-                sessionStore: sessionStore
+                sessionStore: sessionStore,
+                presentation: presentation,
+                swipeSettings: swipeSettings
             )
         )
     }

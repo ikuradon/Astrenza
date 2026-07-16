@@ -10,11 +10,7 @@ struct HomeTimelineView: View {
     @State private var selectedTimeline: TimelineKind = .home
     @State private var isTimelineMenuPresented = false
     @State private var isUserSwitcherPresented = false
-    @State private var isComposerPresented = false
-    @State private var isSettingsPresented = false
-    @State private var isFiltersSettingsPresented = false
-    @State private var isRelayStatusPresented = false
-    @State private var composeSheetMode: ComposeSheetMode = .post
+    @State private var presentation = HomeTimelinePresentationState()
     @State private var didCompleteInitialAppearance = false
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var isTimelineAtNewestWindow = true
@@ -25,8 +21,6 @@ struct HomeTimelineView: View {
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
     @State private var navigation = HomeTimelineNavigationState()
     @State private var unreadBadgeFrame: CGRect = .zero
-    @State private var fullscreenMedia: TimelineFullscreenMediaRequest?
-    @State private var browserDestination: TimelineBrowserDestination?
     @State private var swipeSettings = TimelineSwipeSettings()
     @State private var timelineRestoreStore = TimelineRestoreStore()
     @State private var homeViewportState: TimelineViewportState?
@@ -167,16 +161,8 @@ struct HomeTimelineView: View {
         .homeTimelinePresentations(
             timelineStore: liveTimelineStore,
             sessionStore: sessionStore,
-            bindings: HomeTimelinePresentationBindings(
-                isComposerPresented: $isComposerPresented,
-                isSettingsPresented: $isSettingsPresented,
-                isFiltersSettingsPresented: $isFiltersSettingsPresented,
-                isRelayStatusPresented: $isRelayStatusPresented,
-                composeSheetMode: $composeSheetMode,
-                fullscreenMedia: $fullscreenMedia,
-                browserDestination: $browserDestination,
-                swipeSettings: $swipeSettings
-            ),
+            presentation: $presentation,
+            swipeSettings: $swipeSettings,
             actions: HomeTimelinePresentationActions(
                 onSelectAccount: selectAccountFromSwitcher,
                 onRemoveAccount: removeAccountFromSettings,
@@ -365,15 +351,15 @@ private extension HomeTimelineView {
 
     func openMedia(_ media: TimelineMedia, initialTileIndex: Int = 0) {
         dismissFloatingMenus()
-        fullscreenMedia = TimelineFullscreenMediaRequest(
-            media: media,
+        presentation.presentFullscreenMedia(
+            media,
             initialTileIndex: initialTileIndex
         )
     }
 
     func openURL(_ url: URL) {
         dismissFloatingMenus()
-        browserDestination = TimelineBrowserDestination(url: url)
+        presentation.presentBrowser(url: url)
     }
 
     func dismissFloatingMenus() {
@@ -442,13 +428,7 @@ private extension HomeTimelineView {
 
     func presentSettings() {
         dismissFloatingMenus()
-        guard !isComposerPresented,
-              !isFiltersSettingsPresented,
-              !isRelayStatusPresented,
-              browserDestination == nil,
-              fullscreenMedia == nil
-        else { return }
-        isSettingsPresented = true
+        presentation.requestSettings()
     }
 
     func selectAccountFromSwitcher(_ pubkey: String) {
@@ -463,24 +443,12 @@ private extension HomeTimelineView {
 
     func presentFiltersSettings() {
         dismissFloatingMenus()
-        guard !isComposerPresented,
-              !isSettingsPresented,
-              !isRelayStatusPresented,
-              browserDestination == nil,
-              fullscreenMedia == nil
-        else { return }
-        isFiltersSettingsPresented = true
+        presentation.requestFiltersSettings()
     }
 
     func presentRelayStatus() {
         dismissFloatingMenus()
-        guard !isComposerPresented,
-              !isSettingsPresented,
-              !isFiltersSettingsPresented,
-              browserDestination == nil,
-              fullscreenMedia == nil
-        else { return }
-        isRelayStatusPresented = true
+        presentation.requestRelayStatus()
     }
 
     func handleTimelineEmptyStatePrimaryAction() {
@@ -569,14 +537,12 @@ private extension HomeTimelineView {
 
     func presentComposer(mode: ComposeSheetMode) {
         dismissFloatingMenus()
-        guard didCompleteInitialAppearance,
-              !isComposerPresented,
-              !isSettingsPresented,
-              !isFiltersSettingsPresented
-        else { return }
-        composeSheetMode = mode
+        guard presentation.prepareComposer(
+            mode: mode,
+            isInitialPresentationReady: didCompleteInitialAppearance
+        ) else { return }
         DispatchQueue.main.async {
-            isComposerPresented = true
+            presentation.activatePreparedComposer()
         }
     }
 

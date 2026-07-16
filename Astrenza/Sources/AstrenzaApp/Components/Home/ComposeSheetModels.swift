@@ -1,4 +1,4 @@
-enum ComposeSheetMode {
+enum ComposeSheetMode: Equatable {
     case post
     case reply
 
