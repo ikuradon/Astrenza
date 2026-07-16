@@ -4,7 +4,7 @@ enum NostrRelayDemand: Hashable, Sendable {
     case persistentDefault
     case backwardInstallation(UUID)
     case backwardSubscription(subscriptionID: String, generation: UInt64)
-    case publish(eventID: String)
+    case publish(eventID: String, attemptID: UUID)
     case bootstrap(UUID)
 }
 

@@ -73,7 +73,7 @@ struct NostrRelayRuntimeLiveSoakTests {
             let publications = await publishProbeEvents(
                 probeEvents,
                 publisher: NostrOutboxRelayPublisher(
-                    transportFactory: { _ in NostrURLSessionRelayTransport(urlSession: urlSession) },
+                    relayRuntime: runtime,
                     timeoutNanoseconds: 12_000_000_000
                 )
             )

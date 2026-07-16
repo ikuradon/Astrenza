@@ -380,6 +380,16 @@ struct NostrCorePackageTests {
         #expect(message == .auth("challenge-token"))
     }
 
+    @Test("Nostr relay message parses publish OK")
+    func relayMessageParsesPublishOK() throws {
+        let eventID = String(repeating: "a", count: 64)
+        let message = try #require(NostrRelayMessage.parse(
+            #"["OK","\#(eventID)",true,"saved"]"#
+        ))
+
+        #expect(message == .ok(eventID: eventID, accepted: true, message: "saved"))
+    }
+
     @Test("Remote data cache stores and reads response data by URL")
     func remoteDataCacheStoresData() throws {
         let urlCache = URLCache(memoryCapacity: 1024 * 1024, diskCapacity: 0, diskPath: nil)

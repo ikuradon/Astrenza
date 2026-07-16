@@ -17,6 +17,23 @@ public enum NostrOutboxRelayPublishError: Error, Equatable, Sendable {
     case relayClosed(String)
     case authRequired(String)
     case timedOut
+
+    static func message(for error: any Error) -> String {
+        switch error {
+        case NostrOutboxRelayPublishError.invalidEventFrame:
+            "invalid event frame"
+        case NostrOutboxRelayPublishError.relayClosed(let message):
+            message
+        case NostrOutboxRelayPublishError.authRequired(let challenge):
+            "auth-required: \(challenge)"
+        case NostrOutboxRelayPublishError.timedOut:
+            "publish timed out"
+        case is CancellationError:
+            "publish cancelled"
+        default:
+            String(describing: error)
+        }
+    }
 }
 
 /// UIやdatabaseの状態を所有せず、署名済みeventをRelayへ送信します。
@@ -25,14 +42,22 @@ public enum NostrOutboxRelayPublishError: Error, Equatable, Sendable {
 public struct NostrOutboxRelayPublisher: Sendable {
     public typealias TransportFactory = @Sendable (String) -> any NostrRelayTransport
 
-    private let transportFactory: TransportFactory
+    private let backend: Backend
     private let timeoutNanoseconds: UInt64
 
     public init(
         transportFactory: @escaping TransportFactory = { _ in NostrURLSessionRelayTransport() },
         timeoutNanoseconds: UInt64 = 7_000_000_000
     ) {
-        self.transportFactory = transportFactory
+        backend = .standalone(transportFactory)
+        self.timeoutNanoseconds = timeoutNanoseconds
+    }
+
+    public init(
+        relayRuntime: NostrRelayRuntime,
+        timeoutNanoseconds: UInt64 = 7_000_000_000
+    ) {
+        backend = .runtime(relayRuntime)
         self.timeoutNanoseconds = timeoutNanoseconds
     }
 
@@ -40,7 +65,14 @@ public struct NostrOutboxRelayPublisher: Sendable {
         event: NostrEvent,
         relayURLs: [String]
     ) async -> [NostrOutboxRelayPublishResult] {
-        await withTaskGroup(of: NostrOutboxRelayPublishResult.self) { group in
+        if case .runtime(let relayRuntime) = backend {
+            return await relayRuntime.publish(
+                event: event,
+                relayURLs: relayURLs,
+                timeoutNanoseconds: timeoutNanoseconds
+            )
+        }
+        return await withTaskGroup(of: NostrOutboxRelayPublishResult.self) { group in
             for relayURL in relayURLs {
                 group.addTask {
                     await publish(event: event, relayURL: relayURL)
@@ -60,6 +92,20 @@ public struct NostrOutboxRelayPublisher: Sendable {
         event: NostrEvent,
         relayURL: String
     ) async -> NostrOutboxRelayPublishResult {
+        if case .runtime(let relayRuntime) = backend {
+            return await relayRuntime.publish(
+                event: event,
+                relayURLs: [relayURL],
+                timeoutNanoseconds: timeoutNanoseconds
+            ).first ?? NostrOutboxRelayPublishResult(
+                relayURL: relayURL,
+                accepted: false,
+                message: "invalid relay URL"
+            )
+        }
+        guard case .standalone(let transportFactory) = backend else {
+            preconditionFailure("Runtime publishing returned before standalone transport access")
+        }
         let transport = transportFactory(relayURL)
         do {
             let connection = try await transport.connect(relayURL: relayURL)
@@ -83,7 +129,7 @@ public struct NostrOutboxRelayPublisher: Sendable {
             return NostrOutboxRelayPublishResult(
                 relayURL: relayURL,
                 accepted: false,
-                message: Self.errorMessage(error)
+                message: NostrOutboxRelayPublishError.message(for: error)
             )
         }
     }
@@ -165,25 +211,13 @@ public struct NostrOutboxRelayPublisher: Sendable {
         return text
     }
 
-    private static func errorMessage(_ error: any Error) -> String {
-        switch error {
-        case NostrOutboxRelayPublishError.invalidEventFrame:
-            "invalid event frame"
-        case NostrOutboxRelayPublishError.relayClosed(let message):
-            message
-        case NostrOutboxRelayPublishError.authRequired(let challenge):
-            "auth-required: \(challenge)"
-        case NostrOutboxRelayPublishError.timedOut:
-            "publish timed out"
-        case is CancellationError:
-            "publish cancelled"
-        default:
-            String(describing: error)
-        }
-    }
-
     private struct Acknowledgement: Sendable {
         let accepted: Bool
         let message: String
+    }
+
+    private enum Backend: Sendable {
+        case runtime(NostrRelayRuntime)
+        case standalone(TransportFactory)
     }
 }

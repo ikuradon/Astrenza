@@ -11,8 +11,7 @@ enum HomeTimelineStoreFactory {
         linkPreviewResolver: NostrLinkPreviewResolver? = nil,
         viewportStateRestorer: any HomeTimelineViewportStateRestoring =
             TimelineRestoreStore(),
-        outboxPublisher: NostrOutboxRelayPublisher =
-            NostrOutboxRelayPublisher(),
+        outboxPublisher: NostrOutboxRelayPublisher? = nil,
         localMutationPersistence:
             (any HomeTimelineLocalMutationPersisting)? = nil,
         syncPolicy: NostrSyncPolicy = .default(
@@ -21,6 +20,9 @@ enum HomeTimelineStoreFactory {
         ),
         syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
     ) -> NostrHomeTimelineStore {
+        let resolvedOutboxPublisher = outboxPublisher ?? relayRuntime.map {
+            NostrOutboxRelayPublisher(relayRuntime: $0)
+        } ?? NostrOutboxRelayPublisher()
         let components = HomeTimelineStoreAssembly.assemble(
             HomeTimelineStoreAssemblyInput(
                 timelineLoader: timelineLoader,
@@ -28,7 +30,7 @@ enum HomeTimelineStoreFactory {
                 relayRuntime: relayRuntime,
                 linkPreviewResolver: linkPreviewResolver,
                 viewportStateRestorer: viewportStateRestorer,
-                outboxPublisher: outboxPublisher,
+                outboxPublisher: resolvedOutboxPublisher,
                 localMutationPersistence: localMutationPersistence,
                 initialSyncPolicy: syncPolicy,
                 syncPolicySettingsStore: syncPolicySettingsStore

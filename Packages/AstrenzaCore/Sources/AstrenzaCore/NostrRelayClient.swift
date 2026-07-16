@@ -12,6 +12,7 @@ public enum NostrRelayClientError: Error {
 public enum NostrRelayMessage: Equatable {
     case event(subscriptionID: String, event: NostrEvent)
     case eose(subscriptionID: String)
+    case ok(eventID: String, accepted: Bool, message: String)
     case closed(subscriptionID: String, message: String)
     case notice(String)
     case auth(String)
@@ -33,6 +34,13 @@ public enum NostrRelayMessage: Equatable {
         case "EOSE":
             guard array.count == 2, let subscriptionID = array[1] as? String else { return nil }
             return .eose(subscriptionID: subscriptionID)
+        case "OK":
+            guard array.count == 4,
+                  let eventID = array[1] as? String,
+                  let accepted = array[2] as? Bool,
+                  let message = array[3] as? String
+            else { return nil }
+            return .ok(eventID: eventID, accepted: accepted, message: message)
         case "CLOSED":
             guard array.count == 3,
                   let subscriptionID = array[1] as? String,
@@ -182,7 +190,7 @@ public struct NostrRelayClient: Sendable {
                 throw NostrRelayClientError.relayClosed(message)
             case .auth(let challenge):
                 throw NostrRelayClientError.authRequired(challenge: challenge)
-            case .notice:
+            case .notice, .ok:
                 continue
             }
         }

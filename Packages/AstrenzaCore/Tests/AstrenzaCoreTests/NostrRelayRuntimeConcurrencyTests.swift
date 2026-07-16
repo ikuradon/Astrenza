@@ -207,6 +207,161 @@ struct NostrRelayRuntimeConcurrencyTests {
         #expect(await session.activeSubscriptionIDs() == ["home-forward"])
     }
 
+    @Test("Session accepts publish OK before EVENT send returns")
+    func sessionStagesPublishBeforeSendReturns() async throws {
+        let eventID = String(repeating: "a", count: 64)
+        let event = publishEvent(
+            id: eventID,
+            content: "publish race",
+            createdAt: 300
+        )
+        let connection = RelayConcurrencyTestConnection(
+            inboundFrames: [#"["OK","\#(eventID)",true,"saved"]"#],
+            gateFirstSend: true
+        )
+        let session = NostrRelaySession(
+            relayURL: "wss://relay.example",
+            transport: RelayConcurrencyTestTransport(connection: connection)
+        )
+
+        let publishTask = Task {
+            try await session.publish(event)
+        }
+        await connection.waitUntilFirstSendStarts()
+        try await session.receiveNext()
+        await connection.releaseFirstSend()
+
+        #expect(try await publishTask.value == NostrRelayPublishAcknowledgement(
+            accepted: true,
+            message: "saved"
+        ))
+        #expect(await connection.sentFrames().count == 1)
+    }
+
+    @Test("Runtime publisher reuses the default relay connection")
+    func runtimePublisherReusesDefaultRelayConnection() async throws {
+        let relayURL = "wss://relay.example"
+        let eventID = String(repeating: "b", count: 64)
+        let event = publishEvent(
+            id: eventID,
+            content: "shared session",
+            createdAt: 301
+        )
+        let connection = RelayConcurrencyTestConnection(blockReceiveWhenEmpty: true)
+        let transport = RelayConcurrencyTestTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: true,
+            retryPolicy: NostrRelayRuntimeRetryPolicy(
+                maxAttempts: 0,
+                initialDelayMilliseconds: 0,
+                delayStepMilliseconds: 0
+            ),
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let publisher = NostrOutboxRelayPublisher(
+            relayRuntime: runtime,
+            timeoutNanoseconds: 1_000_000_000
+        )
+
+        try await runtime.setDefaultRelays([relayURL])
+        await connection.waitUntilReceiveStarts()
+        let publishTask = Task {
+            await publisher.publish(event: event, relayURL: relayURL)
+        }
+        for _ in 0..<1_000 where await connection.sentFrames().isEmpty {
+            await Task.yield()
+        }
+        await connection.enqueueInboundFrame(
+            #"["OK","\#(eventID)",true,"saved"]"#
+        )
+        let result = await publishTask.value
+
+        #expect(result == NostrOutboxRelayPublishResult(
+            relayURL: relayURL,
+            accepted: true,
+            message: "saved"
+        ))
+        #expect(await transport.connectCallCount() == 1)
+        #expect(await connection.closeCallCount() == 0)
+        #expect(await runtime.connectionState(relayURL: relayURL) == .connected)
+
+        await runtime.terminate()
+    }
+
+    @Test("Runtime publisher releases a temporary relay after OK")
+    func runtimePublisherReleasesTemporaryRelay() async throws {
+        let relayURL = "wss://hint.example"
+        let eventID = String(repeating: "c", count: 64)
+        let event = publishEvent(
+            id: eventID,
+            content: "temporary publish relay",
+            createdAt: 302
+        )
+        let connection = RelayConcurrencyTestConnection(blockReceiveWhenEmpty: true)
+        let transport = RelayConcurrencyTestTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: true,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let publisher = NostrOutboxRelayPublisher(
+            relayRuntime: runtime,
+            timeoutNanoseconds: 1_000_000_000
+        )
+
+        let publishTask = Task {
+            await publisher.publish(event: event, relayURL: relayURL)
+        }
+        await connection.waitUntilReceiveStarts()
+        await connection.enqueueInboundFrame(
+            #"["OK","\#(eventID)",true,"saved"]"#
+        )
+        let result = await publishTask.value
+
+        #expect(result.accepted)
+        #expect(await transport.connectCallCount() == 1)
+        #expect(await connection.closeCallCount() == 1)
+        #expect(await runtime.temporaryRelayURLs().isEmpty)
+        #expect(await runtime.connectionState(relayURL: relayURL) == .initialized)
+
+        await runtime.terminate()
+    }
+
+    @Test("Session routes AUTH to a pending publish")
+    func sessionRoutesAuthToPendingPublish() async throws {
+        let event = publishEvent(
+            id: String(repeating: "d", count: 64),
+            content: "auth challenge",
+            createdAt: 303
+        )
+        let connection = RelayConcurrencyTestConnection(
+            inboundFrames: [#"["AUTH","challenge-token"]"#],
+            gateFirstSend: true
+        )
+        let session = NostrRelaySession(
+            relayURL: "wss://relay.example",
+            transport: RelayConcurrencyTestTransport(connection: connection)
+        )
+
+        let publishTask = Task {
+            try await session.publish(event)
+        }
+        await connection.waitUntilFirstSendStarts()
+        try await session.receiveNext()
+        await connection.releaseFirstSend()
+
+        var receivedError: NostrOutboxRelayPublishError?
+        do {
+            _ = try await publishTask.value
+        } catch let error as NostrOutboxRelayPublishError {
+            receivedError = error
+        }
+        #expect(receivedError == .authRequired("challenge-token"))
+    }
+
     @Test("A failed replacement does not roll back over a newer close")
     func failedInstallRollbackRespectsSubscriptionGeneration() async throws {
         let connection = RelayConcurrencyTestConnection()
@@ -1085,6 +1240,18 @@ struct NostrRelayRuntimeConcurrencyTests {
         )
         return String(data: frameData, encoding: .utf8) ?? "[]"
     }
+
+    private func publishEvent(id: String, content: String, createdAt: Int) -> NostrEvent {
+        NostrEvent(
+            id: id,
+            pubkey: String(repeating: "1", count: 64),
+            createdAt: createdAt,
+            kind: 1,
+            tags: [],
+            content: content,
+            sig: String(repeating: "2", count: 128)
+        )
+    }
 }
 
 private actor RelayConcurrencyPacketCollector {
@@ -1325,6 +1492,15 @@ private actor RelayConcurrencyTestConnection: NostrRelayTransportConnection {
     func releaseFirstSend() {
         firstSendRelease?.resume()
         firstSendRelease = nil
+    }
+
+    func enqueueInboundFrame(_ frame: String) {
+        if let blockedReceive {
+            self.blockedReceive = nil
+            blockedReceive.resume(returning: frame)
+        } else {
+            inboundFrames.append(frame)
+        }
     }
 
     func waitUntilReceiveStarts() async {

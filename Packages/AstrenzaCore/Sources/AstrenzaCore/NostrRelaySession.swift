@@ -25,6 +25,16 @@ public protocol NostrRelayTransportConnection: Sendable {
     func close() async
 }
 
+public struct NostrRelayPublishAcknowledgement: Equatable, Sendable {
+    public let accepted: Bool
+    public let message: String
+
+    public init(accepted: Bool, message: String) {
+        self.accepted = accepted
+        self.message = message
+    }
+}
+
 public actor NostrRelaySession {
     public let relayURL: String
 
@@ -37,6 +47,8 @@ public actor NostrRelaySession {
     private var connectionState: NostrRelayConnectionState = .initialized
     private var activeSubscriptions: [String: SubscriptionRegistration] = [:]
     private var subscriptionGenerations: [String: UInt64] = [:]
+    private var pendingPublishes: [UUID: PendingPublish] = [:]
+    private var pendingPublishIDsByEventID: [String: [UUID]] = [:]
     private var continuations: [UUID: AsyncStream<NostrRelayRuntimePacket>.Continuation] = [:]
     private var trafficMeter: NostrRelayTrafficMeter?
 
@@ -104,6 +116,9 @@ public actor NostrRelaySession {
         let previousConnection = connection
         connection = nil
         connectionGeneration &+= 1
+        failAllPendingPublishes(
+            with: NostrRelayRuntimeError.connectionUnavailable(relayURL: relayURL)
+        )
         setState(.retrying)
         await previousConnection?.close()
         do {
@@ -224,6 +239,42 @@ public actor NostrRelaySession {
         }
     }
 
+    public func publish(
+        _ event: NostrEvent,
+        timeoutNanoseconds: UInt64 = 7_000_000_000
+    ) async throws -> NostrRelayPublishAcknowledgement {
+        if connection == nil {
+            try await connect()
+        }
+        guard let connection else {
+            throw NostrRelayRuntimeError.connectionUnavailable(relayURL: relayURL)
+        }
+
+        let channel = AsyncThrowingStream<NostrRelayPublishAcknowledgement, Error>.makeStream()
+        let attemptID = UUID()
+        pendingPublishes[attemptID] = PendingPublish(
+            eventID: event.id,
+            continuation: channel.continuation
+        )
+        pendingPublishIDsByEventID[event.id, default: []].append(attemptID)
+        do {
+            try await send(Self.eventFrame(event), connection: connection)
+        } catch {
+            failPendingPublish(attemptID: attemptID, with: error)
+            throw error
+        }
+
+        do {
+            return try await Self.waitForPublishAcknowledgement(
+                channel.stream,
+                timeoutNanoseconds: timeoutNanoseconds
+            )
+        } catch {
+            failPendingPublish(attemptID: attemptID, with: error)
+            throw error
+        }
+    }
+
     public func close(
         subscriptionID: String,
         requestEndReason: NostrRelayRequestAttemptEndReason? = .cancelled
@@ -278,6 +329,14 @@ public actor NostrRelaySession {
             } else if activeSubscriptions[subscriptionID]?.generation == registration.generation {
                 activeSubscriptions[subscriptionID]?.requestID = nil
             }
+        case .ok(let eventID, let accepted, let message):
+            resolvePendingPublish(
+                eventID: eventID,
+                acknowledgement: NostrRelayPublishAcknowledgement(
+                    accepted: accepted,
+                    message: message
+                )
+            )
         case .closed(let subscriptionID, let message):
             _ = nextSubscriptionGeneration(subscriptionID: subscriptionID)
             activeSubscriptions.removeValue(forKey: subscriptionID)
@@ -289,6 +348,9 @@ public actor NostrRelaySession {
             emit(.notice(relayURL: relayURL, message: message))
         case .auth(let challenge):
             emit(.auth(relayURL: relayURL, challenge: challenge))
+            failAllPendingPublishes(
+                with: NostrOutboxRelayPublishError.authRequired(challenge)
+            )
         }
     }
 
@@ -322,6 +384,7 @@ public actor NostrRelaySession {
         let connectionToClose = connection
         connection = nil
         connectionGeneration &+= 1
+        failAllPendingPublishes(with: CancellationError())
         activeSubscriptions = [:]
         subscriptionGenerations = [:]
         setState(.terminated)
@@ -440,6 +503,83 @@ public actor NostrRelaySession {
         recordSent(textFrame)
     }
 
+    private func resolvePendingPublish(
+        eventID: String,
+        acknowledgement: NostrRelayPublishAcknowledgement
+    ) {
+        guard let attemptID = pendingPublishIDsByEventID[eventID]?.first,
+              let pending = removePendingPublish(attemptID: attemptID)
+        else { return }
+        pending.continuation.yield(acknowledgement)
+        pending.continuation.finish()
+    }
+
+    private func failPendingPublish(attemptID: UUID, with error: any Error) {
+        guard let pending = removePendingPublish(attemptID: attemptID) else { return }
+        pending.continuation.finish(throwing: error)
+    }
+
+    private func failAllPendingPublishes(with error: any Error) {
+        let pending = Array(pendingPublishes.values)
+        pendingPublishes.removeAll(keepingCapacity: false)
+        pendingPublishIDsByEventID.removeAll(keepingCapacity: false)
+        for publish in pending {
+            publish.continuation.finish(throwing: error)
+        }
+    }
+
+    private func removePendingPublish(attemptID: UUID) -> PendingPublish? {
+        guard let pending = pendingPublishes.removeValue(forKey: attemptID) else { return nil }
+        pendingPublishIDsByEventID[pending.eventID]?.removeAll { $0 == attemptID }
+        if pendingPublishIDsByEventID[pending.eventID]?.isEmpty == true {
+            pendingPublishIDsByEventID[pending.eventID] = nil
+        }
+        return pending
+    }
+
+    private static func waitForPublishAcknowledgement(
+        _ stream: AsyncThrowingStream<NostrRelayPublishAcknowledgement, Error>,
+        timeoutNanoseconds: UInt64
+    ) async throws -> NostrRelayPublishAcknowledgement {
+        try await withThrowingTaskGroup(of: NostrRelayPublishAcknowledgement.self) { group in
+            group.addTask {
+                for try await acknowledgement in stream {
+                    return acknowledgement
+                }
+                throw CancellationError()
+            }
+            group.addTask {
+                if timeoutNanoseconds > 0 {
+                    try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                }
+                throw NostrOutboxRelayPublishError.timedOut
+            }
+
+            defer { group.cancelAll() }
+            guard let acknowledgement = try await group.next() else {
+                throw NostrOutboxRelayPublishError.timedOut
+            }
+            return acknowledgement
+        }
+    }
+
+    private static func eventFrame(_ event: NostrEvent) throws -> String {
+        let eventData = try JSONEncoder().encode(event)
+        let eventObject = try JSONSerialization.jsonObject(with: eventData)
+        let frame: [Any] = ["EVENT", eventObject]
+        guard JSONSerialization.isValidJSONObject(frame) else {
+            throw NostrOutboxRelayPublishError.invalidEventFrame
+        }
+        let data = try JSONSerialization.data(
+            withJSONObject: frame,
+            options: [.sortedKeys]
+        )
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw NostrOutboxRelayPublishError.invalidEventFrame
+        }
+        return text
+    }
+
     private func recordReceived(_ textFrame: String) {
         trafficMeter?.recordReceived(textFrame)
         flushTraffic()
@@ -524,4 +664,12 @@ private struct SubscriptionRegistration: Sendable {
     let packet: NostrREQPacket
     let generation: UInt64
     var requestID: String?
+}
+
+private struct PendingPublish: Sendable {
+    let eventID: String
+    let continuation: AsyncThrowingStream<
+        NostrRelayPublishAcknowledgement,
+        Error
+    >.Continuation
 }

@@ -102,6 +102,32 @@ public actor NostrRelayRuntime {
         )
     }
 
+    public func publish(
+        event: NostrEvent,
+        relayURLs: [String],
+        timeoutNanoseconds: UInt64 = 7_000_000_000
+    ) async -> [NostrOutboxRelayPublishResult] {
+        let destinations = NostrRelayURL.normalizedStrings(relayURLs)
+        return await withTaskGroup(of: NostrOutboxRelayPublishResult.self) { group in
+            for relayURL in destinations {
+                group.addTask {
+                    await self.publish(
+                        event: event,
+                        relayURL: relayURL,
+                        timeoutNanoseconds: timeoutNanoseconds
+                    )
+                }
+            }
+
+            var results: [NostrOutboxRelayPublishResult] = []
+            results.reserveCapacity(destinations.count)
+            for await result in group {
+                results.append(result)
+            }
+            return results.sorted { $0.relayURL < $1.relayURL }
+        }
+    }
+
     public func setTrafficContext(accountID: String?, policy: NostrSyncPolicy) async {
         trafficAccountID = accountID
         trafficPolicy = policy
@@ -950,6 +976,61 @@ public actor NostrRelayRuntime {
             sessions[relayURL] = session
             await startPump(for: session, relayURL: relayURL)
         }
+    }
+
+    private func publish(
+        event: NostrEvent,
+        relayURL: String,
+        timeoutNanoseconds: UInt64
+    ) async -> NostrOutboxRelayPublishResult {
+        guard let identity = NostrRelayURL(relayURL) else {
+            return NostrOutboxRelayPublishResult(
+                relayURL: relayURL,
+                accepted: false,
+                message: "invalid relay URL"
+            )
+        }
+
+        let demand = NostrRelayDemand.publish(
+            eventID: event.id,
+            attemptID: UUID()
+        )
+        relayDemands.acquire(demand, for: [identity])
+        await prepareDemandRelaySessions([relayURL])
+
+        let result: NostrOutboxRelayPublishResult
+        if let session = sessions[relayURL] {
+            do {
+                try await session.connect()
+                if receiveLoopTasks[relayURL] == nil {
+                    startReceiveLoop(for: session, relayURL: relayURL)
+                }
+                let acknowledgement = try await session.publish(
+                    event,
+                    timeoutNanoseconds: timeoutNanoseconds
+                )
+                result = NostrOutboxRelayPublishResult(
+                    relayURL: relayURL,
+                    accepted: acknowledgement.accepted,
+                    message: acknowledgement.message
+                )
+            } catch {
+                result = NostrOutboxRelayPublishResult(
+                    relayURL: relayURL,
+                    accepted: false,
+                    message: NostrOutboxRelayPublishError.message(for: error)
+                )
+            }
+        } else {
+            result = NostrOutboxRelayPublishResult(
+                relayURL: relayURL,
+                accepted: false,
+                message: "relay connection unavailable"
+            )
+        }
+
+        await releaseRelayDemand(demand, from: [relayURL])
+        return result
     }
 
     private func releaseRelayDemand(
