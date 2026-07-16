@@ -17,7 +17,7 @@ struct HomeTimelineView: View {
     @State private var navigation = HomeTimelineNavigationState()
     @State private var unreadBadgeFrame: CGRect = .zero
     @State private var swipeSettings = TimelineSwipeSettings()
-    @State private var timelineRestoreStore = TimelineRestoreStore()
+    @State private var viewportPersistence: HomeViewportPersistenceCoordinator
 
     private var accountID: String {
         sessionStore.account?.pubkey ?? "mock-account"
@@ -77,23 +77,24 @@ struct HomeTimelineView: View {
         self.liveTimelineStore = liveTimelineStore
         self.onInitialPresentationReady = onInitialPresentationReady
 
-        let restoreStore = TimelineRestoreStore()
+        let viewportPersistence = HomeViewportPersistenceCoordinator(
+            persistence: TimelineRestoreStore(),
+            fallbackViewportLoader: { accountID, timelineKey in
+                liveTimelineStore.restoredViewportState(
+                    accountID: accountID,
+                    timelineKey: timelineKey
+                )
+            }
+        )
         let initialAccountID = sessionStore.account?.pubkey ?? "mock-account"
-        let initialViewportState = restoreStore.viewportState(
-            accountID: initialAccountID,
-            timelineKey: TimelineKind.home.id
-        ) ?? liveTimelineStore.restoredViewportState(
+        let initialSnapshot = viewportPersistence.restoreSnapshot(
             accountID: initialAccountID,
             timelineKey: TimelineKind.home.id
         )
-        let initialLayoutCache = restoreStore.layoutCache(
-            accountID: initialAccountID,
-            timelineKey: TimelineKind.home.id
-        )
-        _timelineRestoreStore = State(initialValue: restoreStore)
+        _viewportPersistence = State(initialValue: viewportPersistence)
         _viewport = State(initialValue: HomeTimelineViewportState(
-            restoredViewportState: initialViewportState,
-            layoutCache: initialLayoutCache
+            restoredViewportState: initialSnapshot.viewportState,
+            layoutCache: initialSnapshot.layoutCache
         ))
     }
 
@@ -148,7 +149,7 @@ struct HomeTimelineView: View {
             loadTimelineRestoreState()
         }
         .onDisappear {
-            timelineRestoreStore.flushPendingSaves()
+            viewportPersistence.flushPendingSaves()
         }
         .homeTimelinePresentations(
             timelineStore: liveTimelineStore,
@@ -388,7 +389,7 @@ private extension HomeTimelineView {
         guard selectedTab == .home, selectedTimeline == .home, sessionStore.account != nil else { return }
         dismissFloatingMenus()
         let latestSavedViewportState = viewport.isHomeReturnMode ? nil :
-            timelineRestoreStore.latestViewportState(
+            viewportPersistence.latestViewportState(
                 accountID: accountID,
                 timelineKey: selectedTimeline.id
             )
@@ -547,45 +548,32 @@ private extension HomeTimelineView {
     }
 
     func loadTimelineRestoreState() {
-        timelineRestoreStore.flushPendingSaves()
-        let restoredViewportState = timelineRestoreStore.viewportState(
-            accountID: accountID,
-            timelineKey: selectedTimeline.id
-        ) ?? liveTimelineStore.restoredViewportState(
-            accountID: accountID,
-            timelineKey: selectedTimeline.id
-        )
-        let layoutCache = timelineRestoreStore.layoutCache(
+        let snapshot = viewportPersistence.restoreSnapshot(
             accountID: accountID,
             timelineKey: selectedTimeline.id
         )
         viewport.load(
-            restoredViewportState: restoredViewportState,
-            layoutCache: layoutCache
+            restoredViewportState: snapshot.viewportState,
+            layoutCache: snapshot.layoutCache
         )
         if sessionStore.account != nil, selectedTimeline == .home {
-            liveTimelineStore.setRestoreProjectionAnchor(restoredViewportState?.anchorPostID)
-            liveTimelineStore.setTimelineAtNewestWindow(restoredViewportState == nil)
+            liveTimelineStore.setRestoreProjectionAnchor(snapshot.viewportState?.anchorPostID)
+            liveTimelineStore.setTimelineAtNewestWindow(snapshot.viewportState == nil)
         }
     }
 
     func saveTimelineViewportState(_ state: TimelineViewportState) {
-        let nextState = TimelineViewportState(
+        viewportPersistence.scheduleViewportStateSave(
+            state,
             accountID: accountID,
-            timelineKey: selectedTimeline.id,
-            anchorPostID: state.anchorPostID,
-            anchorOffset: state.anchorOffset,
-            contentOffset: state.contentOffset,
-            updatedAt: state.updatedAt
+            timelineKey: selectedTimeline.id
         )
-
-        timelineRestoreStore.scheduleViewportStateSave(nextState)
     }
 
     func saveTimelineLayoutCache(_ cache: TimelineLayoutCache) {
         guard viewport.shouldUpdateLayoutCache(cache) else { return }
         viewport.applyLayoutCache(cache)
-        timelineRestoreStore.scheduleLayoutCacheSave(
+        viewportPersistence.scheduleLayoutCacheSave(
             cache,
             accountID: accountID,
             timelineKey: selectedTimeline.id
