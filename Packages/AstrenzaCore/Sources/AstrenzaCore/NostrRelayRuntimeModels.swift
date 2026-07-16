@@ -748,17 +748,6 @@ private extension Array {
 
 private extension String {
     func normalizedRelayHint() -> String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let components = URLComponents(string: trimmed),
-              let scheme = components.scheme?.lowercased(),
-              scheme == "ws" || scheme == "wss",
-              components.host?.isEmpty == false
-        else { return nil }
-
-        var normalized = components
-        normalized.scheme = scheme
-        normalized.host = components.host?.lowercased()
-        return normalized.string
+        NostrRelayURL(self)?.rawValue
     }
 }

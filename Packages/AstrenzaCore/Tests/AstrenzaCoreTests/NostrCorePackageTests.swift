@@ -6,6 +6,24 @@ import secp256k1
 
 @Suite("AstrenzaCore Nostr package")
 struct NostrCorePackageTests {
+    @Test("Relay URL identity canonicalizes equivalent inputs")
+    func relayURLIdentityCanonicalizesEquivalentInputs() throws {
+        let strict = try #require(NostrRelayURL(" WSS://Relay.Example./path/?b=2&a=1#fragment "))
+        let userFacing = try #require(NostrRelayURL(
+            "https://relay.example/path?a=1&b=2",
+            mode: .userFacing
+        ))
+
+        #expect(strict.rawValue == "wss://relay.example/path?a=1&b=2")
+        #expect(strict == userFacing)
+        #expect(NostrRelayURL("relay.example") == nil)
+        #expect(NostrRelayURL("relay.example", mode: .userFacing)?.rawValue == "wss://relay.example")
+        #expect(NostrRelayURL.normalizedStrings([
+            strict.rawValue,
+            "wss://RELAY.EXAMPLE/path/?b=2&a=1"
+        ]) == [strict.rawValue])
+    }
+
     @Test("NIP-19 npub decodes to canonical hex pubkey without launching Simulator")
     func npubDecoding() throws {
         let pubkey = try NostrNIP19.publicKeyHex(

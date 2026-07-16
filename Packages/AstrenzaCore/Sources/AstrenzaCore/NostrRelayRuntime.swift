@@ -84,7 +84,7 @@ public actor NostrRelayRuntime {
     }
 
     public func setDefaultRelays(_ newRelayURLs: [String]) async throws {
-        let normalizedRelays = newRelayURLs.dedupedPreservingOrder()
+        let normalizedRelays = NostrRelayURL.normalizedStrings(newRelayURLs)
         let previousRelayURLs = Set(relayURLs)
         let removedRelays = Set(relayURLs).subtracting(normalizedRelays)
         let addedRelays = normalizedRelays.filter { !previousRelayURLs.contains($0) }

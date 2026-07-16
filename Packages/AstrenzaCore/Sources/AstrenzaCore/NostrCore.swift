@@ -472,7 +472,10 @@ public struct NostrRelayList: Equatable {
         }
 
         let items = event.tags.compactMap { tag -> Item? in
-            guard tag.count >= 2, tag[0] == "r", let normalized = normalizeRelayURL(tag[1]) else {
+            guard tag.count >= 2,
+                  tag[0] == "r",
+                  let normalized = NostrRelayURL(tag[1], mode: .userFacing)?.rawValue
+            else {
                 return nil
             }
             let marker = tag.count >= 3 ? tag[2] : nil
@@ -483,21 +486,6 @@ public struct NostrRelayList: Equatable {
             )
         }
         return NostrRelayList(items: dedupeItems(items))
-    }
-
-    private static func normalizeRelayURL(_ raw: String) -> String? {
-        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.hasPrefix("https://") {
-            value = "wss://" + value.dropFirst("https://".count)
-        } else if value.hasPrefix("http://") {
-            value = "ws://" + value.dropFirst("http://".count)
-        } else if !value.hasPrefix("wss://") && !value.hasPrefix("ws://") {
-            value = "wss://\(value)"
-        }
-        guard let url = URL(string: value), url.scheme == "wss" || url.scheme == "ws", url.host != nil else {
-            return nil
-        }
-        return value
     }
 
     private static func dedupeItems(_ items: [Item]) -> [Item] {
@@ -565,18 +553,7 @@ public enum NostrContactList {
     }
 
     private static func normalizeRelayHint(_ raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              var components = URLComponents(string: trimmed),
-              let scheme = components.scheme?.lowercased(),
-              scheme == "ws" || scheme == "wss",
-              components.host?.isEmpty == false
-        else { return nil }
-
-        components.scheme = scheme
-        components.host = components.host?.lowercased()
-        components.fragment = nil
-        return components.string
+        NostrRelayURL(raw)?.rawValue
     }
 }
 

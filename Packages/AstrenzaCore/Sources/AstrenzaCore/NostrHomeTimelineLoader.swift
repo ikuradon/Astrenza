@@ -856,20 +856,7 @@ public struct NostrHomeTimelineLoader: Sendable {
     }
 
     private func normalizedRelayURLs(_ relays: [String]) -> [String] {
-        relays.compactMap { raw in
-            var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.hasPrefix("https://") {
-                value = "wss://" + value.dropFirst("https://".count)
-            } else if value.hasPrefix("http://") {
-                value = "ws://" + value.dropFirst("http://".count)
-            } else if !value.hasPrefix("wss://") && !value.hasPrefix("ws://") {
-                value = "wss://\(value)"
-            }
-            guard let url = URL(string: value), url.scheme == "wss" || url.scheme == "ws", url.host != nil else {
-                return nil
-            }
-            return value
-        }
+        NostrRelayURL.normalizedStrings(relays, mode: .userFacing)
     }
 }
 

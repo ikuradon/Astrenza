@@ -78,26 +78,6 @@ public enum NostrPublishDestinationResolver {
     }
 
     private static func dedupe(_ relays: [String]) -> [String] {
-        var seen = Set<String>()
-        return relays.compactMap { relay in
-            guard let normalized = normalizeRelayURL(relay),
-                  seen.insert(normalized).inserted
-            else { return nil }
-            return normalized
-        }
-    }
-
-    private static func normalizeRelayURL(_ raw: String) -> String? {
-        guard let url = URL(string: raw),
-              url.scheme == "wss" || url.scheme == "ws",
-              url.host != nil
-        else { return nil }
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        components.scheme = components.scheme?.lowercased()
-        components.host = components.host?.lowercased()
-        components.fragment = nil
-        return components.url?.absoluteString
+        NostrRelayURL.normalizedStrings(relays)
     }
 }
