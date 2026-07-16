@@ -117,6 +117,24 @@ struct HomeTimelineStoreAssemblyTests {
         #expect(persistence.savedRules.map(\.accountID) == ["account"])
         #expect(persistence.savedRules.map(\.value) == ["author"])
     }
+
+    @Test("Factory injects dependencies before creating the Store")
+    func factoryBuildsInjectedComposition() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let syncPolicy = NostrSyncPolicy.default(
+            networkType: .cellular,
+            lowPowerMode: true
+        )
+
+        let store = HomeTimelineStoreFactory.make(
+            eventStore: eventStore,
+            syncPolicy: syncPolicy
+        )
+
+        #expect(store.presentationEventStore === eventStore)
+        #expect(store.currentSyncPolicy == syncPolicy)
+        #expect(store.phase == .idle)
+    }
 }
 
 @MainActor

@@ -58,7 +58,7 @@ struct PublishedActivityStateTests {
 
     @Test("A selected activity field notifies its observer once")
     func selectedActivityFieldNotifiesOnce() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         let observation = observePublishedState(store.phase)
         let transition = activityTransition(
             phase: .loaded,

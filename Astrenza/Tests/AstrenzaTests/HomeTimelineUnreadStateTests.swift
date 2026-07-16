@@ -22,7 +22,7 @@ struct HomeTimelineUnreadStateTests {
 
     @Test("materialized unread count ignores unmaterialized new events")
     func materializedUnreadCountIsSeparateFromUnmaterializedEvents() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
 
         store.testingSetMaterializedPostIDs(["new-1", "new-2", "old-1"])
         store.testingSetReadBoundary(postID: "old-1")
@@ -35,7 +35,7 @@ struct HomeTimelineUnreadStateTests {
 
     @Test("dismissing badge hides only the current unread generation")
     func unreadBadgeDismissIsGenerationScoped() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
 
         store.testingSetMaterializedPostIDs(["new-1", "old-1"])
         store.testingSetReadBoundary(postID: "old-1")
@@ -48,7 +48,7 @@ struct HomeTimelineUnreadStateTests {
 
     @Test("marking visible materialized posts read decreases unread count")
     func markVisiblePostsReadDecreasesCount() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
 
         store.testingSetMaterializedPostIDs(["new-1", "new-2", "old-1"])
         store.testingSetReadBoundary(postID: "old-1")
@@ -62,7 +62,7 @@ struct HomeTimelineUnreadStateTests {
 
     @Test("marking newest materialized window read clears the badge")
     func markNewestMaterializedWindowReadClearsBadge() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
 
         store.testingSetMaterializedPostIDs(["new-1", "new-2", "old-1"])
         store.testingSetReadBoundary(postID: "old-1")
@@ -76,7 +76,7 @@ struct HomeTimelineUnreadStateTests {
 
     @Test("badge hides when the viewport moves older than the unread range")
     func badgeHidesPastUnreadRange() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
 
         store.testingSetMaterializedPostIDs(["new-1", "new-2", "old-1", "old-2"])
         store.testingSetReadBoundary(postID: "old-1")

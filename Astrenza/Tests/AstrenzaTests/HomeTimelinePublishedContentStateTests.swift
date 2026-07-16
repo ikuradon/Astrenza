@@ -42,7 +42,7 @@ struct PublishedContentStateTests {
 
     @Test("A selected content field notifies its observer once")
     func selectedContentFieldNotifiesOnce() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         let observation = observePublishedState(store.resolvedRelays)
 
         store.testingApplyContentSnapshot(.initial)

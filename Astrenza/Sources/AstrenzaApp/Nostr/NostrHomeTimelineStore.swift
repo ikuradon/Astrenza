@@ -1,4 +1,3 @@
-import Foundation
 import AstrenzaCore
 
 @MainActor
@@ -11,34 +10,8 @@ final class NostrHomeTimelineStore {
         composition.presentation.presentationEventStore
     }
 
-    init(
-        timelineLoader: NostrHomeTimelineLoader = NostrHomeTimelineLoader(),
-        eventStore: NostrEventStore? = try? NostrEventStore.applicationSupport(appDirectory: "Astrenza"),
-        relayRuntime: NostrRelayRuntime? = nil,
-        linkPreviewResolver: NostrLinkPreviewResolver? = nil,
-        viewportStateRestorer: any HomeTimelineViewportStateRestoring =
-            TimelineRestoreStore(),
-        outboxPublisher: NostrOutboxRelayPublisher = NostrOutboxRelayPublisher(),
-        localMutationPersistence: (any HomeTimelineLocalMutationPersisting)? = nil,
-        syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false),
-        syncPolicySettingsStore: NostrSyncPolicySettingsStore = .shared
-    ) {
-        let components = HomeTimelineStoreAssembly.assemble(
-            HomeTimelineStoreAssemblyInput(
-                timelineLoader: timelineLoader,
-                eventStore: eventStore,
-                relayRuntime: relayRuntime,
-                linkPreviewResolver: linkPreviewResolver,
-                viewportStateRestorer: viewportStateRestorer,
-                outboxPublisher: outboxPublisher,
-                localMutationPersistence: localMutationPersistence,
-                initialSyncPolicy: syncPolicy,
-                syncPolicySettingsStore: syncPolicySettingsStore
-            )
-        )
-        self.composition = HomeStoreComposition.make(
-            components: components
-        )
+    init(composition: HomeStoreComposition) {
+        self.composition = composition
     }
 }
 

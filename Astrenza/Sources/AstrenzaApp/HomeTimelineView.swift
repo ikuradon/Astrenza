@@ -81,7 +81,7 @@ struct HomeTimelineView: View {
 
     init(
         sessionStore: NostrSessionStore = NostrSessionStore(restoreAccount: false),
-        liveTimelineStore: NostrHomeTimelineStore = NostrHomeTimelineStore(),
+        liveTimelineStore: NostrHomeTimelineStore = HomeTimelineStoreFactory.make(),
         onInitialPresentationReady: @escaping () -> Void = {}
     ) {
         self.sessionStore = sessionStore

@@ -26,7 +26,7 @@ struct PublishedPendingEventStateTests {
 
     @Test("A changed pending event count notifies its observer once")
     func changedPendingEventCountNotifiesOnce() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         let observation = observePublishedState(store.unmaterializedNewCount)
         let publication = HomeTimelinePendingEventCountPublication(count: 4)
 

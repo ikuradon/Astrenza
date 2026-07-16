@@ -153,7 +153,7 @@ struct HomeTimelinePublishCoordinatorTests {
             memberships: [],
             savedAt: 399
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: EmptyRelayFetcher(),
                 bootstrapRelays: []

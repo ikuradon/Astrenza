@@ -246,7 +246,7 @@ struct NostrTimelineSyncTests {
             groupID: "astrenza-older-notes-test",
             subscriptionID: "astrenza-older-notes-test-req"
         )
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         await store.testingActivateHomeFeed(
             account: account,
             definition: definition,
@@ -313,7 +313,7 @@ struct NostrTimelineSyncTests {
             groupID: "astrenza-older-notes-early",
             subscriptionID: "astrenza-older-notes-early-req"
         )
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         await store.testingActivateHomeFeed(
             account: account,
             definition: definition,
@@ -358,7 +358,7 @@ struct NostrTimelineSyncTests {
             filters: [["authors": .strings([oldAuthor]), "kinds": .ints([1, 6])]],
             relayURLs: ["wss://relay.example"]
         )
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         await store.testingActivateHomeFeed(
             account: account,
             definition: revision1,

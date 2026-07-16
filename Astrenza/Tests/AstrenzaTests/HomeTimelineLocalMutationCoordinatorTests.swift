@@ -93,7 +93,7 @@ struct HomeTimelineLocalMutationCoordinatorTests {
             existingDefinition: nil,
             now: 400
         )?.definition)
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             eventStore: eventStore,
             localMutationPersistence: FailingLocalMutationPersistence()
         )
@@ -172,7 +172,7 @@ struct HomeTimelineLocalMutationCoordinatorTests {
             ),
             savedAt: 500
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: CancellableLocalMutationRelayFetcher(),
                 bootstrapRelays: ["wss://relay.example"]

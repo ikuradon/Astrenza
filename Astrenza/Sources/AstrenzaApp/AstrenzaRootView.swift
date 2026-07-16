@@ -17,7 +17,7 @@ struct AstrenzaRootView: View {
         _sessionStore = StateObject(
             wrappedValue: NostrSessionStore(restoreAccount: !isRunningUnitTests)
         )
-        _homeTimelineStore = State(initialValue: NostrHomeTimelineStore(
+        _homeTimelineStore = State(initialValue: HomeTimelineStoreFactory.make(
             relayRuntime: NostrRelayRuntime { _ in
                 NostrURLSessionRelayTransport()
             },

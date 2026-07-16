@@ -33,7 +33,7 @@ struct GenericFeedWindowTests {
             ],
             deletedIndices: [500]
         )
-        let store = NostrHomeTimelineStore(eventStore: try NostrEventStore.inMemory())
+        let store = HomeTimelineStoreFactory.make(eventStore: try NostrEventStore.inMemory())
 
         let merged = store.testingMergedProjectionWindow(
             current,

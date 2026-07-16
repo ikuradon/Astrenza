@@ -65,7 +65,7 @@ struct PublishedAccountContextStateTests {
             lowPowerMode: true
         )
         let account = account()
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             eventStore: nil,
             syncPolicy: fallbackPolicy
         )

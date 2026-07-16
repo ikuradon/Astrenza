@@ -85,7 +85,7 @@ struct PublishedPresentationStateTests {
 
     @Test("A selected presentation field notifies its observer once")
     func selectedPresentationFieldNotifiesOnce() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         store.testingSetMaterializedPostIDs(["old"])
         store.testingSetReadBoundary(postID: "old")
         let observation = observePublishedState(store.entries)

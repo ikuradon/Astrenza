@@ -1084,7 +1084,7 @@ struct TimelineModelTests {
             content: #"{"name":"Parent Display"}"#
         )
         try eventStore.save(events: [reply, parentMetadata])
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:])),
             eventStore: eventStore,
             relayRuntime: nil
@@ -1440,7 +1440,7 @@ struct TimelineModelTests {
             accountID: account.pubkey
         )
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.start(account: account)
         try #require(await waitForTimelineState {
             store.entries.compactMap(\.post).map(\.id) == [matching.id, other.id]
@@ -1930,7 +1930,7 @@ struct TimelineModelTests {
             accountID: account.pubkey
         )
         #expect(try eventStore.feedDefinition(feedID: "feed:home:\(account.pubkey)") == nil)
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:]),
                 bootstrapRelays: []
@@ -1979,7 +1979,7 @@ struct TimelineModelTests {
             insertedAt: 400
         )
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.start(account: account)
         let expectedIDs = [
             newer.id,
@@ -2035,7 +2035,7 @@ struct TimelineModelTests {
             insertedAt: 10_001
         )
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.setRestoreProjectionAnchor(anchor.id)
         store.start(account: account)
         try #require(await waitForTimelineState {
@@ -2091,7 +2091,7 @@ struct TimelineModelTests {
             accountID: account.pubkey
         )
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.start(account: account)
         try #require(await waitForTimelineState {
             store.entries.compactMap(\.post).map(\.id) == [visible.id] &&
@@ -2173,7 +2173,7 @@ struct TimelineModelTests {
             )
         ])
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.start(account: account)
         defer { store.cancel() }
         try await waitForRelayStatusCounts(in: store, connected: 1, planned: 2)
@@ -2218,7 +2218,7 @@ struct TimelineModelTests {
             )
         ])
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.start(account: account)
         defer { store.cancel() }
         try #require(await waitForTimelineState {
@@ -2274,7 +2274,7 @@ struct TimelineModelTests {
                 message: "recent EOSE"
             )
         ])
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [
                     "astrenza-nip65": [],
@@ -2311,7 +2311,7 @@ struct TimelineModelTests {
             heartbeatPolicy: .disabled
         )
         let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [:])
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: relayClient,
                 bootstrapRelays: ["wss://bootstrap.example", "wss://fallback.example"],
@@ -2371,7 +2371,7 @@ struct TimelineModelTests {
             autoReceive: false,
             heartbeatPolicy: .disabled
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: relayClient,
                 bootstrapRelays: [relayURL],
@@ -2437,7 +2437,7 @@ struct TimelineModelTests {
             autoReceive: false,
             heartbeatPolicy: .disabled
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: relayClient,
                 bootstrapRelays: [relayURL],
@@ -2482,7 +2482,7 @@ struct TimelineModelTests {
             heartbeatPolicy: .disabled,
             backwardPolicy: .disabled
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             eventStore: eventStore,
             relayRuntime: relayRuntime
         )
@@ -2569,7 +2569,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://old-relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(timelineLoader: timelineLoader, eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(timelineLoader: timelineLoader, eventStore: eventStore)
 
         store.start(account: account)
         try await waitForRelayStatusCounts(in: store, connected: 0, planned: 3)
@@ -2710,7 +2710,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(timelineLoader: timelineLoader, eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(timelineLoader: timelineLoader, eventStore: eventStore)
 
         store.start(account: account)
         try await waitForFollowedPubkeys(in: store, [firstFollow, secondFollow])
@@ -2765,7 +2765,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(timelineLoader: timelineLoader, eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(timelineLoader: timelineLoader, eventStore: eventStore)
 
         store.start(account: account)
         for _ in 0..<100 {
@@ -3098,7 +3098,7 @@ struct TimelineModelTests {
             disableOGPOnCellular: true,
             reduceFullOutboxOnCellular: true
         ), accountID: account.pubkey)
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:])),
             eventStore: nil,
             syncPolicySettingsStore: policyStore
@@ -3152,7 +3152,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3214,7 +3214,7 @@ struct TimelineModelTests {
             ),
             accountID: secondAccount.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(
                 relayClient: CancellableStoreRelayClient(),
                 bootstrapRelays: ["wss://relay.example"]
@@ -3288,7 +3288,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3347,7 +3347,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3436,7 +3436,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3525,7 +3525,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3629,7 +3629,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3746,7 +3746,7 @@ struct TimelineModelTests {
             gapPairs: [(newer.id, older.id)],
             insertedAt: 400
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3857,7 +3857,7 @@ struct TimelineModelTests {
             gapPairs: [(newer.id, older.id)],
             insertedAt: 400
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -3978,7 +3978,7 @@ struct TimelineModelTests {
             gapPairs: [(newer.id, older.id)],
             insertedAt: 400
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4091,7 +4091,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4220,7 +4220,7 @@ struct TimelineModelTests {
             gapPairs: [(newer.id, older.id)],
             insertedAt: 400
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4329,7 +4329,7 @@ struct TimelineModelTests {
             gapPairs: [(newer.id, older.id)],
             insertedAt: 400
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4433,7 +4433,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4546,7 +4546,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4638,7 +4638,7 @@ struct TimelineModelTests {
             ),
             accountID: account.pubkey
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4711,7 +4711,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4864,7 +4864,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -4960,7 +4960,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5035,7 +5035,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5130,7 +5130,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://fast.example", "wss://slow.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5205,7 +5205,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntimeWithTwoRelays
@@ -5292,7 +5292,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5404,7 +5404,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime,
@@ -5489,7 +5489,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://hinted.example", "wss://other.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5597,7 +5597,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5685,7 +5685,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5773,7 +5773,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5894,7 +5894,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -5973,7 +5973,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6069,7 +6069,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6155,7 +6155,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6250,7 +6250,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6358,7 +6358,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6441,7 +6441,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6521,7 +6521,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6608,7 +6608,7 @@ struct TimelineModelTests {
             bootstrapRelays: [relayURL],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6701,7 +6701,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6764,7 +6764,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6850,7 +6850,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -6938,7 +6938,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime,
@@ -7025,7 +7025,7 @@ struct TimelineModelTests {
             bootstrapRelays: ["wss://relay.example"],
             pageLimit: 20
         )
-        let store = NostrHomeTimelineStore(
+        let store = HomeTimelineStoreFactory.make(
             timelineLoader: timelineLoader,
             eventStore: eventStore,
             relayRuntime: relayRuntime
@@ -7158,7 +7158,7 @@ struct TimelineModelTests {
             accountID: account.pubkey
         )
 
-        let store = NostrHomeTimelineStore(eventStore: eventStore)
+        let store = HomeTimelineStoreFactory.make(eventStore: eventStore)
         store.start(account: account)
 
         #expect(store.listEntries().compactMap(\.post).map(\.id) == [
@@ -8189,7 +8189,7 @@ private func makeGatedHomeStore(
         TimelineRestoreStore()
 ) -> (store: NostrHomeTimelineStore, relayClient: GatedStoreRelayClient) {
     let relayClient = GatedStoreRelayClient(eventsBySubscriptionID: [:])
-    let store = NostrHomeTimelineStore(
+    let store = HomeTimelineStoreFactory.make(
         timelineLoader: NostrHomeTimelineLoader(
             relayClient: relayClient,
             bootstrapRelays: bootstrapRelays

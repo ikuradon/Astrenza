@@ -26,7 +26,7 @@ struct PublishedListProjectionStateTests {
 
     @Test("A changed list revision notifies its observer once")
     func changedListRevisionNotifiesOnce() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         let observation = observePublishedState(store.listContentRevision)
         let invalidation = HomeTimelineListProjectionInvalidation(revision: 7)
 

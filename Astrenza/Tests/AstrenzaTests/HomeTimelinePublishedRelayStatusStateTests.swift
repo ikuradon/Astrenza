@@ -46,7 +46,7 @@ struct PublishedRelayStatusStateTests {
 
     @Test("A selected relay field notifies its observer once")
     func selectedRelayFieldNotifiesOnce() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         let observation = observePublishedState(store.relayStatusRevision)
 
         store.testingApplyRelayStatusSnapshot(relayStatusSnapshot())
@@ -71,7 +71,7 @@ struct PublishedRelayStatusStateTests {
 
     @Test("Realtime invalidation runs even when relay publication state is unchanged")
     func noOpTransitionStillInvalidatesRealtime() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         store.testingSetHomeTimelineRealtime(true)
 
         store.testingApplyRelayStatusTransition(HomeTimelineRelayStatusTransition(
@@ -85,7 +85,7 @@ struct PublishedRelayStatusStateTests {
 
     @Test("Activity status observation follows relay status publication")
     func activityStatusObservesRelayPublication() {
-        let store = NostrHomeTimelineStore(eventStore: nil)
+        let store = HomeTimelineStoreFactory.make(eventStore: nil)
         let observation = observePublishedState(store.activityStatus)
 
         store.testingApplyRelayStatusTransition(
