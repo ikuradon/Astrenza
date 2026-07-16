@@ -5,6 +5,7 @@ struct HomeTimelineView: View {
     @ObservedObject var sessionStore: NostrSessionStore
     let liveTimelineStore: NostrHomeTimelineStore
     let onInitialPresentationReady: () -> Void
+    private let feedActions: HomeTimelineFeedActionCoordinator
     private let userActions: HomeTimelineUserActionCoordinator
     @State private var selectedTab: TimelineTab = .home
     @State private var previousTab: TimelineTab = .home
@@ -47,6 +48,13 @@ struct HomeTimelineView: View {
         }
     }
 
+    private var feedInteractionContext: HomeTimelineFeedInteractionContext {
+        HomeTimelineFeedInteractionContext(
+            hasLiveAccount: sessionStore.account != nil,
+            timeline: selectedTimeline
+        )
+    }
+
     private var timelineNavigationActions:
         HomeTimelineNavigationDestinationActions {
         HomeTimelineNavigationDestinationActions(
@@ -77,6 +85,9 @@ struct HomeTimelineView: View {
         self.sessionStore = sessionStore
         self.liveTimelineStore = liveTimelineStore
         self.onInitialPresentationReady = onInitialPresentationReady
+        self.feedActions = HomeTimelineFeedActionCoordinator(
+            actions: liveTimelineStore
+        )
         self.userActions = HomeTimelineUserActionCoordinator(
             actions: liveTimelineStore
         )
@@ -219,10 +230,7 @@ private extension HomeTimelineView {
                 onScrollActivityChanged: handleTimelineScrollActivityChanged,
                 onViewportRestoreCompleted: handleTimelineViewportRestoreCompleted,
                 onViewportStateChanged: saveTimelineViewportState,
-                onReadablePostIDsChanged: { ids in
-                    guard sessionStore.account != nil, selectedTimeline == .home else { return }
-                    liveTimelineStore.markMaterializedPostsRead(visiblePostIDs: ids)
-                },
+                onReadablePostIDsChanged: handleReadablePostIDsChanged,
                 onLayoutCacheChanged: saveTimelineLayoutCache
             )
             .id("\(accountID)/\(selectedTimeline.id)")
@@ -294,8 +302,17 @@ private extension HomeTimelineView {
     }
 
     func handleTimelineScrollActivityChanged(_ isActive: Bool) {
-        guard sessionStore.account != nil, selectedTimeline == .home else { return }
-        liveTimelineStore.setTimelineScrollActive(isActive)
+        feedActions.setTimelineScrollActive(
+            isActive,
+            context: feedInteractionContext
+        )
+    }
+
+    func handleReadablePostIDsChanged(_ ids: [TimelinePost.ID]) {
+        feedActions.markMaterializedPostsRead(
+            visiblePostIDs: ids,
+            context: feedInteractionContext
+        )
     }
 
     func handleTimelineViewportRestoreCompleted(_ restoredOffset: CGFloat) {
@@ -476,19 +493,21 @@ private extension HomeTimelineView {
     }
 
     func refreshVisibleTimeline() async -> Bool {
-        guard sessionStore.account != nil, selectedTimeline == .home else { return false }
-        applyNewestWindowUpdate(viewport.prepareRefresh())
-        return await liveTimelineStore.applyPendingNewEvents()
+        await feedActions.refresh(context: feedInteractionContext) {
+            applyNewestWindowUpdate(viewport.prepareRefresh())
+        }
     }
 
-    func loadOlderVisibleTimeline(_ postID: TimelinePost.ID) {
-        guard sessionStore.account != nil, selectedTimeline == .home else { return }
-        liveTimelineStore.loadOlder()
+    func loadOlderVisibleTimeline(_: TimelinePost.ID) {
+        feedActions.loadOlder(context: feedInteractionContext)
     }
 
     func backfillVisibleTimelineGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
-        guard sessionStore.account != nil, selectedTimeline == .home else { return false }
-        return await liveTimelineStore.backfillGap(gap, direction: direction)
+        await feedActions.backfillGap(
+            gap,
+            direction: direction,
+            context: feedInteractionContext
+        )
     }
 
     func handlePostActionChoice(_ post: TimelinePost, choice: PostActionChoice) {
