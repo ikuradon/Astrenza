@@ -20,7 +20,7 @@ final class NostrHomeTimelineStore {
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
 
-    var relayStatusEventStore: NostrEventStore? {
+    var presentationEventStore: NostrEventStore? {
         eventStore
     }
 
@@ -89,10 +89,6 @@ extension NostrHomeTimelineStore {
         viewportCoordinator.refresh()
     }
 
-    func refreshLatest() async {
-        await viewportCoordinator.refreshLatest()
-    }
-
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
         viewportCoordinator.setTimelineAtNewestWindow(isAtNewestWindow)
     }
@@ -158,20 +154,6 @@ extension NostrHomeTimelineStore {
 
     func resumeTimelineFilters() {
         featureActionCoordinator.resumeFilters()
-    }
-}
-
-extension NostrHomeTimelineStore {
-    var syncPolicy: NostrSyncPolicy {
-        publishedStateCoordinator.syncPolicy
-    }
-
-    var restoreProjectionAnchorEventID: String? {
-        viewportCoordinator.restoreProjectionAnchorEventID
-    }
-
-    var isTimelineAtNewestWindow: Bool {
-        viewportCoordinator.isTimelineAtNewestWindow
     }
 }
 

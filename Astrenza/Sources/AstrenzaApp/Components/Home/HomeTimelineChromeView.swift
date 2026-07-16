@@ -18,7 +18,7 @@ struct HomeTimelineChromeView: View {
     private var accountSummaries: [NostrAccountSummary] {
         _ = timelineStore.resolvedContentRevision
         return sessionStore.accountSummaries(
-            eventStore: timelineStore.relayStatusEventStore
+            eventStore: timelineStore.presentationEventStore
         )
     }
 

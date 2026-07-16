@@ -125,7 +125,7 @@ extension NostrHomeTimelineStore {
         dependencies.runtime.ensureLifecycle(accountID: account.pubkey)
         dependencies.application.applyAccountContextTransition(.activate(
             account,
-            syncPolicy: syncPolicy
+            syncPolicy: currentSyncPolicy
         ))
         dependencies.application.applyContentSnapshot(
             dependencies.state.replaceFollowedPubkeys(sourceAuthors)

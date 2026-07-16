@@ -24,13 +24,13 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     }
 
     private var eventStore: NostrEventStore? {
-        hasLiveAccount ? timelineStore.relayStatusEventStore : nil
+        hasLiveAccount ? timelineStore.presentationEventStore : nil
     }
 
     private var accountSummaries: [NostrAccountSummary] {
         _ = timelineStore.resolvedContentRevision
         return sessionStore.accountSummaries(
-            eventStore: timelineStore.relayStatusEventStore
+            eventStore: timelineStore.presentationEventStore
         )
     }
 
