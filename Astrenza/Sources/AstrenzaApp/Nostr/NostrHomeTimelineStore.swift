@@ -23,8 +23,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let stateCoordinator: HomeStoreStateCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private lazy var restoreProjectionAnchorWorkflow =
-        HomeRestoreProjectionAnchorWorkflow(target: self)
+    private let restoreCoordinator: HomeStoreRestoreCoordinator
     private var publishedStateObservation: AnyCancellable?
 
     var relayStatusEventStore: NostrEventStore? {
@@ -113,6 +112,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.stateCoordinator = composition.state
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
+        self.restoreCoordinator = composition.restore
         bindContextComposition()
     }
 }
@@ -272,7 +272,7 @@ extension NostrHomeTimelineStore {
     }
 
     func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
-        restoreProjectionAnchorWorkflow.restoreIfPossible(account: account)
+        restoreCoordinator.restoreIfPossible(account: account)
     }
 
     func startRuntimeSession() {
