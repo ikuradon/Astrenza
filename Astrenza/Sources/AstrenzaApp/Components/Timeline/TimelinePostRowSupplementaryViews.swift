@@ -18,10 +18,7 @@ struct RelativeTimestampSchedule: TimelineSchedule {
     func entries(from startDate: Date, mode: Mode) -> AnySequence<Date> {
         AnySequence(
             sequence(
-                first: TimelineTimestampFormatter.nextRelativeTextChangeDate(
-                    from: createdAt,
-                    after: startDate
-                ),
+                first: startDate,
                 next: { date in
                     TimelineTimestampFormatter.nextRelativeTextChangeDate(
                         from: createdAt,

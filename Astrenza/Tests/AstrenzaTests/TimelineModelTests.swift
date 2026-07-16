@@ -283,6 +283,23 @@ struct TimelineModelTests {
         ) == date(172_800))
     }
 
+    @Test("Relative timestamp schedule renders now before later change boundaries")
+    func relativeTimestampScheduleStartsAtCurrentDate() {
+        let createdAt = 1_000
+        func date(_ delta: TimeInterval) -> Date {
+            Date(timeIntervalSince1970: TimeInterval(createdAt) + delta)
+        }
+        let startDate = date(60.25)
+
+        let entries = Array(
+            RelativeTimestampSchedule(createdAt: createdAt)
+                .entries(from: startDate, mode: .normal)
+                .prefix(3)
+        )
+
+        #expect(entries == [startDate, date(120), date(180)])
+    }
+
     @Test("Reply tree exposes ancestors and descendants from mock store")
     func replyTreeNavigation() throws {
         let root = try #require(MockTimelineData.posts.first { $0.id == "thread-a-root" })
