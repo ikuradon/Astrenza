@@ -16,58 +16,17 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let runtimeCoordinator: HomeStoreRuntimeCoordinator
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let projectionCoordinator: HomeStoreProjectionCoordinator
-    private let contextCoordinator: HomeStoreContextCoordinator
+    private let applicationCoordinator: HomeStoreApplicationCoordinator
     private let lifecycleCoordinator: HomeStoreLifecycleCoordinator
     private let featureActionCoordinator: HomeStoreFeatureActionCoordinator
     private let syncCoordinator: HomeStoreSyncCoordinator
     private let stateCoordinator: HomeStoreStateCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private let restoreCoordinator: HomeStoreRestoreCoordinator
     private var publishedStateObservation: AnyCancellable?
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
-    }
-
-    func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
-        publishedStateCoordinator.applyContentSnapshot(snapshot)
-    }
-
-    func applyActivityTransition(
-        _ transition: HomeTimelineActivityTransition
-    ) {
-        statusCoordinator.applyActivityTransition(transition)
-    }
-
-    func applyActivityIntent(
-        _ intent: HomeTimelineActivityIntent
-    ) {
-        statusCoordinator.applyActivityIntent(intent)
-    }
-
-    func applyPresentationTransition(
-        _ transition: HomeTimelinePresentationTransition
-    ) {
-        presentationCoordinator.applyPresentationTransition(transition)
-    }
-
-    func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
-        statusCoordinator.applyRelayStatusSnapshot(snapshot)
-    }
-
-    func applyRelayStatusTransition(
-        _ transition: HomeTimelineRelayStatusTransition?
-    ) {
-        if let relayURL = statusCoordinator.applyRelayStatusTransition(
-            transition
-        ) {
-            invalidateHomeTimelineRealtime(relayURL: relayURL)
-        }
-    }
-
-    func publishRelayStatusChange() {
-        statusCoordinator.publishRelayStatusChange()
     }
 
     init(
@@ -105,15 +64,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.runtimeCoordinator = composition.runtime
         self.queryStoreCoordinator = composition.query
         self.projectionCoordinator = composition.projection
-        self.contextCoordinator = composition.context
+        self.applicationCoordinator = composition.application
         self.lifecycleCoordinator = composition.lifecycle
         self.featureActionCoordinator = composition.featureActions
         self.syncCoordinator = composition.sync
         self.stateCoordinator = composition.state
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
-        self.restoreCoordinator = composition.restore
-        bindContextComposition()
+        observePublishedState()
     }
 }
 
@@ -199,152 +157,6 @@ extension NostrHomeTimelineStore {
     func cancel() {
         lifecycleCoordinator.cancel()
     }
-
-    func refreshLatest(
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken
-    ) async {
-        await lifecycleCoordinator.refreshLatest(
-            account: account,
-            lifecycle: lifecycle
-        )
-    }
-
-    func loadOlder(
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken
-    ) async {
-        await lifecycleCoordinator.loadOlder(
-            account: account,
-            lifecycle: lifecycle
-        )
-    }
-
-    func replaceRuntimeBootstrapState(
-        _ state: NostrHomeTimelineState
-    ) {
-        stateCoordinator.replaceRuntimeBootstrapState(state)
-    }
-
-    func replaceFollowedPubkeys(_ pubkeys: [String]) {
-        applyContentSnapshot(
-            stateCoordinator.replaceFollowedPubkeys(pubkeys)
-        )
-    }
-
-    func persistDatabase(account: NostrAccount) async {
-        await stateCoordinator.persistDatabase(accountID: account.pubkey)
-    }
-
-    func scheduleHomeFeedReadStateSave() {
-        contextCoordinator.scheduleReadBoundarySave()
-    }
-
-    func prepareHomeFeedDefinition(account: NostrAccount) {
-        projectionCoordinator.prepareDefinition(account: account)
-    }
-
-    func reloadNewestProjectionWindow(account: NostrAccount) {
-        projectionCoordinator.reloadNewestProjection(account: account)
-    }
-
-    func reloadProjectionWindow(
-        account: NostrAccount,
-        around anchorEventID: String?,
-        mergingWithCurrentWindow: Bool = false,
-        onCompletion: HomeTimelineMaterializationCoordinating
-            .ProjectionReloadHandler? = nil
-    ) {
-        projectionCoordinator.reloadProjection(
-            account: account,
-            around: anchorEventID,
-            mergingWithCurrentWindow: mergingWithCurrentWindow,
-            onCompletion: onCompletion
-        )
-    }
-
-    func requestNewestProjectionReload() {
-        presentationCoordinator.requestNewestProjectionReload()
-    }
-
-    func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
-        restoreCoordinator.restoreIfPossible(account: account)
-    }
-
-    func startRuntimeSession() {
-        runtimeCoordinator.startSession()
-    }
-
-    func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
-        guard let provisionalRelays = runtimeCoordinator
-            .provisionalBootstrapRelayURLs(account: account)
-        else { return }
-        applyContentSnapshot(
-            stateCoordinator.installProvisionalRelays(provisionalRelays)
-        )
-        statusCoordinator.refreshRelayStatusCounts()
-    }
-
-    func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
-        await runtimeCoordinator.configure(
-            account: account,
-            forceInstall: forceInstall
-        )
-    }
-
-}
-
-extension NostrHomeTimelineStore {
-
-    func handleRuntimeEvent(
-        relayURL: String,
-        subscriptionID: String,
-        event: NostrEvent
-    ) async {
-        await runtimeCoordinator.handleEvent(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID,
-            event: event
-        )
-    }
-
-    private func enqueueBackwardDependencies(for event: NostrEvent) async {
-        await runtimeCoordinator.enqueueDependencies(for: event)
-    }
-
-    func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        runtimeCoordinator.handleBackwardCompletion(completion)
-    }
-
-    func scheduleLinkPreviewResolution() {
-        runtimeCoordinator.scheduleLinkPreviewResolution()
-    }
-
-    func materializeEntries(
-        allowsRealtimeFollow: Bool = false,
-        onTransition: HomeTimelineMaterializationCoordinating
-            .TransitionHandler? = nil
-    ) {
-        presentationCoordinator.materializeEntries(
-            allowsRealtimeFollow: allowsRealtimeFollow,
-            onTransition: onTransition
-        )
-    }
-
-    func scheduleMaterializeEntries(
-        delayNanoseconds: UInt64? = nil,
-        allowsRealtimeFollow: Bool? = nil
-    ) {
-        presentationCoordinator.scheduleMaterialization(
-            delayNanoseconds: delayNanoseconds,
-            allowsRealtimeFollow: allowsRealtimeFollow
-        )
-    }
-
-    func replaceTimelineState(_ state: NostrHomeTimelineState) {
-        stateCoordinator.replaceTimelineState(state)
-    }
-
 }
 
 extension NostrHomeTimelineStore {
@@ -358,28 +170,11 @@ extension NostrHomeTimelineStore {
 }
 
 private extension NostrHomeTimelineStore {
-    func bindContextComposition() {
-        contextCoordinator.bind(
-            applications: HomeStoreContextApplications.make(target: self)
-        )
-        observePublishedState()
-    }
-
     func observePublishedState() {
         publishedStateObservation =
             publishedStateCoordinator.objectWillChange.sink { [weak self] in
                 self?.publishedStateRevision &+= 1
             }
-    }
-
-    func invalidateHomeTimelineRealtime(
-        for key: RuntimeSubscriptionKey
-    ) {
-        syncCoordinator.invalidateForwardSubscription(key)
-    }
-
-    func invalidateHomeTimelineRealtime(relayURL: String) {
-        syncCoordinator.invalidateForwardSubscriptions(relayURL: relayURL)
     }
 }
 
@@ -394,59 +189,6 @@ extension NostrHomeTimelineStore {
 
     var isTimelineAtNewestWindow: Bool {
         viewportCoordinator.isTimelineAtNewestWindow
-    }
-}
-
-extension NostrHomeTimelineStore {
-    func resetHomeTimelineRealtime(
-        expecting runtimeKeys: Set<RuntimeSubscriptionKey> = []
-    ) {
-        syncCoordinator.prepareForwardSubscriptions(runtimeKeys)
-    }
-
-    func applyProjectionViewportTransition(
-        _ transition: HomeTimelineProjectionViewportTransition
-    ) {
-        viewportCoordinator.applyProjectionViewportTransition(transition)
-    }
-
-    func applyAccountContextTransition(
-        _ transition: HomeTimelineAccountContextTransition
-    ) {
-        publishedStateCoordinator.applyAccountContextTransition(transition)
-    }
-
-    @discardableResult
-    func clearPendingNewEvents() -> Bool {
-        viewportCoordinator.clearPendingNewEvents()
-    }
-
-    func resetRuntimeSetup() {
-        runtimeCoordinator.resetSetup()
-    }
-
-    func clearPendingProjectionReload() {
-        presentationCoordinator.clearNewestProjectionReload()
-    }
-
-    func applyPendingEventCountPublication(
-        _ publication: HomeTimelinePendingEventCountPublication
-    ) {
-        publishedStateCoordinator.applyPendingEventCountPublication(
-            publication
-        )
-    }
-
-    func invalidateListEntries() {
-        applyListProjectionInvalidation(
-            queryStoreCoordinator.invalidateListEntries()
-        )
-    }
-
-    func applyListProjectionInvalidation(
-        _ invalidation: HomeTimelineListProjectionInvalidation
-    ) {
-        publishedStateCoordinator.applyListProjectionInvalidation(invalidation)
     }
 }
 
@@ -603,211 +345,16 @@ extension NostrHomeTimelineStore {
 
 #if DEBUG
 extension NostrHomeTimelineStore {
-    func testingApplyActivityTransition(_ transition: HomeTimelineActivityTransition) {
-        applyActivityTransition(transition)
-    }
-
-    func testingApplyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
-        applyContentSnapshot(snapshot)
-    }
-
-    func testingApplyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
-        applyRelayStatusSnapshot(snapshot)
-    }
-
-    func testingApplyRelayStatusTransition(_ transition: HomeTimelineRelayStatusTransition?) {
-        applyRelayStatusTransition(transition)
-    }
-
-    func testingApplyListProjectionInvalidation(
-        _ invalidation: HomeTimelineListProjectionInvalidation
-    ) {
-        applyListProjectionInvalidation(invalidation)
-    }
-
-    func testingApplyPendingEventCountPublication(
-        _ publication: HomeTimelinePendingEventCountPublication
-    ) {
-        applyPendingEventCountPublication(publication)
-    }
-
-    func testingApplyAccountContextTransition(
-        _ transition: HomeTimelineAccountContextTransition
-    ) {
-        applyAccountContextTransition(transition)
-    }
-
-    func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        syncCoordinator.setRealtimeForTesting(isRealtime)
-    }
-
-    func testingSetMaterializedPostIDs(_ ids: [TimelinePost.ID]) {
-        let testEntries: [TimelineFeedEntry] = ids.map { id in
-            .post(TimelinePost(
-                id: id,
-                author: .unresolved(pubkey: String(repeating: "a", count: 64)),
-                avatar: AvatarStyle(
-                    primary: .astrenzaAccent,
-                    secondary: .astrenzaAttachmentBackground,
-                    symbolName: "person.fill",
-                    pictureState: .metadataPending,
-                    placeholderSeed: id
-                ),
-                body: id,
-                createdAt: TimelineMockClock.referenceNow,
-                replyCount: nil,
-                boostCount: nil,
-                favoriteCount: nil,
-                isLocked: false,
-                media: nil,
-                context: nil
-            ))
-        }
-        presentationCoordinator.replaceEntriesForTesting(
-            testEntries,
-            renderFingerprint: testEntries.map { $0.id.hashValue }
+    var testingDependencies: HomeStoreTestingDependencies {
+        HomeStoreTestingDependencies(
+            application: applicationCoordinator,
+            runtime: runtimeCoordinator,
+            projection: projectionCoordinator,
+            sync: syncCoordinator,
+            state: stateCoordinator,
+            viewport: viewportCoordinator,
+            presentation: presentationCoordinator
         )
-    }
-
-    func testingSetReadBoundary(postID: TimelinePost.ID) {
-        presentationCoordinator.setReadBoundaryForTesting(postID: postID)
-    }
-
-    func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
-        viewportCoordinator.replacePendingEventIDs(ids)
-    }
-
-    func testingMergedProjectionWindow(
-        _ current: NostrFeedWindow,
-        with loaded: NostrFeedWindow,
-        centeredOn anchorEventID: String
-    ) -> NostrFeedWindow {
-        projectionCoordinator.mergedWindow(
-            current,
-            with: loaded,
-            centeredOn: anchorEventID
-        )
-    }
-
-    func testingActivateHomeFeed(
-        account: NostrAccount,
-        definition: NostrFeedDefinitionRecord,
-        sourceAuthors: [String]
-    ) async {
-        runtimeCoordinator.ensureLifecycle(accountID: account.pubkey)
-        applyAccountContextTransition(.activate(
-            account,
-            syncPolicy: syncPolicy
-        ))
-        applyContentSnapshot(
-            stateCoordinator.replaceFollowedPubkeys(sourceAuthors)
-        )
-        await projectionCoordinator.activateStoredProjection(
-            definition: definition,
-            sourceAuthors: sourceAuthors
-        )
-    }
-
-    func testingRegisterOlderFeedRequest(
-        packet: NostrREQPacket,
-        definition: NostrFeedDefinitionRecord,
-        anchorEventID: String?
-    ) {
-        syncCoordinator.registerOlderFeedRequest(
-            packet: packet,
-            definition: definition,
-            anchorEventID: anchorEventID
-        )
-    }
-
-    func testingRegisterForwardFeedRequest(
-        packet: NostrREQPacket,
-        definition: NostrFeedDefinitionRecord
-    ) {
-        syncCoordinator.registerForwardFeedRequest(
-            packet: packet,
-            definition: definition
-        )
-    }
-
-    func testingRegisterGapFeedRequest(
-        packet: NostrREQPacket,
-        definition: NostrFeedDefinitionRecord,
-        newerEventID: String,
-        olderEventID: String,
-        direction: TimelineGapFillDirection
-    ) {
-        syncCoordinator.registerGapFeedRequest(
-            packet: packet,
-            definition: definition,
-            newerEventID: newerEventID,
-            olderEventID: olderEventID,
-            direction: direction
-        )
-    }
-
-    func testingHandleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) async {
-        await runtimeCoordinator.handlePacket(
-            .requestStarted(attempt),
-            isActive: true
-        )
-    }
-
-    func testingHandleBackwardEvent(
-        relayURL: String,
-        subscriptionID: String,
-        event: NostrEvent
-    ) async {
-        await handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
-    }
-
-    func testingHandleHomeForwardEvent(
-        relayURL: String,
-        subscriptionID: String,
-        event: NostrEvent
-    ) async {
-        await handleRuntimeEvent(relayURL: relayURL, subscriptionID: subscriptionID, event: event)
-    }
-
-    func testingHandleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        handleBackwardCompletion(completion)
-    }
-
-    func testingEnqueueBackwardDependencies(for event: NostrEvent) async {
-        await enqueueBackwardDependencies(for: event)
-    }
-
-    @discardableResult
-    func testingEnqueueBackwardDependencies(
-        _ dependencies: NostrEventDependencies,
-        availableRelayURLs: [String]
-    ) -> Bool {
-        stateCoordinator.enqueueSourceDependencies(
-            dependencies,
-            availableRelayURLs: availableRelayURLs,
-            now: 0
-        )
-    }
-
-    func testingFlushBackwardDependencies() {
-        stateCoordinator.flushSourcePacketInstall(onFailure: { _ in })
-    }
-
-    var testingPendingBackwardRequestCount: Int {
-        syncCoordinator.backwardRequestCount +
-            stateCoordinator.pendingDependencyRequestCount
-    }
-
-    var testingHasPendingDependencyWork: Bool {
-        stateCoordinator.hasPendingDependencyWork
-    }
-
-    var testingActiveFeedSyncRequestCount: Int {
-        syncCoordinator.activeRequestCount
-    }
-
-    var testingActiveFeedSyncContextCount: Int {
-        syncCoordinator.activeContextCount
     }
 }
 #endif

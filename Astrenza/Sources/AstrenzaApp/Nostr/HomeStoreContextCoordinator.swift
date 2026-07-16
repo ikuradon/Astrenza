@@ -1,12 +1,5 @@
 import AstrenzaCore
 
-@MainActor
-protocol HomeStoreContextApplicationTarget:
-    HomeStoreApplicationEffectTarget,
-    HomeLoadApplicationEffectTarget,
-    HomeAccountApplicationEffectTarget,
-    HomeViewportApplicationEffectTarget {}
-
 struct HomeStoreContextApplications: Sendable {
     let store: HomeTimelineStoreApplicationEffects
     let load: HomeTimelineLoadApplicationEffects

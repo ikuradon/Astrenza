@@ -175,15 +175,12 @@ struct StoreContextCoordinatorFixture {
         readOnly: true
     )
     let source: StoreContextSourceSpy
-    let target: NostrHomeTimelineStore
+    let target: HomeStoreApplicationCoordinator
     let coordinator: HomeStoreContextCoordinator
 
     init() {
         let source = StoreContextSourceSpy()
-        let target = NostrHomeTimelineStore(
-            eventStore: nil,
-            relayRuntime: nil
-        )
+        let target = makeStoreContextApplicationTarget()
         let coordinator = HomeStoreContextCoordinator(source: source)
         coordinator.bind(
             applications: HomeStoreContextApplications.make(target: target)
@@ -306,4 +303,22 @@ struct StoreContextCoordinatorFixture {
         source.accountSnapshotValue = nil
         source.viewportSnapshotValue = nil
     }
+}
+
+@MainActor
+private func makeStoreContextApplicationTarget() -> HomeStoreApplicationCoordinator {
+    let components = HomeTimelineStoreAssembly.assemble(
+        HomeTimelineStoreAssemblyInput(
+            timelineLoader: NostrHomeTimelineLoader(),
+            eventStore: nil,
+            relayRuntime: nil,
+            linkPreviewResolver: nil,
+            viewportStateRestorer: TimelineRestoreStore(),
+            outboxPublisher: NostrOutboxRelayPublisher(),
+            localMutationPersistence: nil,
+            initialSyncPolicy: .default(networkType: .unknown),
+            syncPolicySettingsStore: .shared
+        )
+    )
+    return HomeStoreComposition.make(components: components).application
 }

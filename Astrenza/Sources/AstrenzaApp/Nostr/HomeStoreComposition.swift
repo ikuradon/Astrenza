@@ -20,6 +20,29 @@ struct HomeStoreComposition {
                 status: status
             )
         }
+
+        func applicationCollaborators(
+            publishedState: HomeTimelinePublishedStateCoordinator,
+            lifecycle: HomeStoreLifecycleCoordinator,
+            sync: HomeStoreSyncCoordinator,
+            state: HomeStoreStateCoordinator,
+            restore: HomeStoreRestoreCoordinator
+        ) -> HomeStoreApplicationCollaborators {
+            HomeStoreApplicationCollaborators(
+                publishedState: publishedState,
+                context: context,
+                query: query,
+                projection: projection,
+                lifecycle: lifecycle,
+                sync: sync,
+                state: state,
+                runtime: runtime,
+                viewport: viewport,
+                presentation: presentation,
+                status: status,
+                restore: restore
+            )
+        }
     }
 
     let query: HomeStoreQueryCoordinator
@@ -34,40 +57,59 @@ struct HomeStoreComposition {
     let presentation: HomeStorePresentationCoordinator
     let status: HomeStoreStatusCoordinator
     let restore: HomeStoreRestoreCoordinator
+    let application: HomeStoreApplicationCoordinator
 
     static func make(
         components: HomeTimelineStoreComponents
     ) -> HomeStoreComposition {
         let shared = makeShared(components: components)
+        let lifecycle = HomeStoreLifecycleCoordinator.live(
+            components: components,
+            projection: shared.projection,
+            contexts: shared.context
+        )
+        let featureActions = HomeStoreFeatureActionCoordinator.live(
+            components: components,
+            contexts: shared.context
+        )
+        let sync = HomeStoreSyncCoordinator.live(
+            components: components,
+            contexts: shared.context
+        )
+        let state = HomeStoreStateCoordinator.live(
+            components: components,
+            contexts: shared.context
+        )
+        let restore = HomeStoreRestoreCoordinator.live(
+            publishedState: components.publishedStateCoordinator,
+            collaborators: shared.restoreCollaborators
+        )
+        let application = HomeStoreApplicationCoordinator(
+            collaborators: shared.applicationCollaborators(
+                publishedState: components.publishedStateCoordinator,
+                lifecycle: lifecycle,
+                sync: sync,
+                state: state,
+                restore: restore
+            )
+        )
+        shared.context.bind(
+            applications: application.contextApplications
+        )
         return HomeStoreComposition(
             query: shared.query,
             projection: shared.projection,
             context: shared.context,
-            lifecycle: HomeStoreLifecycleCoordinator.live(
-                components: components,
-                projection: shared.projection,
-                contexts: shared.context
-            ),
-            featureActions: HomeStoreFeatureActionCoordinator.live(
-                components: components,
-                contexts: shared.context
-            ),
-            sync: HomeStoreSyncCoordinator.live(
-                components: components,
-                contexts: shared.context
-            ),
-            state: HomeStoreStateCoordinator.live(
-                components: components,
-                contexts: shared.context
-            ),
+            lifecycle: lifecycle,
+            featureActions: featureActions,
+            sync: sync,
+            state: state,
             runtime: shared.runtime,
             viewport: shared.viewport,
             presentation: shared.presentation,
             status: shared.status,
-            restore: HomeStoreRestoreCoordinator.live(
-                publishedState: components.publishedStateCoordinator,
-                collaborators: shared.restoreCollaborators
-            )
+            restore: restore,
+            application: application
         )
     }
 
