@@ -71,6 +71,22 @@ struct NostrCorePackageTests {
         #expect(decoded.kind == 1)
     }
 
+    @Test(
+        "NIP-19 rejects non-ASCII Bech32 prefixes without trapping",
+        arguments: [
+            "日本語1qqqqqq",
+            "emoji😀1qqqqqq",
+            "本文1qqqqqqqqqq"
+        ]
+    )
+    func nip19RejectsNonASCIIBech32Prefixes(input: String) {
+        #expect {
+            try NostrNIP19.eventReference(from: input)
+        } throws: { error in
+            error as? NostrNIP19Error == .invalidEncoding
+        }
+    }
+
     @Test("NIP-19 nsec decodes to canonical hex private key")
     func nsecDecoding() throws {
         let privateKey = try NostrNIP19.privateKeyHex(

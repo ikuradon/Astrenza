@@ -351,7 +351,7 @@ enum Bech32 {
         guard !hrp.isEmpty, hrp.allSatisfy({ $0.unicodeScalars.allSatisfy { (33...126).contains($0.value) } }) else {
             throw NostrNIP19Error.invalidEncoding
         }
-        let checksum = createChecksum(hrp: hrp, data: data)
+        let checksum = try createChecksum(hrp: hrp, data: data)
         let encoded = try (data + checksum).map { value -> Character in
             guard value < charset.count else {
                 throw NostrNIP19Error.invalidEncoding
@@ -362,11 +362,17 @@ enum Bech32 {
     }
 
     static func decode(_ input: String) throws -> (hrp: String, data: [UInt8]) {
-        guard let separator = input.lastIndex(of: "1") else {
+        guard input.unicodeScalars.allSatisfy({ (33...126).contains($0.value) }),
+              input == input.lowercased() || input == input.uppercased()
+        else {
             throw NostrNIP19Error.invalidEncoding
         }
-        let hrp = String(input[..<separator])
-        let encoded = input[input.index(after: separator)...]
+        let normalized = input.lowercased()
+        guard let separator = normalized.lastIndex(of: "1") else {
+            throw NostrNIP19Error.invalidEncoding
+        }
+        let hrp = String(normalized[..<separator])
+        let encoded = normalized[normalized.index(after: separator)...]
         guard !hrp.isEmpty, encoded.count >= 6 else {
             throw NostrNIP19Error.invalidEncoding
         }
@@ -377,7 +383,7 @@ enum Bech32 {
             }
             return UInt8(index)
         }
-        guard polymod(hrpExpand(hrp) + values) == 1 else {
+        guard polymod(try hrpExpand(hrp) + values) == 1 else {
             throw NostrNIP19Error.invalidChecksum
         }
         return (hrp, Array(values.dropLast(6)))
@@ -413,13 +419,18 @@ enum Bech32 {
         return output
     }
 
-    private static func hrpExpand(_ hrp: String) -> [UInt8] {
-        let scalars = hrp.unicodeScalars.map { UInt8($0.value) }
+    private static func hrpExpand(_ hrp: String) throws -> [UInt8] {
+        let scalars = try hrp.unicodeScalars.map { scalar -> UInt8 in
+            guard let value = UInt8(exactly: scalar.value) else {
+                throw NostrNIP19Error.invalidEncoding
+            }
+            return value
+        }
         return scalars.map { $0 >> 5 } + [0] + scalars.map { $0 & 31 }
     }
 
-    private static func createChecksum(hrp: String, data: [UInt8]) -> [UInt8] {
-        let values = hrpExpand(hrp.lowercased()) + data
+    private static func createChecksum(hrp: String, data: [UInt8]) throws -> [UInt8] {
+        let values = try hrpExpand(hrp.lowercased()) + data
         let mod = polymod(values + Array(repeating: 0, count: 6)) ^ 1
         return (0..<6).map { index in
             UInt8((mod >> UInt32(5 * (5 - index))) & 31)
