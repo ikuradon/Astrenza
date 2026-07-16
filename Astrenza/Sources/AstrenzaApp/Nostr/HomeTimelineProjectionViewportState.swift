@@ -42,3 +42,32 @@ struct HomeTimelineProjectionViewportState: Equatable, Sendable {
         return next == self ? nil : next
     }
 }
+
+@MainActor
+final class HomeProjectionViewportCoordinator {
+    private var state: HomeTimelineProjectionViewportState
+
+    init(
+        initialState: HomeTimelineProjectionViewportState =
+            HomeTimelineProjectionViewportState()
+    ) {
+        state = initialState
+    }
+
+    var restoreAnchorEventID: String? {
+        state.restoreAnchorEventID
+    }
+
+    var isAtNewestWindow: Bool {
+        state.isAtNewestWindow
+    }
+
+    @discardableResult
+    func apply(
+        _ transition: HomeTimelineProjectionViewportTransition
+    ) -> Bool {
+        guard let next = state.applying(transition) else { return false }
+        state = next
+        return true
+    }
+}

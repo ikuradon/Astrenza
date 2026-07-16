@@ -71,3 +71,35 @@ struct ProjectionViewportStateTests {
         #expect(next.isAtNewestWindow)
     }
 }
+
+@Suite("Home timeline projection viewport coordinator")
+@MainActor
+struct ProjectionViewportCoordinatorTests {
+    @Test("The coordinator owns and applies viewport state transitions")
+    func appliesTransitions() {
+        let coordinator = HomeProjectionViewportCoordinator()
+
+        #expect(coordinator.apply(.setRestoreAnchor("anchor")))
+        #expect(coordinator.restoreAnchorEventID == "anchor")
+        #expect(!coordinator.isAtNewestWindow)
+
+        #expect(coordinator.apply(.resetToNewest))
+        #expect(coordinator.restoreAnchorEventID == nil)
+        #expect(coordinator.isAtNewestWindow)
+    }
+
+    @Test("Rejected and duplicate transitions do not mutate owned state")
+    func rejectsInvalidAndDuplicateTransitions() {
+        let coordinator = HomeProjectionViewportCoordinator(
+            initialState: HomeTimelineProjectionViewportState(
+                restoreAnchorEventID: "anchor",
+                isAtNewestWindow: false
+            )
+        )
+
+        #expect(!coordinator.apply(.setNewestWindow(true)))
+        #expect(!coordinator.apply(.setNewestWindow(false)))
+        #expect(coordinator.restoreAnchorEventID == "anchor")
+        #expect(!coordinator.isAtNewestWindow)
+    }
+}

@@ -67,8 +67,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     private lazy var runtimeContextFactory =
         makeRuntimeContextFactory()
+    private lazy var restoreProjectionAnchorWorkflow =
+        HomeRestoreProjectionAnchorWorkflow(target: self)
     private var publishedStateObservation: AnyCancellable?
-    private var projectionViewportState = HomeTimelineProjectionViewportState()
+    private let projectionViewportCoordinator =
+        HomeProjectionViewportCoordinator()
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -496,25 +499,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
-        guard let restoreProjectionAnchorEventID else { return }
-        reloadProjectionWindow(
-            account: account,
-            around: restoreProjectionAnchorEventID
-        ) { [weak self] didReload in
-            guard didReload,
-                  let self,
-                  self.account?.pubkey == account.pubkey,
-                  self.restoreProjectionAnchorEventID ==
-                    restoreProjectionAnchorEventID
-            else { return }
-            materializeEntries { [weak self] transition in
-                guard let self else { return }
-                scheduleLinkPreviewResolution()
-                if !transition.snapshot.entries.isEmpty {
-                    applyActivityIntent(.setPhase(.loaded))
-                }
-            }
-        }
+        restoreProjectionAnchorWorkflow.restoreIfPossible(account: account)
     }
 
     func startRuntimeSession() {
@@ -929,19 +914,20 @@ private extension NostrHomeTimelineStore {
             application: runtimeApplicationEffects
         )
     }
+}
 
+extension NostrHomeTimelineStore {
     var syncPolicy: NostrSyncPolicy {
         publishedStateCoordinator.accountContext.syncPolicy
     }
 
     var restoreProjectionAnchorEventID: String? {
-        projectionViewportState.restoreAnchorEventID
+        projectionViewportCoordinator.restoreAnchorEventID
     }
 
     var isTimelineAtNewestWindow: Bool {
-        projectionViewportState.isAtNewestWindow
+        projectionViewportCoordinator.isAtNewestWindow
     }
-
 }
 
 extension NostrHomeTimelineStore {
@@ -957,10 +943,7 @@ extension NostrHomeTimelineStore {
     func applyProjectionViewportTransition(
         _ transition: HomeTimelineProjectionViewportTransition
     ) {
-        guard let next = projectionViewportState.applying(transition) else {
-            return
-        }
-        projectionViewportState = next
+        projectionViewportCoordinator.apply(transition)
     }
 
     func applyAccountContextTransition(
@@ -1014,6 +997,9 @@ extension NostrHomeTimelineStore:
 extension NostrHomeTimelineStore:
     HomeViewportApplicationEffectTarget,
     HomeLoadApplicationEffectTarget {}
+
+extension NostrHomeTimelineStore:
+    HomeRestoreProjectionAnchorTarget {}
 
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {
