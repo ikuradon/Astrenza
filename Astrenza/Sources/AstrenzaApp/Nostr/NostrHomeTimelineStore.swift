@@ -232,10 +232,6 @@ extension NostrHomeTimelineStore {
         )
     }
 
-    func timelineEvent(id: String) -> NostrEvent? {
-        queryStoreCoordinator.timelineEvent(id: id)
-    }
-
     func persistDatabase(account: NostrAccount) async {
         await stateCoordinator.persistDatabase(accountID: account.pubkey)
     }
@@ -364,8 +360,7 @@ extension NostrHomeTimelineStore {
 private extension NostrHomeTimelineStore {
     func bindContextComposition() {
         contextCoordinator.bind(
-            applications: HomeStoreContextApplications.make(target: self),
-            readBoundaryTarget: self
+            applications: HomeStoreContextApplications.make(target: self)
         )
         observePublishedState()
     }
@@ -393,10 +388,6 @@ extension NostrHomeTimelineStore {
         publishedStateCoordinator.accountContext.syncPolicy
     }
 
-    var currentReadBoundaryPostID: String? {
-        presentationCoordinator.currentReadBoundaryPostID
-    }
-
     var restoreProjectionAnchorEventID: String? {
         viewportCoordinator.restoreProjectionAnchorEventID
     }
@@ -417,10 +408,6 @@ extension NostrHomeTimelineStore {
         _ transition: HomeTimelineProjectionViewportTransition
     ) {
         viewportCoordinator.applyProjectionViewportTransition(transition)
-    }
-
-    func applyRestoredReadBoundary(postID: String) {
-        presentationCoordinator.restoreReadBoundary(postID: postID)
     }
 
     func applyAccountContextTransition(

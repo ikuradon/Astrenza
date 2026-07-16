@@ -9,7 +9,6 @@ struct HomeStoreContextCoordinatorTests {
         let fixture = StoreContextCoordinatorFixture()
         fixture.installSnapshots()
 
-        #expect(fixture.source.boundReadBoundaryTarget === fixture.target)
         #expect(fixture.source.runtimeApplicationContextCount == 1)
         expectInstalledSnapshots(fixture)
 

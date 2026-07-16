@@ -19,37 +19,107 @@ protocol HomeStoreReadBoundaryInteracting: AnyObject {
 extension HomeReadBoundaryInteractionWorkflow:
     HomeStoreReadBoundaryInteracting {}
 
-@MainActor
-protocol HomeStoreReadBoundaryTarget: AnyObject {
-    var account: NostrAccount? { get }
-    var entries: [TimelineFeedEntry] { get }
-    var currentReadBoundaryPostID: String? { get }
+struct HomeStoreReadBoundarySnapshot {
+    let account: NostrAccount?
+    let entries: [TimelineFeedEntry]
+    let currentBoundaryPostID: TimelinePost.ID?
+}
 
+@MainActor
+protocol HomeStoreReadBoundarySourcing: AnyObject {
+    func snapshot() -> HomeStoreReadBoundarySnapshot
     func timelineEvent(id: String) -> NostrEvent?
     func applyRestoredReadBoundary(postID: String)
 }
 
 @MainActor
+final class HomeStoreReadBoundarySource: HomeStoreReadBoundarySourcing {
+    typealias SnapshotProvider = @MainActor () -> HomeStoreReadBoundarySnapshot
+    typealias EventProvider = @MainActor (_ id: String) -> NostrEvent?
+    typealias BoundaryApplication = @MainActor (_ postID: String) -> Void
+
+    private let snapshotProvider: SnapshotProvider
+    private let eventProvider: EventProvider
+    private let boundaryApplication: BoundaryApplication
+
+    init(
+        snapshot: @escaping SnapshotProvider,
+        event: @escaping EventProvider,
+        applyRestoredBoundary: @escaping BoundaryApplication
+    ) {
+        snapshotProvider = snapshot
+        eventProvider = event
+        boundaryApplication = applyRestoredBoundary
+    }
+
+    static func live(
+        components: HomeTimelineStoreComponents,
+        query: HomeStoreQueryCoordinator
+    ) -> HomeStoreReadBoundarySource {
+        let publishedState = components.publishedStateCoordinator
+        let presentation = components.presentationWorkflow
+        return HomeStoreReadBoundarySource(
+            snapshot: {
+                HomeStoreReadBoundarySnapshot(
+                    account: publishedState.accountContext.account,
+                    entries: publishedState.presentation.entries,
+                    currentBoundaryPostID:
+                        presentation.interactionState.readBoundaryPostID
+                )
+            },
+            event: { eventID in
+                query.timelineEvent(id: eventID)
+            },
+            applyRestoredBoundary: { postID in
+                publishedState.applyPresentationTransition(
+                    presentation.restoreReadBoundary(postID: postID)
+                )
+            }
+        )
+    }
+
+    func snapshot() -> HomeStoreReadBoundarySnapshot {
+        snapshotProvider()
+    }
+
+    func timelineEvent(id: String) -> NostrEvent? {
+        eventProvider(id)
+    }
+
+    func applyRestoredReadBoundary(postID: String) {
+        boundaryApplication(postID)
+    }
+}
+
+@MainActor
 final class HomeStoreReadBoundaryCoordinator {
     private let interaction: any HomeStoreReadBoundaryInteracting
-    private weak var target: (any HomeStoreReadBoundaryTarget)?
+    private let source: any HomeStoreReadBoundarySourcing
 
     init(
         interaction: any HomeStoreReadBoundaryInteracting,
-        target: (any HomeStoreReadBoundaryTarget)? = nil
+        source: any HomeStoreReadBoundarySourcing
     ) {
         self.interaction = interaction
-        self.target = target
+        self.source = source
     }
 
-    func bind(target: any HomeStoreReadBoundaryTarget) {
-        self.target = target
+    static func live(
+        components: HomeTimelineStoreComponents,
+        query: HomeStoreQueryCoordinator
+    ) -> HomeStoreReadBoundaryCoordinator {
+        HomeStoreReadBoundaryCoordinator(
+            interaction: components.readBoundaryInteractionWorkflow,
+            source: HomeStoreReadBoundarySource.live(
+                components: components,
+                query: query
+            )
+        )
     }
 
     @discardableResult
     func restore(account: NostrAccount) async -> Bool {
-        guard let entries = target?.entries else { return false }
-        let positions = entries.compactMap(\.post).map { post in
+        let positions = source.snapshot().entries.compactMap(\.post).map { post in
             HomeTimelineReadPosition(
                 postID: post.id,
                 createdAt: post.createdAt
@@ -60,37 +130,38 @@ final class HomeStoreReadBoundaryCoordinator {
             positions: positions
         )
         guard !Task.isCancelled,
-              let target,
-              target.account?.pubkey == account.pubkey,
+              source.snapshot().account?.pubkey == account.pubkey,
               let boundaryID
         else { return false }
-        target.applyRestoredReadBoundary(postID: boundaryID)
+        source.applyRestoredReadBoundary(postID: boundaryID)
         return true
     }
 
     @discardableResult
     func scheduleSave() -> Bool {
-        guard let target, let account = target.account else { return false }
+        let snapshot = source.snapshot()
+        guard let account = snapshot.account else { return false }
         return interaction.scheduleReadBoundarySave(
             accountID: account.pubkey,
-            boundaryEvent: currentBoundaryEvent(target: target)
+            boundaryEvent: currentBoundaryEvent(snapshot: snapshot)
         )
     }
 
     func boundaryWrite() -> HomeTimelineReadBoundaryWrite? {
-        guard let target, let account = target.account else { return nil }
+        let snapshot = source.snapshot()
+        guard let account = snapshot.account else { return nil }
         return interaction.readBoundaryWrite(
             accountID: account.pubkey,
-            boundaryEvent: currentBoundaryEvent(target: target)
+            boundaryEvent: currentBoundaryEvent(snapshot: snapshot)
         )
     }
 
     private func currentBoundaryEvent(
-        target: any HomeStoreReadBoundaryTarget
+        snapshot: HomeStoreReadBoundarySnapshot
     ) -> NostrEvent? {
-        guard let boundaryID = target.currentReadBoundaryPostID else {
+        guard let boundaryID = snapshot.currentBoundaryPostID else {
             return nil
         }
-        return target.timelineEvent(id: boundaryID)
+        return source.timelineEvent(id: boundaryID)
     }
 }

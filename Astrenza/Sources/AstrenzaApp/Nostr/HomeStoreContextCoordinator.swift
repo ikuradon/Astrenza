@@ -65,11 +65,7 @@ final class HomeStoreContextCoordinator {
         )
     }
 
-    func bind(
-        applications: HomeStoreContextApplications,
-        readBoundaryTarget: any HomeStoreReadBoundaryTarget
-    ) {
-        source.bindReadBoundary(target: readBoundaryTarget)
+    func bind(applications: HomeStoreContextApplications) {
         factories = makeFactories(applications: applications)
     }
 

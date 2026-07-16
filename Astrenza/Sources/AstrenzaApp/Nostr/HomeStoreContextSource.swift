@@ -2,8 +2,6 @@ import AstrenzaCore
 
 @MainActor
 protocol HomeStoreContextSourcing: AnyObject {
-    func bindReadBoundary(target: any HomeStoreReadBoundaryTarget)
-
     func loadSnapshot() -> HomeLoadContextSnapshot?
     func hasResolvedRelays() -> Bool
     func loaderState() -> NostrHomeTimelineState?
@@ -84,15 +82,12 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
         loadInteraction = components.loadInteractionWorkflow
         syncInteraction = components.syncInteractionWorkflow
         self.query = query
-        readBoundary = HomeStoreReadBoundaryCoordinator(
-            interaction: components.readBoundaryInteractionWorkflow
+        readBoundary = HomeStoreReadBoundaryCoordinator.live(
+            components: components,
+            query: query
         )
         self.projectionViewport = projectionViewport
         self.hasRelayRuntime = hasRelayRuntime
-    }
-
-    func bindReadBoundary(target: any HomeStoreReadBoundaryTarget) {
-        readBoundary.bind(target: target)
     }
 
     func loadSnapshot() -> HomeLoadContextSnapshot? {

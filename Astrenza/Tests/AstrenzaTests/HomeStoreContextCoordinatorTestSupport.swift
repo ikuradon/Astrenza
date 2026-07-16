@@ -29,8 +29,6 @@ final class StoreContextSourceSpy: HomeStoreContextSourcing {
         case scheduleReadBoundarySave
     }
 
-    weak var boundReadBoundaryTarget:
-        (any HomeStoreReadBoundaryTarget)?
     var loadSnapshotValue: HomeLoadContextSnapshot?
     var runtimeSnapshotValue: HomeTimelineRuntimeStoreSnapshot?
     var stateProjectionValue: HomeTimelineStateContextProjection?
@@ -49,10 +47,6 @@ final class StoreContextSourceSpy: HomeStoreContextSourcing {
     private(set) var snapshotReads: [SnapshotRead] = []
     private(set) var dependencyCalls: [DependencyCall] = []
     private(set) var runtimeApplicationContextCount = 0
-
-    func bindReadBoundary(target: any HomeStoreReadBoundaryTarget) {
-        boundReadBoundaryTarget = target
-    }
 
     func loadSnapshot() -> HomeLoadContextSnapshot? {
         snapshotReads.append(.load)
@@ -192,8 +186,7 @@ struct StoreContextCoordinatorFixture {
         )
         let coordinator = HomeStoreContextCoordinator(source: source)
         coordinator.bind(
-            applications: HomeStoreContextApplications.make(target: target),
-            readBoundaryTarget: target
+            applications: HomeStoreContextApplications.make(target: target)
         )
         self.source = source
         self.target = target

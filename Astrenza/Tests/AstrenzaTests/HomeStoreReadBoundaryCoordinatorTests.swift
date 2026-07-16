@@ -12,7 +12,7 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         let expectedPositions = posts.map {
             HomeTimelineReadPosition(postID: $0.id, createdAt: $0.createdAt)
         }
-        fixture.target.entries = [
+        fixture.source.entries = [
             .deleted(TimelineDeletedEntry(id: "deleted")),
             .post(posts[0]),
             .post(posts[1])
@@ -27,13 +27,13 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         #expect(fixture.interaction.events == [
             .restore(fixture.account.pubkey, expectedPositions)
         ])
-        #expect(fixture.target.appliedBoundaryIDs == [posts[1].id])
+        #expect(fixture.source.appliedBoundaryIDs == [posts[1].id])
     }
 
     @Test("A missing restored boundary leaves presentation unchanged")
     func ignoresMissingBoundary() async {
         let fixture = StoreReadBoundaryFixture()
-        fixture.target.entries = MockTimelineData.posts.prefix(1).map {
+        fixture.source.entries = MockTimelineData.posts.prefix(1).map {
             .post($0)
         }
 
@@ -42,7 +42,7 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         )
 
         #expect(!didRestore)
-        #expect(fixture.target.appliedBoundaryIDs.isEmpty)
+        #expect(fixture.source.appliedBoundaryIDs.isEmpty)
     }
 
     @Test("An account switch during restore rejects the stale boundary")
@@ -50,7 +50,7 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         let fixture = StoreReadBoundaryFixture()
         fixture.interaction.restoredBoundaryID = "boundary"
         fixture.interaction.onRestore = {
-            fixture.target.account = fixture.replacementAccount
+            fixture.source.account = fixture.replacementAccount
         }
 
         let didRestore = await fixture.coordinator.restore(
@@ -58,7 +58,7 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         )
 
         #expect(!didRestore)
-        #expect(fixture.target.appliedBoundaryIDs.isEmpty)
+        #expect(fixture.source.appliedBoundaryIDs.isEmpty)
     }
 
     @Test("Cancellation after read-state I/O rejects the restored boundary")
@@ -72,7 +72,7 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         }.value
 
         #expect(!didRestore)
-        #expect(fixture.target.appliedBoundaryIDs.isEmpty)
+        #expect(fixture.source.appliedBoundaryIDs.isEmpty)
     }
 
     @Test("Save and session flush share the current boundary event")
@@ -91,8 +91,8 @@ struct HomeStoreReadBoundaryCoordinatorTests {
             ),
             updatedAt: 200
         )
-        fixture.target.currentReadBoundaryPostID = event.id
-        fixture.target.timelineEvents[event.id] = event
+        fixture.source.currentReadBoundaryPostID = event.id
+        fixture.source.timelineEvents[event.id] = event
         fixture.interaction.scheduleResult = true
         fixture.interaction.boundaryWriteResult = expectedWrite
 
@@ -104,37 +104,76 @@ struct HomeStoreReadBoundaryCoordinatorTests {
             .schedule(fixture.account.pubkey, event.id),
             .write(fixture.account.pubkey, event.id)
         ])
-        #expect(fixture.target.lookedUpEventIDs == [event.id, event.id])
+        #expect(fixture.source.lookedUpEventIDs == [event.id, event.id])
         #expect(write.scopeID == expectedWrite.scopeID)
         #expect(write.feedID == expectedWrite.feedID)
         #expect(write.boundary == expectedWrite.boundary)
         #expect(write.updatedAt == expectedWrite.updatedAt)
     }
 
-    @Test("The coordinator does not retain its Store target")
-    func doesNotRetainTarget() async {
+    @Test("The coordinator owns its required state source")
+    func retainsRequiredSource() {
         let account = StoreReadBoundaryFixture.makeAccount(
             pubkeyCharacter: "a"
         )
         let interaction = StoreReadBoundaryInteractionSpy()
-        var target: StoreReadBoundaryTargetSpy? =
-            StoreReadBoundaryTargetSpy(account: account)
-        weak let weakTarget = target
-        let coordinator = HomeStoreReadBoundaryCoordinator(
-            interaction: interaction
-        )
-        if let target {
-            coordinator.bind(target: target)
+        interaction.scheduleResult = true
+        var source: StoreReadBoundarySourceSpy? =
+            StoreReadBoundarySourceSpy(account: account)
+        weak let weakSource = source
+        let coordinator: HomeStoreReadBoundaryCoordinator
+        if let source {
+            coordinator = HomeStoreReadBoundaryCoordinator(
+                interaction: interaction,
+                source: source
+            )
+        } else {
+            Issue.record("Expected a read-boundary source")
+            return
         }
 
-        target = nil
+        source = nil
 
-        #expect(weakTarget == nil)
-        #expect(!coordinator.scheduleSave())
-        #expect(coordinator.boundaryWrite() == nil)
-        let didRestore = await coordinator.restore(account: account)
-        #expect(!didRestore)
-        #expect(interaction.events.isEmpty)
+        #expect(weakSource != nil)
+        #expect(coordinator.scheduleSave())
+        #expect(interaction.events == [
+            .schedule(account.pubkey, nil)
+        ])
+    }
+
+    @Test("The state source exposes fresh snapshots and routes effects")
+    func sourceRoutesStateAndEffects() {
+        let account = StoreReadBoundaryFixture.makeAccount(
+            pubkeyCharacter: "a"
+        )
+        let event = StoreReadBoundaryFixture.makeEvent(
+            id: "1",
+            pubkey: account.pubkey
+        )
+        let state = StoreReadBoundarySourceClosureState()
+        let source = HomeStoreReadBoundarySource(
+            snapshot: { state.snapshot },
+            event: { eventID in
+                state.requestedEventIDs.append(eventID)
+                return eventID == event.id ? event : nil
+            },
+            applyRestoredBoundary: { postID in
+                state.appliedBoundaryIDs.append(postID)
+            }
+        )
+
+        state.snapshot = HomeStoreReadBoundarySnapshot(
+            account: account,
+            entries: [.post(MockTimelineData.posts[0])],
+            currentBoundaryPostID: event.id
+        )
+
+        #expect(source.snapshot().account == account)
+        #expect(source.snapshot().entries.count == 1)
+        #expect(source.timelineEvent(id: event.id) == event)
+        source.applyRestoredReadBoundary(postID: event.id)
+        #expect(state.requestedEventIDs == [event.id])
+        #expect(state.appliedBoundaryIDs == [event.id])
     }
 }
 
@@ -142,22 +181,22 @@ struct HomeStoreReadBoundaryCoordinatorTests {
 private struct StoreReadBoundaryFixture {
     let account: NostrAccount
     let replacementAccount: NostrAccount
-    let target: StoreReadBoundaryTargetSpy
+    let source: StoreReadBoundarySourceSpy
     let interaction: StoreReadBoundaryInteractionSpy
     let coordinator: HomeStoreReadBoundaryCoordinator
 
     init() {
         let account = Self.makeAccount(pubkeyCharacter: "a")
-        let target = StoreReadBoundaryTargetSpy(account: account)
+        let source = StoreReadBoundarySourceSpy(account: account)
         let interaction = StoreReadBoundaryInteractionSpy()
         self.account = account
         replacementAccount = Self.makeAccount(pubkeyCharacter: "b")
-        self.target = target
+        self.source = source
         self.interaction = interaction
         let coordinator = HomeStoreReadBoundaryCoordinator(
-            interaction: interaction
+            interaction: interaction,
+            source: source
         )
-        coordinator.bind(target: target)
         self.coordinator = coordinator
     }
 
@@ -230,8 +269,8 @@ private final class StoreReadBoundaryInteractionSpy:
 }
 
 @MainActor
-private final class StoreReadBoundaryTargetSpy:
-    HomeStoreReadBoundaryTarget {
+private final class StoreReadBoundarySourceSpy:
+    HomeStoreReadBoundarySourcing {
     var account: NostrAccount?
     var entries: [TimelineFeedEntry] = []
     var currentReadBoundaryPostID: String?
@@ -243,6 +282,14 @@ private final class StoreReadBoundaryTargetSpy:
         self.account = account
     }
 
+    func snapshot() -> HomeStoreReadBoundarySnapshot {
+        HomeStoreReadBoundarySnapshot(
+            account: account,
+            entries: entries,
+            currentBoundaryPostID: currentReadBoundaryPostID
+        )
+    }
+
     func timelineEvent(id: String) -> NostrEvent? {
         lookedUpEventIDs.append(id)
         return timelineEvents[id]
@@ -251,4 +298,15 @@ private final class StoreReadBoundaryTargetSpy:
     func applyRestoredReadBoundary(postID: String) {
         appliedBoundaryIDs.append(postID)
     }
+}
+
+@MainActor
+private final class StoreReadBoundarySourceClosureState {
+    var snapshot = HomeStoreReadBoundarySnapshot(
+        account: nil,
+        entries: [],
+        currentBoundaryPostID: nil
+    )
+    var requestedEventIDs: [String] = []
+    var appliedBoundaryIDs: [String] = []
 }
