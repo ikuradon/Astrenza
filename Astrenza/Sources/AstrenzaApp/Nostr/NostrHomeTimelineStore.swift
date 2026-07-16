@@ -12,8 +12,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let publishedStateCoordinator:
         HomeTimelinePublishedStateCoordinator
     private let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
-    private let viewportInteractionWorkflow:
-        HomeTimelineViewportInteractionWorkflow
+    private let viewportCoordinator: HomeStoreViewportCoordinator
     private let eventStore: NostrEventStore?
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeCoordinator: HomeStoreRuntimeCoordinator
@@ -40,8 +39,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private lazy var restoreProjectionAnchorWorkflow =
         HomeRestoreProjectionAnchorWorkflow(target: self)
     private var publishedStateObservation: AnyCancellable?
-    private let projectionViewportCoordinator:
-        HomeProjectionViewportCoordinator
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -122,7 +119,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.publishedStateCoordinator =
             components.publishedStateCoordinator
         self.loadInteractionWorkflow = components.loadInteractionWorkflow
-        self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
+        self.viewportCoordinator = composition.viewport
         self.eventStore = components.eventStore
         self.dataInteractionWorkflow = components.dataInteractionWorkflow
         self.runtimeCoordinator = composition.runtime
@@ -145,8 +142,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
         self.localMutationInteractionWorkflow =
             components.localMutationInteractionWorkflow
-        self.projectionViewportCoordinator =
-            composition.projectionViewport
         bindContextComposition()
     }
 }
@@ -160,10 +155,7 @@ extension NostrHomeTimelineStore {
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
-        viewportInteractionWorkflow.setRestoreProjectionAnchor(
-            anchorEventID,
-            context: contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.setRestoreProjectionAnchor(anchorEventID)
     }
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
@@ -174,61 +166,42 @@ extension NostrHomeTimelineStore {
     }
 
     func refresh() {
-        viewportInteractionWorkflow.refresh(
-            contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.refresh()
     }
 
     func refreshLatest() async {
-        await viewportInteractionWorkflow.refreshLatest(
-            contextCoordinator.viewportContext()
-        )
+        await viewportCoordinator.refreshLatest()
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
-        viewportInteractionWorkflow.setTimelineAtNewestWindow(
-            isAtNewestWindow,
-            context: contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.setTimelineAtNewestWindow(isAtNewestWindow)
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
-        viewportInteractionWorkflow.setTimelineScrollActive(
-            isActive,
-            context: contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.setTimelineScrollActive(isActive)
     }
 
     func dismissUnreadBadge() {
-        viewportInteractionWorkflow.dismissUnreadBadge(
-            contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.dismissUnreadBadge()
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
-        viewportInteractionWorkflow.markMaterializedPostsRead(
-            visiblePostIDs: visiblePostIDs,
-            context: contextCoordinator.viewportContext()
+        viewportCoordinator.markMaterializedPostsRead(
+            visiblePostIDs: visiblePostIDs
         )
     }
 
     func markNewestMaterializedWindowRead() {
-        viewportInteractionWorkflow.markNewestMaterializedWindowRead(
-            contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.markNewestMaterializedWindowRead()
     }
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        viewportInteractionWorkflow.applyPendingNewEvents(
-            contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.applyPendingNewEvents()
     }
 
     func loadOlder() {
-        viewportInteractionWorkflow.loadOlder(
-            contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.loadOlder()
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
@@ -501,11 +474,11 @@ extension NostrHomeTimelineStore {
     }
 
     var restoreProjectionAnchorEventID: String? {
-        projectionViewportCoordinator.restoreAnchorEventID
+        viewportCoordinator.restoreProjectionAnchorEventID
     }
 
     var isTimelineAtNewestWindow: Bool {
-        projectionViewportCoordinator.isAtNewestWindow
+        viewportCoordinator.isTimelineAtNewestWindow
     }
 }
 
@@ -522,7 +495,7 @@ extension NostrHomeTimelineStore {
     func applyProjectionViewportTransition(
         _ transition: HomeTimelineProjectionViewportTransition
     ) {
-        projectionViewportCoordinator.apply(transition)
+        viewportCoordinator.applyProjectionViewportTransition(transition)
     }
 
     func applyRestoredReadBoundary(postID: String) {
@@ -537,9 +510,7 @@ extension NostrHomeTimelineStore {
 
     @discardableResult
     func clearPendingNewEvents() -> Bool {
-        viewportInteractionWorkflow.clearPendingEvents(
-            contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.clearPendingNewEvents()
     }
 
     func resetRuntimeSetup() {
@@ -803,10 +774,7 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
-        viewportInteractionWorkflow.replacePendingEventIDs(
-            ids,
-            context: contextCoordinator.viewportContext()
-        )
+        viewportCoordinator.replacePendingEventIDs(ids)
     }
 
     func testingMergedProjectionWindow(

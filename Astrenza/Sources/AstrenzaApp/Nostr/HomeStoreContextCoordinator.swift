@@ -5,7 +5,7 @@ struct HomeStoreComposition {
     let query: HomeStoreQueryCoordinator
     let context: HomeStoreContextCoordinator
     let runtime: HomeStoreRuntimeCoordinator
-    let projectionViewport: HomeProjectionViewportCoordinator
+    let viewport: HomeStoreViewportCoordinator
     let presentation: HomeStorePresentationCoordinator
     let status: HomeStoreStatusCoordinator
 
@@ -29,7 +29,11 @@ struct HomeStoreComposition {
                 components: components,
                 contexts: context
             ),
-            projectionViewport: projectionViewport,
+            viewport: HomeStoreViewportCoordinator.live(
+                components: components,
+                projection: projectionViewport,
+                contexts: context
+            ),
             presentation: HomeStorePresentationCoordinator.live(
                 components: components
             ),
