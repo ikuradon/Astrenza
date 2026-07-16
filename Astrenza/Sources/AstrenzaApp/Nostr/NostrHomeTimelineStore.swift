@@ -23,8 +23,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineStateContextProjector()
     private let storeApplicationDispatcher =
         HomeTimelineStoreApplicationDispatcher()
-    private let accountApplicationDispatcher =
-        HomeTimelineAccountApplicationDispatcher()
     private let viewportApplicationDispatcher =
         HomeTimelineViewportDispatcher()
     private let gapBackfillInteractionWorkflow:
@@ -57,8 +55,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let relayRuntime: NostrRelayRuntime?
     private lazy var storeApplicationEffects =
         makeStoreApplicationEffects()
-    private lazy var accountApplicationEffects =
-        makeAccountApplicationEffects()
     private lazy var viewportApplicationEffects =
         makeViewportApplicationEffects()
     private lazy var featureInteractionContextFactory =
@@ -1182,9 +1178,6 @@ private extension NostrHomeTimelineStore {
                 restoreCachedReadState: { [weak self] account in
                     await self?.restoreHomeFeedReadState(account: account)
                 },
-                applyStart: { [weak self] action in
-                    self?.dispatchAccountApplication(action)
-                },
                 load: { [weak self] request in
                     guard let self else { return }
                     await load(
@@ -1192,13 +1185,7 @@ private extension NostrHomeTimelineStore {
                         lifecycle: request.lifecycle
                     )
                 },
-                applyReset: { [weak self] action in
-                    self?.dispatchAccountApplication(action)
-                },
-                performReset: { [weak self] action in
-                    guard let self else { return }
-                    await performAccountApplication(action)
-                }
+                applications: makeAccountApplicationEffects()
             )
         )
     }
@@ -1246,33 +1233,6 @@ private extension NostrHomeTimelineStore {
             hasTimelineEvents: !noteEvents.isEmpty,
             hasResolvedRelays: !resolvedRelays.isEmpty,
             hasFollowedPubkeys: !followedPubkeys.isEmpty
-        )
-    }
-
-    func dispatchAccountApplication(
-        _ action: HomeTimelineAccountResetStoreAction
-    ) {
-        accountApplicationDispatcher.apply(
-            action,
-            effects: accountApplicationEffects
-        )
-    }
-
-    func performAccountApplication(
-        _ action: HomeTimelineAccountResetAsyncAction
-    ) async {
-        await accountApplicationDispatcher.perform(
-            action,
-            effects: accountApplicationEffects
-        )
-    }
-
-    func dispatchAccountApplication(
-        _ action: HomeTimelineAccountStartStoreAction
-    ) {
-        accountApplicationDispatcher.apply(
-            action,
-            effects: accountApplicationEffects
         )
     }
 

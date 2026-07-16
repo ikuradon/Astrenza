@@ -35,71 +35,87 @@ struct HomeAccountLifecycleEnvironment: Sendable {
         HomeTimelineAccountStartEnvironment.CachedPresentationWaiter
     let restoreCachedReadState:
         HomeTimelineAccountStartEnvironment.CachedReadStateRestorer
-    let applyStart: HomeAccountStartInteractionEffects.ApplicationEffect
     let load: HomeAccountStartInteractionEffects.LoadEffect
-    let applyReset: HomeAccountResetInteractionEffects.ApplicationEffect
-    let performReset:
-        HomeAccountResetInteractionEffects.AsyncApplicationEffect
+    let applications: HomeTimelineAccountApplicationEffects
 }
 
 @MainActor
 struct HomeAccountContextFactory {
-    private let environment: HomeAccountLifecycleEnvironment
+    private let snapshot: HomeAccountLifecycleEnvironment.SnapshotProvider
+    private let readBoundaryWrite:
+        HomeAccountLifecycleEnvironment.ReadBoundaryProvider
+    private let startEffects: HomeAccountStartInteractionEffects
+    private let resetEffects: HomeAccountResetInteractionEffects
 
     init(environment: HomeAccountLifecycleEnvironment) {
-        self.environment = environment
+        snapshot = environment.snapshot
+        readBoundaryWrite = environment.readBoundaryWrite
+
+        let snapshot = environment.snapshot
+        let dispatcher = HomeTimelineAccountApplicationDispatcher()
+        startEffects = HomeAccountStartInteractionEffects(
+            environment: HomeTimelineAccountStartEnvironment(
+                state: {
+                    Self.startState(from: snapshot() ?? .empty)
+                },
+                restoreCachedSnapshot: environment.restoreCachedSnapshot,
+                restoredViewport: environment.restoredViewport,
+                waitForCachedPresentation:
+                    environment.waitForCachedPresentation,
+                restoreCachedReadState: environment.restoreCachedReadState
+            ),
+            apply: { action in
+                dispatcher.apply(
+                    action,
+                    effects: environment.applications
+                )
+            },
+            load: environment.load
+        )
+        resetEffects = HomeAccountResetInteractionEffects(
+            environment: HomeTimelineAccountResetEnvironment(
+                currentAccount: {
+                    snapshot()?.account
+                }
+            ),
+            apply: { action in
+                dispatcher.apply(
+                    action,
+                    effects: environment.applications
+                )
+            },
+            perform: { action in
+                await dispatcher.perform(
+                    action,
+                    effects: environment.applications
+                )
+            }
+        )
     }
 
     func startContext() -> HomeAccountStartInteractionContext {
         let snapshot = currentSnapshot()
-        let snapshotProvider = environment.snapshot
         return HomeAccountStartInteractionContext(
             state: HomeTimelineAccountStartInteractionState(
                 hasRelayRuntime: snapshot.hasRelayRuntime
             ),
-            effects: HomeAccountStartInteractionEffects(
-                environment: HomeTimelineAccountStartEnvironment(
-                    state: {
-                        Self.startState(
-                            from: snapshotProvider() ?? .empty
-                        )
-                    },
-                    restoreCachedSnapshot:
-                        environment.restoreCachedSnapshot,
-                    restoredViewport: environment.restoredViewport,
-                    waitForCachedPresentation:
-                        environment.waitForCachedPresentation,
-                    restoreCachedReadState:
-                        environment.restoreCachedReadState
-                ),
-                apply: environment.applyStart,
-                load: environment.load
-            )
+            effects: startEffects
         )
     }
 
     func resetContext() -> HomeAccountResetInteractionContext {
         let snapshot = currentSnapshot()
-        let snapshotProvider = environment.snapshot
         return HomeAccountResetInteractionContext(
             state: HomeTimelineAccountResetInteractionState(
-                readBoundaryWrite: environment.readBoundaryWrite(),
+                readBoundaryWrite: readBoundaryWrite(),
                 resolvedRelays: snapshot.resolvedRelays
             ),
-            effects: HomeAccountResetInteractionEffects(
-                environment: HomeTimelineAccountResetEnvironment(
-                    currentAccount: {
-                        snapshotProvider()?.account
-                    }
-                ),
-                apply: environment.applyReset,
-                perform: environment.performReset
-            )
+            effects: resetEffects
         )
     }
 
     private func currentSnapshot() -> HomeAccountLifecycleSnapshot {
-        environment.snapshot() ?? .empty
+        snapshot() ?? .empty
     }
 
     private static func startState(

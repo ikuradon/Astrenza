@@ -59,7 +59,7 @@ struct HomeAccountContextFactoryTests {
         #expect(context.effects.environment.currentAccount() == nil)
     }
 
-    @Test("Start and reset dependencies route through injected effects")
+    @Test("Start and reset dependencies route through supplied applications")
     func routesLifecycleEffects() async {
         let fixture = AccountContextFactoryFixture()
         let start = fixture.factory.startContext()
@@ -90,11 +90,12 @@ struct HomeAccountContextFactoryTests {
             .restoreCachedReadState(fixture.account),
             .load(request)
         ])
-        #expect(fixture.probe.startActions == [
-            .account(.startRuntimeSession)
+        #expect(fixture.probe.applicationEvents == [
+            .startRuntimeSession,
+            .clearPendingEvents,
+            .resetRuntimeSetup,
+            .resetRealtimeState
         ])
-        #expect(fixture.probe.resetEvents == [.clearPendingEvents])
-        #expect(fixture.probe.resetAsyncActions == [.resetRuntimeState])
     }
 }
 
@@ -106,9 +107,11 @@ private enum AccountContextDependency: Equatable, Sendable {
     case load(HomeTimelineAccountStartLoadRequest)
 }
 
-private enum AccountContextResetEvent: Equatable {
+private enum AccountContextApplicationEvent: Equatable {
+    case startRuntimeSession
     case clearPendingEvents
-    case other
+    case resetRuntimeSetup
+    case resetRealtimeState
 }
 
 @MainActor
@@ -118,10 +121,7 @@ private final class AccountContextFactoryProbe {
     let restoredViewport: HomeTimelineRestoredViewport
     private(set) var readBoundaryCount = 0
     private(set) var dependencies: [AccountContextDependency] = []
-    private(set) var startActions: [HomeTimelineAccountStartStoreAction] = []
-    private(set) var resetEvents: [AccountContextResetEvent] = []
-    private(set) var resetAsyncActions:
-        [HomeTimelineAccountResetAsyncAction] = []
+    private(set) var applicationEvents: [AccountContextApplicationEvent] = []
 
     init(
         snapshot: HomeAccountLifecycleSnapshot,
@@ -154,30 +154,44 @@ private final class AccountContextFactoryProbe {
             restoreCachedReadState: { [self] account in
                 dependencies.append(.restoreCachedReadState(account))
             },
-            applyStart: { [self] action in
-                startActions.append(action)
-            },
             load: { [self] request in
                 dependencies.append(.load(request))
             },
-            applyReset: { [self] action in
-                resetEvents.append(Self.resetEvent(for: action))
-            },
-            performReset: { [self] action in
-                resetAsyncActions.append(action)
-            }
+            applications: applicationEffects
         )
     }
 
-    private static func resetEvent(
-        for action: HomeTimelineAccountResetStoreAction
-    ) -> AccountContextResetEvent {
-        switch action {
-        case .clearPendingEvents:
-            .clearPendingEvents
-        default:
-            .other
-        }
+    private var applicationEffects: HomeTimelineAccountApplicationEffects {
+        HomeTimelineAccountApplicationEffects(
+            cancelCurrentAccount: {},
+            applyAccountContextTransition: { _ in },
+            startRuntimeSession: { [self] in
+                applicationEvents.append(.startRuntimeSession)
+            },
+            prepareHomeFeedDefinition: { _ in },
+            applyProjectionViewportTransition: { _ in },
+            reloadNewestProjectionWindow: { _ in },
+            materializeEntries: {},
+            applyRestoreProjectionAnchor: { _ in },
+            installProvisionalRuntimeBootstrap: { _ in },
+            setPhase: { _ in },
+            publishRelayStatusChange: {},
+            applyPresentationTransition: { _ in },
+            clearPendingEvents: { [self] in
+                applicationEvents.append(.clearPendingEvents)
+            },
+            applyActivityTransition: { _ in },
+            invalidateListEntries: {},
+            resetRealtimeState: { [self] in
+                applicationEvents.append(.resetRealtimeState)
+            },
+            applyContentSnapshot: { _ in },
+            applyRelayStatusSnapshot: { _ in },
+            resetRuntimeSetup: { [self] in
+                applicationEvents.append(.resetRuntimeSetup)
+            },
+            configureRuntime: { _, _ in }
+        )
     }
 }
 
