@@ -15,22 +15,15 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let eventStore: NostrEventStore?
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeCoordinator: HomeStoreRuntimeCoordinator
-    private let gapBackfillInteractionWorkflow:
-        HomeGapBackfillInteractionWorkflow
-    private let filterInteractionWorkflow:
-        HomeTimelineFilterInteractionWorkflow
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let projectionCoordinator: HomeStoreProjectionCoordinator
     private let contextCoordinator: HomeStoreContextCoordinator
     private let lifecycleCoordinator: HomeStoreLifecycleCoordinator
+    private let featureActionCoordinator: HomeStoreFeatureActionCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
-    private let publishInteractionWorkflow:
-        HomeTimelinePublishInteractionWorkflow?
-    private let localMutationInteractionWorkflow:
-        HomeLocalMutationInteractionWorkflow?
     private lazy var restoreProjectionAnchorWorkflow =
         HomeRestoreProjectionAnchorWorkflow(target: self)
     private var publishedStateObservation: AnyCancellable?
@@ -113,21 +106,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.eventStore = components.eventStore
         self.dataInteractionWorkflow = components.dataInteractionWorkflow
         self.runtimeCoordinator = composition.runtime
-        self.gapBackfillInteractionWorkflow =
-            components.gapBackfillInteractionWorkflow
-        self.filterInteractionWorkflow =
-            components.filterInteractionWorkflow
         self.queryStoreCoordinator = composition.query
         self.projectionCoordinator = composition.projection
         self.contextCoordinator = composition.context
         self.lifecycleCoordinator = composition.lifecycle
+        self.featureActionCoordinator = composition.featureActions
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
-        self.publishInteractionWorkflow = components.publishInteractionWorkflow
-        self.localMutationInteractionWorkflow =
-            components.localMutationInteractionWorkflow
         bindContextComposition()
     }
 }
@@ -188,36 +175,27 @@ extension NostrHomeTimelineStore {
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
-        await gapBackfillInteractionWorkflow.backfill(
-            gap: gap,
-            direction: direction,
-            context: contextCoordinator.gapBackfillContext()
+        await featureActionCoordinator.backfillGap(
+            gap,
+            direction: direction
         )
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
-        guard let account, let publishInteractionWorkflow else { return }
-        try await publishInteractionWorkflow.enqueue(
-            input: input,
-            signer: signer,
-            context: contextCoordinator.publishContext(
-                account: account
-            )
+        try await featureActionCoordinator.enqueuePublish(
+            input,
+            signer: signer
         )
     }
 
     func muteAuthor(of post: TimelinePost) {
-        localMutationInteractionWorkflow?.perform(
-            .muteAuthor(authorPubkey: post.author.pubkey),
-            context: contextCoordinator.localMutationContext()
+        featureActionCoordinator.muteAuthor(
+            authorPubkey: post.author.pubkey
         )
     }
 
     func bookmark(_ post: TimelinePost) {
-        localMutationInteractionWorkflow?.perform(
-            .bookmark(eventID: post.id),
-            context: contextCoordinator.localMutationContext()
-        )
+        featureActionCoordinator.bookmark(eventID: post.id)
     }
 
     func cancel() {
@@ -390,17 +368,11 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore {
     func suspendTimelineFilters() {
-        filterInteractionWorkflow.perform(
-            .suspend,
-            context: contextCoordinator.filterContext()
-        )
+        featureActionCoordinator.suspendFilters()
     }
 
     func resumeTimelineFilters() {
-        filterInteractionWorkflow.perform(
-            .resume,
-            context: contextCoordinator.filterContext()
-        )
+        featureActionCoordinator.resumeFilters()
     }
 }
 

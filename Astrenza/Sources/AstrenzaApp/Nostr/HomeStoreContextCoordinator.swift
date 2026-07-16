@@ -6,6 +6,7 @@ struct HomeStoreComposition {
     let projection: HomeStoreProjectionCoordinator
     let context: HomeStoreContextCoordinator
     let lifecycle: HomeStoreLifecycleCoordinator
+    let featureActions: HomeStoreFeatureActionCoordinator
     let runtime: HomeStoreRuntimeCoordinator
     let viewport: HomeStoreViewportCoordinator
     let presentation: HomeStorePresentationCoordinator
@@ -34,6 +35,10 @@ struct HomeStoreComposition {
             lifecycle: HomeStoreLifecycleCoordinator.live(
                 components: components,
                 projection: projection,
+                contexts: context
+            ),
+            featureActions: HomeStoreFeatureActionCoordinator.live(
+                components: components,
                 contexts: context
             ),
             runtime: HomeStoreRuntimeCoordinator.live(
