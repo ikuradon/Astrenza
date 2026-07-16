@@ -10,9 +10,13 @@ public enum NostrRelayFilterMatcher {
         for (key, value) in filter {
             switch key {
             case "ids":
-                guard value.stringArrayValue.contains(event.id) else { return false }
+                guard value.stringArrayValue.contains(where: { event.id.hasPrefix($0) }) else {
+                    return false
+                }
             case "authors":
-                guard value.stringArrayValue.contains(event.pubkey) else { return false }
+                guard value.stringArrayValue.contains(where: { event.pubkey.hasPrefix($0) }) else {
+                    return false
+                }
             case "kinds":
                 guard value.intArrayValue.contains(event.kind) else { return false }
             case "since":

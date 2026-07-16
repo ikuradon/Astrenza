@@ -3475,6 +3475,13 @@ struct NostrCorePackageTests {
             "until": .int(300),
             "#t": .strings(["nostr"])
         ]]))
+        #expect(NostrRelayFilterMatcher.matches(event: event, filters: [[
+            "ids": .strings([String(eventID.prefix(12))]),
+            "authors": .strings([String(author.prefix(12))])
+        ]]))
+        #expect(!NostrRelayFilterMatcher.matches(event: event, filters: [[
+            "ids": .strings([String(repeating: "c", count: 12)])
+        ]]))
         #expect(!NostrRelayFilterMatcher.matches(event: event, filters: [["kinds": .ints([0])]]))
         #expect(!NostrRelayFilterMatcher.matches(event: event, filters: [["#t": .strings(["swift"])]]))
     }
