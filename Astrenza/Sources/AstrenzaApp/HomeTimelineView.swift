@@ -23,8 +23,7 @@ struct HomeTimelineView: View {
     @State private var homeReturnAnchor: TimelineViewportState?
     @State private var homeScrollCommand: TimelineScrollCommand?
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
-    @State private var postNavigationPath: [TimelineNavigationRoute] = []
-    @State private var profileNavigationPath: [TimelineNavigationRoute] = []
+    @State private var navigation = HomeTimelineNavigationState()
     @State private var unreadBadgeFrame: CGRect = .zero
     @State private var fullscreenMedia: TimelineFullscreenMediaRequest?
     @State private var browserDestination: TimelineBrowserDestination?
@@ -35,6 +34,51 @@ struct HomeTimelineView: View {
 
     private var accountID: String {
         sessionStore.account?.pubkey ?? "mock-account"
+    }
+
+    private var actionMenuTopClearance: CGFloat {
+        max(unreadBadgeFrame.maxY + 10, 96)
+    }
+
+    private var visibleTab: TimelineTab {
+        selectedTab == .compose ? previousTab : selectedTab
+    }
+
+    private var topChromeCollapseProgress: CGFloat {
+        min(max(timelineScrollOffset / 72, 0), 1)
+    }
+
+    private var isPostDetailPresented: Bool {
+        navigation.isPresentingDetail
+    }
+
+    private var composeSubmitHandler: ((ComposeSubmitRequest) async -> Bool)? {
+        guard sessionStore.account != nil else { return nil }
+        return { request in
+            await submitCompose(request)
+        }
+    }
+
+    private var timelineNavigationActions:
+        HomeTimelineNavigationDestinationActions {
+        HomeTimelineNavigationDestinationActions(
+            onOpenPost: openPost,
+            onOpenProfile: openProfile,
+            onReply: presentReplyComposer,
+            onOpenMedia: openMedia,
+            onOpenURL: openURL
+        )
+    }
+
+    private var profileNavigationActions:
+        HomeTimelineNavigationDestinationActions {
+        HomeTimelineNavigationDestinationActions(
+            onOpenPost: openProfilePost,
+            onOpenProfile: openProfileFromProfile,
+            onReply: presentReplyComposer,
+            onOpenMedia: openMedia,
+            onOpenURL: openURL
+        )
     }
 
     init(
@@ -55,35 +99,16 @@ struct HomeTimelineView: View {
             accountID: initialAccountID,
             timelineKey: TimelineKind.home.id
         )
+        let initialLayoutCache = restoreStore.layoutCache(
+            accountID: initialAccountID,
+            timelineKey: TimelineKind.home.id
+        )
         _timelineRestoreStore = State(initialValue: restoreStore)
         _homeViewportState = State(initialValue: initialViewportState)
-        _homeLayoutCache = State(initialValue: restoreStore.layoutCache(accountID: initialAccountID, timelineKey: TimelineKind.home.id))
+        _homeLayoutCache = State(initialValue: initialLayoutCache)
         _isTimelineAtNewestWindow = State(initialValue: initialViewportState == nil)
         _isViewportRestoreProtectionActive = State(initialValue: initialViewportState != nil)
         _isTimelineDetachedFromLiveEdge = State(initialValue: initialViewportState != nil)
-    }
-
-    private var actionMenuTopClearance: CGFloat {
-        max(unreadBadgeFrame.maxY + 10, 96)
-    }
-
-    private var visibleTab: TimelineTab {
-        selectedTab == .compose ? previousTab : selectedTab
-    }
-
-    private var topChromeCollapseProgress: CGFloat {
-        min(max(timelineScrollOffset / 72, 0), 1)
-    }
-
-    private var isPostDetailPresented: Bool {
-        !postNavigationPath.isEmpty || !profileNavigationPath.isEmpty
-    }
-
-    private var composeSubmitHandler: ((ComposeSubmitRequest) async -> Bool)? {
-        guard sessionStore.account != nil else { return nil }
-        return { request in
-            await submitCompose(request)
-        }
     }
 
     var body: some View {
@@ -112,7 +137,7 @@ struct HomeTimelineView: View {
             )
 
             if isPostDetailPresented {
-                ReplyFloatingButton(action: presentReplyComposer)
+                HomeTimelineReplyButton(action: presentReplyComposer)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 18)
                     .padding(.bottom, 24)
@@ -180,7 +205,7 @@ private extension HomeTimelineView {
     }
 
     var timelineList: some View {
-        NavigationStack(path: $postNavigationPath) {
+        NavigationStack(path: $navigation.timelinePath) {
             HomeTimelineFeedContentView(
                 store: liveTimelineStore,
                 hasLiveAccount: sessionStore.account != nil,
@@ -218,14 +243,22 @@ private extension HomeTimelineView {
                 onLayoutCacheChanged: saveTimelineLayoutCache
             )
             .id("\(accountID)/\(selectedTimeline.id)")
-            .navigationDestination(for: TimelineNavigationRoute.self) { route in
-                timelineDestination(for: route)
+            .navigationDestination(
+                for: HomeTimelineNavigationRoute.self
+            ) { route in
+                HomeTimelineNavigationDestinationView(
+                    route: route,
+                    timelineStore: liveTimelineStore,
+                    hasLiveAccount: sessionStore.account != nil,
+                    swipeSettings: swipeSettings,
+                    actions: timelineNavigationActions
+                )
             }
         }
     }
 
     var profileView: some View {
-        NavigationStack(path: $profileNavigationPath) {
+        NavigationStack(path: $navigation.profilePath) {
             HomeTimelineProfileContentView(
                 timelineStore: liveTimelineStore,
                 account: sessionStore.account,
@@ -238,114 +271,18 @@ private extension HomeTimelineView {
                 onOpenMedia: openMedia,
                 onOpenURL: openURL
             )
-            .navigationDestination(for: TimelineNavigationRoute.self) { route in
-                profileDestination(for: route)
+            .navigationDestination(
+                for: HomeTimelineNavigationRoute.self
+            ) { route in
+                HomeTimelineNavigationDestinationView(
+                    route: route,
+                    timelineStore: liveTimelineStore,
+                    hasLiveAccount: sessionStore.account != nil,
+                    swipeSettings: swipeSettings,
+                    actions: profileNavigationActions
+                )
             }
         }
-    }
-
-    @ViewBuilder
-    func timelineDestination(for route: TimelineNavigationRoute) -> some View {
-        switch route {
-        case .post(let selectedPost):
-            let post = detailPost(for: selectedPost.post)
-            PostDetailView(
-                post: post,
-                replyAncestors: liveReplyAncestors(for: post),
-                replies: liveReplies(for: post),
-                swipeSettings: swipeSettings,
-                onOpenPost: openPost,
-                onReplyPost: { _ in
-                    presentReplyComposer()
-                },
-                onOpenMedia: openMedia,
-                onOpenURL: openURL
-            )
-        case .profile(let selectedProfile):
-            userDetailView(
-                for: selectedProfile.post,
-                onOpenPost: openPost,
-                onOpenProfile: openProfile
-            )
-        }
-    }
-
-    @ViewBuilder
-    func profileDestination(for route: TimelineNavigationRoute) -> some View {
-        switch route {
-        case .post(let selectedPost):
-            let post = detailPost(for: selectedPost.post)
-            PostDetailView(
-                post: post,
-                replyAncestors: liveReplyAncestors(for: post),
-                replies: liveReplies(for: post),
-                swipeSettings: swipeSettings,
-                onOpenPost: openProfilePost,
-                onReplyPost: { _ in
-                    presentReplyComposer()
-                },
-                onOpenMedia: openMedia,
-                onOpenURL: openURL
-            )
-        case .profile(let selectedProfile):
-            userDetailView(
-                for: selectedProfile.post,
-                onOpenPost: openProfilePost,
-                onOpenProfile: openProfileFromProfile
-            )
-        }
-    }
-
-    func userDetailView(
-        for post: TimelinePost,
-        onOpenPost: @escaping (TimelinePost) -> Void,
-        onOpenProfile: @escaping (TimelinePost) -> Void
-    ) -> some View {
-        let projection = userProfileProjection(for: post)
-
-        return UserDetailView(
-            profile: projection.profile,
-            posts: projection.posts,
-            swipeSettings: swipeSettings,
-            onOpenPost: onOpenPost,
-            onOpenProfile: onOpenProfile,
-            onReplyPost: { _ in
-                presentReplyComposer()
-            },
-            onOpenMedia: openMedia,
-            onOpenURL: openURL
-        )
-    }
-
-    func detailPost(for post: TimelinePost) -> TimelinePost {
-        guard sessionStore.account != nil else { return post }
-        return liveTimelineStore.post(eventID: post.id) ?? post
-    }
-
-    func liveReplyAncestors(for post: TimelinePost) -> [TimelinePost]? {
-        guard sessionStore.account != nil else { return nil }
-        return liveTimelineStore.replyAncestors(for: post)
-    }
-
-    func liveReplies(for post: TimelinePost) -> [TimelinePost]? {
-        guard sessionStore.account != nil else { return nil }
-        return liveTimelineStore.replies(for: post)
-    }
-
-    func userProfileProjection(
-        for post: TimelinePost
-    ) -> HomeTimelineProfileProjection {
-        guard sessionStore.account != nil else {
-            let profile = MockTimelineData.profile(for: post)
-            return HomeTimelineProfileProjection(
-                profile: profile,
-                posts: MockTimelineData.profilePosts(for: profile)
-            )
-        }
-
-        return liveTimelineStore.profileProjection(
-            pubkey: post.author.pubkey
-        )
     }
 
     func completeInitialAppearanceIfNeeded() {
@@ -408,22 +345,22 @@ private extension HomeTimelineView {
     func openPost(_ post: TimelinePost) {
         dismissFloatingMenus()
         clearHomeReturnAnchor()
-        postNavigationPath.append(.post(SelectedPostRoute(post: post)))
+        navigation.openPost(post, on: .timeline)
     }
 
     func openProfile(_ post: TimelinePost) {
         dismissFloatingMenus()
-        postNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
+        navigation.openProfile(from: post, on: .timeline)
     }
 
     func openProfilePost(_ post: TimelinePost) {
         dismissFloatingMenus()
-        profileNavigationPath.append(.post(SelectedPostRoute(post: post)))
+        navigation.openPost(post, on: .profile)
     }
 
     func openProfileFromProfile(_ post: TimelinePost) {
         dismissFloatingMenus()
-        profileNavigationPath.append(.profile(SelectedProfileRoute(post: post)))
+        navigation.openProfile(from: post, on: .profile)
     }
 
     func openMedia(_ media: TimelineMedia, initialTileIndex: Int = 0) {
@@ -505,7 +442,12 @@ private extension HomeTimelineView {
 
     func presentSettings() {
         dismissFloatingMenus()
-        guard !isComposerPresented && !isFiltersSettingsPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        guard !isComposerPresented,
+              !isFiltersSettingsPresented,
+              !isRelayStatusPresented,
+              browserDestination == nil,
+              fullscreenMedia == nil
+        else { return }
         isSettingsPresented = true
     }
 
@@ -521,13 +463,23 @@ private extension HomeTimelineView {
 
     func presentFiltersSettings() {
         dismissFloatingMenus()
-        guard !isComposerPresented && !isSettingsPresented && !isRelayStatusPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        guard !isComposerPresented,
+              !isSettingsPresented,
+              !isRelayStatusPresented,
+              browserDestination == nil,
+              fullscreenMedia == nil
+        else { return }
         isFiltersSettingsPresented = true
     }
 
     func presentRelayStatus() {
         dismissFloatingMenus()
-        guard !isComposerPresented && !isSettingsPresented && !isFiltersSettingsPresented && browserDestination == nil && fullscreenMedia == nil else { return }
+        guard !isComposerPresented,
+              !isSettingsPresented,
+              !isFiltersSettingsPresented,
+              browserDestination == nil,
+              fullscreenMedia == nil
+        else { return }
         isRelayStatusPresented = true
     }
 
@@ -617,7 +569,11 @@ private extension HomeTimelineView {
 
     func presentComposer(mode: ComposeSheetMode) {
         dismissFloatingMenus()
-        guard didCompleteInitialAppearance, !isComposerPresented, !isSettingsPresented, !isFiltersSettingsPresented else { return }
+        guard didCompleteInitialAppearance,
+              !isComposerPresented,
+              !isSettingsPresented,
+              !isFiltersSettingsPresented
+        else { return }
         composeSheetMode = mode
         DispatchQueue.main.async {
             isComposerPresented = true
@@ -704,62 +660,7 @@ enum HomeTimelineViewportRestorePolicy {
     }
 }
 
-private enum TimelineNavigationRoute: Hashable {
-    case post(SelectedPostRoute)
-    case profile(SelectedProfileRoute)
-}
-
-private struct SelectedPostRoute: Identifiable, Hashable {
-    let post: TimelinePost
-
-    var id: TimelinePost.ID {
-        post.id
-    }
-
-    static func == (lhs: SelectedPostRoute, rhs: SelectedPostRoute) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-}
-
-private struct SelectedProfileRoute: Identifiable, Hashable {
-    let post: TimelinePost
-
-    var id: String {
-        post.author.pubkey
-    }
-
-    static func == (lhs: SelectedProfileRoute, rhs: SelectedProfileRoute) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-}
-
 #Preview {
     HomeTimelineView()
         .preferredColorScheme(.dark)
-}
-
-private struct ReplyFloatingButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "arrowshape.turn.up.left.fill")
-                .font(.system(size: 23, weight: .heavy))
-                .foregroundStyle(.primary)
-                .frame(width: 58, height: 58)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .astrenzaGlass(tint: Color.white.opacity(0.08), in: Circle())
-        .shadow(color: Color.black.opacity(0.26), radius: 18, y: 10)
-        .accessibilityLabel("Reply")
-    }
 }
