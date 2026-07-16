@@ -210,12 +210,19 @@ enum HomeTimelineRuntimeStoreAction: Equatable, Sendable {
     case scheduleLinkPreviewResolution
 }
 
+struct HomeTimelineRuntimeEventEnvelope: Equatable, Sendable {
+    let relayURL: String
+    let subscriptionID: String
+    let event: NostrEvent
+}
+
 enum HomeTimelineRuntimeStoreAsyncAction: Equatable, Sendable {
     case handleEvent(
         relayURL: String,
         subscriptionID: String,
         event: NostrEvent
     )
+    case handleEvents([HomeTimelineRuntimeEventEnvelope])
 }
 
 struct HomeTimelineRuntimeInteractionEffects: Sendable {

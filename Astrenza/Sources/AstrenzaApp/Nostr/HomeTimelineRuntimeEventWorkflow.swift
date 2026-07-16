@@ -7,6 +7,11 @@ protocol HomeTimelineRuntimeEventCoordinating: AnyObject {
         handlers: HomeTimelineRuntimeEventHandlers
     ) async
 
+    func handle(
+        _ requests: [HomeTimelineRuntimeEventRequest],
+        handlers: HomeTimelineRuntimeEventHandlers
+    ) async
+
     func rememberLatestMetadataEvent(
         _ event: NostrEvent,
         consultEventStore: Bool,
@@ -24,6 +29,17 @@ protocol HomeTimelineRuntimeEventCoordinating: AnyObject {
         context: HomeTimelineRuntimeEventApplicationContext,
         handlers: HomeTimelineRuntimeEventApplicationHandlers
     ) async -> Bool
+}
+
+extension HomeTimelineRuntimeEventCoordinating {
+    func handle(
+        _ requests: [HomeTimelineRuntimeEventRequest],
+        handlers: HomeTimelineRuntimeEventHandlers
+    ) async {
+        for request in requests {
+            await handle(request, handlers: handlers)
+        }
+    }
 }
 
 extension HomeTimelineRuntimeEventCoordinator: HomeTimelineRuntimeEventCoordinating {}
@@ -97,15 +113,24 @@ final class HomeTimelineRuntimeEventWorkflow {
         _ input: HomeTimelineRuntimeEventInput,
         effects: HomeTimelineRuntimeEventEffects
     ) async {
+        await handle([input], effects: effects)
+    }
+
+    func handle(
+        _ inputs: [HomeTimelineRuntimeEventInput],
+        effects: HomeTimelineRuntimeEventEffects
+    ) async {
         await coordinator.handle(
-            HomeTimelineRuntimeEventRequest(
-                relayURL: input.relayURL,
-                subscriptionID: input.subscriptionID,
-                event: input.event,
-                account: input.account,
-                hasRelayRuntime: input.hasRelayRuntime,
-                receivedWhileRealtime: input.receivedWhileRealtime
-            ),
+            inputs.map { input in
+                HomeTimelineRuntimeEventRequest(
+                    relayURL: input.relayURL,
+                    subscriptionID: input.subscriptionID,
+                    event: input.event,
+                    account: input.account,
+                    hasRelayRuntime: input.hasRelayRuntime,
+                    receivedWhileRealtime: input.receivedWhileRealtime
+                )
+            },
             handlers: eventHandlers(effects: effects)
         )
     }

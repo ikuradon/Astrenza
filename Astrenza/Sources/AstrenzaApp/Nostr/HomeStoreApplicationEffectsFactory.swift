@@ -45,7 +45,24 @@ protocol HomeStoreApplicationEffectTarget: AnyObject {
         subscriptionID: String,
         event: NostrEvent
     ) async
+    func handleRuntimeEvents(
+        _ events: [HomeTimelineRuntimeEventEnvelope]
+    ) async
     func persistDatabase(account: NostrAccount) async
+}
+
+extension HomeStoreApplicationEffectTarget {
+    func handleRuntimeEvents(
+        _ events: [HomeTimelineRuntimeEventEnvelope]
+    ) async {
+        for event in events {
+            await handleRuntimeEvent(
+                relayURL: event.relayURL,
+                subscriptionID: event.subscriptionID,
+                event: event.event
+            )
+        }
+    }
 }
 
 @MainActor
@@ -79,7 +96,7 @@ enum HomeStoreApplicationEffectsFactory {
             publishProfileMetadataChange:
                 bindings.publishProfileMetadataChange,
             publishRelayStatusChange: bindings.publishRelayStatusChange,
-            handleRuntimeEvent: bindings.handleRuntimeEvent,
+            handleRuntimeEvents: bindings.handleRuntimeEvents,
             persistDatabase: bindings.persistDatabase
         )
     }
@@ -221,13 +238,9 @@ private struct Bindings {
         }
     }
 
-    var handleRuntimeEvent: HomeTimelineStoreApplicationEffects.RuntimeEvent {
-        { [weak target] relayURL, subscriptionID, event in
-            await target?.handleRuntimeEvent(
-                relayURL: relayURL,
-                subscriptionID: subscriptionID,
-                event: event
-            )
+    var handleRuntimeEvents: HomeTimelineStoreApplicationEffects.RuntimeEvents {
+        { [weak target] events in
+            await target?.handleRuntimeEvents(events)
         }
     }
 

@@ -26,7 +26,7 @@ struct HomeTimelineRuntimeSessionTests {
             message: "ready"
         )
         let packetHandler = try #require(system.pump.packetHandlers.first)
-        await packetHandler(packet)
+        await packetHandler([packet])
         #expect(system.probe.packets == [packet])
 
         _ = system.lifecycle.cancel()

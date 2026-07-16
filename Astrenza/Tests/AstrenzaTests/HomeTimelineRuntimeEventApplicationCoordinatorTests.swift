@@ -6,6 +6,41 @@ import Testing
 @Suite("Home timeline runtime event application coordinator")
 @MainActor
 struct HomeTimelineRuntimeEventApplicationCoordinatorTests {
+    @Test("A batch coalesces invalidation, newest reload, and materialization")
+    func batchCoalescesProjectionWork() async {
+        let fixture = makeFixture()
+        var first = HomeTimelineRuntimeEventApplicationPlan()
+        first.invalidatesListEntries = true
+        first.projectionUpdate = .reloadNewestAndSchedule(allowsRealtimeFollow: false)
+        first.materializationSchedule = .deferredDependencies
+        var second = HomeTimelineRuntimeEventApplicationPlan()
+        second.invalidatesListEntries = true
+        second.projectionUpdate = .reloadNewestAndSchedule(allowsRealtimeFollow: true)
+        second.materializationSchedule = .standard
+
+        let applied = await fixture.coordinator.apply(
+            [
+                HomeTimelineRuntimeEventApplicationRequest(
+                    plan: first,
+                    backwardRequestKey: nil
+                ),
+                HomeTimelineRuntimeEventApplicationRequest(
+                    plan: second,
+                    backwardRequestKey: nil
+                )
+            ],
+            context: fixture.context,
+            handlers: handlers(probe: fixture.probe)
+        )
+
+        #expect(applied == [true, true])
+        #expect(fixture.probe.listRevisions == [1])
+        #expect(fixture.probe.commands == [
+            .requestNewestProjectionReloadAndSchedule(allowsRealtimeFollow: true),
+            .scheduleMaterialization(.standard)
+        ])
+    }
+
     @Test("Forward notes invalidate list state and preserve realtime projection commands")
     func forwardNoteApplication() async {
         let fixture = makeFixture()

@@ -30,6 +30,24 @@ protocol HomeTimelineRuntimePacketRouting: AnyObject {
         context: HomeTimelineRuntimePacketContext,
         handlers: HomeTimelineRuntimePacketHandlers
     ) async
+
+    func handle(
+        _ packets: [NostrRelayRuntimePacket],
+        context: HomeTimelineRuntimePacketContext,
+        handlers: HomeTimelineRuntimePacketHandlers
+    ) async
+}
+
+extension HomeTimelineRuntimePacketRouting {
+    func handle(
+        _ packets: [NostrRelayRuntimePacket],
+        context: HomeTimelineRuntimePacketContext,
+        handlers: HomeTimelineRuntimePacketHandlers
+    ) async {
+        for packet in packets {
+            await handle(packet, context: context, handlers: handlers)
+        }
+    }
 }
 
 extension HomeTimelineRuntimePacketWorkflow: HomeTimelineRuntimePacketRouting {}
@@ -111,16 +129,23 @@ final class HomeTimelineRuntimeWorkflow {
         setup.reset()
     }
 
-    func handlePacket(
-        _ packet: NostrRelayRuntimePacket,
+    func handlePackets(
+        _ packets: [NostrRelayRuntimePacket],
         effects: HomeTimelineRuntimePacketEffects
     ) async {
         guard let context = effects.context() else { return }
         await packetRouter.handle(
-            packet,
+            packets,
             context: context,
             handlers: packetHandlers(effects: effects)
         )
+    }
+
+    func handlePacket(
+        _ packet: NostrRelayRuntimePacket,
+        effects: HomeTimelineRuntimePacketEffects
+    ) async {
+        await handlePackets([packet], effects: effects)
     }
 
     private func sessionHandlers(
@@ -128,8 +153,8 @@ final class HomeTimelineRuntimeWorkflow {
     ) -> HomeTimelineRuntimeSessionHandlers {
         HomeTimelineRuntimeSessionHandlers(
             isAccountCurrent: effects.isAccountCurrent,
-            handlePacket: { [weak self] packet in
-                await self?.handlePacket(packet, effects: effects.packet)
+            handlePacket: { [weak self] packets in
+                await self?.handlePackets(packets, effects: effects.packet)
             },
             applicationEffects: effects.application,
             perform: { [weak self] command in

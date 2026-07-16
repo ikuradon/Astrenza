@@ -11,19 +11,25 @@ public struct NostrProfileDirectoryPolicy: Equatable, Sendable {
     public let failureRetryAfterSeconds: Int
     public let foregroundBatchDelayMilliseconds: Int
     public let backgroundBatchDelayMilliseconds: Int
+    public let persistenceBatchDelayMilliseconds: Int
+    public let persistenceBatchSize: Int
 
     public init(
         staleAfterSeconds: Int = 24 * 60 * 60,
         notFoundRetryAfterSeconds: Int = 15 * 60,
         failureRetryAfterSeconds: Int = 60,
         foregroundBatchDelayMilliseconds: Int = 12,
-        backgroundBatchDelayMilliseconds: Int = 250
+        backgroundBatchDelayMilliseconds: Int = 250,
+        persistenceBatchDelayMilliseconds: Int = 8,
+        persistenceBatchSize: Int = 32
     ) {
         self.staleAfterSeconds = max(0, staleAfterSeconds)
         self.notFoundRetryAfterSeconds = max(0, notFoundRetryAfterSeconds)
         self.failureRetryAfterSeconds = max(0, failureRetryAfterSeconds)
         self.foregroundBatchDelayMilliseconds = max(0, foregroundBatchDelayMilliseconds)
         self.backgroundBatchDelayMilliseconds = max(0, backgroundBatchDelayMilliseconds)
+        self.persistenceBatchDelayMilliseconds = max(0, persistenceBatchDelayMilliseconds)
+        self.persistenceBatchSize = max(1, persistenceBatchSize)
     }
 }
 
@@ -61,6 +67,13 @@ public actor NostrProfileDirectory {
         var priority: NostrProfileRequestPriority
     }
 
+    private struct PendingProfilePersistence: Sendable {
+        let event: NostrEvent
+        let source: NostrEventSourceRecord
+        let fetchRecord: NostrProfileFetchRecord
+        let receivedAt: Int
+    }
+
     private let eventStore: NostrEventStore?
     private let relayRuntime: NostrRelayRuntime
     private let policy: NostrProfileDirectoryPolicy
@@ -75,6 +88,8 @@ public actor NostrProfileDirectory {
     private var foregroundFlushTask: Task<Void, Never>?
     private var backgroundFlushTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
+    private var persistenceFlushTask: Task<Void, Never>?
+    private var pendingProfilePersistence: [PendingProfilePersistence] = []
     private var requestContexts: [String: RequestContext] = [:]
     private var retryAtByPubkey: [String: Int] = [:]
     private var lifecycleGeneration: UInt64 = 0
@@ -128,15 +143,18 @@ public actor NostrProfileDirectory {
     }
 
     public func stop() {
+        flushProfilePersistence()
         lifecycleGeneration &+= 1
         runtimeTask?.cancel()
         foregroundFlushTask?.cancel()
         backgroundFlushTask?.cancel()
         retryTask?.cancel()
+        persistenceFlushTask?.cancel()
         runtimeTask = nil
         foregroundFlushTask = nil
         backgroundFlushTask = nil
         retryTask = nil
+        persistenceFlushTask = nil
         foregroundQueue.removeAll()
         backgroundQueue.removeAll()
         cachedQueuedPubkeys.removeAll()
@@ -362,16 +380,11 @@ public actor NostrProfileDirectory {
         else { return }
 
         let now = Int(Date().timeIntervalSince1970)
-        try? eventStore?.ingest(
-            events: [event],
-            eventSources: [NostrEventSourceRecord(
-                eventID: event.id,
-                relayURL: relayURL,
-                firstSeenAt: now,
-                lastSeenAt: now
-            )],
-            feedMemberships: [],
-            receivedAt: now
+        let source = NostrEventSourceRecord(
+            eventID: event.id,
+            relayURL: relayURL,
+            firstSeenAt: now,
+            lastSeenAt: now
         )
         group.resolvedPubkeys.insert(event.pubkey)
         requestGroups[groupID] = group
@@ -380,20 +393,24 @@ public actor NostrProfileDirectory {
         clearRetry(for: event.pubkey, removeRequestContext: true)
         var changedStates: [String: NostrProfileResolutionState] = [:]
         setState(.resolved, for: event.pubkey, changedStates: &changedStates)
-        try? eventStore?.saveProfileFetchRecords([
-            NostrProfileFetchRecord(
+        enqueueProfilePersistence(PendingProfilePersistence(
+            event: event,
+            source: source,
+            fetchRecord: NostrProfileFetchRecord(
                 pubkey: event.pubkey,
                 outcome: .resolved,
                 lastAttemptAt: group.attemptedAt,
                 lastSuccessAt: now,
                 updatedAt: now
-            )
-        ])
+            ),
+            receivedAt: now
+        ))
         emit(NostrProfileDirectoryUpdate(states: changedStates, metadataEvents: [event]))
         scheduleRetryTask()
     }
 
     private func handleCompletion(_ completion: NostrBackwardREQCompletion) {
+        flushProfilePersistence()
         guard Self.handles(groupID: completion.groupID),
               let group = requestGroups.removeValue(forKey: completion.groupID)
         else { return }
@@ -430,6 +447,37 @@ public actor NostrProfileDirectory {
         try? eventStore?.saveProfileFetchRecords(records)
         emit(states: changedStates)
         scheduleRetryTask()
+    }
+
+    private func enqueueProfilePersistence(
+        _ pending: PendingProfilePersistence
+    ) {
+        pendingProfilePersistence.append(pending)
+        if pendingProfilePersistence.count >= policy.persistenceBatchSize {
+            flushProfilePersistence()
+            return
+        }
+        guard persistenceFlushTask == nil else { return }
+        let delay = policy.persistenceBatchDelayMilliseconds
+        persistenceFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.flushProfilePersistence()
+        }
+    }
+
+    private func flushProfilePersistence() {
+        persistenceFlushTask?.cancel()
+        persistenceFlushTask = nil
+        guard !pendingProfilePersistence.isEmpty else { return }
+        let pending = pendingProfilePersistence
+        pendingProfilePersistence.removeAll(keepingCapacity: true)
+        try? eventStore?.ingestProfileResolutions(
+            events: pending.map(\.event),
+            eventSources: pending.map(\.source),
+            fetchRecords: pending.map(\.fetchRecord),
+            receivedAt: pending.map(\.receivedAt).max() ?? 0
+        )
     }
 
     private func failRequestGroup(groupID: String, message: String, now: Int) {
@@ -588,6 +636,7 @@ public actor NostrProfileDirectory {
 
     private func runtimePumpFinished(generation: UInt64) {
         guard lifecycleGeneration == generation else { return }
+        flushProfilePersistence()
         runtimeTask = nil
     }
 }

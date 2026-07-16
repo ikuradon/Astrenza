@@ -410,6 +410,20 @@ public final class NostrEventStore: Sendable {
         }
     }
 
+    public func ingestProfileResolutions(
+        events: [NostrEvent],
+        eventSources: [NostrEventSourceRecord],
+        fetchRecords: [NostrProfileFetchRecord],
+        receivedAt: Int = Int(Date().timeIntervalSince1970)
+    ) throws {
+        guard !events.isEmpty || !eventSources.isEmpty || !fetchRecords.isEmpty else { return }
+        try database.write { db in
+            try persist(events: events, receivedAt: receivedAt, db: db)
+            try upsertEventSources(eventSources, db: db)
+            try persistProfileFetchRecords(fetchRecords, db: db)
+        }
+    }
+
     /// V4以前の`timeline_entries`を使うmigration/test fixture向けの保存APIです。
     /// productionのHome Feed保存には`saveHomeFeedState`を使用してください。
     public func saveHomeTimelineState(
@@ -1115,32 +1129,39 @@ public final class NostrEventStore: Sendable {
     public func saveProfileFetchRecords(_ records: [NostrProfileFetchRecord]) throws {
         guard !records.isEmpty else { return }
         try database.write { db in
-            for record in records {
-                try db.execute(
-                    sql: """
-                    INSERT INTO profile_fetch_state (
-                        pubkey, last_outcome, last_attempt_at, last_success_at,
-                        next_retry_at, last_error, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(pubkey) DO UPDATE SET
-                        last_outcome = excluded.last_outcome,
-                        last_attempt_at = excluded.last_attempt_at,
-                        last_success_at = excluded.last_success_at,
-                        next_retry_at = excluded.next_retry_at,
-                        last_error = excluded.last_error,
-                        updated_at = excluded.updated_at
-                    """,
-                    arguments: [
-                        record.pubkey,
-                        record.outcome.rawValue,
-                        record.lastAttemptAt,
-                        record.lastSuccessAt,
-                        record.nextRetryAt,
-                        record.lastError,
-                        record.updatedAt
-                    ]
-                )
-            }
+            try persistProfileFetchRecords(records, db: db)
+        }
+    }
+
+    private func persistProfileFetchRecords(
+        _ records: [NostrProfileFetchRecord],
+        db: Database
+    ) throws {
+        for record in records {
+            try db.execute(
+                sql: """
+                INSERT INTO profile_fetch_state (
+                    pubkey, last_outcome, last_attempt_at, last_success_at,
+                    next_retry_at, last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(pubkey) DO UPDATE SET
+                    last_outcome = excluded.last_outcome,
+                    last_attempt_at = excluded.last_attempt_at,
+                    last_success_at = excluded.last_success_at,
+                    next_retry_at = excluded.next_retry_at,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    record.pubkey,
+                    record.outcome.rawValue,
+                    record.lastAttemptAt,
+                    record.lastSuccessAt,
+                    record.nextRetryAt,
+                    record.lastError,
+                    record.updatedAt
+                ]
+            )
         }
     }
 

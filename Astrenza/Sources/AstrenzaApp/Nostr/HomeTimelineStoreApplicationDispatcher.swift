@@ -39,6 +39,9 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     typealias BackwardCompletion = @MainActor @Sendable (
         _ completion: NostrBackwardREQCompletion
     ) -> Void
+    typealias RuntimeEvents = @MainActor @Sendable (
+        _ events: [HomeTimelineRuntimeEventEnvelope]
+    ) async -> Void
     typealias RuntimeEvent = @MainActor @Sendable (
         _ relayURL: String,
         _ subscriptionID: String,
@@ -66,8 +69,18 @@ struct HomeTimelineStoreApplicationEffects: Sendable {
     let scheduleLinkPreviewResolution: Action
     let publishProfileMetadataChange: Action
     let publishRelayStatusChange: Action
-    let handleRuntimeEvent: RuntimeEvent
+    let handleRuntimeEvents: RuntimeEvents
     let persistDatabase: AsyncAccount
+
+    var handleRuntimeEvent: RuntimeEvent {
+        { relayURL, subscriptionID, event in
+            await handleRuntimeEvents([HomeTimelineRuntimeEventEnvelope(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                event: event
+            )])
+        }
+    }
 }
 
 @MainActor
@@ -296,11 +309,13 @@ struct HomeTimelineStoreApplicationDispatcher {
     ) async {
         switch application {
         case .handleEvent(let relayURL, let subscriptionID, let event):
-            await effects.handleRuntimeEvent(
-                relayURL,
-                subscriptionID,
-                event
-            )
+            await effects.handleRuntimeEvents([HomeTimelineRuntimeEventEnvelope(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID,
+                event: event
+            )])
+        case .handleEvents(let events):
+            await effects.handleRuntimeEvents(events)
         }
     }
 }

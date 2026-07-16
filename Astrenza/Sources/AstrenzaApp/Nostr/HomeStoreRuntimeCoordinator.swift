@@ -25,6 +25,11 @@ protocol HomeStoreRuntimeInteracting: AnyObject {
         context: HomeTimelineRuntimeEventContext
     ) async
 
+    func handleEvents(
+        _ events: [HomeTimelineRuntimeEventEnvelope],
+        context: HomeTimelineRuntimeEventContext
+    ) async
+
     func enqueueDependencies(
         for event: NostrEvent,
         state: HomeTimelineRuntimeDependencyState,
@@ -45,6 +50,22 @@ protocol HomeStoreRuntimeInteracting: AnyObject {
         context: HomeTimelineRuntimeInteractionContext
     ) async
     #endif
+}
+
+extension HomeStoreRuntimeInteracting {
+    func handleEvents(
+        _ events: [HomeTimelineRuntimeEventEnvelope],
+        context: HomeTimelineRuntimeEventContext
+    ) async {
+        for event in events {
+            await handleEvent(
+                relayURL: event.relayURL,
+                subscriptionID: event.subscriptionID,
+                event: event.event,
+                context: context
+            )
+        }
+    }
 }
 
 extension HomeTimelineRuntimeInteractionWorkflow:
@@ -148,17 +169,25 @@ final class HomeStoreRuntimeCoordinator {
         )
     }
 
+    func handleEvents(
+        _ events: [HomeTimelineRuntimeEventEnvelope]
+    ) async {
+        await runtime.handleEvents(
+            events,
+            context: contexts.runtimeEventContext()
+        )
+    }
+
     func handleEvent(
         relayURL: String,
         subscriptionID: String,
         event: NostrEvent
     ) async {
-        await runtime.handleEvent(
+        await handleEvents([HomeTimelineRuntimeEventEnvelope(
             relayURL: relayURL,
             subscriptionID: subscriptionID,
-            event: event,
-            context: contexts.runtimeEventContext()
-        )
+            event: event
+        )])
     }
 
     @discardableResult

@@ -5,6 +5,44 @@ import Testing
 
 @Suite("Home timeline event ingestor")
 struct HomeTimelineEventIngestorTests {
+    @Test("Projected event batches persist all canonical events and memberships together")
+    func projectedBatchIngest() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let definition = try feedDefinition(revision: 3)
+        try eventStore.saveFeedDefinition(definition)
+        let context = HomeFeedRuntimeContext(definition: definition)
+        let first = event(idCharacter: "8")
+        let second = event(idCharacter: "9")
+        let ingestor = HomeTimelineEventIngestor(eventStore: eventStore, now: { 450 })
+
+        let results = try await ingestor.ingestProjectedEvents([
+            .forward(HomeTimelineForwardEventIngestRequest(
+                event: first,
+                relayURL: "wss://relay.one",
+                activeFeedContext: context,
+                requestContext: context,
+                sourceRequestID: "batch-one"
+            )),
+            .forward(HomeTimelineForwardEventIngestRequest(
+                event: second,
+                relayURL: "wss://relay.two",
+                activeFeedContext: context,
+                requestContext: context,
+                sourceRequestID: "batch-two"
+            ))
+        ])
+
+        #expect(results.map(\.eventResult.primaryEventID) == [first.id, second.id])
+        #expect(results.map(\.projectsIntoCurrentFeed) == [true, true])
+        #expect(try eventStore.events(ids: [first.id, second.id]).count == 2)
+        let memberships = try eventStore.feedMemberships(
+            feedID: definition.feedID,
+            revision: definition.revision,
+            limit: 10
+        )
+        #expect(Set(memberships.map(\.eventID)) == Set([first.id, second.id]))
+    }
+
     @Test("Forward ingest atomically stores current feed membership and provenance")
     func forwardIngestProjectsCurrentFeed() async throws {
         let eventStore = try NostrEventStore.inMemory()

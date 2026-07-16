@@ -150,12 +150,14 @@ private final class RuntimePacketWorkflowProbe {
             applyState: { [weak self] application in
                 self?.events.append(.applyState(application))
             },
-            handleEvent: { [weak self] relayURL, subscriptionID, event in
-                self?.events.append(.handleEvent(
-                    relayURL: relayURL,
-                    subscriptionID: subscriptionID,
-                    event: event
-                ))
+            handleEvent: { [weak self] events in
+                for event in events {
+                    self?.events.append(.handleEvent(
+                        relayURL: event.relayURL,
+                        subscriptionID: event.subscriptionID,
+                        event: event.event
+                    ))
+                }
             },
             handleBackwardCompletion: { [weak self] completion in
                 self?.events.append(.handleBackwardCompletion(completion))

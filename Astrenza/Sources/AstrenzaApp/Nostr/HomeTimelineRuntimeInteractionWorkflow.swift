@@ -19,6 +19,22 @@ protocol HomeTimelineRuntimeRouting: AnyObject {
         _ packet: NostrRelayRuntimePacket,
         effects: HomeTimelineRuntimePacketEffects
     ) async
+
+    func handlePackets(
+        _ packets: [NostrRelayRuntimePacket],
+        effects: HomeTimelineRuntimePacketEffects
+    ) async
+}
+
+extension HomeTimelineRuntimeRouting {
+    func handlePackets(
+        _ packets: [NostrRelayRuntimePacket],
+        effects: HomeTimelineRuntimePacketEffects
+    ) async {
+        for packet in packets {
+            await handlePacket(packet, effects: effects)
+        }
+    }
 }
 
 extension HomeTimelineRuntimeWorkflow: HomeTimelineRuntimeRouting {}
@@ -27,6 +43,11 @@ extension HomeTimelineRuntimeWorkflow: HomeTimelineRuntimeRouting {}
 protocol HomeTimelineRuntimeEventRouting: AnyObject {
     func handle(
         _ input: HomeTimelineRuntimeEventInput,
+        effects: HomeTimelineRuntimeEventEffects
+    ) async
+
+    func handle(
+        _ inputs: [HomeTimelineRuntimeEventInput],
         effects: HomeTimelineRuntimeEventEffects
     ) async
 
@@ -47,6 +68,17 @@ protocol HomeTimelineRuntimeEventRouting: AnyObject {
         context: HomeTimelineRuntimeEventApplicationContext,
         effects: HomeTimelineRuntimeApplicationEffects
     ) async -> Bool
+}
+
+extension HomeTimelineRuntimeEventRouting {
+    func handle(
+        _ inputs: [HomeTimelineRuntimeEventInput],
+        effects: HomeTimelineRuntimeEventEffects
+    ) async {
+        for input in inputs {
+            await handle(input, effects: effects)
+        }
+    }
 }
 
 extension HomeTimelineRuntimeEventWorkflow: HomeTimelineRuntimeEventRouting {}
@@ -134,11 +166,33 @@ final class HomeTimelineRuntimeInteractionWorkflow {
         isActive: Bool? = nil,
         context: HomeTimelineRuntimeInteractionContext
     ) async {
-        await runtime.handlePacket(
-            packet,
+        await runtime.handlePackets(
+            [packet],
             effects: packetEffects(
                 isActive: isActive,
                 effects: context.effects
+            )
+        )
+    }
+
+    func handleEvents(
+        _ envelopes: [HomeTimelineRuntimeEventEnvelope],
+        context: HomeTimelineRuntimeEventContext
+    ) async {
+        await events.handle(
+            envelopes.map { envelope in
+                HomeTimelineRuntimeEventInput(
+                    relayURL: envelope.relayURL,
+                    subscriptionID: envelope.subscriptionID,
+                    event: envelope.event,
+                    account: context.state.account,
+                    hasRelayRuntime: context.state.hasRelayRuntime,
+                    receivedWhileRealtime: context.state.receivedWhileRealtime
+                )
+            },
+            effects: eventEffects(
+                state: context.state,
+                for: context.effects
             )
         )
     }
@@ -149,19 +203,13 @@ final class HomeTimelineRuntimeInteractionWorkflow {
         event: NostrEvent,
         context: HomeTimelineRuntimeEventContext
     ) async {
-        await events.handle(
-            HomeTimelineRuntimeEventInput(
+        await handleEvents(
+            [HomeTimelineRuntimeEventEnvelope(
                 relayURL: relayURL,
                 subscriptionID: subscriptionID,
-                event: event,
-                account: context.state.account,
-                hasRelayRuntime: context.state.hasRelayRuntime,
-                receivedWhileRealtime: context.state.receivedWhileRealtime
-            ),
-            effects: eventEffects(
-                state: context.state,
-                for: context.effects
-            )
+                event: event
+            )],
+            context: context
         )
     }
 
@@ -262,12 +310,8 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             applyRelayStatusTransition: { transition in
                 effects.apply(.applyRelayStatusTransition(transition))
             },
-            handleEvent: { relayURL, subscriptionID, event in
-                await effects.perform(.handleEvent(
-                    relayURL: relayURL,
-                    subscriptionID: subscriptionID,
-                    event: event
-                ))
+            handleEvent: { events in
+                await effects.perform(.handleEvents(events))
             },
             handleBackwardCompletion: { completion in
                 effects.apply(.handleBackwardCompletion(completion))

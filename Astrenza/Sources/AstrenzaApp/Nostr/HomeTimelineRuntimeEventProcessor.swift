@@ -8,6 +8,28 @@ protocol HomeTimelineProjectedEventIngesting: Sendable {
     func ingestBackward(
         _ request: HomeTimelineBackwardEventIngestRequest
     ) async throws -> HomeTimelineProjectedEventIngestResult
+
+    func ingestProjectedEvents(
+        _ requests: [HomeTimelineProjectedEventIngestRequest]
+    ) async throws -> [HomeTimelineProjectedEventIngestResult]
+}
+
+extension HomeTimelineProjectedEventIngesting {
+    func ingestProjectedEvents(
+        _ requests: [HomeTimelineProjectedEventIngestRequest]
+    ) async throws -> [HomeTimelineProjectedEventIngestResult] {
+        var results: [HomeTimelineProjectedEventIngestResult] = []
+        results.reserveCapacity(requests.count)
+        for request in requests {
+            switch request {
+            case .forward(let forward):
+                results.append(try await ingestForward(forward))
+            case .backward(let backward):
+                results.append(try await ingestBackward(backward))
+            }
+        }
+        return results
+    }
 }
 
 extension HomeTimelineEventIngestor: HomeTimelineProjectedEventIngesting {}
@@ -57,87 +79,107 @@ final class HomeTimelineRuntimeEventProcessor {
         ensureFeedDefinition: () async -> Void,
         activeFeedContext: () -> HomeFeedRuntimeContext?
     ) async -> HomeTimelineRuntimeEventProcessingOutcome {
-        if HomeTimelineSyncPlanner.isHomeForwardSubscription(subscriptionID) {
-            return await processForward(
+        await process(
+            [RuntimeEventProcessingRequest(
                 relayURL: relayURL,
                 subscriptionID: subscriptionID,
-                event: event,
-                presentationState: forwardPresentationState,
-                ensureFeedDefinition: ensureFeedDefinition,
-                activeFeedContext: activeFeedContext
-            )
-        }
-
-        return await processBackward(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID,
-            event: event,
+                event: event
+            )],
+            forwardPresentationState: forwardPresentationState,
             ensureFeedDefinition: ensureFeedDefinition,
             activeFeedContext: activeFeedContext
-        )
+        )[0]
     }
 
-    private func processForward(
-        relayURL: String,
-        subscriptionID: String,
-        event: NostrEvent,
-        presentationState: () -> HomeTimelineRuntimeEventPresentationState,
+    func process(
+        _ requests: [RuntimeEventProcessingRequest],
+        forwardPresentationState: () -> HomeTimelineRuntimeEventPresentationState,
         ensureFeedDefinition: () async -> Void,
         activeFeedContext: () -> HomeFeedRuntimeContext?
-    ) async -> HomeTimelineRuntimeEventProcessingOutcome {
-        guard event.kind == 1 || event.kind == 5 || event.kind == 6 else {
-            return .ignored
+    ) async -> [HomeTimelineRuntimeEventProcessingOutcome] {
+        guard !requests.isEmpty else { return [] }
+        if requests.contains(where: requiresFeedDefinition) {
+            await ensureFeedDefinition()
         }
+        let feedContext = activeFeedContext()
+        let prepared = requests.map { prepare($0, activeFeedContext: feedContext) }
+        let ingestRequests = prepared.compactMap { $0?.ingestRequest }
 
-        await ensureFeedDefinition()
-        let requestID = feedSyncCoordinator.requestID(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-        let requestContext = feedSyncCoordinator.context(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-
-        let ingestResult: HomeTimelineProjectedEventIngestResult
+        let ingestResults: [HomeTimelineProjectedEventIngestResult]
         do {
-            ingestResult = try await eventIngestor.ingestForward(
-                HomeTimelineForwardEventIngestRequest(
-                    event: event,
-                    relayURL: relayURL,
-                    activeFeedContext: activeFeedContext(),
-                    requestContext: requestContext,
-                    sourceRequestID: requestID
-                )
-            )
+            ingestResults = try await eventIngestor.ingestProjectedEvents(ingestRequests)
         } catch {
-            return .persistenceFailed("event save failed: \(error.localizedDescription)")
+            return prepared.map { item in
+                guard let item else { return .ignored }
+                return .persistenceFailed(
+                    "\(item.persistenceFailurePrefix): \(error.localizedDescription)"
+                )
+            }
         }
 
-        let presentationState = presentationState()
-        let applicationPlan = applicationPlanner.planForward(.init(
-            event: event,
-            embeddedEvent: ingestResult.eventResult.embeddedEvent,
-            projectsIntoCurrentFeed: ingestResult.projectsIntoCurrentFeed,
-            receivedWhileRealtime: presentationState.receivedWhileRealtime,
-            hasRestoreProjectionAnchor: presentationState.hasRestoreProjectionAnchor,
-            isTimelineAtNewestWindow: presentationState.isTimelineAtNewestWindow,
-            hasPendingEvents: presentationState.hasPendingEvents
-        ))
-        return .processed(HomeTimelineRuntimeEventProcessingResult(
-            applicationPlan: applicationPlan,
-            backwardRequestKey: nil
-        ))
+        var resultIndex = 0
+        return prepared.map { item in
+            guard let item else { return .ignored }
+            let ingestResult = ingestResults[resultIndex]
+            resultIndex += 1
+            let applicationPlan: HomeTimelineRuntimeEventApplicationPlan
+            switch item.kind {
+            case .forward:
+                let presentationState = forwardPresentationState()
+                applicationPlan = applicationPlanner.planForward(.init(
+                    event: item.event,
+                    embeddedEvent: ingestResult.eventResult.embeddedEvent,
+                    projectsIntoCurrentFeed: ingestResult.projectsIntoCurrentFeed,
+                    receivedWhileRealtime: presentationState.receivedWhileRealtime,
+                    hasRestoreProjectionAnchor: presentationState.hasRestoreProjectionAnchor,
+                    isTimelineAtNewestWindow: presentationState.isTimelineAtNewestWindow,
+                    hasPendingEvents: presentationState.hasPendingEvents
+                ))
+            case .backward(let isTimelineBackfill):
+                applicationPlan = applicationPlanner.planBackward(.init(
+                    event: item.event,
+                    embeddedEvent: ingestResult.eventResult.embeddedEvent,
+                    projectsIntoCurrentFeed: ingestResult.projectsIntoCurrentFeed,
+                    isTimelineBackfill: isTimelineBackfill
+                ))
+            }
+            return .processed(HomeTimelineRuntimeEventProcessingResult(
+                applicationPlan: applicationPlan,
+                backwardRequestKey: item.backwardRequestKey
+            ))
+        }
     }
 
-    private func processBackward(
-        relayURL: String,
-        subscriptionID: String,
-        event: NostrEvent,
-        ensureFeedDefinition: () async -> Void,
-        activeFeedContext: () -> HomeFeedRuntimeContext?
-    ) async -> HomeTimelineRuntimeEventProcessingOutcome {
-        let requestKey = backwardRequestRegistry.key(for: subscriptionID)
+    private func prepare(
+        _ input: RuntimeEventProcessingRequest,
+        activeFeedContext: HomeFeedRuntimeContext?
+    ) -> PreparedEvent? {
+        if HomeTimelineSyncPlanner.isHomeForwardSubscription(input.subscriptionID) {
+            guard input.event.kind == 1 || input.event.kind == 5 || input.event.kind == 6 else {
+                return nil
+            }
+            return PreparedEvent(
+                event: input.event,
+                ingestRequest: .forward(HomeTimelineForwardEventIngestRequest(
+                    event: input.event,
+                    relayURL: input.relayURL,
+                    activeFeedContext: activeFeedContext,
+                    requestContext: feedSyncCoordinator.context(
+                        relayURL: input.relayURL,
+                        subscriptionID: input.subscriptionID
+                    ),
+                    sourceRequestID: feedSyncCoordinator.requestID(
+                        relayURL: input.relayURL,
+                        subscriptionID: input.subscriptionID
+                    )
+                )),
+                kind: .forward,
+                backwardRequestKey: nil,
+                persistenceFailurePrefix: "event save failed"
+            )
+        }
+
+        let requestKey = backwardRequestRegistry.key(for: input.subscriptionID)
         let request = requestKey.flatMap { backwardRequestRegistry.request(for: $0) }
         let projectionReason: HomeTimelineFeedProjectionReason? = if request?.isOlderPage == true {
             .older
@@ -147,47 +189,53 @@ final class HomeTimelineRuntimeEventProcessor {
             nil
         }
         let isTimelineBackfill = projectionReason != nil
-        if isTimelineBackfill {
-            await ensureFeedDefinition()
-        }
-
-        let sourceRequestID = feedSyncCoordinator.requestID(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-        let activeRequestContext = feedSyncCoordinator.context(
-            relayURL: relayURL,
-            subscriptionID: subscriptionID
-        )
-
-        let ingestResult: HomeTimelineProjectedEventIngestResult
-        do {
-            // 配信可否はbackward request registryで判定する。provenance用requestStartedは
-            // 最初のEVENT到着時点でまだqueue内に残っている場合がある。
-            ingestResult = try await eventIngestor.ingestBackward(
-                HomeTimelineBackwardEventIngestRequest(
-                    event: event,
-                    relayURL: relayURL,
-                    activeFeedContext: activeFeedContext(),
-                    requestContext: request?.feedContext,
-                    activeRequestContext: activeRequestContext,
-                    projectionReason: projectionReason,
-                    sourceRequestID: sourceRequestID
+        // 配信可否はbackward request registryで判定する。provenance用requestStartedは
+        // 最初のEVENT到着時点でまだqueue内に残っている場合がある。
+        return PreparedEvent(
+            event: input.event,
+            ingestRequest: .backward(HomeTimelineBackwardEventIngestRequest(
+                event: input.event,
+                relayURL: input.relayURL,
+                activeFeedContext: activeFeedContext,
+                requestContext: request?.feedContext,
+                activeRequestContext: feedSyncCoordinator.context(
+                    relayURL: input.relayURL,
+                    subscriptionID: input.subscriptionID
+                ),
+                projectionReason: projectionReason,
+                sourceRequestID: feedSyncCoordinator.requestID(
+                    relayURL: input.relayURL,
+                    subscriptionID: input.subscriptionID
                 )
-            )
-        } catch {
-            return .persistenceFailed("backward event save failed: \(error.localizedDescription)")
+            )),
+            kind: .backward(isTimelineBackfill: isTimelineBackfill),
+            backwardRequestKey: requestKey,
+            persistenceFailurePrefix: "backward event save failed"
+        )
+    }
+
+    private func requiresFeedDefinition(
+        _ request: RuntimeEventProcessingRequest
+    ) -> Bool {
+        if HomeTimelineSyncPlanner.isHomeForwardSubscription(request.subscriptionID) {
+            return request.event.kind == 1 || request.event.kind == 5 || request.event.kind == 6
+        }
+        guard let key = backwardRequestRegistry.key(for: request.subscriptionID),
+              let backward = backwardRequestRegistry.request(for: key)
+        else { return false }
+        return backward.isOlderPage || backward.gap != nil
+    }
+
+    private struct PreparedEvent {
+        enum Kind {
+            case forward
+            case backward(isTimelineBackfill: Bool)
         }
 
-        let applicationPlan = applicationPlanner.planBackward(.init(
-            event: event,
-            embeddedEvent: ingestResult.eventResult.embeddedEvent,
-            projectsIntoCurrentFeed: ingestResult.projectsIntoCurrentFeed,
-            isTimelineBackfill: isTimelineBackfill
-        ))
-        return .processed(HomeTimelineRuntimeEventProcessingResult(
-            applicationPlan: applicationPlan,
-            backwardRequestKey: requestKey
-        ))
+        let event: NostrEvent
+        let ingestRequest: HomeTimelineProjectedEventIngestRequest
+        let kind: Kind
+        let backwardRequestKey: String?
+        let persistenceFailurePrefix: String
     }
 }

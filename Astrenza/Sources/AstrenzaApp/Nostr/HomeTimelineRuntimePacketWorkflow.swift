@@ -15,9 +15,7 @@ struct HomeTimelineRuntimePacketHandlers: Sendable {
         _ application: HomeTimelineRuntimePacketApplication
     ) -> Void
     typealias EventHandler = @MainActor @Sendable (
-        _ relayURL: String,
-        _ subscriptionID: String,
-        _ event: NostrEvent
+        _ events: [HomeTimelineRuntimeEventEnvelope]
     ) async -> Void
     typealias BackwardCompletionHandler = @MainActor @Sendable (
         _ completion: NostrBackwardREQCompletion
@@ -41,17 +39,42 @@ final class HomeTimelineRuntimePacketWorkflow {
         context: HomeTimelineRuntimePacketContext,
         handlers: HomeTimelineRuntimePacketHandlers
     ) async {
-        let application = packetHandler.handle(packet, context: context)
-        guard application.wasHandled else { return }
+        await handle([packet], context: context, handlers: handlers)
+    }
 
-        handlers.applyState(application)
-        switch application.action {
-        case .event(let relayURL, let subscriptionID, let event):
-            await handlers.handleEvent(relayURL, subscriptionID, event)
-        case .backwardCompleted(let completion):
-            handlers.handleBackwardCompletion(completion)
-        case nil:
-            break
+    func handle(
+        _ packets: [NostrRelayRuntimePacket],
+        context: HomeTimelineRuntimePacketContext,
+        handlers: HomeTimelineRuntimePacketHandlers
+    ) async {
+        var pendingEvents: [HomeTimelineRuntimeEventEnvelope] = []
+
+        func flushEvents() async {
+            guard !pendingEvents.isEmpty else { return }
+            let events = pendingEvents
+            pendingEvents.removeAll(keepingCapacity: true)
+            await handlers.handleEvent(events)
         }
+
+        for packet in packets {
+            let application = packetHandler.handle(packet, context: context)
+            guard application.wasHandled else { continue }
+
+            handlers.applyState(application)
+            switch application.action {
+            case .event(let relayURL, let subscriptionID, let event):
+                pendingEvents.append(HomeTimelineRuntimeEventEnvelope(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID,
+                    event: event
+                ))
+            case .backwardCompleted(let completion):
+                await flushEvents()
+                handlers.handleBackwardCompletion(completion)
+            case nil:
+                await flushEvents()
+            }
+        }
+        await flushEvents()
     }
 }

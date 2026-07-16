@@ -189,12 +189,14 @@ struct StoreApplicationDispatcherFixture {
             publishRelayStatusChange: { [probe] in
                 probe.events.append(.publishRelayStatusChange)
             },
-            handleRuntimeEvent: { [probe] relayURL, subscriptionID, event in
-                probe.events.append(.runtimeEvent(
-                    relayURL: relayURL,
-                    subscriptionID: subscriptionID,
-                    eventID: event.id
-                ))
+            handleRuntimeEvents: { [probe] events in
+                for event in events {
+                    probe.events.append(.runtimeEvent(
+                        relayURL: event.relayURL,
+                        subscriptionID: event.subscriptionID,
+                        eventID: event.event.id
+                    ))
+                }
             },
             persistDatabase: { [probe] account in
                 probe.events.append(.persistDatabase(account.pubkey))

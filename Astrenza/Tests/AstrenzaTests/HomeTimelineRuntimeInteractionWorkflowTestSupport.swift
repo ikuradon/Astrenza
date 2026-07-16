@@ -64,11 +64,11 @@ final class RuntimeInteractionRoutingSpy: HomeTimelineRuntimeRouting {
         effects.setRealtime(true)
         effects.applyRelayStatusTransition(nil)
         if let event {
-            await effects.handleEvent(
-                "wss://relay.example",
-                "astrenza-home-forward-interaction",
-                event
-            )
+            await effects.handleEvent([HomeTimelineRuntimeEventEnvelope(
+                relayURL: "wss://relay.example",
+                subscriptionID: "astrenza-home-forward-interaction",
+                event: event
+            )])
         }
         if let completion {
             effects.handleBackwardCompletion(completion)

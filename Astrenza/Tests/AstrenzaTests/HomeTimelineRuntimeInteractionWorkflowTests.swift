@@ -150,16 +150,16 @@ struct HomeTimelineRuntimeInteractionTests {
             .handleBackwardCompletion(fixture.completion)
         ])
         #expect(fixture.probe.asyncApplications == [
-            .handleEvent(
+            .handleEvents([HomeTimelineRuntimeEventEnvelope(
                 relayURL: fixture.relayURLs[0],
                 subscriptionID: fixture.subscriptionID,
                 event: fixture.event
-            ),
-            .handleEvent(
+            )]),
+            .handleEvents([HomeTimelineRuntimeEventEnvelope(
                 relayURL: fixture.relayURLs[0],
                 subscriptionID: fixture.subscriptionID,
                 event: fixture.event
-            )
+            )])
         ])
     }
 

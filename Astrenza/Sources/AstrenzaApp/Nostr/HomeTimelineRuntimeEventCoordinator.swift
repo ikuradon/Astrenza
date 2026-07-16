@@ -6,6 +6,25 @@ protocol HomeTimelineRuntimeEventProcessing: AnyObject {
         _ request: RuntimeEventProcessingRequest,
         handlers: RuntimeEventProcessingHandlers
     ) async -> HomeTimelineRuntimeEventProcessingOutcome
+
+    func process(
+        _ requests: [RuntimeEventProcessingRequest],
+        handlers: RuntimeEventProcessingHandlers
+    ) async -> [HomeTimelineRuntimeEventProcessingOutcome]
+}
+
+extension HomeTimelineRuntimeEventProcessing {
+    func process(
+        _ requests: [RuntimeEventProcessingRequest],
+        handlers: RuntimeEventProcessingHandlers
+    ) async -> [HomeTimelineRuntimeEventProcessingOutcome] {
+        var outcomes: [HomeTimelineRuntimeEventProcessingOutcome] = []
+        outcomes.reserveCapacity(requests.count)
+        for request in requests {
+            outcomes.append(await process(request, handlers: handlers))
+        }
+        return outcomes
+    }
 }
 
 struct RuntimeEventProcessingRequest: Equatable, Sendable {
@@ -36,6 +55,18 @@ extension HomeTimelineRuntimeEventProcessor: HomeTimelineRuntimeEventProcessing 
             activeFeedContext: handlers.activeFeedContext
         )
     }
+
+    func process(
+        _ requests: [RuntimeEventProcessingRequest],
+        handlers: RuntimeEventProcessingHandlers
+    ) async -> [HomeTimelineRuntimeEventProcessingOutcome] {
+        await process(
+            requests,
+            forwardPresentationState: handlers.forwardPresentationState,
+            ensureFeedDefinition: handlers.ensureFeedDefinition,
+            activeFeedContext: handlers.activeFeedContext
+        )
+    }
 }
 
 @MainActor
@@ -46,6 +77,12 @@ protocol HomeTimelineRuntimeEventApplying: AnyObject {
         context: HomeTimelineRuntimeEventApplicationContext,
         handlers: HomeTimelineRuntimeEventApplicationHandlers
     ) async -> Bool
+
+    func apply(
+        _ requests: [HomeTimelineRuntimeEventApplicationRequest],
+        context: HomeTimelineRuntimeEventApplicationContext,
+        handlers: HomeTimelineRuntimeEventApplicationHandlers
+    ) async -> [Bool]
 
     func rememberLatestMetadataEvent(
         _ event: NostrEvent,
@@ -64,6 +101,26 @@ protocol HomeTimelineRuntimeEventApplying: AnyObject {
         context: HomeTimelineRuntimeEventApplicationContext,
         handlers: HomeTimelineRuntimeEventApplicationHandlers
     ) async -> Bool
+}
+
+extension HomeTimelineRuntimeEventApplying {
+    func apply(
+        _ requests: [HomeTimelineRuntimeEventApplicationRequest],
+        context: HomeTimelineRuntimeEventApplicationContext,
+        handlers: HomeTimelineRuntimeEventApplicationHandlers
+    ) async -> [Bool] {
+        var results: [Bool] = []
+        results.reserveCapacity(requests.count)
+        for request in requests {
+            results.append(await apply(
+                request.plan,
+                backwardRequestKey: request.backwardRequestKey,
+                context: context,
+                handlers: handlers
+            ))
+        }
+        return results
+    }
 }
 
 extension HomeTimelineRuntimeEventApplicationCoordinator: HomeTimelineRuntimeEventApplying {}
@@ -143,46 +200,90 @@ final class HomeTimelineRuntimeEventCoordinator {
         _ request: HomeTimelineRuntimeEventRequest,
         handlers: HomeTimelineRuntimeEventHandlers
     ) async {
-        guard let account = request.account,
+        await handle([request], handlers: handlers)
+    }
+
+    func handle(
+        _ requests: [HomeTimelineRuntimeEventRequest],
+        handlers: HomeTimelineRuntimeEventHandlers
+    ) async {
+        guard let first = requests.first,
+              let account = first.account,
               let lifecycle = lifecycleCoordinator.token(for: account.pubkey)
         else { return }
+        let currentRequests = requests.filter { $0.account?.pubkey == account.pubkey }
+        let outcomes = await process(
+            currentRequests,
+            account: account,
+            handlers: handlers
+        )
+        var processed: [(HomeTimelineRuntimeEventRequest, HomeTimelineRuntimeEventProcessingResult)] = []
 
-        let outcome = await process(request, account: account, handlers: handlers)
+        for (request, outcome) in zip(currentRequests, outcomes) {
+            switch outcome {
+            case .ignored:
+                continue
+            case .persistenceFailed(let message):
+                handlers.perform(.recordDiagnostic(HomeTimelineRuntimeEventDiagnostic(
+                    relayURL: request.relayURL,
+                    subscriptionID: request.subscriptionID,
+                    message: message
+                )))
+            case .processed(let result):
+                processed.append((request, result))
+            }
+        }
+        guard !processed.isEmpty,
+              lifecycleCoordinator.isCurrent(lifecycle),
+              handlers.isAccountCurrent(account.pubkey)
+        else { return }
 
-        switch outcome {
-        case .ignored:
-            return
-        case .persistenceFailed(let message):
-            handlers.perform(.recordDiagnostic(HomeTimelineRuntimeEventDiagnostic(
-                relayURL: request.relayURL,
-                subscriptionID: request.subscriptionID,
-                message: message
-            )))
-        case .processed(let result):
-            await apply(
-                result,
-                request: request,
+        let applied = await applicationCoordinator.apply(
+            processed.map { item in
+                HomeTimelineRuntimeEventApplicationRequest(
+                    plan: item.1.applicationPlan,
+                    backwardRequestKey: item.1.backwardRequestKey
+                )
+            },
+            context: HomeTimelineRuntimeEventApplicationContext(
                 account: account,
                 lifecycle: lifecycle,
-                handlers: handlers
+                hasRelayRuntime: first.hasRelayRuntime
+            ),
+            handlers: handlers.application
+        )
+        var didApplyEvent = false
+        for (item, wasApplied) in zip(processed, applied) where wasApplied {
+            didApplyEvent = true
+            feedEventRecorder.record(
+                item.0.event,
+                relayURL: item.0.relayURL,
+                subscriptionID: item.0.subscriptionID
             )
+        }
+        if didApplyEvent {
+            handlers.perform(.scheduleLinkPreviewResolution)
         }
     }
 
     private func process(
-        _ request: HomeTimelineRuntimeEventRequest,
+        _ requests: [HomeTimelineRuntimeEventRequest],
         account: NostrAccount,
         handlers: HomeTimelineRuntimeEventHandlers
-    ) async -> HomeTimelineRuntimeEventProcessingOutcome {
+    ) async -> [HomeTimelineRuntimeEventProcessingOutcome] {
         await processor.process(
-            RuntimeEventProcessingRequest(
-                relayURL: request.relayURL,
-                subscriptionID: request.subscriptionID,
-                event: request.event
-            ),
+            requests.map { request in
+                RuntimeEventProcessingRequest(
+                    relayURL: request.relayURL,
+                    subscriptionID: request.subscriptionID,
+                    event: request.event
+                )
+            },
             handlers: RuntimeEventProcessingHandlers(
                 forwardPresentationState: {
-                    handlers.presentationState(request.receivedWhileRealtime)
+                    handlers.presentationState(
+                        requests.first?.receivedWhileRealtime ?? false
+                    )
                 },
                 ensureFeedDefinition: { [weak self] in
                     await self?.ensureFeedDefinition(accountID: account.pubkey)
@@ -191,35 +292,6 @@ final class HomeTimelineRuntimeEventCoordinator {
                     self?.projectionController.runtimeContext()
                 }
             )
-        )
-    }
-
-    private func apply(
-        _ result: HomeTimelineRuntimeEventProcessingResult,
-        request: HomeTimelineRuntimeEventRequest,
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken,
-        handlers: HomeTimelineRuntimeEventHandlers
-    ) async {
-        guard lifecycleCoordinator.isCurrent(lifecycle),
-              handlers.isAccountCurrent(account.pubkey)
-        else { return }
-        let applied = await applicationCoordinator.apply(
-            result.applicationPlan,
-            backwardRequestKey: result.backwardRequestKey,
-            context: HomeTimelineRuntimeEventApplicationContext(
-                account: account,
-                lifecycle: lifecycle,
-                hasRelayRuntime: request.hasRelayRuntime
-            ),
-            handlers: handlers.application
-        )
-        guard applied else { return }
-        handlers.perform(.scheduleLinkPreviewResolution)
-        feedEventRecorder.record(
-            request.event,
-            relayURL: request.relayURL,
-            subscriptionID: request.subscriptionID
         )
     }
 

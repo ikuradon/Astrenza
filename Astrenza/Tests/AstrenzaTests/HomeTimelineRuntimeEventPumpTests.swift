@@ -4,6 +4,42 @@ import Testing
 
 @Suite("Home timeline runtime event pump")
 struct HomeTimelineRuntimeEventPumpTests {
+    @Test("Event bursts flush at the bound and before EOSE in packet order")
+    @MainActor
+    func boundedEventBatchesPreserveEOSEOrder() async throws {
+        let source = RuntimePacketStreamStub()
+        let probe = RuntimePacketBatchProbe()
+        let pump = HomeTimelineRuntimeEventPump(policy: .init(
+            maxEventCount: 2,
+            maxDelayNanoseconds: 1_000_000_000
+        ))
+        _ = pump.start(
+            stream: { await source.stream() },
+            isSourceCurrent: { true },
+            onPacket: { packets in
+                probe.batches.append(packets)
+            }
+        )
+        try #require(await pump.waitUntilReady())
+        let first = runtimeEventPacket(idCharacter: "1")
+        let second = runtimeEventPacket(idCharacter: "2")
+        let third = runtimeEventPacket(idCharacter: "3")
+        let eose = NostrRelayRuntimePacket.eose(
+            relayURL: "wss://relay.example",
+            subscriptionID: "astrenza-home-forward"
+        )
+
+        await source.emit(first)
+        await source.emit(second)
+        try #require(await waitUntil { probe.batches.count == 1 })
+        await source.emit(third)
+        await source.emit(eose)
+        try #require(await waitUntil { probe.batches.count == 3 })
+
+        #expect(probe.batches == [[first, second], [third], [eose]])
+        pump.cancel()
+    }
+
     @Test("One stream becomes ready, forwards packets, and clears state when it ends")
     @MainActor
     func streamLifecycle() async throws {
@@ -14,8 +50,8 @@ struct HomeTimelineRuntimeEventPumpTests {
         let didStart = pump.start(
             stream: { await source.stream() },
             isSourceCurrent: { true },
-            onPacket: { packet in
-                probe.packets.append(packet)
+            onPacket: { packets in
+                probe.packets.append(contentsOf: packets)
             }
         )
         let didStartDuplicate = pump.start(
@@ -74,8 +110,8 @@ struct HomeTimelineRuntimeEventPumpTests {
         let didStartRestartedSource = pump.start(
             stream: { await restartedSource.stream() },
             isSourceCurrent: { true },
-            onPacket: { packet in
-                probe.packets.append(packet)
+            onPacket: { packets in
+                probe.packets.append(contentsOf: packets)
             }
         )
         #expect(didStartRestartedSource)
@@ -108,8 +144,8 @@ struct HomeTimelineRuntimeEventPumpTests {
         let didStart = pump.start(
             stream: { await source.stream() },
             isSourceCurrent: { validity.isCurrent },
-            onPacket: { packet in
-                probe.packets.append(packet)
+            onPacket: { packets in
+                probe.packets.append(contentsOf: packets)
             }
         )
         #expect(didStart)
@@ -136,11 +172,32 @@ struct HomeTimelineRuntimeEventPumpTests {
         }
         return false
     }
+
+    private func runtimeEventPacket(idCharacter: String) -> NostrRelayRuntimePacket {
+        .event(
+            relayURL: "wss://relay.example",
+            subscriptionID: "astrenza-home-forward",
+            event: NostrEvent(
+                id: String(repeating: idCharacter, count: 64),
+                pubkey: String(repeating: "a", count: 64),
+                createdAt: 100,
+                kind: 1,
+                tags: [],
+                content: idCharacter,
+                sig: String(repeating: "b", count: 128)
+            )
+        )
+    }
 }
 
 @MainActor
 private final class RuntimePacketProbe {
     var packets: [NostrRelayRuntimePacket] = []
+}
+
+@MainActor
+private final class RuntimePacketBatchProbe {
+    var batches: [[NostrRelayRuntimePacket]] = []
 }
 
 @MainActor

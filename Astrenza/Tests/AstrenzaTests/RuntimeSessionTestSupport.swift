@@ -89,7 +89,7 @@ final class RuntimeSessionHandlerProbe {
     var handlers: HomeTimelineRuntimeSessionHandlers {
         HomeTimelineRuntimeSessionHandlers(
             isAccountCurrent: { [self] _ in isAccountCurrent },
-            handlePacket: { [self] packet in packets.append(packet) },
+            handlePacket: { [self] batch in packets.append(contentsOf: batch) },
             applicationEffects: Self.applicationEffects,
             perform: { [self] command in commands.append(command) }
         )

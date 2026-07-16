@@ -6,6 +6,11 @@ struct HomeTimelineRuntimeEventApplicationContext: Sendable {
     let hasRelayRuntime: Bool
 }
 
+struct HomeTimelineRuntimeEventApplicationRequest: Equatable, Sendable {
+    var plan: HomeTimelineRuntimeEventApplicationPlan
+    let backwardRequestKey: String?
+}
+
 enum HomeTimelineRuntimeEventApplicationCommand: Equatable, Sendable {
     case reloadProjection(
         anchorEventID: String?,
@@ -132,6 +137,29 @@ final class HomeTimelineRuntimeEventApplicationCoordinator {
         return isCurrent(context)
     }
 
+    func apply(
+        _ requests: [HomeTimelineRuntimeEventApplicationRequest],
+        context: HomeTimelineRuntimeEventApplicationContext,
+        handlers: HomeTimelineRuntimeEventApplicationHandlers
+    ) async -> [Bool] {
+        var normalized = requests
+        coalesceInvalidations(in: &normalized)
+        coalesceNewestProjectionReloads(in: &normalized)
+        coalesceMaterializationSchedules(in: &normalized)
+
+        var results: [Bool] = []
+        results.reserveCapacity(normalized.count)
+        for request in normalized {
+            results.append(await apply(
+                request.plan,
+                backwardRequestKey: request.backwardRequestKey,
+                context: context,
+                handlers: handlers
+            ))
+        }
+        return results
+    }
+
     @discardableResult
     func rememberLatestMetadataEvent(
         _ event: NostrEvent,
@@ -200,6 +228,57 @@ final class HomeTimelineRuntimeEventApplicationCoordinator {
         handlers: HomeTimelineRuntimeEventApplicationHandlers
     ) {
         handlers.applyListProjectionInvalidation(listProjectionCache.invalidate())
+    }
+
+    private func coalesceInvalidations(
+        in requests: inout [HomeTimelineRuntimeEventApplicationRequest]
+    ) {
+        var didKeepInvalidation = false
+        for index in requests.indices where requests[index].plan.invalidatesListEntries {
+            if didKeepInvalidation {
+                requests[index].plan.invalidatesListEntries = false
+            } else {
+                didKeepInvalidation = true
+            }
+        }
+    }
+
+    private func coalesceNewestProjectionReloads(
+        in requests: inout [HomeTimelineRuntimeEventApplicationRequest]
+    ) {
+        var reloadIndices: [Int] = []
+        var allowsRealtimeFollow = false
+        for index in requests.indices {
+            guard case .reloadNewestAndSchedule(let allowsFollow)? =
+                    requests[index].plan.projectionUpdate
+            else { continue }
+            reloadIndices.append(index)
+            allowsRealtimeFollow = allowsRealtimeFollow || allowsFollow
+        }
+        guard let retainedIndex = reloadIndices.last else { return }
+        for index in reloadIndices.dropLast() {
+            requests[index].plan.projectionUpdate = nil
+        }
+        requests[retainedIndex].plan.projectionUpdate = .reloadNewestAndSchedule(
+            allowsRealtimeFollow: allowsRealtimeFollow
+        )
+    }
+
+    private func coalesceMaterializationSchedules(
+        in requests: inout [HomeTimelineRuntimeEventApplicationRequest]
+    ) {
+        let indices = requests.indices.filter {
+            requests[$0].plan.materializationSchedule != nil
+        }
+        guard let retainedIndex = indices.last else { return }
+        let schedule: HomeTimelineRuntimeEventApplicationPlan.MaterializationSchedule =
+            indices.contains {
+                requests[$0].plan.materializationSchedule == .standard
+            } ? .standard : .deferredDependencies
+        for index in indices.dropLast() {
+            requests[index].plan.materializationSchedule = nil
+        }
+        requests[retainedIndex].plan.materializationSchedule = schedule
     }
 
     private func isCurrent(

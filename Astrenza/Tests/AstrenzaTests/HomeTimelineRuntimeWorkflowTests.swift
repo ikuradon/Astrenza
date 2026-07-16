@@ -26,7 +26,7 @@ struct HomeTimelineRuntimeWorkflowTests {
         ])
 
         let packetHandler = try #require(fixture.session.packetHandler)
-        await packetHandler(fixture.packet)
+        await packetHandler([fixture.packet])
         #expect(fixture.packetRouter.packets == [fixture.packet])
         #expect(fixture.packetRouter.contexts == [fixture.observedContext])
     }
@@ -171,11 +171,11 @@ private final class RuntimePacketRouterSpy: HomeTimelineRuntimePacketRouting {
             handlers.applyState(application)
         }
         if let event {
-            await handlers.handleEvent(
-                "wss://relay.example",
-                "astrenza-home-forward",
-                event
-            )
+            await handlers.handleEvent([HomeTimelineRuntimeEventEnvelope(
+                relayURL: "wss://relay.example",
+                subscriptionID: "astrenza-home-forward",
+                event: event
+            )])
         }
         if let completion {
             handlers.handleBackwardCompletion(completion)
@@ -315,8 +315,8 @@ private struct RuntimeWorkflowFixture {
             applyRelayStatusTransition: { [probe] _ in
                 probe.relayTransitionCount += 1
             },
-            handleEvent: { [probe] _, _, event in
-                probe.events.append(event)
+            handleEvent: { [probe] events in
+                probe.events.append(contentsOf: events.map(\.event))
             },
             handleBackwardCompletion: { [probe] completion in
                 probe.completions.append(completion)

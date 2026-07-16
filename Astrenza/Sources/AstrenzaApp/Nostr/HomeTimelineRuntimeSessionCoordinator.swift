@@ -65,7 +65,7 @@ enum HomeTimelineRuntimeSessionCommand: Equatable, Sendable {
 struct HomeTimelineRuntimeSessionHandlers: Sendable {
     typealias AccountValidity = @MainActor @Sendable (_ accountID: String) -> Bool
     typealias PacketHandler = @MainActor @Sendable (
-        _ packet: NostrRelayRuntimePacket
+        _ packets: [NostrRelayRuntimePacket]
     ) async -> Void
     typealias CommandHandler = @MainActor @Sendable (
         _ command: HomeTimelineRuntimeSessionCommand

@@ -36,6 +36,11 @@ struct HomeTimelineBackwardEventIngestRequest: Sendable {
     let sourceRequestID: String?
 }
 
+enum HomeTimelineProjectedEventIngestRequest: Sendable {
+    case forward(HomeTimelineForwardEventIngestRequest)
+    case backward(HomeTimelineBackwardEventIngestRequest)
+}
+
 struct HomeTimelineDependencyCacheResult: Sendable {
     let cachedProfiles: [NostrEvent]
     let snapshot: NostrDependencyFetchCacheSnapshot
@@ -58,39 +63,65 @@ actor HomeTimelineEventIngestor {
     func ingestForward(
         _ request: HomeTimelineForwardEventIngestRequest
     ) async throws -> HomeTimelineProjectedEventIngestResult {
-        let projectsIntoCurrentFeed = feedContextsMatch(
-            active: request.activeFeedContext,
-            request: request.requestContext
-        ) && request.requestContext?.includes(request.event) == true
-        return try ingestProjectedEvent(
-            event: request.event,
-            relayURL: request.relayURL,
-            activeFeedContext: request.activeFeedContext,
-            projectionReason: .forward,
-            sourceRequestID: request.sourceRequestID,
-            projectsIntoCurrentFeed: projectsIntoCurrentFeed
-        )
+        try await ingestProjectedEvents([.forward(request)])[0]
     }
 
     func ingestBackward(
         _ request: HomeTimelineBackwardEventIngestRequest
     ) async throws -> HomeTimelineProjectedEventIngestResult {
-        let projectsIntoCurrentFeed = request.projectionReason != nil &&
-            request.requestContext != nil &&
-            (request.activeRequestContext == nil || request.requestContext == request.activeRequestContext) &&
-            feedContextsMatch(
-                active: request.activeFeedContext,
-                request: request.requestContext
-            ) &&
-            request.requestContext?.includes(request.event) == true
-        return try ingestProjectedEvent(
-            event: request.event,
-            relayURL: request.relayURL,
-            activeFeedContext: request.activeFeedContext,
-            projectionReason: request.projectionReason,
-            sourceRequestID: request.sourceRequestID,
-            projectsIntoCurrentFeed: projectsIntoCurrentFeed
+        try await ingestProjectedEvents([.backward(request)])[0]
+    }
+
+    func ingestProjectedEvents(
+        _ requests: [HomeTimelineProjectedEventIngestRequest]
+    ) async throws -> [HomeTimelineProjectedEventIngestResult] {
+        guard !requests.isEmpty else { return [] }
+        let receivedAt = now()
+        var events: [NostrEvent] = []
+        var eventSources: [NostrEventSourceRecord] = []
+        var feedMemberships: [NostrFeedMembershipRecord] = []
+        var feedMembershipSources: [NostrFeedMembershipSourceRecord] = []
+        var results: [HomeTimelineProjectedEventIngestResult] = []
+        results.reserveCapacity(requests.count)
+
+        for request in requests {
+            let projection = projectedIngestDescription(
+                for: request,
+                receivedAt: receivedAt
+            )
+            let embeddedEvent = embeddedRepostTarget(from: projection.event)
+            let eventsToSave = [projection.event] + (embeddedEvent.map { [$0] } ?? [])
+            events.append(contentsOf: eventsToSave)
+            eventSources.append(contentsOf: eventsToSave.map { storedEvent in
+                NostrEventSourceRecord(
+                    eventID: storedEvent.id,
+                    relayURL: projection.relayURL,
+                    firstSeenAt: receivedAt,
+                    lastSeenAt: receivedAt
+                )
+            })
+            if let membership = projection.feedMembership {
+                feedMemberships.append(membership)
+            }
+            feedMembershipSources.append(contentsOf: projection.feedMembershipSources)
+            results.append(HomeTimelineProjectedEventIngestResult(
+                eventResult: HomeTimelineEventIngestResult(
+                    primaryEventID: projection.event.id,
+                    embeddedEvent: embeddedEvent,
+                    savedEventIDs: eventsToSave.map(\.id)
+                ),
+                projectsIntoCurrentFeed: projection.projectsIntoCurrentFeed
+            ))
+        }
+
+        try eventStore?.ingest(
+            events: events,
+            eventSources: eventSources,
+            feedMemberships: feedMemberships,
+            feedMembershipSources: feedMembershipSources,
+            receivedAt: receivedAt
         )
+        return results
     }
 
     func ingest(
@@ -108,15 +139,44 @@ actor HomeTimelineEventIngestor {
         )
     }
 
-    private func ingestProjectedEvent(
-        event: NostrEvent,
-        relayURL: String,
-        activeFeedContext: HomeFeedRuntimeContext?,
-        projectionReason: HomeTimelineFeedProjectionReason?,
-        sourceRequestID: String?,
-        projectsIntoCurrentFeed: Bool
-    ) throws -> HomeTimelineProjectedEventIngestResult {
-        let receivedAt = now()
+    private func projectedIngestDescription(
+        for request: HomeTimelineProjectedEventIngestRequest,
+        receivedAt: Int
+    ) -> ProjectedIngestDescription {
+        let event: NostrEvent
+        let relayURL: String
+        let activeFeedContext: HomeFeedRuntimeContext?
+        let projectionReason: HomeTimelineFeedProjectionReason?
+        let sourceRequestID: String?
+        let projectsIntoCurrentFeed: Bool
+
+        switch request {
+        case .forward(let forward):
+            event = forward.event
+            relayURL = forward.relayURL
+            activeFeedContext = forward.activeFeedContext
+            projectionReason = .forward
+            sourceRequestID = forward.sourceRequestID
+            projectsIntoCurrentFeed = feedContextsMatch(
+                active: forward.activeFeedContext,
+                request: forward.requestContext
+            ) && forward.requestContext?.includes(forward.event) == true
+        case .backward(let backward):
+            event = backward.event
+            relayURL = backward.relayURL
+            activeFeedContext = backward.activeFeedContext
+            projectionReason = backward.projectionReason
+            sourceRequestID = backward.sourceRequestID
+            projectsIntoCurrentFeed = backward.projectionReason != nil &&
+                backward.requestContext != nil &&
+                (backward.activeRequestContext == nil ||
+                    backward.requestContext == backward.activeRequestContext) &&
+                feedContextsMatch(
+                    active: backward.activeFeedContext,
+                    request: backward.requestContext
+                ) && backward.requestContext?.includes(backward.event) == true
+        }
+
         let feedMembership = projectedFeedMembership(
             event: event,
             activeFeedContext: activeFeedContext,
@@ -132,17 +192,21 @@ actor HomeTimelineEventIngestor {
             insertedAt: receivedAt,
             projectsIntoCurrentFeed: projectsIntoCurrentFeed
         )
-        let eventResult = try ingest(
+        return ProjectedIngestDescription(
             event: event,
             relayURL: relayURL,
             feedMembership: feedMembership,
             feedMembershipSources: feedMembershipSources,
-            receivedAt: receivedAt
-        )
-        return HomeTimelineProjectedEventIngestResult(
-            eventResult: eventResult,
             projectsIntoCurrentFeed: projectsIntoCurrentFeed
         )
+    }
+
+    private struct ProjectedIngestDescription {
+        let event: NostrEvent
+        let relayURL: String
+        let feedMembership: NostrFeedMembershipRecord?
+        let feedMembershipSources: [NostrFeedMembershipSourceRecord]
+        let projectsIntoCurrentFeed: Bool
     }
 
     private func ingest(

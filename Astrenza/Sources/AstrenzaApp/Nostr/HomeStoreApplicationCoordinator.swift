@@ -244,16 +244,22 @@ extension HomeStoreApplicationCoordinator {
         )
     }
 
+    func handleRuntimeEvents(
+        _ events: [HomeTimelineRuntimeEventEnvelope]
+    ) async {
+        await collaborators.runtime.handleEvents(events)
+    }
+
     func handleRuntimeEvent(
         relayURL: String,
         subscriptionID: String,
         event: NostrEvent
     ) async {
-        await collaborators.runtime.handleEvent(
+        await handleRuntimeEvents([HomeTimelineRuntimeEventEnvelope(
             relayURL: relayURL,
             subscriptionID: subscriptionID,
             event: event
-        )
+        )])
     }
 
     func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
