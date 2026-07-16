@@ -112,22 +112,24 @@ public struct NostrDependencyFetchQueue: Equatable, Sendable {
 
         guard !missingProfiles.isEmpty || !missingSourceIDs.isEmpty else { return false }
 
-        for (relayURLs, pubkeys) in groupedDependencies(
+        let profileGroups = groupedDependencies(
             missingProfiles,
             availableRelayURLs: availableProfileRelayURLs ?? availableRelayURLs,
             hintsForValue: { dependencies.profileRelayURLsByPubkey[$0] ?? [] }
-        ) {
+        )
+        for (relayURLs, pubkeys) in profileGroups {
             bufferedProfilePubkeysByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(pubkeys)
         }
-        for (relayURLs, ids) in groupedDependencies(
+        let sourceGroups = groupedDependencies(
             missingSourceIDs,
             availableRelayURLs: availableRelayURLs,
             hintsForValue: { dependencies.sourceRelayURLsByEventID[$0] ?? [] }
-        ) {
+        )
+        for (relayURLs, ids) in sourceGroups {
             bufferedSourceEventIDsByRelay[RelaySelectionKey(relayURLs: relayURLs), default: []].formUnion(ids)
         }
 
-        return true
+        return !profileGroups.isEmpty || !sourceGroups.isEmpty
     }
 
     public mutating func drain() -> NostrDependencyFetchBatch {
@@ -213,6 +215,7 @@ public struct NostrDependencyFetchQueue: Equatable, Sendable {
                 hintedRelayURLs: hintsForValue(value),
                 availableRelayURLs: availableRelayURLs
             )
+            guard !relayURLs.isEmpty else { continue }
             groups[RelaySelectionKey(relayURLs: relayURLs), default: []].append(value)
         }
         return groups
@@ -224,8 +227,6 @@ public struct NostrDependencyFetchQueue: Equatable, Sendable {
         hintedRelayURLs: [String],
         availableRelayURLs: [String]
     ) -> [String] {
-        let hinted = Set(hintedRelayURLs)
-        let connectedHints = availableRelayURLs.filter { hinted.contains($0) }
-        return connectedHints.isEmpty ? availableRelayURLs : connectedHints
+        hintedRelayURLs.isEmpty ? availableRelayURLs : hintedRelayURLs
     }
 }

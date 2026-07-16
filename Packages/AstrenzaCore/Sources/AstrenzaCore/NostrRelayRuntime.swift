@@ -20,6 +20,7 @@ public actor NostrRelayRuntime {
     private var backwardTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var backwardProgressBySubscriptionKey: [String: BackwardSubscriptionProgress] = [:]
     private var backwardSubscriptionKeysByGroupID: [String: Set<String>] = [:]
+    private var temporaryRelayLeaseCounts: [String: Int] = [:]
     private var nextBackwardProgressGeneration: UInt64 = 0
     private var trafficAccountID: String?
     private var trafficPolicy = NostrSyncPolicy.default()
@@ -57,6 +58,11 @@ public actor NostrRelayRuntime {
         relayURLs
     }
 
+    public func temporaryRelayURLs() -> [String] {
+        let defaultRelays = Set(relayURLs)
+        return sessions.keys.filter { !defaultRelays.contains($0) }.sorted()
+    }
+
     public func activeForwardSubscriptionIDs() -> [String] {
         activeForwardPackets.keys.sorted()
     }
@@ -79,8 +85,9 @@ public actor NostrRelayRuntime {
 
     public func setDefaultRelays(_ newRelayURLs: [String]) async throws {
         let normalizedRelays = newRelayURLs.dedupedPreservingOrder()
+        let previousRelayURLs = Set(relayURLs)
         let removedRelays = Set(relayURLs).subtracting(normalizedRelays)
-        let addedRelays = normalizedRelays.filter { sessions[$0] == nil }
+        let addedRelays = normalizedRelays.filter { !previousRelayURLs.contains($0) }
 
         for relayURL in removedRelays {
             let sessionPumpTask = sessionPumpTasks[relayURL]
@@ -104,28 +111,36 @@ public actor NostrRelayRuntime {
         relayURLs = normalizedRelays
 
         for relayURL in addedRelays {
-            let session = NostrRelaySession(
-                relayURL: relayURL,
-                transport: transportFactory(relayURL),
-                eventValidator: eventValidator
-            )
-            await session.configureTraffic(accountID: trafficAccountID, policy: trafficPolicy)
-            sessions[relayURL] = session
-            await startPump(for: session, relayURL: relayURL)
+            let session: NostrRelaySession
+            if let existingSession = sessions[relayURL] {
+                session = existingSession
+            } else {
+                let newSession = NostrRelaySession(
+                    relayURL: relayURL,
+                    transport: transportFactory(relayURL),
+                    eventValidator: eventValidator
+                )
+                await newSession.configureTraffic(accountID: trafficAccountID, policy: trafficPolicy)
+                sessions[relayURL] = newSession
+                await startPump(for: newSession, relayURL: relayURL)
+                session = newSession
 
-            do {
-                try await session.connect()
-            } catch {
-                guard autoReceive else {
-                    sessionPumpTasks[relayURL]?.cancel()
-                    sessionPumpTasks[relayURL] = nil
-                    sessions[relayURL] = nil
-                    await session.terminate()
-                    throw error
+                do {
+                    try await session.connect()
+                } catch {
+                    guard autoReceive else {
+                        sessionPumpTasks[relayURL]?.cancel()
+                        sessionPumpTasks[relayURL] = nil
+                        sessions[relayURL] = nil
+                        await session.terminate()
+                        throw error
+                    }
                 }
             }
             if autoReceive {
-                startReceiveLoop(for: session, relayURL: relayURL)
+                if receiveLoopTasks[relayURL] == nil {
+                    startReceiveLoop(for: session, relayURL: relayURL)
+                }
                 startHeartbeatLoop(for: session, relayURL: relayURL)
             }
 
@@ -234,6 +249,25 @@ public actor NostrRelayRuntime {
             }
         }
         guard !scheduledPackets.isEmpty else { return }
+        let temporaryRelayURLs = scheduledPackets
+            .flatMap(\.packet.relayURLs)
+            .dedupedPreservingOrder()
+            .filter { !relayURLs.contains($0) }
+        retainTemporaryRelayLeases(temporaryRelayURLs)
+
+        do {
+            await prepareTemporaryRelaySessions(temporaryRelayURLs)
+            try await installScheduledBackward(scheduledPackets)
+        } catch {
+            await releaseTemporaryRelayLeases(temporaryRelayURLs)
+            throw error
+        }
+        await releaseTemporaryRelayLeases(temporaryRelayURLs)
+    }
+
+    private func installScheduledBackward(
+        _ scheduledPackets: [BackwardScheduledPacket]
+    ) async throws {
         let unavailableGroupIDs = scheduledPackets
             .filter { scheduledPacket in
                 eligibleRelayURLs(for: scheduledPacket.packet).isEmpty
@@ -290,6 +324,9 @@ public actor NostrRelayRuntime {
                 continue
             }
             successfullyInstalledTargets.append(target)
+            if autoReceive, receiveLoopTasks[target.relayURL] == nil {
+                startReceiveLoop(for: target.session, relayURL: target.relayURL)
+            }
             if hasPendingBackwardProgress(relayURL: target.relayURL, subscriptionID: target.packet.subscriptionID) {
                 scheduleBackwardIdleTimeout(
                     relayURL: target.relayURL,
@@ -346,9 +383,10 @@ public actor NostrRelayRuntime {
     }
 
     private func eligibleRelayURLs(for packet: NostrREQPacket) -> [String] {
-        packet.relayURLs.isEmpty
+        let candidates = packet.relayURLs.isEmpty
             ? relayURLs
-            : relayURLs.filter { packet.relayURLs.contains($0) }
+            : packet.relayURLs.dedupedPreservingOrder()
+        return candidates.filter { sessions[$0] != nil }
     }
 
     public func sendHeartbeat(relayURL: String) async throws {
@@ -385,6 +423,7 @@ public actor NostrRelayRuntime {
         backwardTimeoutTasks = [:]
         backwardProgressBySubscriptionKey = [:]
         backwardSubscriptionKeysByGroupID = [:]
+        temporaryRelayLeaseCounts = [:]
         sessions = [:]
         relayURLs = []
         activeForwardPackets = [:]
@@ -679,6 +718,7 @@ public actor NostrRelayRuntime {
         backwardProgressBySubscriptionKey[key] = progress
 
         await emitBackwardCompletionIfGroupFinished(groupID: progress.groupID)
+        await releaseTemporaryRelaySessionIfUnused(relayURL)
     }
 
     private func emitBackwardCompletionIfGroupFinished(groupID: String) async {
@@ -768,6 +808,51 @@ public actor NostrRelayRuntime {
                 terminal: terminal
             )
         }
+    }
+
+    private func retainTemporaryRelayLeases(_ relayURLs: [String]) {
+        for relayURL in relayURLs {
+            temporaryRelayLeaseCounts[relayURL, default: 0] += 1
+        }
+    }
+
+    private func releaseTemporaryRelayLeases(_ relayURLs: [String]) async {
+        for relayURL in relayURLs {
+            let remainingCount = max(0, temporaryRelayLeaseCounts[relayURL, default: 0] - 1)
+            temporaryRelayLeaseCounts[relayURL] = remainingCount == 0 ? nil : remainingCount
+            await releaseTemporaryRelaySessionIfUnused(relayURL)
+        }
+    }
+
+    private func prepareTemporaryRelaySessions(_ relayURLs: [String]) async {
+        for relayURL in relayURLs where sessions[relayURL] == nil {
+            let session = NostrRelaySession(
+                relayURL: relayURL,
+                transport: transportFactory(relayURL),
+                eventValidator: eventValidator
+            )
+            await session.configureTraffic(accountID: trafficAccountID, policy: trafficPolicy)
+            sessions[relayURL] = session
+            await startPump(for: session, relayURL: relayURL)
+        }
+    }
+
+    private func releaseTemporaryRelaySessionIfUnused(_ relayURL: String) async {
+        guard !relayURLs.contains(relayURL),
+              temporaryRelayLeaseCounts[relayURL] == nil,
+              !backwardProgressBySubscriptionKey.values.contains(where: {
+                  $0.relayURL == relayURL && $0.terminal == nil
+              }),
+              let session = sessions.removeValue(forKey: relayURL)
+        else { return }
+
+        receiveLoopTasks.removeValue(forKey: relayURL)?.cancel()
+        heartbeatLoopTasks.removeValue(forKey: relayURL)?.cancel()
+        heartbeatMissCounts[relayURL] = nil
+        cancelForwardClosedRetries(relayURL: relayURL)
+        cancelBackwardTimeouts(relayURL: relayURL)
+        sessionPumpTasks[relayURL] = nil
+        await session.terminate()
     }
 }
 

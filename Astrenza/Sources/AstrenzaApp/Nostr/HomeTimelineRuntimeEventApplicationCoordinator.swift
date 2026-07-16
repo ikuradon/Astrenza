@@ -167,7 +167,7 @@ final class HomeTimelineRuntimeEventApplicationCoordinator {
         handlers: HomeTimelineRuntimeEventApplicationHandlers
     ) async -> Bool {
         let content = contentCoordinator.snapshot
-        guard context.hasRelayRuntime, !content.resolvedRelays.isEmpty else {
+        guard context.hasRelayRuntime else {
             return isCurrent(context)
         }
         let result = await dependencyCoordinator.enqueueDependencies(

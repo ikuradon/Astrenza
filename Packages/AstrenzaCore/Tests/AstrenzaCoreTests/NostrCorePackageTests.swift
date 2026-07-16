@@ -495,7 +495,10 @@ struct NostrCorePackageTests {
 
         #expect(didEnqueue)
         #expect(batch.profileGroups == [
-            NostrDependencyFetchGroup(relayURLs: ["wss://profiles.example"], values: [pubkey])
+            NostrDependencyFetchGroup(
+                relayURLs: ["wss://missing.example", "wss://profiles.example"],
+                values: [pubkey]
+            )
         ])
         #expect(batch.sourceGroups == [
             NostrDependencyFetchGroup(relayURLs: ["wss://source.example"], values: [eventID])
@@ -3530,6 +3533,64 @@ struct NostrCorePackageTests {
         let record = try #require(try store.profileFetchRecords(pubkeys: [pubkey]).first)
         #expect(record.outcome == .notFound)
         #expect(record.nextRetryAt.map { $0 > record.lastAttemptAt } == true)
+
+        await directory.stop()
+        await runtime.terminate()
+    }
+
+    @Test("Profile directory uses a relay hint outside the default relay set")
+    func profileDirectoryUsesTemporaryHintRelay() async throws {
+        let pubkey = String(repeating: "9", count: 64)
+        let defaultRelayURL = "wss://default.example"
+        let hintRelayURL = "wss://hint.example"
+        let store = try NostrEventStore.inMemory()
+        let defaultConnection = FakeRelayRuntimeConnection()
+        let hintConnection = FakeRelayRuntimeConnection()
+        let connections = [
+            defaultRelayURL: defaultConnection,
+            hintRelayURL: hintConnection
+        ]
+        let runtime = NostrRelayRuntime(
+            transportFactory: { relayURL in
+                FakeRelayRuntimeTransport(connection: connections[relayURL] ?? defaultConnection)
+            },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let directory = NostrProfileDirectory(
+            eventStore: store,
+            relayRuntime: runtime,
+            policy: NostrProfileDirectoryPolicy(
+                notFoundRetryAfterSeconds: 900,
+                foregroundBatchDelayMilliseconds: 0
+            )
+        )
+
+        try await runtime.setDefaultRelays([defaultRelayURL])
+        await directory.start(relayURLs: [defaultRelayURL])
+        await directory.ensureProfiles(
+            pubkeys: [pubkey],
+            relayHintsByPubkey: [pubkey: [hintRelayURL]],
+            priority: .foreground,
+            now: 100
+        )
+
+        let requestFrame = try #require(await waitForSentFrames(1, connection: hintConnection).first)
+        let subscriptionID = try relaySubscriptionID(fromREQFrame: requestFrame)
+        #expect(await defaultConnection.sentFrames().isEmpty)
+        #expect(await runtime.temporaryRelayURLs() == [hintRelayURL])
+
+        await hintConnection.appendInboundFrames(["[\"EOSE\",\"\(subscriptionID)\"]"])
+        try await runtime.receiveNext(relayURL: hintRelayURL)
+
+        #expect(await waitForProfileState(.unavailable, pubkey: pubkey, directory: directory))
+        for _ in 0..<100 where await runtime.temporaryRelayURLs() == [hintRelayURL] {
+            await Task.yield()
+        }
+        #expect(await runtime.temporaryRelayURLs().isEmpty)
+        #expect(await hintConnection.closed())
+        #expect(await runtime.connectionState(relayURL: defaultRelayURL) == .connected)
 
         await directory.stop()
         await runtime.terminate()

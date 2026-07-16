@@ -561,9 +561,7 @@ public actor NostrProfileDirectory {
         hintedRelayURLs: [String],
         availableRelayURLs: [String]
     ) -> [String] {
-        let hints = Set(hintedRelayURLs)
-        let selectedHints = availableRelayURLs.filter { hints.contains($0) }
-        return selectedHints.isEmpty ? availableRelayURLs : selectedHints
+        hintedRelayURLs.isEmpty ? availableRelayURLs : hintedRelayURLs
     }
 
     private func emit(states: [String: NostrProfileResolutionState]) {

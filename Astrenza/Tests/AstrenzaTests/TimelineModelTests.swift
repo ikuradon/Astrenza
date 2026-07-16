@@ -2466,21 +2466,32 @@ struct TimelineModelTests {
         #expect(store.activityStatus == nil)
     }
 
-    @Test("Home timeline releases dependency work when packet relays are unavailable")
+    @Test("Home timeline uses a scoped dependency relay as a temporary relay")
     @MainActor
-    func homeTimelineReleasesUnavailableRelayDependencyWork() async throws {
+    func homeTimelineUsesTemporaryScopedDependencyRelay() async throws {
         let eventStore = try NostrEventStore.inMemory()
         let account = NostrAccount(
             pubkey: String(repeating: "e", count: 64),
             displayIdentifier: "npub-test",
             readOnly: true
         )
-        let connection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let defaultRelayURL = "wss://default.example"
+        let scopedRelayURL = "wss://scoped.example"
+        let defaultConnection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let scopedConnection = FakeRelayRuntimeConnection(inboundFrames: [])
+        let connections = [
+            defaultRelayURL: defaultConnection,
+            scopedRelayURL: scopedConnection
+        ]
         let relayRuntime = NostrRelayRuntime(
-            transportFactory: { _ in FakeRelayRuntimeTransport(connection: connection) },
+            transportFactory: { relayURL in
+                FakeRelayRuntimeTransport(
+                    connection: connections[relayURL] ?? defaultConnection
+                )
+            },
             autoReceive: false,
             heartbeatPolicy: .disabled,
-            backwardPolicy: .disabled
+            backwardPolicy: NostrRelayRuntimeBackwardPolicy(idleTimeoutMilliseconds: 20)
         )
         let store = HomeTimelineStoreFactory.make(
             eventStore: eventStore,
@@ -2498,7 +2509,15 @@ struct TimelineModelTests {
         )
         let dependencyEventID = String(repeating: "f", count: 64)
 
-        try await relayRuntime.setDefaultRelays(["wss://default.example"])
+        try await relayRuntime.setDefaultRelays([defaultRelayURL])
+        let runtimeEvents = await relayRuntime.events()
+        let completionTask = Task<NostrBackwardREQCompletion?, Never> {
+            for await packet in runtimeEvents {
+                guard case .backwardCompleted(let completion) = packet else { continue }
+                return completion
+            }
+            return nil
+        }
         await store.testingActivateHomeFeed(
             account: account,
             definition: definition,
@@ -2506,18 +2525,20 @@ struct TimelineModelTests {
         )
         #expect(store.testingEnqueueBackwardDependencies(
             NostrEventDependencies(sourceEventIDs: [dependencyEventID]),
-            availableRelayURLs: ["wss://scoped.example"]
+            availableRelayURLs: [scopedRelayURL]
         ))
         store.testingFlushBackwardDependencies()
 
-        for _ in 0..<100 {
-            guard store.testingHasPendingDependencyWork else { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        let completion = try #require(await completionTask.value)
+        store.testingHandleBackwardCompletion(completion)
 
         #expect(store.testingPendingBackwardRequestCount == 0)
         #expect(store.testingHasPendingDependencyWork == false)
-        #expect(await connection.sentFrames().isEmpty)
+        #expect(await scopedConnection.sentFrames().contains { $0.contains(#""REQ""#) })
+        #expect(await scopedConnection.closed())
+        #expect(await defaultConnection.sentFrames().isEmpty)
+        #expect(await defaultConnection.closed() == false)
+        #expect(await relayRuntime.temporaryRelayURLs().isEmpty)
     }
 
     @Test("Home relay pill keeps newer cached NIP-65 over stale bootstrap result")

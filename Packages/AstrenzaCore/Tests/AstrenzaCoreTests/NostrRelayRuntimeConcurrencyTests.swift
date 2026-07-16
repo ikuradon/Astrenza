@@ -244,6 +244,105 @@ struct NostrRelayRuntimeConcurrencyTests {
         #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://two.example").isEmpty)
     }
 
+    @Test("A non-default backward relay is disconnected after EOSE")
+    func temporaryBackwardRelayDisconnectsAfterCompletion() async throws {
+        let defaultRelayURL = "wss://default.example"
+        let temporaryRelayURL = "wss://hint.example"
+        let defaultConnection = RelayConcurrencyTestConnection()
+        let temporaryConnection = RelayConcurrencyTestConnection(
+            inboundFrames: [#"["EOSE","source-temporary"]"#]
+        )
+        let connections = [
+            defaultRelayURL: defaultConnection,
+            temporaryRelayURL: temporaryConnection
+        ]
+        let runtime = NostrRelayRuntime(
+            transportFactory: { relayURL in
+                RelayConcurrencyTestTransport(
+                    connection: connections[relayURL] ?? defaultConnection
+                )
+            },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let packet = NostrREQPacket.backward(
+            purpose: "source-events",
+            filters: [["ids": .strings([String(repeating: "a", count: 64)])]],
+            relayURLs: [temporaryRelayURL],
+            groupID: "source-temporary-group",
+            subscriptionID: "source-temporary"
+        )
+
+        try await runtime.setDefaultRelays([defaultRelayURL])
+        try await runtime.installBackward([packet], mergeField: .ids)
+
+        #expect(await runtime.defaultRelayURLs() == [defaultRelayURL])
+        #expect(await runtime.temporaryRelayURLs() == [temporaryRelayURL])
+        #expect(await runtime.activeSubscriptionIDs(relayURL: temporaryRelayURL) == [packet.subscriptionID])
+
+        try await runtime.receiveNext(relayURL: temporaryRelayURL)
+        for _ in 0..<100 where await runtime.temporaryRelayURLs() == [temporaryRelayURL] {
+            await Task.yield()
+        }
+
+        #expect(await runtime.temporaryRelayURLs().isEmpty)
+        #expect(await temporaryConnection.closeCallCount() == 1)
+        #expect(await runtime.connectionState(relayURL: defaultRelayURL) == .connected)
+        #expect(await defaultConnection.closeCallCount() == 0)
+
+        await runtime.terminate()
+    }
+
+    @Test("A temporary relay remains connected while another backward request still uses it")
+    func temporaryBackwardRelayUsesSharedOwnership() async throws {
+        let relayURL = "wss://hint.example"
+        let connection = RelayConcurrencyTestConnection(inboundFrames: [
+            #"["EOSE","source-first"]"#,
+            #"["EOSE","source-second"]"#
+        ])
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in RelayConcurrencyTestTransport(connection: connection) },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            backwardPolicy: .disabled
+        )
+        let first = NostrREQPacket.backward(
+            purpose: "source-events",
+            filters: [["ids": .strings([String(repeating: "b", count: 64)])]],
+            relayURLs: [relayURL],
+            groupID: "source-first-group",
+            subscriptionID: "source-first"
+        )
+        let second = NostrREQPacket.backward(
+            purpose: "source-events",
+            filters: [["ids": .strings([String(repeating: "c", count: 64)])]],
+            relayURLs: [relayURL],
+            groupID: "source-second-group",
+            subscriptionID: "source-second"
+        )
+
+        try await runtime.installBackward([first], mergeField: .ids)
+        try await runtime.installBackward([second], mergeField: .ids)
+        try await runtime.receiveNext(relayURL: relayURL)
+        for _ in 0..<100
+        where await runtime.activeSubscriptionIDs(relayURL: relayURL).count == 2 {
+            await Task.yield()
+        }
+
+        #expect(await runtime.temporaryRelayURLs() == [relayURL])
+        #expect(await runtime.activeSubscriptionIDs(relayURL: relayURL) == [second.subscriptionID])
+        #expect(await connection.closeCallCount() == 0)
+
+        try await runtime.receiveNext(relayURL: relayURL)
+        for _ in 0..<100 where await runtime.temporaryRelayURLs() == [relayURL] {
+            await Task.yield()
+        }
+
+        #expect(await runtime.temporaryRelayURLs().isEmpty)
+        #expect(await connection.closeCallCount() == 1)
+    }
+
     @Test("One failed relay does not roll back a backward request installed on another relay")
     func backwardInstallIsolatesPerRelayFailure() async throws {
         let healthyConnection = RelayConcurrencyTestConnection(blockReceiveWhenEmpty: true)
@@ -974,6 +1073,7 @@ private actor RelayConcurrencyTestConnection: NostrRelayTransportConnection {
     private var receiveStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var blockedReceive: CheckedContinuation<String, Error>?
     private var closeStarted = false
+    private var connectionCloseCallCount = 0
     private var closeStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var closeRelease: CheckedContinuation<Void, Never>?
 
@@ -1031,6 +1131,7 @@ private actor RelayConcurrencyTestConnection: NostrRelayTransportConnection {
     }
 
     func close() async {
+        connectionCloseCallCount += 1
         blockedReceive?.resume(throwing: CancellationError())
         blockedReceive = nil
         guard shouldGateClose else { return }
@@ -1083,5 +1184,9 @@ private actor RelayConcurrencyTestConnection: NostrRelayTransportConnection {
 
     func sentFrames() -> [String] {
         outboundFrames
+    }
+
+    func closeCallCount() -> Int {
+        connectionCloseCallCount
     }
 }
