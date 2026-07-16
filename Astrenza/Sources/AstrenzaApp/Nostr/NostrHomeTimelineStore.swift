@@ -26,9 +26,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineFilterInteractionWorkflow
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let contextCoordinator: HomeStoreContextCoordinator
-    private let activityInteractionWorkflow:
-        HomeTimelineActivityInteractionWorkflow
-    private let presentationWorkflow: HomeTimelinePresentationWorkflow
+    private let presentationCoordinator: HomeStorePresentationCoordinator
+    private let statusCoordinator: HomeStoreStatusCoordinator
     private let linkPreviewInteractionWorkflow:
         HomeLinkPreviewInteractionWorkflow
     private let projectionInteractionWorkflow:
@@ -53,12 +52,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         eventStore
     }
 
-    private var contentState: HomeTimelineContentSnapshot {
-        dataInteractionWorkflow.contentState
-    }
-
     private var noteEvents: [NostrEvent] {
-        contentState.noteEvents
+        dataInteractionWorkflow.contentState.noteEvents
     }
 
     func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
@@ -68,39 +63,29 @@ final class NostrHomeTimelineStore: ObservableObject {
     func applyActivityTransition(
         _ transition: HomeTimelineActivityTransition
     ) {
-        publishedStateCoordinator.applyActivityTransition(transition)
+        statusCoordinator.applyActivityTransition(transition)
     }
 
     func applyActivityIntent(
         _ intent: HomeTimelineActivityIntent
     ) {
-        applyActivityTransition(
-            activityInteractionWorkflow.perform(intent)
-        )
+        statusCoordinator.applyActivityIntent(intent)
     }
 
     func applyPresentationTransition(
         _ transition: HomeTimelinePresentationTransition
     ) {
-        publishedStateCoordinator.applyPresentationTransition(transition)
-    }
-
-    private func updateRelayStatusCounts() {
-        applyRelayStatusSnapshot(
-            syncInteractionWorkflow.relayStatusSnapshot(
-                resolvedRelays: resolvedRelays
-            )
-        )
+        presentationCoordinator.applyPresentationTransition(transition)
     }
 
     func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
-        publishedStateCoordinator.applyRelayStatusSnapshot(snapshot)
+        statusCoordinator.applyRelayStatusSnapshot(snapshot)
     }
 
     func applyRelayStatusTransition(
         _ transition: HomeTimelineRelayStatusTransition?
     ) {
-        if let relayURL = publishedStateCoordinator.applyRelayStatusTransition(
+        if let relayURL = statusCoordinator.applyRelayStatusTransition(
             transition
         ) {
             invalidateHomeTimelineRealtime(relayURL: relayURL)
@@ -108,7 +93,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func publishRelayStatusChange() {
-        publishedStateCoordinator.publishRelayStatusChange()
+        statusCoordinator.publishRelayStatusChange()
     }
 
     init(
@@ -136,7 +121,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 syncPolicySettingsStore: syncPolicySettingsStore
             )
         )
-        let contextComposition = HomeStoreContextComposition.make(
+        let composition = HomeStoreComposition.make(
             components: components
         )
         self.publishedStateCoordinator =
@@ -151,11 +136,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
-        self.queryStoreCoordinator = contextComposition.query
-        self.contextCoordinator = contextComposition.context
-        self.activityInteractionWorkflow =
-            components.activityInteractionWorkflow
-        self.presentationWorkflow = components.presentationWorkflow
+        self.queryStoreCoordinator = composition.query
+        self.contextCoordinator = composition.context
+        self.presentationCoordinator = composition.presentation
+        self.statusCoordinator = composition.status
         self.linkPreviewInteractionWorkflow =
             components.linkPreviewInteractionWorkflow
         self.projectionInteractionWorkflow =
@@ -170,10 +154,12 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.localMutationInteractionWorkflow =
             components.localMutationInteractionWorkflow
         self.projectionViewportCoordinator =
-            contextComposition.projectionViewport
+            composition.projectionViewport
         bindContextComposition()
     }
+}
 
+extension NostrHomeTimelineStore {
     func start(account: NostrAccount) {
         accountStartInteractionWorkflow.start(
             account: account,
@@ -374,7 +360,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func requestNewestProjectionReload() {
-        presentationWorkflow.requestNewestProjectionReload()
+        presentationCoordinator.requestNewestProjectionReload()
     }
 
     func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
@@ -399,7 +385,7 @@ final class NostrHomeTimelineStore: ObservableObject {
                 .installProvisionalRelays(provisionalRelays)
             )
         )
-        updateRelayStatusCounts()
+        statusCoordinator.refreshRelayStatusCounts()
     }
 
     func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
@@ -468,32 +454,20 @@ extension NostrHomeTimelineStore {
         onTransition: HomeTimelineMaterializationCoordinating
             .TransitionHandler? = nil
     ) {
-        let dependencies = dataInteractionWorkflow.dependencyResolutionState
-        projectionInteractionWorkflow.materialize(
-            HomeTimelineMaterializationRequest(
-                account: account,
-                nip05Resolutions: dependencies.nip05Resolutions,
-                profileResolutionStates: dependencies.profileResolutionStates,
-                policy: syncPolicy,
-                allowsRealtimeFollow: allowsRealtimeFollow
-            )
-        ) { [weak self] transition in
-            guard let self else { return }
-            applyPresentationTransition(transition)
-            onTransition?(transition)
-        }
+        presentationCoordinator.materializeEntries(
+            allowsRealtimeFollow: allowsRealtimeFollow,
+            onTransition: onTransition
+        )
     }
 
     func scheduleMaterializeEntries(
         delayNanoseconds: UInt64? = nil,
         allowsRealtimeFollow: Bool? = nil
     ) {
-        presentationWorkflow.scheduleMaterialization(
+        presentationCoordinator.scheduleMaterialization(
             delayNanoseconds: delayNanoseconds,
             allowsRealtimeFollow: allowsRealtimeFollow
-        ) { [weak self] allowsRealtimeFollow in
-            self?.materializeEntries(allowsRealtimeFollow: allowsRealtimeFollow)
-        }
+        )
     }
 
     func replaceTimelineState(_ state: NostrHomeTimelineState) {
@@ -573,7 +547,7 @@ extension NostrHomeTimelineStore {
     }
 
     var currentReadBoundaryPostID: String? {
-        presentationWorkflow.interactionState.readBoundaryPostID
+        presentationCoordinator.currentReadBoundaryPostID
     }
 
     var restoreProjectionAnchorEventID: String? {
@@ -602,9 +576,7 @@ extension NostrHomeTimelineStore {
     }
 
     func applyRestoredReadBoundary(postID: String) {
-        applyPresentationTransition(
-            presentationWorkflow.restoreReadBoundary(postID: postID)
-        )
+        presentationCoordinator.restoreReadBoundary(postID: postID)
     }
 
     func applyAccountContextTransition(
@@ -625,7 +597,7 @@ extension NostrHomeTimelineStore {
     }
 
     func clearPendingProjectionReload() {
-        presentationWorkflow.clearNewestProjectionReload()
+        presentationCoordinator.clearNewestProjectionReload()
     }
 
     func applyPendingEventCountPublication(
@@ -648,15 +620,6 @@ extension NostrHomeTimelineStore {
         publishedStateCoordinator.applyListProjectionInvalidation(invalidation)
     }
 }
-
-extension NostrHomeTimelineStore:
-    HomeStoreContextApplicationTarget {}
-
-extension NostrHomeTimelineStore:
-    HomeRestoreProjectionAnchorTarget {}
-
-extension NostrHomeTimelineStore:
-    HomeStoreReadBoundaryTarget {}
 
 extension NostrHomeTimelineStore: HomeStoreQueryTarget {
     var queryPreferredEvents: [NostrEvent] {
@@ -739,37 +702,23 @@ extension NostrHomeTimelineStore {
     }
 
     var relayStatusRevision: Int {
-        publishedStateCoordinator.relayStatus.revision
+        statusCoordinator.relayStatusRevision
     }
 
     var relayRuntimeStates: [String: NostrRelayConnectionState] {
-        publishedStateCoordinator.relayStatus.snapshot.runtimeStates
+        statusCoordinator.relayStatusSnapshot.runtimeStates
     }
 
     var relayStatusCounts: (connected: Int, planned: Int) {
-        (
-            connected: publishedStateCoordinator.relayStatus.snapshot
-                .connectedRelayCount,
-            planned: publishedStateCoordinator.relayStatus.snapshot
-                .plannedRelayCount
+        let snapshot = statusCoordinator.relayStatusSnapshot
+        return (
+            connected: snapshot.connectedRelayCount,
+            planned: snapshot.plannedRelayCount
         )
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        let backwardRequestState =
-            syncInteractionWorkflow.backwardRequestState
-        return activityInteractionWorkflow.status(
-            context: HomeTimelineActivityContext(
-                connectedRelayCount: relayStatusCounts.connected,
-                plannedRelayCount: relayStatusCounts.planned,
-                hasOlderPageRequest:
-                    backwardRequestState.hasOlderPageRequest,
-                hasGapWork: backwardRequestState.hasGapWork,
-                hasBackwardRequests: backwardRequestState.hasRequests,
-                hasPendingDependencyWork:
-                    dataInteractionWorkflow.dependencyWorkState.hasPendingWork
-            )
-        )
+        statusCoordinator.activityStatus()
     }
 
     var isRelayProcessing: Bool {
@@ -777,19 +726,19 @@ extension NostrHomeTimelineStore {
     }
 
     var phase: Phase {
-        publishedStateCoordinator.activity.phase
+        statusCoordinator.activitySnapshot.phase
     }
 
     var isRefreshing: Bool {
-        publishedStateCoordinator.activity.isRefreshing
+        statusCoordinator.activitySnapshot.isRefreshing
     }
 
     var isLoadingOlder: Bool {
-        publishedStateCoordinator.activity.isLoadingOlder
+        statusCoordinator.activitySnapshot.isLoadingOlder
     }
 
     var isHomeTimelineRealtime: Bool {
-        publishedStateCoordinator.activity.isRealtime
+        statusCoordinator.activitySnapshot.isRealtime
     }
 
     var resolvedRelays: [String] {
@@ -893,18 +842,14 @@ extension NostrHomeTimelineStore {
                 context: nil
             ))
         }
-        applyPresentationTransition(
-            presentationWorkflow.replaceEntriesForTesting(
-                testEntries,
-                renderFingerprint: testEntries.map { $0.id.hashValue }
-            )
+        presentationCoordinator.replaceEntriesForTesting(
+            testEntries,
+            renderFingerprint: testEntries.map { $0.id.hashValue }
         )
     }
 
     func testingSetReadBoundary(postID: TimelinePost.ID) {
-        applyPresentationTransition(
-            presentationWorkflow.setReadBoundaryForTesting(postID: postID)
-        )
+        presentationCoordinator.setReadBoundaryForTesting(postID: postID)
     }
 
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
@@ -1051,18 +996,3 @@ extension NostrHomeTimelineStore {
     }
 }
 #endif
-
-extension NIP05Status {
-    init(_ coreStatus: NostrNIP05Status) {
-        switch coreStatus {
-        case .absent:
-            self = .absent
-        case .unchecked:
-            self = .unchecked
-        case .verified:
-            self = .valid
-        case .invalid, .failed:
-            self = .invalid
-        }
-    }
-}

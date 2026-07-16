@@ -1,19 +1,21 @@
 import AstrenzaCore
 
 @MainActor
-struct HomeStoreContextComposition {
+struct HomeStoreComposition {
     let query: HomeStoreQueryCoordinator
     let context: HomeStoreContextCoordinator
     let projectionViewport: HomeProjectionViewportCoordinator
+    let presentation: HomeStorePresentationCoordinator
+    let status: HomeStoreStatusCoordinator
 
     static func make(
         components: HomeTimelineStoreComponents
-    ) -> HomeStoreContextComposition {
+    ) -> HomeStoreComposition {
         let query = HomeStoreQueryCoordinator(
             interaction: components.queryInteractionWorkflow
         )
         let projectionViewport = HomeProjectionViewportCoordinator()
-        return HomeStoreContextComposition(
+        return HomeStoreComposition(
             query: query,
             context: HomeStoreContextCoordinator.live(
                 components: components,
@@ -21,7 +23,13 @@ struct HomeStoreContextComposition {
                 projectionViewport: projectionViewport,
                 hasRelayRuntime: components.relayRuntime != nil
             ),
-            projectionViewport: projectionViewport
+            projectionViewport: projectionViewport,
+            presentation: HomeStorePresentationCoordinator.live(
+                components: components
+            ),
+            status: HomeStoreStatusCoordinator.live(
+                components: components
+            )
         )
     }
 }
