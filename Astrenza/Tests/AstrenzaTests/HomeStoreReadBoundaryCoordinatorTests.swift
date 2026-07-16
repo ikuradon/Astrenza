@@ -112,7 +112,7 @@ struct HomeStoreReadBoundaryCoordinatorTests {
     }
 
     @Test("The coordinator does not retain its Store target")
-    func doesNotRetainTarget() async throws {
+    func doesNotRetainTarget() async {
         let account = StoreReadBoundaryFixture.makeAccount(
             pubkeyCharacter: "a"
         )
@@ -121,9 +121,11 @@ struct HomeStoreReadBoundaryCoordinatorTests {
             StoreReadBoundaryTargetSpy(account: account)
         weak let weakTarget = target
         let coordinator = HomeStoreReadBoundaryCoordinator(
-            interaction: interaction,
-            target: try #require(target)
+            interaction: interaction
         )
+        if let target {
+            coordinator.bind(target: target)
+        }
 
         target = nil
 
@@ -152,10 +154,11 @@ private struct StoreReadBoundaryFixture {
         replacementAccount = Self.makeAccount(pubkeyCharacter: "b")
         self.target = target
         self.interaction = interaction
-        coordinator = HomeStoreReadBoundaryCoordinator(
-            interaction: interaction,
-            target: target
+        let coordinator = HomeStoreReadBoundaryCoordinator(
+            interaction: interaction
         )
+        coordinator.bind(target: target)
+        self.coordinator = coordinator
     }
 
     static func makeAccount(pubkeyCharacter: Character) -> NostrAccount {

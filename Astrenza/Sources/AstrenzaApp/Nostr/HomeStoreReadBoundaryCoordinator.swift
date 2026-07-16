@@ -36,9 +36,13 @@ final class HomeStoreReadBoundaryCoordinator {
 
     init(
         interaction: any HomeStoreReadBoundaryInteracting,
-        target: any HomeStoreReadBoundaryTarget
+        target: (any HomeStoreReadBoundaryTarget)? = nil
     ) {
         self.interaction = interaction
+        self.target = target
+    }
+
+    func bind(target: any HomeStoreReadBoundaryTarget) {
         self.target = target
     }
 

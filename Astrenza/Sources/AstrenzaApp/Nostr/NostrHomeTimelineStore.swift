@@ -11,7 +11,6 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let publishedStateCoordinator:
         HomeTimelinePublishedStateCoordinator
-    private let remoteLoadCoordinator: HomeTimelineRemoteLoadCoordinator
     private let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     private let viewportInteractionWorkflow:
         HomeTimelineViewportInteractionWorkflow
@@ -19,8 +18,6 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
     private let runtimeInteractionWorkflow:
         HomeTimelineRuntimeInteractionWorkflow
-    private let stateContextProjector =
-        HomeTimelineStateContextProjector()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -28,6 +25,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
+    private let contextCoordinator: HomeStoreContextCoordinator
     private let activityInteractionWorkflow:
         HomeTimelineActivityInteractionWorkflow
     private let presentationWorkflow: HomeTimelinePresentationWorkflow
@@ -35,8 +33,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeLinkPreviewInteractionWorkflow
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
-    private let readBoundaryInteractionWorkflow:
-        HomeReadBoundaryInteractionWorkflow
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
     private let accountStartInteractionWorkflow:
         HomeAccountStartInteractionWorkflow
@@ -47,35 +43,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelinePublishInteractionWorkflow?
     private let localMutationInteractionWorkflow:
         HomeLocalMutationInteractionWorkflow?
-    private let relayRuntime: NostrRelayRuntime?
-    private lazy var readBoundaryStoreCoordinator =
-        HomeStoreReadBoundaryCoordinator(
-            interaction: readBoundaryInteractionWorkflow,
-            target: self
-        )
-    private lazy var storeApplicationEffects =
-        HomeStoreApplicationEffectsFactory.make(target: self)
-    private lazy var featureInteractionContextFactory =
-        makeFeatureInteractionContextFactory()
-    private lazy var accountContextFactory =
-        makeAccountContextFactory()
-    private lazy var viewportContextFactory =
-        makeViewportContextFactory()
-    private lazy var loadContextFactory =
-        makeLoadContextFactory()
-    private lazy var stateContextFactory =
-        makeStateContextFactory()
-    private lazy var runtimeApplicationEffects =
-        stateInteractionWorkflow.runtimeApplicationEffects(
-            context: stateContextFactory.context()
-        )
-    private lazy var runtimeContextFactory =
-        makeRuntimeContextFactory()
     private lazy var restoreProjectionAnchorWorkflow =
         HomeRestoreProjectionAnchorWorkflow(target: self)
     private var publishedStateObservation: AnyCancellable?
-    private let projectionViewportCoordinator =
-        HomeProjectionViewportCoordinator()
+    private let projectionViewportCoordinator:
+        HomeProjectionViewportCoordinator
 
     var relayStatusEventStore: NostrEventStore? {
         eventStore
@@ -87,18 +59,6 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private var noteEvents: [NostrEvent] {
         contentState.noteEvents
-    }
-
-    private var metadataEvents: [NostrEvent] {
-        contentState.metadataEvents
-    }
-
-    private var relayListEvent: NostrEvent? {
-        contentState.relayListEvent
-    }
-
-    private var contactListEvent: NostrEvent? {
-        contentState.contactListEvent
     }
 
     func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
@@ -176,9 +136,11 @@ final class NostrHomeTimelineStore: ObservableObject {
                 syncPolicySettingsStore: syncPolicySettingsStore
             )
         )
+        let contextComposition = HomeStoreContextComposition.make(
+            components: components
+        )
         self.publishedStateCoordinator =
             components.publishedStateCoordinator
-        self.remoteLoadCoordinator = components.remoteLoadCoordinator
         self.loadInteractionWorkflow = components.loadInteractionWorkflow
         self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
         self.eventStore = components.eventStore
@@ -189,9 +151,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
-        self.queryStoreCoordinator = HomeStoreQueryCoordinator(
-            interaction: components.queryInteractionWorkflow
-        )
+        self.queryStoreCoordinator = contextComposition.query
+        self.contextCoordinator = contextComposition.context
         self.activityInteractionWorkflow =
             components.activityInteractionWorkflow
         self.presentationWorkflow = components.presentationWorkflow
@@ -199,8 +160,6 @@ final class NostrHomeTimelineStore: ObservableObject {
             components.linkPreviewInteractionWorkflow
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
-        self.readBoundaryInteractionWorkflow =
-            components.readBoundaryInteractionWorkflow
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
         self.accountStartInteractionWorkflow =
             components.accountStartInteractionWorkflow
@@ -210,22 +169,22 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
         self.localMutationInteractionWorkflow =
             components.localMutationInteractionWorkflow
-        self.relayRuntime = components.relayRuntime
-        self.queryStoreCoordinator.bind(target: self)
-        observePublishedState()
+        self.projectionViewportCoordinator =
+            contextComposition.projectionViewport
+        bindContextComposition()
     }
 
     func start(account: NostrAccount) {
         accountStartInteractionWorkflow.start(
             account: account,
-            context: accountContextFactory.startContext()
+            context: contextCoordinator.accountStartContext()
         )
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
         viewportInteractionWorkflow.setRestoreProjectionAnchor(
             anchorEventID,
-            context: viewportContextFactory.context()
+            context: contextCoordinator.viewportContext()
         )
     }
 
@@ -238,59 +197,59 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func refresh() {
         viewportInteractionWorkflow.refresh(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
     func refreshLatest() async {
         await viewportInteractionWorkflow.refreshLatest(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
         viewportInteractionWorkflow.setTimelineAtNewestWindow(
             isAtNewestWindow,
-            context: viewportContextFactory.context()
+            context: contextCoordinator.viewportContext()
         )
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
         viewportInteractionWorkflow.setTimelineScrollActive(
             isActive,
-            context: viewportContextFactory.context()
+            context: contextCoordinator.viewportContext()
         )
     }
 
     func dismissUnreadBadge() {
         viewportInteractionWorkflow.dismissUnreadBadge(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
         viewportInteractionWorkflow.markMaterializedPostsRead(
             visiblePostIDs: visiblePostIDs,
-            context: viewportContextFactory.context()
+            context: contextCoordinator.viewportContext()
         )
     }
 
     func markNewestMaterializedWindowRead() {
         viewportInteractionWorkflow.markNewestMaterializedWindowRead(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
         viewportInteractionWorkflow.applyPendingNewEvents(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
     func loadOlder() {
         viewportInteractionWorkflow.loadOlder(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
@@ -298,7 +257,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await gapBackfillInteractionWorkflow.backfill(
             gap: gap,
             direction: direction,
-            context: featureInteractionContextFactory.gapBackfillContext()
+            context: contextCoordinator.gapBackfillContext()
         )
     }
 
@@ -307,7 +266,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         try await publishInteractionWorkflow.enqueue(
             input: input,
             signer: signer,
-            context: featureInteractionContextFactory.publishContext(
+            context: contextCoordinator.publishContext(
                 account: account
             )
         )
@@ -316,32 +275,21 @@ final class NostrHomeTimelineStore: ObservableObject {
     func muteAuthor(of post: TimelinePost) {
         localMutationInteractionWorkflow?.perform(
             .muteAuthor(authorPubkey: post.author.pubkey),
-            context: featureInteractionContextFactory.localMutationContext()
+            context: contextCoordinator.localMutationContext()
         )
     }
 
     func bookmark(_ post: TimelinePost) {
         localMutationInteractionWorkflow?.perform(
             .bookmark(eventID: post.id),
-            context: featureInteractionContextFactory.localMutationContext()
+            context: contextCoordinator.localMutationContext()
         )
     }
 
     func cancel() {
         projectionInteractionWorkflow.cancelMaterialization()
         accountResetInteractionWorkflow.reset(
-            context: accountContextFactory.resetContext()
-        )
-    }
-
-    private func load(
-        account: NostrAccount,
-        lifecycle: HomeTimelineLifecycleToken
-    ) async {
-        await loadInteractionWorkflow.loadInitial(
-            account: account,
-            lifecycle: lifecycle,
-            context: loadContextFactory.context()
+            context: contextCoordinator.accountResetContext()
         )
     }
 
@@ -352,7 +300,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await loadInteractionWorkflow.refreshLatest(
             account: account,
             lifecycle: lifecycle,
-            context: loadContextFactory.context()
+            context: contextCoordinator.loadContext()
         )
     }
 
@@ -363,7 +311,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await loadInteractionWorkflow.loadOlder(
             account: account,
             lifecycle: lifecycle,
-            context: loadContextFactory.context()
+            context: contextCoordinator.loadContext()
         )
     }
 
@@ -385,40 +333,17 @@ final class NostrHomeTimelineStore: ObservableObject {
         queryStoreCoordinator.timelineEvent(id: id)
     }
 
-    @discardableResult
-    private func restoreCachedSnapshot(account: NostrAccount) async -> Bool {
-        await stateInteractionWorkflow.restoreCachedState(
-            accountID: account.pubkey,
-            context: stateContextFactory.context()
-        )
-    }
-
     func persistDatabase(account: NostrAccount) async {
         await stateInteractionWorkflow.persistSnapshot(
             dataInteractionWorkflow.persistenceSnapshotInput(
                 accountID: account.pubkey
             ),
-            context: stateContextFactory.context()
+            context: contextCoordinator.stateContext()
         )
-    }
-
-    private func isCurrentHomeFeedContext(_ context: HomeFeedRuntimeContext?) -> Bool {
-        projectionInteractionWorkflow.isCurrent(
-            context,
-            accountID: account?.pubkey
-        )
-    }
-
-    private func restoreHomeFeedReadState(account: NostrAccount) async {
-        await readBoundaryStoreCoordinator.restore(account: account)
     }
 
     func scheduleHomeFeedReadStateSave() {
-        readBoundaryStoreCoordinator.scheduleSave()
-    }
-
-    private func homeFeedReadBoundaryWrite() -> HomeTimelineReadBoundaryWrite? {
-        readBoundaryStoreCoordinator.boundaryWrite()
+        contextCoordinator.scheduleReadBoundarySave()
     }
 
     func prepareHomeFeedDefinition(account: NostrAccount) {
@@ -458,7 +383,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     func startRuntimeSession() {
         runtimeInteractionWorkflow.startSession(
-            context: runtimeContextFactory.interactionContext()
+            context: contextCoordinator.runtimeInteractionContext()
         )
     }
 
@@ -466,7 +391,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         guard let provisionalRelays = runtimeInteractionWorkflow
             .provisionalBootstrapRelayURLs(
                 account: account,
-                state: runtimeContextFactory.interactionState()
+                state: contextCoordinator.runtimeInteractionState()
             )
         else { return }
         applyContentSnapshot(
@@ -481,28 +406,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await runtimeInteractionWorkflow.configure(
             account: account,
             forceInstall: forceInstall,
-            context: runtimeContextFactory.interactionContext()
-        )
-    }
-
-    private func runtimeStoreSnapshot(
-    ) -> HomeTimelineRuntimeStoreSnapshot {
-        HomeTimelineRuntimeStoreSnapshot(
-            account: account,
-            resolvedRelays: resolvedRelays,
-            bootstrapRelayURLs: remoteLoadCoordinator.bootstrapRelays,
-            policy: syncPolicy,
-            hasRelayRuntime: relayRuntime != nil,
-            isTerminating:
-                accountResetInteractionWorkflow.isRuntimeTerminating,
-            isRuntimeActive:
-                activityInteractionWorkflow.state.phase != .idle,
-            isRealtime: activityInteractionWorkflow.state.isRealtime,
-            hasRestoreProjectionAnchor:
-                restoreProjectionAnchorEventID != nil,
-            isTimelineAtNewestWindow: isTimelineAtNewestWindow,
-            hasPendingEvents:
-                viewportInteractionWorkflow.hasBufferedEvents
+            context: contextCoordinator.runtimeInteractionContext()
         )
     }
 
@@ -519,37 +423,19 @@ extension NostrHomeTimelineStore {
             relayURL: relayURL,
             subscriptionID: subscriptionID,
             event: event,
-            context: runtimeContextFactory.eventContext()
+            context: contextCoordinator.runtimeEventContext()
         )
     }
 
     private func runtimeDependencyState() -> HomeTimelineRuntimeDependencyState {
-        runtimeContextFactory.dependencyState()
-    }
-
-    private func stateContextProjection() -> HomeTimelineStateContextProjection {
-        stateContextProjector.projection(from: stateStoreSnapshot())
-    }
-
-    private func stateStoreSnapshot() -> HomeTimelineStateStoreSnapshot {
-        let dependencies = dataInteractionWorkflow.dependencyResolutionState
-        return HomeTimelineStateStoreSnapshot(
-            account: account,
-            resolvedRelays: resolvedRelays,
-            followedPubkeys: followedPubkeys,
-            nip05Resolutions: dependencies.nip05Resolutions,
-            hasMoreOlder: hasMoreOlder,
-            hasPendingEvents: viewportInteractionWorkflow.hasBufferedEvents,
-            defaultMaterializationDelayNanoseconds:
-                presentationWorkflow.interactionState.defaultDelayNanoseconds
-        )
+        contextCoordinator.runtimeDependencyState()
     }
 
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
         _ = await runtimeInteractionWorkflow.enqueueDependencies(
             for: event,
             state: runtimeDependencyState(),
-            application: runtimeApplicationEffects
+            application: contextCoordinator.runtimeApplicationEffects
         )
     }
 
@@ -557,30 +443,23 @@ extension NostrHomeTimelineStore {
         runtimeInteractionWorkflow.resolveNIP05IfNeeded(
             for: metadataEvent,
             state: runtimeDependencyState(),
-            application: runtimeApplicationEffects
+            application: contextCoordinator.runtimeApplicationEffects
         )
     }
 
     func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
         backwardInteractionWorkflow.handle(
             completion,
-            context: featureInteractionContextFactory.backwardContext()
+            context: contextCoordinator.backwardContext()
         )
     }
 
     func scheduleLinkPreviewResolution() {
         let interaction =
-            featureInteractionContextFactory.linkPreviewInteraction()
+            contextCoordinator.linkPreviewInteraction()
         linkPreviewInteractionWorkflow.schedule(
             state: interaction.state,
             effects: interaction.effects
-        )
-    }
-
-    private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
-        queryStoreCoordinator.olderBackfillEvents(
-            account: account,
-            current: current
         )
     }
 
@@ -617,17 +496,11 @@ extension NostrHomeTimelineStore {
         }
     }
 
-    private func loaderState() -> NostrHomeTimelineState {
-        dataInteractionWorkflow.loaderState(
-            relaySyncEvents: syncInteractionWorkflow.relaySyncEvents
-        )
-    }
-
     func replaceTimelineState(_ state: NostrHomeTimelineState) {
         stateInteractionWorkflow.replace(
             state,
             accountID: account?.pubkey,
-            context: stateContextFactory.context()
+            context: contextCoordinator.stateContext()
         )
     }
 
@@ -639,7 +512,7 @@ extension NostrHomeTimelineStore {
         runtimeInteractionWorkflow.rememberLatestMetadataEvent(
             event,
             consultEventStore: consultEventStore,
-            application: runtimeApplicationEffects
+            application: contextCoordinator.runtimeApplicationEffects
         )
     }
 }
@@ -648,19 +521,28 @@ extension NostrHomeTimelineStore {
     func suspendTimelineFilters() {
         filterInteractionWorkflow.perform(
             .suspend,
-            context: featureInteractionContextFactory.filterContext()
+            context: contextCoordinator.filterContext()
         )
     }
 
     func resumeTimelineFilters() {
         filterInteractionWorkflow.perform(
             .resume,
-            context: featureInteractionContextFactory.filterContext()
+            context: contextCoordinator.filterContext()
         )
     }
 }
 
 private extension NostrHomeTimelineStore {
+    func bindContextComposition() {
+        queryStoreCoordinator.bind(target: self)
+        contextCoordinator.bind(
+            applications: HomeStoreContextApplications.make(target: self),
+            readBoundaryTarget: self
+        )
+        observePublishedState()
+    }
+
     func observePublishedState() {
         publishedStateObservation =
             publishedStateCoordinator.objectWillChange.sink { [weak self] in
@@ -668,207 +550,19 @@ private extension NostrHomeTimelineStore {
             }
     }
 
-    func makeLoadContextFactory() -> HomeLoadContextFactory {
-        HomeLoadContextFactory(
-            environment: HomeLoadContextEnvironment(
-                snapshot: { [weak self] in
-                    guard let self else { return nil }
-                    return HomeLoadContextSnapshot(
-                        hasRelayRuntime: relayRuntime != nil,
-                        hasTimelineEvents: !noteEvents.isEmpty
-                    )
-                },
-                providers: HomeTimelineLoadEnvironment(
-                    hasResolvedRelays: { [weak self] in
-                        self?.resolvedRelays.isEmpty == false
-                    },
-                    currentState: { [weak self] in
-                        self?.loaderState()
-                    },
-                    localBackfillEvents: { [weak self] account, current in
-                        self?.databaseBackfillEvents(
-                            account: account,
-                            current: current
-                        )
-                    },
-                    resolvedRelays: { [weak self] in
-                        self?.resolvedRelays ?? []
-                    }
-                ),
-                applications: HomeLoadApplicationEffectsFactory.make(
-                    target: self
-                )
-            )
-        )
-    }
-
-    func makeRuntimeContextFactory() -> HomeRuntimeContextFactory {
-        HomeRuntimeContextFactory(
-            environment: HomeRuntimeContextEnvironment(
-                snapshot: { [weak self] in
-                    self?.runtimeStoreSnapshot()
-                },
-                isCurrentFeedContext: { [weak self] context in
-                    self?.isCurrentHomeFeedContext(context) == true
-                },
-                runtimeApplication: runtimeApplicationEffects,
-                applications: storeApplicationEffects
-            )
-        )
-    }
-
-    func makeStateContextFactory() -> HomeStateContextFactory {
-        HomeStateContextFactory(
-            environment: HomeStateContextEnvironment(
-                projection: { [weak self] in
-                    self?.stateContextProjection()
-                },
-                applications: storeApplicationEffects
-            )
-        )
-    }
-
-    func makeFeatureInteractionContextFactory(
-    ) -> HomeFeatureContextFactory {
-        HomeFeatureContextFactory(
-            environment: HomeFeatureInteractionEnvironment(
-                snapshot: { [weak self] in
-                    self?.featureInteractionSnapshot()
-                },
-                applications: storeApplicationEffects,
-                resolveBackwardDependencies: { [weak self] request in
-                    guard let self else { return false }
-                    return await resolveBackwardDependencies(request)
-                },
-                didUpdateLinkPreview: { [weak self] in
-                    self?.invalidateListEntries()
-                    self?.scheduleMaterializeEntries()
-                }
-            )
-        )
-    }
-
-    func featureInteractionSnapshot(
-    ) -> HomeTimelineFeatureInteractionSnapshot {
-        HomeTimelineFeatureInteractionSnapshot(
-            account: account,
-            resolvedRelays: resolvedRelays,
-            relayListEvent: relayListEvent,
-            syncPolicy: syncPolicy,
-            hasRelayRuntime: relayRuntime != nil
-        )
-    }
-
     func invalidateHomeTimelineRealtime(
         for key: RuntimeSubscriptionKey
     ) {
         syncInteractionWorkflow.invalidateForwardSubscription(
             key,
-            context: featureInteractionContextFactory.syncContext()
+            context: contextCoordinator.syncContext()
         )
     }
 
     func invalidateHomeTimelineRealtime(relayURL: String) {
         syncInteractionWorkflow.invalidateForwardSubscriptions(
             relayURL: relayURL,
-            context: featureInteractionContextFactory.syncContext()
-        )
-    }
-
-    func makeAccountContextFactory() -> HomeAccountContextFactory {
-        HomeAccountContextFactory(
-            environment: HomeAccountLifecycleEnvironment(
-                snapshot: { [weak self] in
-                    self?.accountLifecycleSnapshot()
-                },
-                readBoundaryWrite: { [weak self] in
-                    self?.homeFeedReadBoundaryWrite()
-                },
-                restoreCachedSnapshot: { [weak self] account in
-                    await self?.restoreCachedSnapshot(account: account) ?? false
-                },
-                restoredViewport: { [weak self] accountID in
-                    self?.restoredViewportState(
-                        accountID: accountID,
-                        timelineKey: "home"
-                    ).map {
-                        HomeTimelineRestoredViewport(
-                            anchorEventID: $0.anchorPostID
-                        )
-                    }
-                },
-                waitForCachedPresentation: { [weak self] in
-                    await self?.projectionInteractionWorkflow
-                        .waitForPendingPresentation()
-                },
-                restoreCachedReadState: { [weak self] account in
-                    await self?.restoreHomeFeedReadState(account: account)
-                },
-                load: { [weak self] request in
-                    guard let self else { return }
-                    await load(
-                        account: request.account,
-                        lifecycle: request.lifecycle
-                    )
-                },
-                applications: HomeAccountApplicationEffectsFactory.make(
-                    target: self
-                )
-            )
-        )
-    }
-
-    func accountLifecycleSnapshot() -> HomeAccountLifecycleSnapshot {
-        HomeAccountLifecycleSnapshot(
-            account: account,
-            syncPolicy: syncPolicy,
-            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
-            hasEntries: !entries.isEmpty,
-            resolvedRelays: resolvedRelays,
-            hasRelayRuntime: relayRuntime != nil
-        )
-    }
-
-    func makeViewportContextFactory() -> HomeViewportContextFactory {
-        HomeViewportContextFactory(
-            environment: HomeViewportContextEnvironment(
-                snapshot: { [weak self] in
-                    self?.viewportStoreSnapshot()
-                },
-                applications: HomeViewportApplicationEffectsFactory.make(
-                    target: self
-                )
-            )
-        )
-    }
-
-    func viewportStoreSnapshot() -> HomeViewportStoreSnapshot {
-        HomeViewportStoreSnapshot(
-            account: account,
-            restoreProjectionAnchorEventID: restoreProjectionAnchorEventID,
-            hasPendingProjectionReload:
-                presentationWorkflow.interactionState
-                    .hasPendingNewestProjectionReload,
-            canBeginLoadingOlder:
-                activityInteractionWorkflow.state.canBeginLoadingOlder,
-            hasMoreOlder: hasMoreOlder,
-            hasTimelineEvents: !noteEvents.isEmpty,
-            hasResolvedRelays: !resolvedRelays.isEmpty,
-            hasFollowedPubkeys: !followedPubkeys.isEmpty
-        )
-    }
-
-    func resolveBackwardDependencies(
-        _ request: HomeTimelineBackwardDependencyRequest
-    ) async -> Bool {
-        await runtimeInteractionWorkflow.enqueueDependencies(
-            for: request.event,
-            context: HomeTimelineRuntimeEventApplicationContext(
-                account: request.account,
-                lifecycle: request.lifecycle,
-                hasRelayRuntime: relayRuntime != nil
-            ),
-            application: runtimeApplicationEffects
+            context: contextCoordinator.syncContext()
         )
     }
 }
@@ -897,7 +591,7 @@ extension NostrHomeTimelineStore {
     ) {
         syncInteractionWorkflow.prepareForwardSubscriptions(
             runtimeKeys,
-            context: featureInteractionContextFactory.syncContext()
+            context: contextCoordinator.syncContext()
         )
     }
 
@@ -922,7 +616,7 @@ extension NostrHomeTimelineStore {
     @discardableResult
     func clearPendingNewEvents() -> Bool {
         viewportInteractionWorkflow.clearPendingEvents(
-            viewportContextFactory.context()
+            contextCoordinator.viewportContext()
         )
     }
 
@@ -956,14 +650,7 @@ extension NostrHomeTimelineStore {
 }
 
 extension NostrHomeTimelineStore:
-    HomeStoreApplicationEffectTarget {}
-
-extension NostrHomeTimelineStore:
-    HomeAccountApplicationEffectTarget {}
-
-extension NostrHomeTimelineStore:
-    HomeViewportApplicationEffectTarget,
-    HomeLoadApplicationEffectTarget {}
+    HomeStoreContextApplicationTarget {}
 
 extension NostrHomeTimelineStore:
     HomeRestoreProjectionAnchorTarget {}
@@ -1179,7 +866,7 @@ extension NostrHomeTimelineStore {
     }
 
     func testingSetHomeTimelineRealtime(_ isRealtime: Bool) {
-        featureInteractionContextFactory.syncContext().effects.apply(
+        contextCoordinator.syncContext().effects.apply(
             .setRealtime(isRealtime)
         )
     }
@@ -1223,7 +910,7 @@ extension NostrHomeTimelineStore {
     func testingSetUnmaterializedNewEventIDs(_ ids: Set<String>) {
         viewportInteractionWorkflow.replacePendingEventIDs(
             ids,
-            context: viewportContextFactory.context()
+            context: contextCoordinator.viewportContext()
         )
     }
 
@@ -1302,7 +989,7 @@ extension NostrHomeTimelineStore {
         await runtimeInteractionWorkflow.handlePacket(
             .requestStarted(attempt),
             isActive: true,
-            context: runtimeContextFactory.interactionContext()
+            context: contextCoordinator.runtimeInteractionContext()
         )
     }
 
