@@ -27,8 +27,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineAccountApplicationDispatcher()
     private let viewportApplicationDispatcher =
         HomeTimelineViewportDispatcher()
-    private let loadApplicationDispatcher =
-        HomeTimelineLoadDispatcher()
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
     private let backwardInteractionWorkflow:
@@ -63,14 +61,14 @@ final class NostrHomeTimelineStore: ObservableObject {
         makeAccountApplicationEffects()
     private lazy var viewportApplicationEffects =
         makeViewportApplicationEffects()
-    private lazy var loadApplicationEffects =
-        makeLoadApplicationEffects()
     private lazy var featureInteractionContextFactory =
         makeFeatureInteractionContextFactory()
     private lazy var accountContextFactory =
         makeAccountContextFactory()
     private lazy var viewportContextFactory =
         makeViewportContextFactory()
+    private lazy var loadContextFactory =
+        makeLoadContextFactory()
     private lazy var stateContextFactory =
         makeStateContextFactory()
     private lazy var runtimeApplicationEffects =
@@ -422,7 +420,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await loadInteractionWorkflow.loadInitial(
             account: account,
             lifecycle: lifecycle,
-            context: loadInteractionContext()
+            context: loadContextFactory.context()
         )
     }
 
@@ -433,7 +431,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await loadInteractionWorkflow.refreshLatest(
             account: account,
             lifecycle: lifecycle,
-            context: loadInteractionContext()
+            context: loadContextFactory.context()
         )
     }
 
@@ -444,60 +442,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         await loadInteractionWorkflow.loadOlder(
             account: account,
             lifecycle: lifecycle,
-            context: loadInteractionContext()
-        )
-    }
-
-    private func loadInteractionContext() -> HomeTimelineLoadInteractionContext {
-        HomeTimelineLoadInteractionContext(
-            state: HomeTimelineLoadInteractionState(
-                hasRelayRuntime: relayRuntime != nil,
-                hasTimelineEvents: !noteEvents.isEmpty
-            ),
-            effects: HomeTimelineLoadInteractionEffects(
-                environment: HomeTimelineLoadEnvironment(
-                    hasResolvedRelays: { [weak self] in
-                        self?.resolvedRelays.isEmpty == false
-                    },
-                    currentState: { [weak self] in
-                        self?.loaderState()
-                    },
-                    localBackfillEvents: { [weak self] account, current in
-                        self?.databaseBackfillEvents(
-                            account: account,
-                            current: current
-                        )
-                    },
-                    resolvedRelays: { [weak self] in
-                        self?.resolvedRelays ?? []
-                    }
-                ),
-                apply: { [weak self] application in
-                    self?.dispatchLoadApplication(application)
-                },
-                perform: { [weak self] application in
-                    guard let self else { return }
-                    await performLoadApplication(application)
-                }
-            )
-        )
-    }
-
-    private func dispatchLoadApplication(
-        _ application: HomeTimelineLoadApplication
-    ) {
-        loadApplicationDispatcher.apply(
-            application,
-            effects: loadApplicationEffects
-        )
-    }
-
-    private func performLoadApplication(
-        _ application: HomeTimelineLoadAsyncApplication
-    ) async {
-        await loadApplicationDispatcher.perform(
-            application,
-            effects: loadApplicationEffects
+            context: loadContextFactory.context()
         )
     }
 
@@ -1063,6 +1008,38 @@ extension NostrHomeTimelineStore {
 }
 
 private extension NostrHomeTimelineStore {
+    func makeLoadContextFactory() -> HomeLoadContextFactory {
+        HomeLoadContextFactory(
+            environment: HomeLoadContextEnvironment(
+                snapshot: { [weak self] in
+                    guard let self else { return nil }
+                    return HomeLoadContextSnapshot(
+                        hasRelayRuntime: relayRuntime != nil,
+                        hasTimelineEvents: !noteEvents.isEmpty
+                    )
+                },
+                providers: HomeTimelineLoadEnvironment(
+                    hasResolvedRelays: { [weak self] in
+                        self?.resolvedRelays.isEmpty == false
+                    },
+                    currentState: { [weak self] in
+                        self?.loaderState()
+                    },
+                    localBackfillEvents: { [weak self] account, current in
+                        self?.databaseBackfillEvents(
+                            account: account,
+                            current: current
+                        )
+                    },
+                    resolvedRelays: { [weak self] in
+                        self?.resolvedRelays ?? []
+                    }
+                ),
+                applications: makeLoadApplicationEffects()
+            )
+        )
+    }
+
     func makeRuntimeContextFactory() -> HomeRuntimeContextFactory {
         HomeRuntimeContextFactory(
             environment: HomeRuntimeContextEnvironment(
