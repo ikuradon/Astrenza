@@ -105,18 +105,26 @@ struct HomeTimelineFeedContentView: View {
         )
     }
 
-    private var emptyState: TimelineEmptyState {
-        guard hasLiveAccount, selectedTimeline == .home else {
-            return selectedTimeline.emptyState
+    private var emptyStateContext: HomeTimelineEmptyStateContext {
+        let interaction = HomeTimelineInteractionContext(
+            hasLiveAccount: hasLiveAccount,
+            timeline: selectedTimeline
+        )
+        guard interaction.canMutateLiveHome else {
+            return HomeTimelineEmptyStateContext(
+                interaction: interaction,
+                phase: .idle,
+                hasFollowedPubkeys: false
+            )
         }
+        return HomeTimelineEmptyStateContext(
+            interaction: interaction,
+            phase: store.phase,
+            hasFollowedPubkeys: !store.followedPubkeys.isEmpty
+        )
+    }
 
-        switch store.phase {
-        case .resolvingRelays, .resolvingContacts, .loadingHome:
-            return .loadingHome(message: store.phase.copy)
-        case .failed(let message):
-            return .liveError(message: message)
-        case .idle, .loaded:
-            return store.followedPubkeys.isEmpty ? .noContacts : .home
-        }
+    private var emptyState: TimelineEmptyState {
+        HomeTimelineEmptyStatePolicy.resolve(emptyStateContext).emptyState
     }
 }

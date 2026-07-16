@@ -5,6 +5,7 @@ struct HomeTimelineView: View {
     @ObservedObject var sessionStore: NostrSessionStore
     let liveTimelineStore: NostrHomeTimelineStore
     let onInitialPresentationReady: () -> Void
+    private let emptyStateActions: HomeTimelineEmptyStateActionCoordinator
     private let feedActions: HomeTimelineFeedActionCoordinator
     private let userActions: HomeTimelineUserActionCoordinator
     private let viewportStoreSynchronizer: HomeTimelineViewportStoreSynchronizer
@@ -86,6 +87,9 @@ struct HomeTimelineView: View {
         self.sessionStore = sessionStore
         self.liveTimelineStore = liveTimelineStore
         self.onInitialPresentationReady = onInitialPresentationReady
+        self.emptyStateActions = HomeTimelineEmptyStateActionCoordinator(
+            actions: liveTimelineStore
+        )
         self.feedActions = HomeTimelineFeedActionCoordinator(
             actions: liveTimelineStore
         )
@@ -455,29 +459,18 @@ private extension HomeTimelineView {
     }
 
     func handleTimelineEmptyStatePrimaryAction() {
-        if sessionStore.account != nil, selectedTimeline == .home {
-            switch liveTimelineStore.phase {
-            case .failed:
-                liveTimelineStore.refresh()
-            case .loaded where liveTimelineStore.followedPubkeys.isEmpty:
-                liveTimelineStore.refresh()
-            case .resolvingRelays, .resolvingContacts, .loadingHome, .idle, .loaded:
-                presentRelayStatus()
-            }
-            return
-        }
-
-        switch selectedTimeline {
-        case .home, .relays:
-            presentRelayStatus()
-        case .lists:
-            presentSettings()
-        }
+        emptyStateActions.performPrimaryAction(
+            interaction: timelineInteractionContext,
+            presentRelayStatus: presentRelayStatus,
+            presentSettings: presentSettings
+        )
     }
 
     func handleTimelineEmptyStateSecondaryAction() {
-        guard selectedTimeline == .home else { return }
-        selectedTab = .explore
+        emptyStateActions.performSecondaryAction(
+            interaction: timelineInteractionContext,
+            selectExplore: { selectedTab = .explore }
+        )
     }
 
     func refreshVisibleTimeline() async -> Bool {
