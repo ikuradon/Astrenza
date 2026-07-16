@@ -5,6 +5,30 @@ import Testing
 @Suite("Home Store query coordinator")
 @MainActor
 struct HomeStoreQueryCoordinatorTests {
+    @Test("Live source projects current published state and preferred events")
+    func liveSourceProjectsCurrentState() {
+        let fixture = StoreQueryLiveSourceFixture()
+
+        #expect(StoreQuerySnapshotRecord(snapshot: fixture.source.snapshot()) ==
+            StoreQuerySnapshotRecord(
+                accountID: fixture.account.pubkey,
+                fallbackEntryIDs: [fixture.post.id],
+                resolvedRelayCount: 2,
+                syncPolicy: fixture.syncPolicy,
+                homeContentRevision: 17,
+                listContentRevision: 19
+            ))
+        #expect(fixture.source.preferredEvents.map(\.id) == [
+            fixture.preferredEvent.id
+        ])
+
+        fixture.events.preferredEvents = []
+        fixture.publishedState.applyAccountContextTransition(.clear)
+
+        #expect(fixture.source.snapshot().accountID == nil)
+        #expect(fixture.source.preferredEvents.isEmpty)
+    }
+
     @Test("Public queries receive every current Store snapshot field")
     func routesPublicQueriesWithFreshSnapshot() {
         let fixture = StoreQueryFixture()
@@ -12,7 +36,7 @@ struct HomeStoreQueryCoordinatorTests {
 
         expectPublicQueryResults(fixture: fixture, post: post)
 
-        let expected = StoreQuerySnapshotRecord(target: fixture.target)
+        let expected = StoreQuerySnapshotRecord(source: fixture.source)
         #expect(fixture.interaction.snapshots.count == 7)
         for snapshot in fixture.interaction.snapshots {
             #expect(snapshot == expected)
@@ -28,20 +52,21 @@ struct HomeStoreQueryCoordinatorTests {
             "replies:\(post.id):8"
         ])
 
-        fixture.target.account = fixture.replacementAccount
-        fixture.target.entries = []
-        fixture.target.resolvedRelays = []
-        fixture.target.syncPolicy = .default(
+        fixture.source.account = fixture.replacementAccount
+        fixture.source.entries = []
+        fixture.source.resolvedRelays = []
+        fixture.source.syncPolicy = .default(
             networkType: .cellular,
             lowPowerMode: false
         )
-        fixture.target.resolvedContentRevision = 41
-        fixture.target.listContentRevision = 43
+        fixture.source.resolvedContentRevision = 41
+        fixture.source.listContentRevision = 43
 
         _ = fixture.coordinator.listEntries(limit: 1)
 
         #expect(fixture.interaction.snapshots.last ==
-            StoreQuerySnapshotRecord(target: fixture.target))
+            StoreQuerySnapshotRecord(source: fixture.source))
+        #expect(fixture.source.snapshotCount == 9)
     }
 
     @Test("Event lookup, database backfill, and invalidation share the query boundary")
@@ -55,7 +80,7 @@ struct HomeStoreQueryCoordinatorTests {
             id: "current",
             pubkey: "author"
         )
-        fixture.target.queryPreferredEvents = [preferredEvent]
+        fixture.source.preferredEvents = [preferredEvent]
         let current = NostrHomeTimelineState(
             relays: [],
             followedPubkeys: ["author", "second-author"],
@@ -90,28 +115,120 @@ struct HomeStoreQueryCoordinatorTests {
         #expect(fixture.interaction.invalidationCount == 1)
     }
 
-    @Test("The coordinator does not retain its Store target")
-    func doesNotRetainTarget() {
+    @Test("Queries remain available after composition releases its local source")
+    func retainsRequiredSource() {
         let interaction = StoreQueryInteractionSpy()
-        var target: StoreQueryTargetSpy? = StoreQueryTargetSpy(
-            account: StoreQueryFixture.makeAccount(character: "a"),
+        let account = StoreQueryFixture.makeAccount(character: "a")
+        var source: StoreQuerySourceSpy? = StoreQuerySourceSpy(
+            account: account,
             entries: [],
             resolvedRelays: [],
             syncPolicy: .default(),
             resolvedContentRevision: 0,
             listContentRevision: 0,
-            queryPreferredEvents: []
+            preferredEvents: []
         )
-        weak let weakTarget = target
+        weak let weakSource = source
         let coordinator = HomeStoreQueryCoordinator(
-            interaction: interaction,
-            target: target!
+            source: source!,
+            interaction: interaction
         )
 
-        target = nil
+        source = nil
         _ = coordinator.listEntries(limit: 5)
 
-        #expect(weakTarget == nil)
-        #expect(interaction.snapshots == [.empty])
+        #expect(weakSource != nil)
+        #expect(interaction.snapshots == [StoreQuerySnapshotRecord(
+            accountID: account.pubkey,
+            fallbackEntryIDs: [],
+            resolvedRelayCount: 0,
+            syncPolicy: .default(),
+            homeContentRevision: 0,
+            listContentRevision: 0
+        )])
+    }
+}
+
+@MainActor
+private struct StoreQueryLiveSourceFixture {
+    let account: NostrAccount
+    let post: TimelinePost
+    let preferredEvent: NostrEvent
+    let syncPolicy: NostrSyncPolicy
+    let publishedState: HomeTimelinePublishedStateCoordinator
+    let events: StoreQueryEventSourceSpy
+    let source: HomeStoreQuerySource
+
+    init() {
+        let account = StoreQueryFixture.makeAccount(character: "a")
+        let post = MockTimelineData.posts[0]
+        let preferredEvent = StoreQueryFixture.makeEvent(
+            id: "preferred",
+            pubkey: "author"
+        )
+        let syncPolicy = NostrSyncPolicy.default(
+            networkType: .wifi,
+            lowPowerMode: true
+        )
+        let publishedState = HomeTimelinePublishedStateCoordinator(
+            syncPolicy: .default()
+        )
+        let events = StoreQueryEventSourceSpy(
+            preferredEvents: [preferredEvent]
+        )
+        Self.configure(
+            publishedState,
+            account: account,
+            post: post,
+            syncPolicy: syncPolicy
+        )
+        self.account = account
+        self.post = post
+        self.preferredEvent = preferredEvent
+        self.syncPolicy = syncPolicy
+        self.publishedState = publishedState
+        self.events = events
+        source = HomeStoreQuerySource(
+            publishedState: publishedState,
+            events: events
+        )
+    }
+
+    private static func configure(
+        _ publishedState: HomeTimelinePublishedStateCoordinator,
+        account: NostrAccount,
+        post: TimelinePost,
+        syncPolicy: NostrSyncPolicy
+    ) {
+        publishedState.applyAccountContextTransition(.activate(
+            account,
+            syncPolicy: syncPolicy
+        ))
+        publishedState.applyContentSnapshot(HomeTimelineContentSnapshot(
+            resolvedRelays: ["wss://one.example", "wss://two.example"],
+            followedPubkeys: [],
+            noteEvents: [],
+            metadataEvents: [],
+            relayListEvent: nil,
+            contactListEvent: nil,
+            hasMoreOlder: true
+        ))
+        publishedState.applyPresentationTransition(
+            HomeTimelinePresentationTransition(
+                snapshot: HomeTimelinePresentationSnapshot(
+                    entries: [.post(post)],
+                    filterStatus: TimelineFilterStatus(),
+                    materializedUnreadCount: 0,
+                    visibleUnreadBadgeCount: 0,
+                    resolvedContentRevision: 17,
+                    realtimeFollowSourceRevision: nil
+                ),
+                changes: [.entries, .resolvedContentRevision],
+                didChangeReadState: false
+            )
+        )
+        publishedState.applyListProjectionInvalidation(
+            HomeTimelineListProjectionInvalidation(revision: 19)
+        )
     }
 }

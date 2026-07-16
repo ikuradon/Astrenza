@@ -60,37 +60,82 @@ protocol HomeStoreQueryInteracting: AnyObject {
 extension HomeTimelineQueryInteractionWorkflow: HomeStoreQueryInteracting {}
 
 @MainActor
-protocol HomeStoreQueryTarget: AnyObject {
-    var account: NostrAccount? { get }
-    var entries: [TimelineFeedEntry] { get }
-    var resolvedRelays: [String] { get }
-    var syncPolicy: NostrSyncPolicy { get }
-    var resolvedContentRevision: Int { get }
-    var listContentRevision: Int { get }
-    var queryPreferredEvents: [NostrEvent] { get }
+protocol HomeStoreQuerySourcing: AnyObject {
+    var preferredEvents: [NostrEvent] { get }
+
+    func snapshot() -> HomeTimelineQueryStoreSnapshot
+}
+
+@MainActor
+protocol HomeStoreQueryEventSourcing: AnyObject {
+    var preferredEvents: [NostrEvent] { get }
+}
+
+extension HomeTimelineDataInteractionWorkflow: HomeStoreQueryEventSourcing {
+    var preferredEvents: [NostrEvent] {
+        contentState.noteEvents
+    }
+}
+
+@MainActor
+final class HomeStoreQuerySource: HomeStoreQuerySourcing {
+    private let publishedState: HomeTimelinePublishedStateCoordinator
+    private let events: any HomeStoreQueryEventSourcing
+
+    init(
+        publishedState: HomeTimelinePublishedStateCoordinator,
+        events: any HomeStoreQueryEventSourcing
+    ) {
+        self.publishedState = publishedState
+        self.events = events
+    }
+
+    var preferredEvents: [NostrEvent] {
+        events.preferredEvents
+    }
+
+    func snapshot() -> HomeTimelineQueryStoreSnapshot {
+        HomeTimelineQueryStoreSnapshot(
+            accountID: publishedState.accountContext.account?.pubkey,
+            fallbackEntries: publishedState.presentation.entries,
+            resolvedRelayCount: publishedState.content.resolvedRelays.count,
+            syncPolicy: publishedState.accountContext.syncPolicy,
+            homeContentRevision:
+                publishedState.presentation.resolvedContentRevision,
+            listContentRevision: publishedState.listProjection.revision
+        )
+    }
 }
 
 @MainActor
 final class HomeStoreQueryCoordinator {
+    private let source: any HomeStoreQuerySourcing
     private let interaction: any HomeStoreQueryInteracting
-    private weak var target: (any HomeStoreQueryTarget)?
 
     init(
-        interaction: any HomeStoreQueryInteracting,
-        target: (any HomeStoreQueryTarget)? = nil
+        source: any HomeStoreQuerySourcing,
+        interaction: any HomeStoreQueryInteracting
     ) {
+        self.source = source
         self.interaction = interaction
-        self.target = target
     }
 
-    func bind(target: any HomeStoreQueryTarget) {
-        self.target = target
+    static func live(
+        components: HomeTimelineStoreComponents
+    ) -> HomeStoreQueryCoordinator {
+        HomeStoreQueryCoordinator(
+            source: HomeStoreQuerySource(
+                publishedState: components.publishedStateCoordinator,
+                events: components.dataInteractionWorkflow
+            ),
+            interaction: components.queryInteractionWorkflow
+        )
     }
 
     func timelineEvent(id: String) -> NostrEvent? {
         interaction.event(
             id: id,
-            preferring: target?.queryPreferredEvents ?? []
+            preferring: source.preferredEvents
         )
     }
 
@@ -111,7 +156,7 @@ final class HomeStoreQueryCoordinator {
     func isBookmarked(_ post: TimelinePost) -> Bool {
         interaction.isBookmarked(
             eventID: post.id,
-            accountID: target?.account?.pubkey
+            accountID: currentSnapshot().accountID
         )
     }
 
@@ -191,23 +236,6 @@ final class HomeStoreQueryCoordinator {
     }
 
     private func currentSnapshot() -> HomeTimelineQueryStoreSnapshot {
-        guard let target else {
-            return HomeTimelineQueryStoreSnapshot(
-                accountID: nil,
-                fallbackEntries: [],
-                resolvedRelayCount: 0,
-                syncPolicy: .default(),
-                homeContentRevision: 0,
-                listContentRevision: 0
-            )
-        }
-        return HomeTimelineQueryStoreSnapshot(
-            accountID: target.account?.pubkey,
-            fallbackEntries: target.entries,
-            resolvedRelayCount: target.resolvedRelays.count,
-            syncPolicy: target.syncPolicy,
-            homeContentRevision: target.resolvedContentRevision,
-            listContentRevision: target.listContentRevision
-        )
+        source.snapshot()
     }
 }

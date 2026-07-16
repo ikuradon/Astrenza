@@ -74,9 +74,7 @@ struct HomeStoreComposition {
     private static func makeShared(
         components: HomeTimelineStoreComponents
     ) -> Shared {
-        let query = HomeStoreQueryCoordinator(
-            interaction: components.queryInteractionWorkflow
-        )
+        let query = HomeStoreQueryCoordinator.live(components: components)
         let projectionViewport = HomeProjectionViewportCoordinator()
         let context = HomeStoreContextCoordinator.live(
             components: components,

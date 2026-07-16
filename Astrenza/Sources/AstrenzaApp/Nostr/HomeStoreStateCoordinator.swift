@@ -2,8 +2,6 @@ import AstrenzaCore
 
 @MainActor
 protocol HomeStoreStateDataInteracting: AnyObject {
-    var contentState: HomeTimelineContentSnapshot { get }
-
     func perform(
         _ intent: HomeTimelineDataIntent
     ) -> HomeTimelineContentSnapshot
@@ -102,10 +100,6 @@ final class HomeStoreStateCoordinator {
             accountSource: components.publishedStateCoordinator,
             contexts: contexts
         )
-    }
-
-    var preferredEvents: [NostrEvent] {
-        data.contentState.noteEvents
     }
 
     func installProvisionalRelays(

@@ -36,14 +36,24 @@ func expectPublicQueryResults(
 }
 
 @MainActor
-final class StoreQueryTargetSpy: HomeStoreQueryTarget {
+final class StoreQueryEventSourceSpy: HomeStoreQueryEventSourcing {
+    var preferredEvents: [NostrEvent]
+
+    init(preferredEvents: [NostrEvent]) {
+        self.preferredEvents = preferredEvents
+    }
+}
+
+@MainActor
+final class StoreQuerySourceSpy: HomeStoreQuerySourcing {
     var account: NostrAccount?
     var entries: [TimelineFeedEntry]
     var resolvedRelays: [String]
     var syncPolicy: NostrSyncPolicy
     var resolvedContentRevision: Int
     var listContentRevision: Int
-    var queryPreferredEvents: [NostrEvent]
+    var preferredEvents: [NostrEvent]
+    private(set) var snapshotCount = 0
 
     init(
         account: NostrAccount?,
@@ -52,7 +62,7 @@ final class StoreQueryTargetSpy: HomeStoreQueryTarget {
         syncPolicy: NostrSyncPolicy,
         resolvedContentRevision: Int,
         listContentRevision: Int,
-        queryPreferredEvents: [NostrEvent]
+        preferredEvents: [NostrEvent]
     ) {
         self.account = account
         self.entries = entries
@@ -60,7 +70,19 @@ final class StoreQueryTargetSpy: HomeStoreQueryTarget {
         self.syncPolicy = syncPolicy
         self.resolvedContentRevision = resolvedContentRevision
         self.listContentRevision = listContentRevision
-        self.queryPreferredEvents = queryPreferredEvents
+        self.preferredEvents = preferredEvents
+    }
+
+    func snapshot() -> HomeTimelineQueryStoreSnapshot {
+        snapshotCount += 1
+        return HomeTimelineQueryStoreSnapshot(
+            accountID: account?.pubkey,
+            fallbackEntries: entries,
+            resolvedRelayCount: resolvedRelays.count,
+            syncPolicy: syncPolicy,
+            homeContentRevision: resolvedContentRevision,
+            listContentRevision: listContentRevision
+        )
     }
 }
 
@@ -89,14 +111,14 @@ struct StoreQuerySnapshotRecord: Equatable {
     }
 
     @MainActor
-    init(target: StoreQueryTargetSpy) {
+    init(source: StoreQuerySourceSpy) {
         self.init(
-            accountID: target.account?.pubkey,
-            fallbackEntryIDs: target.entries.map(\.id),
-            resolvedRelayCount: target.resolvedRelays.count,
-            syncPolicy: target.syncPolicy,
-            homeContentRevision: target.resolvedContentRevision,
-            listContentRevision: target.listContentRevision
+            accountID: source.account?.pubkey,
+            fallbackEntryIDs: source.entries.map(\.id),
+            resolvedRelayCount: source.resolvedRelays.count,
+            syncPolicy: source.syncPolicy,
+            homeContentRevision: source.resolvedContentRevision,
+            listContentRevision: source.listContentRevision
         )
     }
 
@@ -111,14 +133,6 @@ struct StoreQuerySnapshotRecord: Equatable {
         )
     }
 
-    static let empty = StoreQuerySnapshotRecord(
-        accountID: nil,
-        fallbackEntryIDs: [],
-        resolvedRelayCount: 0,
-        syncPolicy: .default(),
-        homeContentRevision: 0,
-        listContentRevision: 0
-    )
 }
 
 struct StoreQueryEventRequest: Equatable {
@@ -284,13 +298,13 @@ struct StoreQueryFixture {
     let account = Self.makeAccount(character: "a")
     let replacementAccount = Self.makeAccount(character: "b")
     let interaction = StoreQueryInteractionSpy()
-    let target: StoreQueryTargetSpy
+    let source: StoreQuerySourceSpy
     let coordinator: HomeStoreQueryCoordinator
 
     init() {
         let account = Self.makeAccount(character: "a")
         let post = interaction.postResult
-        let target = StoreQueryTargetSpy(
+        let source = StoreQuerySourceSpy(
             account: account,
             entries: [
                 .post(post),
@@ -306,12 +320,12 @@ struct StoreQueryFixture {
             ),
             resolvedContentRevision: 17,
             listContentRevision: 19,
-            queryPreferredEvents: []
+            preferredEvents: []
         )
-        self.target = target
+        self.source = source
         coordinator = HomeStoreQueryCoordinator(
-            interaction: interaction,
-            target: target
+            source: source,
+            interaction: interaction
         )
     }
 

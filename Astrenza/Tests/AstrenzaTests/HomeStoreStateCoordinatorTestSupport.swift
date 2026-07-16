@@ -19,7 +19,6 @@ final class StoreStateOrderProbe {
 @MainActor
 final class StoreStateDataSpy: HomeStoreStateDataInteracting {
     enum Call: Equatable {
-        case contentState
         case perform(HomeTimelineDataIntent)
         case runtimeBootstrapState([String])
         case persistenceSnapshotInput(accountID: String)
@@ -33,7 +32,6 @@ final class StoreStateDataSpy: HomeStoreStateDataInteracting {
         #endif
     }
 
-    private let contentStateResult: HomeTimelineContentSnapshot
     private let provisionalSnapshot: HomeTimelineContentSnapshot
     private let followedSnapshot: HomeTimelineContentSnapshot
     private let bootstrapResult: NostrHomeTimelineState
@@ -43,7 +41,6 @@ final class StoreStateDataSpy: HomeStoreStateDataInteracting {
     private(set) var calls: [Call] = []
 
     init(
-        contentState: HomeTimelineContentSnapshot,
         provisionalSnapshot: HomeTimelineContentSnapshot,
         followedSnapshot: HomeTimelineContentSnapshot,
         bootstrapResult: NostrHomeTimelineState,
@@ -51,18 +48,12 @@ final class StoreStateDataSpy: HomeStoreStateDataInteracting {
         dependencyWorkState: HomeTimelineDependencyWorkState,
         order: StoreStateOrderProbe
     ) {
-        contentStateResult = contentState
         self.provisionalSnapshot = provisionalSnapshot
         self.followedSnapshot = followedSnapshot
         self.bootstrapResult = bootstrapResult
         self.persistenceInput = persistenceInput
         self.dependencyWorkState = dependencyWorkState
         self.order = order
-    }
-
-    var contentState: HomeTimelineContentSnapshot {
-        calls.append(.contentState)
-        return contentStateResult
     }
 
     func perform(
@@ -238,7 +229,6 @@ struct StoreStateCoordinatorFixture {
         )
         let contexts = StoreStateContextProviderSpy()
         let data = StoreStateDataSpy(
-            contentState: Self.contentState,
             provisionalSnapshot: Self.provisionalSnapshot,
             followedSnapshot: Self.followedSnapshot,
             bootstrapResult: Self.bootstrapResult,
@@ -274,26 +264,6 @@ struct StoreStateCoordinatorFixture {
         followedPubkeys: [],
         noteEvents: [],
         metadataEvents: []
-    )
-
-    static let preferredEvent = NostrEvent(
-        id: String(repeating: "1", count: 64),
-        pubkey: String(repeating: "a", count: 64),
-        createdAt: 100,
-        kind: 1,
-        tags: [],
-        content: "preferred",
-        sig: String(repeating: "0", count: 128)
-    )
-
-    static let contentState = HomeTimelineContentSnapshot(
-        resolvedRelays: ["wss://content.example"],
-        followedPubkeys: [],
-        noteEvents: [preferredEvent],
-        metadataEvents: [],
-        relayListEvent: nil,
-        contactListEvent: nil,
-        hasMoreOlder: true
     )
 
     static let provisionalSnapshot = HomeTimelineContentSnapshot(

@@ -5,11 +5,10 @@ import Testing
 @Suite("Home Store state coordinator")
 @MainActor
 struct HomeStoreStateCoordinatorTests {
-    @Test("content操作とqueryはdata境界を保持する")
+    @Test("content操作はdata境界を保持する")
     func routesContentOperations() {
         let fixture = StoreStateCoordinatorFixture()
 
-        let preferredEvents = fixture.coordinator.preferredEvents
         let provisional = fixture.coordinator.installProvisionalRelays(
             ["wss://requested.example"]
         )
@@ -17,11 +16,9 @@ struct HomeStoreStateCoordinatorTests {
             ["requested-follow"]
         )
 
-        #expect(preferredEvents == [StoreStateCoordinatorFixture.preferredEvent])
         #expect(provisional == StoreStateCoordinatorFixture.provisionalSnapshot)
         #expect(followed == StoreStateCoordinatorFixture.followedSnapshot)
         #expect(fixture.data.calls == [
-            .contentState,
             .perform(.installProvisionalRelays([
                 "wss://requested.example"
             ])),

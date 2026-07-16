@@ -363,7 +363,6 @@ extension NostrHomeTimelineStore {
 
 private extension NostrHomeTimelineStore {
     func bindContextComposition() {
-        queryStoreCoordinator.bind(target: self)
         contextCoordinator.bind(
             applications: HomeStoreContextApplications.make(target: self),
             readBoundaryTarget: self
@@ -461,12 +460,6 @@ extension NostrHomeTimelineStore {
         _ invalidation: HomeTimelineListProjectionInvalidation
     ) {
         publishedStateCoordinator.applyListProjectionInvalidation(invalidation)
-    }
-}
-
-extension NostrHomeTimelineStore: HomeStoreQueryTarget {
-    var queryPreferredEvents: [NostrEvent] {
-        stateCoordinator.preferredEvents
     }
 }
 
