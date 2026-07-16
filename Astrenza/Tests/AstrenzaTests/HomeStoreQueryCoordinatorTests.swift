@@ -29,6 +29,29 @@ struct HomeStoreQueryCoordinatorTests {
         #expect(fixture.source.preferredEvents.isEmpty)
     }
 
+    @Test("Query snapshot observation ignores display-only publications")
+    func liveSourceObservationIsFocused() {
+        let fixture = StoreQueryLiveSourceFixture()
+        let observation = observePublishedState(fixture.source.snapshot())
+
+        fixture.publishedState.applyPresentationTransition(
+            HomeTimelinePresentationTransition(
+                snapshot: HomeTimelinePresentationSnapshot(
+                    entries: [],
+                    filterStatus: TimelineFilterStatus(activeRuleCount: 2),
+                    materializedUnreadCount: 3,
+                    visibleUnreadBadgeCount: 2,
+                    resolvedContentRevision: 0,
+                    realtimeFollowSourceRevision: nil
+                ),
+                changes: [.filterStatus, .unreadCounts],
+                didChangeReadState: false
+            )
+        )
+
+        #expect(observation.count == 0)
+    }
+
     @Test("Public queries receive every current Store snapshot field")
     func routesPublicQueriesWithFreshSnapshot() {
         let fixture = StoreQueryFixture()

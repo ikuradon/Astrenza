@@ -79,39 +79,11 @@ struct HomeTimelineView: View {
         !postNavigationPath.isEmpty || !profileNavigationPath.isEmpty
     }
 
-    private var isComposeSubmitAvailable: Bool {
-        sessionStore.account == nil || sessionStore.signer != nil
-    }
-
-    private var accountSummaries: [NostrAccountSummary] {
-        _ = liveTimelineStore.resolvedContentRevision
-        return sessionStore.accountSummaries(eventStore: liveTimelineStore.relayStatusEventStore)
-    }
-
-    private var currentAccountSummary: NostrAccountSummary? {
-        guard let currentPubkey = sessionStore.account?.pubkey else { return nil }
-        return accountSummaries.first { $0.id == currentPubkey }
-    }
-
     private var composeSubmitHandler: ((ComposeSubmitRequest) async -> Bool)? {
         guard sessionStore.account != nil else { return nil }
         return { request in
             await submitCompose(request)
         }
-    }
-
-    private var relayConnectedCount: Int {
-        guard sessionStore.account != nil else {
-            return RelayMockStore.connectedCount
-        }
-        return liveTimelineStore.relayStatusCounts.connected
-    }
-
-    private var relayPlannedCount: Int {
-        guard sessionStore.account != nil else {
-            return RelayMockStore.plannedCount
-        }
-        return liveTimelineStore.relayStatusCounts.planned
     }
 
     var body: some View {
@@ -123,55 +95,21 @@ struct HomeTimelineView: View {
                     TapGesture().onEnded(dismissFloatingMenus)
                 )
 
-            if visibleTab == .home && !isPostDetailPresented {
-                VStack {
-                    HomeTimelineTopBar(
-                        visibleTab: visibleTab,
-                        selectedTimeline: $selectedTimeline,
-                        isTimelineMenuPresented: $isTimelineMenuPresented,
-                        isUserSwitcherPresented: $isUserSwitcherPresented,
-                        collapseProgress: topChromeCollapseProgress,
-                        onDismissFloatingMenus: dismissFloatingMenus,
-                        onRelayStatusTap: presentRelayStatus,
-                        onSettingsTap: presentSettings,
-                        currentAccount: currentAccountSummary,
-                        accounts: accountSummaries,
-                        onSelectAccount: selectAccountFromSwitcher,
-                        onAddAccount: presentSettings,
-                        relayConnectedCount: relayConnectedCount,
-                        relayPlannedCount: relayPlannedCount,
-                        isRelayProcessing: liveTimelineStore.isRelayProcessing,
-                        relayProcessingLabel: liveTimelineStore.activityStatus?.compactLabel
-                    )
-                    .zIndex(30)
-
-                    Spacer(minLength: 0)
-                }
-            }
-
-            if visibleTab == .home && !isPostDetailPresented && liveTimelineStore.visibleUnreadBadgeCount > 0 {
-                HomeUnreadBadge(count: liveTimelineStore.visibleUnreadBadgeCount) {
-                    liveTimelineStore.dismissUnreadBadge()
-                    dismissFloatingMenus()
-                }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, 88)
-                    .padding(.trailing, 22)
-            }
-
-            if visibleTab == .home && !isPostDetailPresented && liveTimelineStore.filterStatus.isVisible {
-                HomeFilterIndicator(
-                    status: liveTimelineStore.filterStatus,
-                    onOpenFilters: presentFiltersSettings,
-                    onClear: liveTimelineStore.suspendTimelineFilters,
-                    onResume: liveTimelineStore.resumeTimelineFilters
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.top, 72)
-                .padding(.leading, 16)
-                .transition(.scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity))
-                .zIndex(32)
-            }
+            HomeTimelineChromeView(
+                timelineStore: liveTimelineStore,
+                visibleTab: visibleTab,
+                isPostDetailPresented: isPostDetailPresented,
+                collapseProgress: topChromeCollapseProgress,
+                onDismissFloatingMenus: dismissFloatingMenus,
+                onRelayStatusTap: presentRelayStatus,
+                onSettingsTap: presentSettings,
+                onSelectAccount: selectAccountFromSwitcher,
+                onOpenFilters: presentFiltersSettings,
+                sessionStore: sessionStore,
+                selectedTimeline: $selectedTimeline,
+                isTimelineMenuPresented: $isTimelineMenuPresented,
+                isUserSwitcherPresented: $isUserSwitcherPresented
+            )
 
             if isPostDetailPresented {
                 ReplyFloatingButton(action: presentReplyComposer)
@@ -202,43 +140,42 @@ struct HomeTimelineView: View {
             timelineRestoreStore.flushPendingSaves()
         }
         .homeTimelinePresentations(
-            isComposerPresented: $isComposerPresented,
-            isSettingsPresented: $isSettingsPresented,
-            isFiltersSettingsPresented: $isFiltersSettingsPresented,
-            isRelayStatusPresented: $isRelayStatusPresented,
-            composeSheetMode: $composeSheetMode,
-            fullscreenMedia: $fullscreenMedia,
-            browserDestination: $browserDestination,
-            swipeSettings: $swipeSettings,
-            relayURLs: sessionStore.account == nil ? [] : liveTimelineStore.resolvedRelays,
-            relayRuntimeStates: sessionStore.account == nil ? [:] : liveTimelineStore.relayRuntimeStates,
-            syncPolicy: liveTimelineStore.currentSyncPolicy,
-            accountID: sessionStore.account?.pubkey,
-            eventStore: sessionStore.account == nil ? nil : liveTimelineStore.relayStatusEventStore,
-            accountSummaries: accountSummaries,
-            onSelectAccount: selectAccountFromSwitcher,
-            onRemoveAccount: removeAccountFromSettings,
-            onAddAccount: presentSettings,
-            isComposeSubmitAvailable: isComposeSubmitAvailable,
-            onComposeSubmit: composeSubmitHandler
+            timelineStore: liveTimelineStore,
+            sessionStore: sessionStore,
+            bindings: HomeTimelinePresentationBindings(
+                isComposerPresented: $isComposerPresented,
+                isSettingsPresented: $isSettingsPresented,
+                isFiltersSettingsPresented: $isFiltersSettingsPresented,
+                isRelayStatusPresented: $isRelayStatusPresented,
+                composeSheetMode: $composeSheetMode,
+                fullscreenMedia: $fullscreenMedia,
+                browserDestination: $browserDestination,
+                swipeSettings: $swipeSettings
+            ),
+            actions: HomeTimelinePresentationActions(
+                onSelectAccount: selectAccountFromSwitcher,
+                onRemoveAccount: removeAccountFromSettings,
+                onAddAccount: presentSettings,
+                onComposeSubmit: composeSubmitHandler
+            )
         )
     }
 }
 
 private extension HomeTimelineView {
     var nativeTabs: some View {
-        UIKitTimelineTabView(
-            selectedTab: $selectedTab,
-            previousTab: $previousTab,
+        HomeTimelineTabContentView(
+            timelineStore: liveTimelineStore,
             minimizeDirection: tabBarMinimizeDirection,
             isTabBarHidden: isPostDetailPresented,
-            hasUnmaterializedHomeEvents: liveTimelineStore.unmaterializedNewCount > 0,
             isHomeReturnMode: homeReturnAnchor != nil,
             timelineList: timelineList,
             profileView: profileView,
             onMinimizeDirectionChanged: updateTabBarMinimizeDirection,
             onHomeRetap: handleHomeTabRetap,
-            onComposeTap: presentComposer
+            onComposeTap: presentComposer,
+            selectedTab: $selectedTab,
+            previousTab: $previousTab
         )
     }
 
@@ -288,11 +225,10 @@ private extension HomeTimelineView {
     }
 
     var profileView: some View {
-        let projection = currentUserProfileProjection
-        return NavigationStack(path: $profileNavigationPath) {
-            UserDetailView(
-                profile: projection.profile,
-                posts: projection.posts,
+        NavigationStack(path: $profileNavigationPath) {
+            HomeTimelineProfileContentView(
+                timelineStore: liveTimelineStore,
+                account: sessionStore.account,
                 swipeSettings: swipeSettings,
                 onOpenPost: openProfilePost,
                 onOpenProfile: openProfileFromProfile,
@@ -378,20 +314,6 @@ private extension HomeTimelineView {
             },
             onOpenMedia: openMedia,
             onOpenURL: openURL
-        )
-    }
-
-    var currentUserProfileProjection: HomeTimelineProfileProjection {
-        guard let account = sessionStore.account else {
-            return HomeTimelineProfileProjection(
-                profile: MockTimelineData.selfProfile,
-                posts: MockTimelineData.selfProfilePosts
-            )
-        }
-
-        return liveTimelineStore.profileProjection(
-            pubkey: account.pubkey,
-            isCurrentUser: true
         )
     }
 

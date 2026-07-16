@@ -268,7 +268,8 @@ extension NostrHomeTimelineStore {
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        statusCoordinator.activityStatus()
+        _ = publishedStateCoordinator.relayStatusRevision
+        return statusCoordinator.activityStatus()
     }
 
     var isRelayProcessing: Bool {

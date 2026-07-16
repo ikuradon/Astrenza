@@ -82,6 +82,22 @@ struct PublishedRelayStatusStateTests {
 
         #expect(!store.isHomeTimelineRealtime)
     }
+
+    @Test("Activity status observation follows relay status publication")
+    func activityStatusObservesRelayPublication() {
+        let store = NostrHomeTimelineStore(eventStore: nil)
+        let observation = observePublishedState(store.activityStatus)
+
+        store.testingApplyRelayStatusTransition(
+            HomeTimelineRelayStatusTransition(
+                snapshot: relayStatusSnapshot(),
+                invalidatedRealtimeRelayURL: nil,
+                publishesStatusChange: true
+            )
+        )
+
+        #expect(observation.count == 1)
+    }
 }
 
 private func relayStatusSnapshot(

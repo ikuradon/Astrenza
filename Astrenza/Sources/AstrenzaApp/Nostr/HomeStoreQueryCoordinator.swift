@@ -96,13 +96,12 @@ final class HomeStoreQuerySource: HomeStoreQuerySourcing {
 
     func snapshot() -> HomeTimelineQueryStoreSnapshot {
         HomeTimelineQueryStoreSnapshot(
-            accountID: publishedState.accountContext.account?.pubkey,
-            fallbackEntries: publishedState.presentation.entries,
-            resolvedRelayCount: publishedState.content.resolvedRelays.count,
-            syncPolicy: publishedState.accountContext.syncPolicy,
-            homeContentRevision:
-                publishedState.presentation.resolvedContentRevision,
-            listContentRevision: publishedState.listProjection.revision
+            accountID: publishedState.account?.pubkey,
+            fallbackEntries: publishedState.entries,
+            resolvedRelayCount: publishedState.resolvedRelays.count,
+            syncPolicy: publishedState.syncPolicy,
+            homeContentRevision: publishedState.resolvedContentRevision,
+            listContentRevision: publishedState.listProjectionRevision
         )
     }
 }
