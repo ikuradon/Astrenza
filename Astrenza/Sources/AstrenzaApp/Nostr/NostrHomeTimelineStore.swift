@@ -27,8 +27,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineBackwardInteractionWorkflow
     private let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
-    private let queryInteractionWorkflow:
-        HomeTimelineQueryInteractionWorkflow
+    private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let activityInteractionWorkflow:
         HomeTimelineActivityInteractionWorkflow
     private let presentationWorkflow: HomeTimelinePresentationWorkflow
@@ -100,17 +99,6 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private var contactListEvent: NostrEvent? {
         contentState.contactListEvent
-    }
-
-    private var timelineQuerySnapshot: HomeTimelineQueryStoreSnapshot {
-        HomeTimelineQueryStoreSnapshot(
-            accountID: account?.pubkey,
-            fallbackEntries: entries,
-            resolvedRelayCount: resolvedRelays.count,
-            syncPolicy: syncPolicy,
-            homeContentRevision: resolvedContentRevision,
-            listContentRevision: listContentRevision
-        )
     }
 
     func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
@@ -201,7 +189,9 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
-        self.queryInteractionWorkflow = components.queryInteractionWorkflow
+        self.queryStoreCoordinator = HomeStoreQueryCoordinator(
+            interaction: components.queryInteractionWorkflow
+        )
         self.activityInteractionWorkflow =
             components.activityInteractionWorkflow
         self.presentationWorkflow = components.presentationWorkflow
@@ -221,10 +211,8 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.localMutationInteractionWorkflow =
             components.localMutationInteractionWorkflow
         self.relayRuntime = components.relayRuntime
-        self.publishedStateObservation =
-            publishedStateCoordinator.objectWillChange.sink { [weak self] in
-                self?.publishedStateRevision &+= 1
-            }
+        self.queryStoreCoordinator.bind(target: self)
+        observePublishedState()
     }
 
     func start(account: NostrAccount) {
@@ -394,10 +382,7 @@ final class NostrHomeTimelineStore: ObservableObject {
     }
 
     func timelineEvent(id: String) -> NostrEvent? {
-        queryInteractionWorkflow.event(
-            id: id,
-            preferring: noteEvents
-        )
+        queryStoreCoordinator.timelineEvent(id: id)
     }
 
     @discardableResult
@@ -593,13 +578,9 @@ extension NostrHomeTimelineStore {
     }
 
     private func databaseBackfillEvents(account: NostrAccount, current: NostrHomeTimelineState) -> [NostrEvent]? {
-        queryInteractionWorkflow.olderBackfillEvents(
-            HomeTimelineOlderBackfillQuery(
-                accountID: account.pubkey,
-                followedPubkeys: current.followedPubkeys,
-                currentEvents: current.noteEvents,
-                limit: 1_000
-            )
+        queryStoreCoordinator.olderBackfillEvents(
+            account: account,
+            current: current
         )
     }
 
@@ -680,6 +661,13 @@ extension NostrHomeTimelineStore {
 }
 
 private extension NostrHomeTimelineStore {
+    func observePublishedState() {
+        publishedStateObservation =
+            publishedStateCoordinator.objectWillChange.sink { [weak self] in
+                self?.publishedStateRevision &+= 1
+            }
+    }
+
     func makeLoadContextFactory() -> HomeLoadContextFactory {
         HomeLoadContextFactory(
             environment: HomeLoadContextEnvironment(
@@ -956,7 +944,7 @@ extension NostrHomeTimelineStore {
 
     func invalidateListEntries() {
         applyListProjectionInvalidation(
-            queryInteractionWorkflow.invalidateListEntries()
+            queryStoreCoordinator.invalidateListEntries()
         )
     }
 
@@ -983,33 +971,29 @@ extension NostrHomeTimelineStore:
 extension NostrHomeTimelineStore:
     HomeStoreReadBoundaryTarget {}
 
+extension NostrHomeTimelineStore: HomeStoreQueryTarget {
+    var queryPreferredEvents: [NostrEvent] {
+        noteEvents
+    }
+}
+
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {
-        queryInteractionWorkflow.isBookmarked(
-            eventID: post.id,
-            accountID: account?.pubkey
-        )
+        queryStoreCoordinator.isBookmarked(post)
     }
 
     func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
-        queryInteractionWorkflow.listEntries(
-            limit: limit,
-            snapshot: timelineQuerySnapshot
-        )
+        queryStoreCoordinator.listEntries(limit: limit)
     }
 
     func post(eventID: String) -> TimelinePost? {
-        queryInteractionWorkflow.post(
-            eventID: eventID,
-            snapshot: timelineQuerySnapshot
-        )
+        queryStoreCoordinator.post(eventID: eventID)
     }
 
     func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
-        queryInteractionWorkflow.profile(
+        queryStoreCoordinator.profile(
             pubkey: pubkey,
-            isCurrentUser: isCurrentUser,
-            snapshot: timelineQuerySnapshot
+            isCurrentUser: isCurrentUser
         )
     }
 
@@ -1018,19 +1002,17 @@ extension NostrHomeTimelineStore {
         isCurrentUser: Bool = false,
         postsLimit: Int = 80
     ) -> HomeTimelineProfileProjection {
-        queryInteractionWorkflow.profileProjection(
+        queryStoreCoordinator.profileProjection(
             pubkey: pubkey,
             isCurrentUser: isCurrentUser,
-            postsLimit: postsLimit,
-            snapshot: timelineQuerySnapshot
+            postsLimit: postsLimit
         )
     }
 
     func profilePosts(pubkey: String, limit: Int = 80) -> [TimelinePost] {
-        queryInteractionWorkflow.profilePosts(
+        queryStoreCoordinator.profilePosts(
             pubkey: pubkey,
-            limit: limit,
-            snapshot: timelineQuerySnapshot
+            limit: limit
         )
     }
 
@@ -1038,18 +1020,16 @@ extension NostrHomeTimelineStore {
         for post: TimelinePost,
         limit: Int = 8
     ) -> [TimelinePost] {
-        queryInteractionWorkflow.replyAncestors(
+        queryStoreCoordinator.replyAncestors(
             for: post,
-            limit: limit,
-            snapshot: timelineQuerySnapshot
+            limit: limit
         )
     }
 
     func replies(for post: TimelinePost, limit: Int = 24) -> [TimelinePost] {
-        queryInteractionWorkflow.replies(
+        queryStoreCoordinator.replies(
             for: post,
-            limit: limit,
-            snapshot: timelineQuerySnapshot
+            limit: limit
         )
     }
 }
