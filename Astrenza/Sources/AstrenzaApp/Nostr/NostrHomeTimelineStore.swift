@@ -50,7 +50,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeLocalMutationInteractionWorkflow?
     private let relayRuntime: NostrRelayRuntime?
     private lazy var storeApplicationEffects =
-        makeStoreApplicationEffects()
+        HomeStoreApplicationEffectsFactory.make(target: self)
     private lazy var featureInteractionContextFactory =
         makeFeatureInteractionContextFactory()
     private lazy var accountContextFactory =
@@ -105,7 +105,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
+    func applyContentSnapshot(_ snapshot: HomeTimelineContentSnapshot) {
         publishedStateCoordinator.applyContentSnapshot(snapshot)
     }
 
@@ -115,7 +115,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         publishedStateCoordinator.applyActivityTransition(transition)
     }
 
-    private func applyActivityIntent(
+    func applyActivityIntent(
         _ intent: HomeTimelineActivityIntent
     ) {
         applyActivityTransition(
@@ -123,7 +123,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func applyPresentationTransition(
+    func applyPresentationTransition(
         _ transition: HomeTimelinePresentationTransition
     ) {
         publishedStateCoordinator.applyPresentationTransition(transition)
@@ -137,11 +137,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
+    func applyRelayStatusSnapshot(_ snapshot: HomeTimelineRelayStatusSnapshot) {
         publishedStateCoordinator.applyRelayStatusSnapshot(snapshot)
     }
 
-    private func applyRelayStatusTransition(
+    func applyRelayStatusTransition(
         _ transition: HomeTimelineRelayStatusTransition?
     ) {
         if let relayURL = publishedStateCoordinator.applyRelayStatusTransition(
@@ -151,7 +151,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         }
     }
 
-    private func publishRelayStatusChange() {
+    func publishRelayStatusChange() {
         publishedStateCoordinator.publishRelayStatusChange()
     }
 
@@ -488,7 +488,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func persistDatabase(account: NostrAccount) async {
+    func persistDatabase(account: NostrAccount) async {
         let dependencies = dataInteractionWorkflow.dependencyResolutionState
         await stateInteractionWorkflow.persistSnapshot(
             HomeTimelineSnapshotInput(
@@ -560,11 +560,11 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func reloadNewestProjectionWindow(account: NostrAccount) {
+    func reloadNewestProjectionWindow(account: NostrAccount) {
         projectionInteractionWorkflow.reloadNewestProjection(account: account)
     }
 
-    private func reloadProjectionWindow(
+    func reloadProjectionWindow(
         account: NostrAccount,
         around anchorEventID: String?,
         mergingWithCurrentWindow: Bool = false,
@@ -577,6 +577,10 @@ final class NostrHomeTimelineStore: ObservableObject {
             mergingWithCurrentWindow: mergingWithCurrentWindow,
             onCompletion: onCompletion
         )
+    }
+
+    func requestNewestProjectionReload() {
+        presentationWorkflow.requestNewestProjectionReload()
     }
 
     private func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
@@ -651,86 +655,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func makeStoreApplicationEffects(
-    ) -> HomeTimelineStoreApplicationEffects {
-        HomeTimelineStoreApplicationEffects(
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            applyContentSnapshot: { [weak self] snapshot in
-                self?.applyContentSnapshot(snapshot)
-            },
-            applyRelayStatusSnapshot: { [weak self] snapshot in
-                self?.applyRelayStatusSnapshot(snapshot)
-            },
-            applyListProjectionInvalidation: { [weak self] invalidation in
-                self?.applyListProjectionInvalidation(invalidation)
-            },
-            applyPendingEventCountPublication: { [weak self] publication in
-                self?.applyPendingEventCountPublication(publication)
-            },
-            reloadProjection: {
-                [weak self] account, anchorEventID, merging in
-                self?.reloadProjectionWindow(
-                    account: account,
-                    around: anchorEventID,
-                    mergingWithCurrentWindow: merging
-                )
-            },
-            reloadNewestProjectionWindow: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            requestNewestProjectionReload: { [weak self] in
-                self?.presentationWorkflow.requestNewestProjectionReload()
-            },
-            scheduleMaterialization: { [weak self] delay, realtimeFollow in
-                self?.scheduleMaterializeEntries(
-                    delayNanoseconds: delay,
-                    allowsRealtimeFollow: realtimeFollow
-                )
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            applyRelayStatusTransition: { [weak self] transition in
-                self?.applyRelayStatusTransition(transition)
-            },
-            setRealtime: { [weak self] isRealtime in
-                self?.applyActivityIntent(.setRealtime(isRealtime))
-            },
-            setPhase: { [weak self] phase in
-                self?.applyActivityIntent(.setPhase(phase))
-            },
-            handleBackwardCompletion: { [weak self] completion in
-                self?.handleBackwardCompletion(completion)
-            },
-            invalidateListEntries: { [weak self] in
-                self?.invalidateListEntries()
-            },
-            scheduleLinkPreviewResolution: { [weak self] in
-                self?.scheduleLinkPreviewResolution()
-            },
-            publishRelayStatusChange: { [weak self] in
-                self?.publishRelayStatusChange()
-            },
-            handleRuntimeEvent: { [weak self] relayURL, subscriptionID, event in
-                await self?.handleRuntimeEvent(
-                    relayURL: relayURL,
-                    subscriptionID: subscriptionID,
-                    event: event
-                )
-            },
-            persistDatabase: { [weak self] account in
-                await self?.persistDatabase(account: account)
-            }
-        )
-    }
-
 }
 
-private extension NostrHomeTimelineStore {
+extension NostrHomeTimelineStore {
 
-    private func handleRuntimeEvent(relayURL: String, subscriptionID: String, event: NostrEvent) async {
+    func handleRuntimeEvent(
+        relayURL: String,
+        subscriptionID: String,
+        event: NostrEvent
+    ) async {
         await runtimeInteractionWorkflow.handleEvent(
             relayURL: relayURL,
             subscriptionID: subscriptionID,
@@ -777,14 +710,14 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    private func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
+    func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
         backwardInteractionWorkflow.handle(
             completion,
             context: featureInteractionContextFactory.backwardContext()
         )
     }
 
-    private func scheduleLinkPreviewResolution() {
+    func scheduleLinkPreviewResolution() {
         let interaction =
             featureInteractionContextFactory.linkPreviewInteraction()
         linkPreviewInteractionWorkflow.schedule(
@@ -804,7 +737,7 @@ private extension NostrHomeTimelineStore {
         )
     }
 
-    private func materializeEntries(
+    func materializeEntries(
         allowsRealtimeFollow: Bool = false,
         onTransition: HomeTimelineMaterializationCoordinating
             .TransitionHandler? = nil
@@ -825,7 +758,7 @@ private extension NostrHomeTimelineStore {
         }
     }
 
-    private func scheduleMaterializeEntries(
+    func scheduleMaterializeEntries(
         delayNanoseconds: UInt64? = nil,
         allowsRealtimeFollow: Bool? = nil
     ) {
@@ -1192,7 +1125,9 @@ private extension NostrHomeTimelineStore {
             viewportContextFactory.context()
         )
     }
+}
 
+extension NostrHomeTimelineStore {
     func applyPendingEventCountPublication(
         _ publication: HomeTimelinePendingEventCountPublication
     ) {
@@ -1213,6 +1148,9 @@ private extension NostrHomeTimelineStore {
         publishedStateCoordinator.applyListProjectionInvalidation(invalidation)
     }
 }
+
+extension NostrHomeTimelineStore:
+    HomeStoreApplicationEffectTarget {}
 
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {
