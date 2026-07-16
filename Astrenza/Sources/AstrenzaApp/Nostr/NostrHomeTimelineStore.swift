@@ -16,20 +16,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         HomeTimelineViewportInteractionWorkflow
     private let eventStore: NostrEventStore?
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
-    private let runtimeInteractionWorkflow:
-        HomeTimelineRuntimeInteractionWorkflow
+    private let runtimeCoordinator: HomeStoreRuntimeCoordinator
     private let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
-    private let backwardInteractionWorkflow:
-        HomeTimelineBackwardInteractionWorkflow
     private let filterInteractionWorkflow:
         HomeTimelineFilterInteractionWorkflow
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let contextCoordinator: HomeStoreContextCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
-    private let linkPreviewInteractionWorkflow:
-        HomeLinkPreviewInteractionWorkflow
     private let projectionInteractionWorkflow:
         HomeProjectionInteractionWorkflow
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
@@ -130,18 +125,15 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.viewportInteractionWorkflow = components.viewportInteractionWorkflow
         self.eventStore = components.eventStore
         self.dataInteractionWorkflow = components.dataInteractionWorkflow
-        self.runtimeInteractionWorkflow = components.runtimeInteractionWorkflow
+        self.runtimeCoordinator = composition.runtime
         self.gapBackfillInteractionWorkflow =
             components.gapBackfillInteractionWorkflow
-        self.backwardInteractionWorkflow = components.backwardInteractionWorkflow
         self.filterInteractionWorkflow =
             components.filterInteractionWorkflow
         self.queryStoreCoordinator = composition.query
         self.contextCoordinator = composition.context
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
-        self.linkPreviewInteractionWorkflow =
-            components.linkPreviewInteractionWorkflow
         self.projectionInteractionWorkflow =
             components.projectionInteractionWorkflow
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
@@ -368,17 +360,12 @@ extension NostrHomeTimelineStore {
     }
 
     func startRuntimeSession() {
-        runtimeInteractionWorkflow.startSession(
-            context: contextCoordinator.runtimeInteractionContext()
-        )
+        runtimeCoordinator.startSession()
     }
 
     func installProvisionalRuntimeBootstrapIfNeeded(account: NostrAccount) {
-        guard let provisionalRelays = runtimeInteractionWorkflow
-            .provisionalBootstrapRelayURLs(
-                account: account,
-                state: contextCoordinator.runtimeInteractionState()
-            )
+        guard let provisionalRelays = runtimeCoordinator
+            .provisionalBootstrapRelayURLs(account: account)
         else { return }
         applyContentSnapshot(
             dataInteractionWorkflow.perform(
@@ -389,10 +376,9 @@ extension NostrHomeTimelineStore {
     }
 
     func configureRelayRuntime(account: NostrAccount, forceInstall: Bool = false) async {
-        await runtimeInteractionWorkflow.configure(
+        await runtimeCoordinator.configure(
             account: account,
-            forceInstall: forceInstall,
-            context: contextCoordinator.runtimeInteractionContext()
+            forceInstall: forceInstall
         )
     }
 
@@ -405,48 +391,23 @@ extension NostrHomeTimelineStore {
         subscriptionID: String,
         event: NostrEvent
     ) async {
-        await runtimeInteractionWorkflow.handleEvent(
+        await runtimeCoordinator.handleEvent(
             relayURL: relayURL,
             subscriptionID: subscriptionID,
-            event: event,
-            context: contextCoordinator.runtimeEventContext()
+            event: event
         )
-    }
-
-    private func runtimeDependencyState() -> HomeTimelineRuntimeDependencyState {
-        contextCoordinator.runtimeDependencyState()
     }
 
     private func enqueueBackwardDependencies(for event: NostrEvent) async {
-        _ = await runtimeInteractionWorkflow.enqueueDependencies(
-            for: event,
-            state: runtimeDependencyState(),
-            application: contextCoordinator.runtimeApplicationEffects
-        )
-    }
-
-    private func resolveNIP05IfNeeded(for metadataEvent: NostrEvent) {
-        runtimeInteractionWorkflow.resolveNIP05IfNeeded(
-            for: metadataEvent,
-            state: runtimeDependencyState(),
-            application: contextCoordinator.runtimeApplicationEffects
-        )
+        await runtimeCoordinator.enqueueDependencies(for: event)
     }
 
     func handleBackwardCompletion(_ completion: NostrBackwardREQCompletion) {
-        backwardInteractionWorkflow.handle(
-            completion,
-            context: contextCoordinator.backwardContext()
-        )
+        runtimeCoordinator.handleBackwardCompletion(completion)
     }
 
     func scheduleLinkPreviewResolution() {
-        let interaction =
-            contextCoordinator.linkPreviewInteraction()
-        linkPreviewInteractionWorkflow.schedule(
-            state: interaction.state,
-            effects: interaction.effects
-        )
+        runtimeCoordinator.scheduleLinkPreviewResolution()
     }
 
     func materializeEntries(
@@ -478,17 +439,6 @@ extension NostrHomeTimelineStore {
         )
     }
 
-    @discardableResult
-    private func rememberLatestMetadataEvent(
-        _ event: NostrEvent,
-        consultEventStore: Bool = true
-    ) -> NostrEvent {
-        runtimeInteractionWorkflow.rememberLatestMetadataEvent(
-            event,
-            consultEventStore: consultEventStore,
-            application: contextCoordinator.runtimeApplicationEffects
-        )
-    }
 }
 
 extension NostrHomeTimelineStore {
@@ -593,7 +543,7 @@ extension NostrHomeTimelineStore {
     }
 
     func resetRuntimeSetup() {
-        runtimeInteractionWorkflow.resetSetup()
+        runtimeCoordinator.resetSetup()
     }
 
     func clearPendingProjectionReload() {
@@ -876,7 +826,7 @@ extension NostrHomeTimelineStore {
         definition: NostrFeedDefinitionRecord,
         sourceAuthors: [String]
     ) async {
-        runtimeInteractionWorkflow.ensureLifecycle(accountID: account.pubkey)
+        runtimeCoordinator.ensureLifecycle(accountID: account.pubkey)
         applyAccountContextTransition(.activate(
             account,
             syncPolicy: syncPolicy
@@ -931,10 +881,9 @@ extension NostrHomeTimelineStore {
     }
 
     func testingHandleFeedSyncRequestStarted(_ attempt: NostrRelayRequestAttempt) async {
-        await runtimeInteractionWorkflow.handlePacket(
+        await runtimeCoordinator.handlePacket(
             .requestStarted(attempt),
-            isActive: true,
-            context: contextCoordinator.runtimeInteractionContext()
+            isActive: true
         )
     }
 
