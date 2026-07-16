@@ -298,53 +298,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func makeViewportApplicationEffects(
-    ) -> HomeTimelineViewportApplicationEffects {
-        HomeTimelineViewportApplicationEffects(
-            applyProjectionViewportTransition: { [weak self] transition in
-                self?.applyProjectionViewportTransition(transition)
-            },
-            reloadNewestProjectionWindow: { [weak self] account in
-                self?.reloadNewestProjectionWindow(account: account)
-            },
-            materializeEntries: { [weak self] allowsRealtimeFollow in
-                self?.materializeEntries(
-                    allowsRealtimeFollow: allowsRealtimeFollow
-                )
-            },
-            applyRestoreProjectionAnchor: { [weak self] account in
-                self?.applyRestoreProjectionAnchorIfPossible(account: account)
-            },
-            applyPresentationTransition: { [weak self] transition in
-                self?.applyPresentationTransition(transition)
-            },
-            scheduleReadStateSave: { [weak self] in
-                self?.scheduleHomeFeedReadStateSave()
-            },
-            applyPendingEventCountPublication: { [weak self] publication in
-                self?.applyPendingEventCountPublication(publication)
-            },
-            clearPendingProjectionReload: { [weak self] in
-                self?.presentationWorkflow.clearNewestProjectionReload()
-            },
-            scheduleLinkPreviewResolution: { [weak self] in
-                self?.scheduleLinkPreviewResolution()
-            },
-            refreshLatest: { [weak self] account, lifecycle in
-                await self?.refreshLatest(
-                    account: account,
-                    lifecycle: lifecycle
-                )
-            },
-            loadOlder: { [weak self] account, lifecycle in
-                await self?.loadOlder(
-                    account: account,
-                    lifecycle: lifecycle
-                )
-            }
-        )
-    }
-
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
         await gapBackfillInteractionWorkflow.backfill(
             gap: gap,
@@ -396,7 +349,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func refreshLatest(
+    func refreshLatest(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
@@ -407,7 +360,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func loadOlder(
+    func loadOlder(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
@@ -418,48 +371,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func makeLoadApplicationEffects(
-    ) -> HomeTimelineLoadApplicationEffects {
-        HomeTimelineLoadApplicationEffects(
-            applyActivityTransition: { [weak self] transition in
-                self?.applyActivityTransition(transition)
-            },
-            applyRelayStatusTransition: { [weak self] transition in
-                self?.applyRelayStatusTransition(transition)
-            },
-            installProvisionalRuntimeBootstrap: { [weak self] account in
-                self?.installProvisionalRuntimeBootstrapIfNeeded(
-                    account: account
-                )
-            },
-            restartAccount: { [weak self] account in
-                self?.start(account: account)
-            },
-            replaceTimelineState: { [weak self] state in
-                self?.replaceTimelineState(state)
-            },
-            replaceRuntimeBootstrapState: { [weak self] state in
-                self?.replaceRuntimeBootstrapState(state)
-            },
-            replaceFollowedPubkeys: { [weak self] pubkeys in
-                self?.replaceFollowedPubkeys(pubkeys)
-            },
-            materializeEntries: { [weak self] in
-                self?.materializeEntries()
-            },
-            setPhase: { [weak self] phase in
-                self?.applyActivityIntent(.setPhase(phase))
-            },
-            configureRuntime: { [weak self] account in
-                await self?.configureRelayRuntime(account: account)
-            },
-            persistDatabase: { [weak self] account in
-                await self?.persistDatabase(account: account)
-            }
-        )
-    }
-
-    private func replaceRuntimeBootstrapState(
+    func replaceRuntimeBootstrapState(
         _ state: NostrHomeTimelineState
     ) {
         replaceTimelineState(
@@ -467,7 +379,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func replaceFollowedPubkeys(_ pubkeys: [String]) {
+    func replaceFollowedPubkeys(_ pubkeys: [String]) {
         applyContentSnapshot(
             dataInteractionWorkflow.perform(.replaceFollowedPubkeys(pubkeys))
         )
@@ -531,7 +443,7 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
     }
 
-    private func scheduleHomeFeedReadStateSave() {
+    func scheduleHomeFeedReadStateSave() {
         guard let account else { return }
         readBoundaryInteractionWorkflow.scheduleReadBoundarySave(
             accountID: account.pubkey,
@@ -776,7 +688,7 @@ extension NostrHomeTimelineStore {
         )
     }
 
-    private func replaceTimelineState(_ state: NostrHomeTimelineState) {
+    func replaceTimelineState(_ state: NostrHomeTimelineState) {
         stateInteractionWorkflow.replace(
             state,
             accountID: account?.pubkey,
@@ -841,7 +753,9 @@ private extension NostrHomeTimelineStore {
                         self?.resolvedRelays ?? []
                     }
                 ),
-                applications: makeLoadApplicationEffects()
+                applications: HomeLoadApplicationEffectsFactory.make(
+                    target: self
+                )
             )
         )
     }
@@ -979,7 +893,9 @@ private extension NostrHomeTimelineStore {
                 snapshot: { [weak self] in
                     self?.viewportStoreSnapshot()
                 },
-                applications: makeViewportApplicationEffects()
+                applications: HomeViewportApplicationEffectsFactory.make(
+                    target: self
+                )
             )
         )
     }
@@ -1064,6 +980,10 @@ extension NostrHomeTimelineStore {
         runtimeInteractionWorkflow.resetSetup()
     }
 
+    func clearPendingProjectionReload() {
+        presentationWorkflow.clearNewestProjectionReload()
+    }
+
     func applyPendingEventCountPublication(
         _ publication: HomeTimelinePendingEventCountPublication
     ) {
@@ -1090,6 +1010,10 @@ extension NostrHomeTimelineStore:
 
 extension NostrHomeTimelineStore:
     HomeAccountApplicationEffectTarget {}
+
+extension NostrHomeTimelineStore:
+    HomeViewportApplicationEffectTarget,
+    HomeLoadApplicationEffectTarget {}
 
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {
