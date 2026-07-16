@@ -5,6 +5,7 @@ struct HomeStoreComposition {
     let query: HomeStoreQueryCoordinator
     let projection: HomeStoreProjectionCoordinator
     let context: HomeStoreContextCoordinator
+    let lifecycle: HomeStoreLifecycleCoordinator
     let runtime: HomeStoreRuntimeCoordinator
     let viewport: HomeStoreViewportCoordinator
     let presentation: HomeStorePresentationCoordinator
@@ -23,12 +24,18 @@ struct HomeStoreComposition {
             projectionViewport: projectionViewport,
             hasRelayRuntime: components.relayRuntime != nil
         )
+        let projection = HomeStoreProjectionCoordinator.live(
+            components: components
+        )
         return HomeStoreComposition(
             query: query,
-            projection: HomeStoreProjectionCoordinator.live(
-                components: components
-            ),
+            projection: projection,
             context: context,
+            lifecycle: HomeStoreLifecycleCoordinator.live(
+                components: components,
+                projection: projection,
+                contexts: context
+            ),
             runtime: HomeStoreRuntimeCoordinator.live(
                 components: components,
                 contexts: context

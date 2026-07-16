@@ -11,7 +11,6 @@ final class NostrHomeTimelineStore: ObservableObject {
 
     private let publishedStateCoordinator:
         HomeTimelinePublishedStateCoordinator
-    private let loadInteractionWorkflow: HomeTimelineLoadInteractionWorkflow
     private let viewportCoordinator: HomeStoreViewportCoordinator
     private let eventStore: NostrEventStore?
     private let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
@@ -23,13 +22,10 @@ final class NostrHomeTimelineStore: ObservableObject {
     private let queryStoreCoordinator: HomeStoreQueryCoordinator
     private let projectionCoordinator: HomeStoreProjectionCoordinator
     private let contextCoordinator: HomeStoreContextCoordinator
+    private let lifecycleCoordinator: HomeStoreLifecycleCoordinator
     private let presentationCoordinator: HomeStorePresentationCoordinator
     private let statusCoordinator: HomeStoreStatusCoordinator
     private let syncInteractionWorkflow: HomeTimelineSyncInteractionWorkflow
-    private let accountStartInteractionWorkflow:
-        HomeAccountStartInteractionWorkflow
-    private let accountResetInteractionWorkflow:
-        HomeAccountResetInteractionWorkflow
     private let stateInteractionWorkflow: HomeTimelineStateInteractionWorkflow
     private let publishInteractionWorkflow:
         HomeTimelinePublishInteractionWorkflow?
@@ -113,7 +109,6 @@ final class NostrHomeTimelineStore: ObservableObject {
         )
         self.publishedStateCoordinator =
             components.publishedStateCoordinator
-        self.loadInteractionWorkflow = components.loadInteractionWorkflow
         self.viewportCoordinator = composition.viewport
         self.eventStore = components.eventStore
         self.dataInteractionWorkflow = components.dataInteractionWorkflow
@@ -125,13 +120,10 @@ final class NostrHomeTimelineStore: ObservableObject {
         self.queryStoreCoordinator = composition.query
         self.projectionCoordinator = composition.projection
         self.contextCoordinator = composition.context
+        self.lifecycleCoordinator = composition.lifecycle
         self.presentationCoordinator = composition.presentation
         self.statusCoordinator = composition.status
         self.syncInteractionWorkflow = components.syncInteractionWorkflow
-        self.accountStartInteractionWorkflow =
-            components.accountStartInteractionWorkflow
-        self.accountResetInteractionWorkflow =
-            components.accountResetInteractionWorkflow
         self.stateInteractionWorkflow = components.stateInteractionWorkflow
         self.publishInteractionWorkflow = components.publishInteractionWorkflow
         self.localMutationInteractionWorkflow =
@@ -142,10 +134,7 @@ final class NostrHomeTimelineStore: ObservableObject {
 
 extension NostrHomeTimelineStore {
     func start(account: NostrAccount) {
-        accountStartInteractionWorkflow.start(
-            account: account,
-            context: contextCoordinator.accountStartContext()
-        )
+        lifecycleCoordinator.start(account: account)
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
@@ -232,20 +221,16 @@ extension NostrHomeTimelineStore {
     }
 
     func cancel() {
-        projectionCoordinator.cancelMaterialization()
-        accountResetInteractionWorkflow.reset(
-            context: contextCoordinator.accountResetContext()
-        )
+        lifecycleCoordinator.cancel()
     }
 
     func refreshLatest(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await loadInteractionWorkflow.refreshLatest(
+        await lifecycleCoordinator.refreshLatest(
             account: account,
-            lifecycle: lifecycle,
-            context: contextCoordinator.loadContext()
+            lifecycle: lifecycle
         )
     }
 
@@ -253,10 +238,9 @@ extension NostrHomeTimelineStore {
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken
     ) async {
-        await loadInteractionWorkflow.loadOlder(
+        await lifecycleCoordinator.loadOlder(
             account: account,
-            lifecycle: lifecycle,
-            context: contextCoordinator.loadContext()
+            lifecycle: lifecycle
         )
     }
 
