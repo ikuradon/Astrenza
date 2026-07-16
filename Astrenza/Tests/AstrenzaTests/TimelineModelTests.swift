@@ -549,6 +549,52 @@ struct TimelineModelTests {
         } == false)
     }
 
+    @Test("Timeline content projection ignores non-NIP-19 Unicode tokens containing a separator")
+    func timelineContentProjectionIgnoresNonNIP19UnicodeTokens() {
+        let content = "日本語1qqqqqq emoji😀1qqqqqq 本文1qqqqqqqqqq"
+        let event = timelineEvent(
+            idSeed: "unicode-bech32-like-content",
+            pubkey: String(repeating: "a", count: 64),
+            createdAt: 120,
+            content: content
+        )
+
+        let projection = NostrTimelineContentProjection(event: event)
+
+        #expect(projection.quotedEventID == nil)
+        #expect(projection.richBody.displayText == content)
+    }
+
+    @Test("Timeline content projection preserves supported event reference forms")
+    func timelineContentProjectionPreservesEventReferenceForms() throws {
+        let eventID = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2"
+        let note = "note1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q7k28gn"
+        let nevent = try NostrNIP19.encodeEventReference(
+            eventID: eventID,
+            relays: ["wss://relay.example"],
+            kind: 1
+        )
+        let candidates = [
+            eventID,
+            eventID.uppercased(),
+            note,
+            "nostr:\(note)",
+            nevent,
+            "nostr:\(nevent)"
+        ]
+
+        for (index, candidate) in candidates.enumerated() {
+            let event = timelineEvent(
+                idSeed: "event-reference-form-\(index)",
+                pubkey: String(repeating: "a", count: 64),
+                createdAt: 120,
+                content: "quote \(candidate)"
+            )
+
+            #expect(NostrTimelineContentProjection.quotedPostID(from: event) == eventID)
+        }
+    }
+
     @Test("Timeline content projection preserves adjacent custom emoji")
     func timelineContentProjectionPreservesAdjacentCustomEmoji() {
         let shortcodes = [

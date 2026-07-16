@@ -43,9 +43,20 @@ struct NostrTimelineContentProjection {
             .lazy
             .compactMap { token -> String? in
                 let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}>\n"))
+                guard isEventReferenceCandidate(trimmed) else { return nil }
                 return try? NostrNIP19.eventReference(from: trimmed).eventID
             }
             .first
+    }
+
+    private static func isEventReferenceCandidate(_ token: String) -> Bool {
+        let lowered = token.lowercased()
+        let value = lowered.hasPrefix("nostr:")
+            ? String(lowered.dropFirst("nostr:".count))
+            : lowered
+        return value.hasPrefix("note1")
+            || value.hasPrefix("nevent1")
+            || NostrHex.isLowercaseHex(value, byteCount: 32)
     }
 
     private static func quoteLikeEventID(from tags: [[String]]) -> String? {
