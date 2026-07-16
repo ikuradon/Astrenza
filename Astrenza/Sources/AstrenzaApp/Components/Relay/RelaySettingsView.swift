@@ -4,6 +4,7 @@ import SwiftUI
 struct RelaySettingsView: View {
     let accountID: String?
     let eventStore: NostrEventStore?
+    let onSyncPolicyChange: (NostrSyncPolicy) -> Void
     @State private var selectedSection: RelaySettingsSection = .nip65
     @State private var draftRelayURL = "wss://"
     @State private var isPublishingNIP65 = true
@@ -16,12 +17,14 @@ struct RelaySettingsView: View {
         accountID: String? = nil,
         eventStore: NostrEventStore? = nil,
         syncPolicyStore: NostrSyncPolicySettingsStore = .shared,
-        mediaResolverSettingsStore: NostrMediaResolverSettingsStore = .shared
+        mediaResolverSettingsStore: NostrMediaResolverSettingsStore = .shared,
+        onSyncPolicyChange: @escaping (NostrSyncPolicy) -> Void = { _ in }
     ) {
         self.accountID = accountID
         self.eventStore = eventStore
         self.syncPolicyStore = syncPolicyStore
         self.mediaResolverSettingsStore = mediaResolverSettingsStore
+        self.onSyncPolicyChange = onSyncPolicyChange
         _syncPolicy = State(initialValue: syncPolicyStore.policy(accountID: accountID))
         _mediaResolverSettings = State(initialValue: mediaResolverSettingsStore.settings())
     }
@@ -54,6 +57,7 @@ struct RelaySettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: syncPolicy) { _, policy in
             syncPolicyStore.save(policy, accountID: accountID)
+            onSyncPolicyChange(policy)
         }
         .onChange(of: mediaResolverSettings) { _, settings in
             mediaResolverSettingsStore.save(settings)
@@ -228,12 +232,6 @@ private struct RelaySyncPolicyCard: View {
                     title: "Disable OGP on Cellular",
                     subtitle: "Keep links clickable but skip preview fetching while on cellular.",
                     isOn: $policy.disableOGPOnCellular
-                )
-                Divider().overlay(Color.white.opacity(0.08))
-                RelayPolicyToggle(
-                    title: "Reduce Full Outbox on Cellular",
-                    subtitle: "Fall back to your own NIP-65 relays when Full Outbox would be too chatty.",
-                    isOn: $policy.reduceFullOutboxOnCellular
                 )
             }
             .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18))
@@ -505,12 +503,10 @@ private struct RelayAddCard: View {
 private extension NostrSyncMode {
     var settingsTitle: String {
         switch self {
-        case .energySaver:
-            "Saver"
         case .ownRelayList:
-            "Own"
+            "3 / 10002"
         case .fullOutbox:
-            "Full"
+            "Full Outbox"
         }
     }
 }

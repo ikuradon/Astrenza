@@ -3,11 +3,23 @@ import AstrenzaCore
 struct HomeLoadContextSnapshot: Equatable, Sendable {
     let hasRelayRuntime: Bool
     let hasTimelineEvents: Bool
+    let syncPolicy: NostrSyncPolicy
+
+    init(
+        hasRelayRuntime: Bool,
+        hasTimelineEvents: Bool,
+        syncPolicy: NostrSyncPolicy = .default()
+    ) {
+        self.hasRelayRuntime = hasRelayRuntime
+        self.hasTimelineEvents = hasTimelineEvents
+        self.syncPolicy = syncPolicy
+    }
 
     static var empty: Self {
         HomeLoadContextSnapshot(
             hasRelayRuntime: false,
-            hasTimelineEvents: false
+            hasTimelineEvents: false,
+            syncPolicy: .default()
         )
     }
 }
@@ -52,7 +64,8 @@ struct HomeLoadContextFactory {
         return HomeTimelineLoadInteractionContext(
             state: HomeTimelineLoadInteractionState(
                 hasRelayRuntime: snapshot.hasRelayRuntime,
-                hasTimelineEvents: snapshot.hasTimelineEvents
+                hasTimelineEvents: snapshot.hasTimelineEvents,
+                syncPolicy: snapshot.syncPolicy
             ),
             effects: effects
         )

@@ -16,6 +16,7 @@ struct SettingsView: View {
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
     let onAddAccount: () -> Void
+    let onSyncPolicyChange: (String?, NostrSyncPolicy) -> Void
     @Binding var swipeSettings: TimelineSwipeSettings
     @State private var isSoundsEnabled = true
     @State private var isHapticsEnabled = true
@@ -43,7 +44,8 @@ struct SettingsView: View {
         accountSummaries: [NostrAccountSummary] = [],
         onSelectAccount: @escaping (String) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in },
-        onAddAccount: @escaping () -> Void = {}
+        onAddAccount: @escaping () -> Void = {},
+        onSyncPolicyChange: @escaping (String?, NostrSyncPolicy) -> Void = { _, _ in }
     ) {
         self.onClose = onClose
         _swipeSettings = swipeSettings
@@ -53,6 +55,7 @@ struct SettingsView: View {
         self.onSelectAccount = onSelectAccount
         self.onRemoveAccount = onRemoveAccount
         self.onAddAccount = onAddAccount
+        self.onSyncPolicyChange = onSyncPolicyChange
     }
 
     var body: some View {
@@ -64,7 +67,8 @@ struct SettingsView: View {
                             summary: summary,
                             eventStore: eventStore,
                             onSelectAccount: onSelectAccount,
-                            onRemoveAccount: onRemoveAccount
+                            onRemoveAccount: onRemoveAccount,
+                            onSyncPolicyChange: onSyncPolicyChange
                         )
                     }
                     SettingsNavigationRow(title: "Add Account", icon: "plus", tint: .green) {
@@ -528,6 +532,7 @@ private struct AccountSettingsView: View {
     let eventStore: NostrEventStore?
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
+    let onSyncPolicyChange: (String?, NostrSyncPolicy) -> Void
 
     var body: some View {
         SettingsList {
@@ -568,7 +573,13 @@ private struct AccountSettingsView: View {
                     EmptySettingsDestination(title: "Keys / Signer")
                 }
                 SettingsStatusNavigationRow(title: "Relays / Sync", statusColor: .green, icon: "antenna.radiowaves.left.and.right", tint: .green) {
-                    RelaySettingsView(accountID: summary.id, eventStore: eventStore)
+                    RelaySettingsView(
+                        accountID: summary.id,
+                        eventStore: eventStore,
+                        onSyncPolicyChange: { policy in
+                            onSyncPolicyChange(summary.id, policy)
+                        }
+                    )
                 }
                 SettingsNavigationRow(title: "Muting / Filters", icon: "line.3.horizontal.decrease.circle.fill", tint: .orange) {
                     NostrListSettingsView(accountID: summary.id, eventStore: eventStore)
@@ -755,6 +766,7 @@ private struct SettingsAccountRow: View {
     let eventStore: NostrEventStore?
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
+    let onSyncPolicyChange: (String?, NostrSyncPolicy) -> Void
 
     var body: some View {
         NavigationLink {
@@ -762,7 +774,8 @@ private struct SettingsAccountRow: View {
                 summary: summary,
                 eventStore: eventStore,
                 onSelectAccount: onSelectAccount,
-                onRemoveAccount: onRemoveAccount
+                onRemoveAccount: onRemoveAccount,
+                onSyncPolicyChange: onSyncPolicyChange
             )
         } label: {
             SettingsRowShell(iconView: {

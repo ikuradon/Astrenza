@@ -93,7 +93,8 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
     func loadSnapshot() -> HomeLoadContextSnapshot? {
         HomeLoadContextSnapshot(
             hasRelayRuntime: hasRelayRuntime,
-            hasTimelineEvents: !dataInteraction.contentState.noteEvents.isEmpty
+            hasTimelineEvents: !dataInteraction.contentState.noteEvents.isEmpty,
+            syncPolicy: publishedState.accountContext.syncPolicy
         )
     }
 

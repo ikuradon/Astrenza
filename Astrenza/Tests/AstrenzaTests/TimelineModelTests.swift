@@ -3025,8 +3025,7 @@ struct TimelineModelTests {
             lowPowerMode: false,
             tapToLoadMedia: true,
             queueOGPPreviews: true,
-            disableOGPOnCellular: true,
-            reduceFullOutboxOnCellular: true
+            disableOGPOnCellular: true
         )
 
         store.save(policy, accountID: accountA)
@@ -3090,13 +3089,12 @@ struct TimelineModelTests {
             readOnly: true
         )
         policyStore.save(NostrSyncPolicy(
-            mode: .energySaver,
+            mode: .fullOutbox,
             networkType: .cellular,
             lowPowerMode: true,
             tapToLoadMedia: true,
             queueOGPPreviews: true,
-            disableOGPOnCellular: true,
-            reduceFullOutboxOnCellular: true
+            disableOGPOnCellular: true
         ), accountID: account.pubkey)
         let store = HomeTimelineStoreFactory.make(
             timelineLoader: NostrHomeTimelineLoader(relayClient: FakeStoreRelayClient(eventsBySubscriptionID: [:])),
@@ -3107,7 +3105,7 @@ struct TimelineModelTests {
         store.start(account: account)
         defer { store.cancel() }
 
-        #expect(store.currentSyncPolicy.mode == .energySaver)
+        #expect(store.currentSyncPolicy.mode == .fullOutbox)
         #expect(store.currentSyncPolicy.networkType == .cellular)
         #expect(store.currentSyncPolicy.lowPowerMode)
     }

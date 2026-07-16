@@ -1,7 +1,6 @@
 import Foundation
 
 public enum NostrSyncMode: String, Codable, CaseIterable, Sendable {
-    case energySaver
     case ownRelayList
     case fullOutbox
 }
@@ -20,7 +19,6 @@ public struct NostrSyncPolicy: Codable, Equatable, Sendable {
     public var tapToLoadMedia: Bool
     public var queueOGPPreviews: Bool
     public var disableOGPOnCellular: Bool
-    public var reduceFullOutboxOnCellular: Bool
 
     public init(
         mode: NostrSyncMode,
@@ -28,8 +26,7 @@ public struct NostrSyncPolicy: Codable, Equatable, Sendable {
         lowPowerMode: Bool,
         tapToLoadMedia: Bool,
         queueOGPPreviews: Bool,
-        disableOGPOnCellular: Bool,
-        reduceFullOutboxOnCellular: Bool
+        disableOGPOnCellular: Bool
     ) {
         self.mode = mode
         self.networkType = networkType
@@ -37,7 +34,6 @@ public struct NostrSyncPolicy: Codable, Equatable, Sendable {
         self.tapToLoadMedia = tapToLoadMedia
         self.queueOGPPreviews = queueOGPPreviews
         self.disableOGPOnCellular = disableOGPOnCellular
-        self.reduceFullOutboxOnCellular = reduceFullOutboxOnCellular
     }
 
     public static func `default`(
@@ -46,13 +42,12 @@ public struct NostrSyncPolicy: Codable, Equatable, Sendable {
     ) -> NostrSyncPolicy {
         let constrained = lowPowerMode || networkType == .cellular
         return NostrSyncPolicy(
-            mode: lowPowerMode ? .energySaver : .ownRelayList,
+            mode: .ownRelayList,
             networkType: networkType,
             lowPowerMode: lowPowerMode,
             tapToLoadMedia: constrained,
             queueOGPPreviews: true,
-            disableOGPOnCellular: networkType == .cellular,
-            reduceFullOutboxOnCellular: true
+            disableOGPOnCellular: networkType == .cellular
         )
     }
 }

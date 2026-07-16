@@ -238,6 +238,7 @@ final class RefreshProbe: HomeTimelineRefreshRemoteLoading {
     func refreshState(
         account: NostrAccount,
         current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> HomeTimelineRemoteLoadOutcome {
         events.append(.loadRemote(

@@ -31,6 +31,7 @@ struct HomeTimelineSyncPlanner {
         account: NostrAccount,
         followedPubkeys: [String],
         contactItems: [NostrContactListItem] = [],
+        authorRelayListEvents: [NostrEvent] = [],
         newestCreatedAt: Int?,
         newestCreatedAtByRelay: [String: Int]? = nil,
         initialCreatedAt: Int? = nil,
@@ -38,11 +39,11 @@ struct HomeTimelineSyncPlanner {
         policy: NostrSyncPolicy
     ) -> HomeTimelineForwardPlan {
         let authors = timelineAuthors(account: account, followedPubkeys: followedPubkeys)
-        if policy.mode == .fullOutbox,
-           !(policy.reduceFullOutboxOnCellular && policy.networkType == .cellular) {
+        if policy.mode == .fullOutbox {
             let packets = fullOutboxForwardPackets(
                 authors: authors,
                 contactItems: contactItems,
+                authorRelayListEvents: authorRelayListEvents,
                 newestCreatedAt: newestCreatedAt,
                 newestCreatedAtByRelay: newestCreatedAtByRelay,
                 initialCreatedAt: initialCreatedAt,
@@ -116,6 +117,9 @@ struct HomeTimelineSyncPlanner {
         followedPubkeys: [String],
         oldestCreatedAt: Int,
         relayURLs: [String],
+        contactItems: [NostrContactListItem] = [],
+        authorRelayListEvents: [NostrEvent] = [],
+        policy: NostrSyncPolicy = .default(),
         limit: Int = 100,
         requestID: String = UUID().uuidString
     ) -> NostrREQPacket? {
@@ -123,7 +127,16 @@ struct HomeTimelineSyncPlanner {
             authors: timelineAuthors(account: account, followedPubkeys: followedPubkeys),
             until: oldestCreatedAt - 1,
             limit: limit,
-            relayURLs: relayURLs,
+            relayURLs: selectedRelayURLs(
+                authors: timelineAuthors(
+                    account: account,
+                    followedPubkeys: followedPubkeys
+                ),
+                contactItems: contactItems,
+                authorRelayListEvents: authorRelayListEvents,
+                fallbackRelayURLs: relayURLs,
+                policy: policy
+            ),
             requestID: requestID
         )
     }
@@ -135,6 +148,9 @@ struct HomeTimelineSyncPlanner {
         olderEvent: NostrEvent,
         missingEstimate: Int,
         relayURLs: [String],
+        contactItems: [NostrContactListItem] = [],
+        authorRelayListEvents: [NostrEvent] = [],
+        policy: NostrSyncPolicy = .default(),
         requestID: String = UUID().uuidString
     ) -> NostrREQPacket? {
         NostrBackwardREQBuilder.notesWindow(
@@ -142,7 +158,16 @@ struct HomeTimelineSyncPlanner {
             since: olderEvent.createdAt + 1,
             until: newerEvent.createdAt - 1,
             limit: max(1, min(missingEstimate, 250)),
-            relayURLs: relayURLs,
+            relayURLs: selectedRelayURLs(
+                authors: timelineAuthors(
+                    account: account,
+                    followedPubkeys: followedPubkeys
+                ),
+                contactItems: contactItems,
+                authorRelayListEvents: authorRelayListEvents,
+                fallbackRelayURLs: relayURLs,
+                policy: policy
+            ),
             requestID: requestID
         )
     }
@@ -188,34 +213,45 @@ struct HomeTimelineSyncPlanner {
         followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
     }
 
+    private func selectedRelayURLs(
+        authors: [String],
+        contactItems: [NostrContactListItem],
+        authorRelayListEvents: [NostrEvent],
+        fallbackRelayURLs: [String],
+        policy: NostrSyncPolicy
+    ) -> [String] {
+        guard policy.mode == .fullOutbox else { return fallbackRelayURLs }
+        let routes = NostrOutboxRelayRouting().relayURLsByAuthor(
+            authors: authors,
+            relayListEvents: authorRelayListEvents,
+            contactItems: contactItems,
+            fallbackRelayURLs: fallbackRelayURLs
+        )
+        var seen = Set<String>()
+        return authors.flatMap { routes[$0.lowercased()] ?? [] }.filter {
+            seen.insert($0).inserted
+        }
+    }
+
     private func fullOutboxForwardPackets(
         authors: [String],
         contactItems: [NostrContactListItem],
+        authorRelayListEvents: [NostrEvent],
         newestCreatedAt: Int?,
         newestCreatedAtByRelay: [String: Int]?,
         initialCreatedAt: Int?,
         fallbackRelayURLs: [String]
     ) -> [NostrREQPacket] {
-        var relayHintsByPubkey: [String: [String]] = [:]
-        for item in contactItems {
-            var hints = relayHintsByPubkey[item.pubkey.lowercased(), default: []]
-            for relayHint in item.relayHints where !hints.contains(relayHint) {
-                hints.append(relayHint)
-            }
-            relayHintsByPubkey[item.pubkey.lowercased()] = hints
-        }
-
+        let relayURLsByAuthor = NostrOutboxRelayRouting().relayURLsByAuthor(
+            authors: authors,
+            relayListEvents: authorRelayListEvents,
+            contactItems: contactItems,
+            fallbackRelayURLs: fallbackRelayURLs
+        )
         var authorsByRelays: [RelaySelectionKey: [String]] = [:]
-        let connectedHintRelays = Set(contactItems.flatMap(\.relayHints)).intersection(fallbackRelayURLs)
-        let defaultRelayURLs = fallbackRelayURLs.filter { !connectedHintRelays.contains($0) }
-        let fallbackOnlyRelayURLs = defaultRelayURLs.isEmpty ? fallbackRelayURLs : defaultRelayURLs
-
         for author in authors {
-            let hints = relayHintsByPubkey[author.lowercased()] ?? []
-            let connectedHints = fallbackRelayURLs.filter { relayURL in
-                hints.contains(relayURL)
-            }
-            let relayURLs = connectedHints.isEmpty ? fallbackOnlyRelayURLs : connectedHints
+            let relayURLs = relayURLsByAuthor[author.lowercased()] ??
+                fallbackRelayURLs
             authorsByRelays[RelaySelectionKey(relayURLs: relayURLs), default: []].append(author)
         }
 

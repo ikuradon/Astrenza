@@ -69,8 +69,8 @@ struct HomeTimelineRuntimeInteractionTests {
         ])
     }
 
-    @Test("Runtime relay plan caps the connection set at ten")
-    func relayPlanCapsRuntimeRelays() {
+    @Test("Runtime relay plan preserves the complete connection set")
+    func relayPlanPreservesRuntimeRelays() {
         let planner = HomeTimelineRuntimeRelayPlanner()
         let account = NostrAccount(
             pubkey: String(repeating: "a", count: 64),
@@ -83,7 +83,7 @@ struct HomeTimelineRuntimeInteractionTests {
             account: account,
             resolvedRelayURLs: relayURLs,
             bootstrapRelayURLs: []
-        ) == Array(relayURLs.prefix(10)))
+        ) == relayURLs)
     }
 
     @Test("Provisional relays require a runtime and an unresolved account")

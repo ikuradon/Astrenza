@@ -49,6 +49,7 @@ struct HomeStoreComposition {
     let projection: HomeStoreProjectionCoordinator
     let context: HomeStoreContextCoordinator
     let lifecycle: HomeStoreLifecycleCoordinator
+    let syncPolicy: HomeStoreSyncPolicyCoordinator
     let featureActions: HomeStoreFeatureActionCoordinator
     let sync: HomeStoreSyncCoordinator
     let state: HomeStoreStateCoordinator
@@ -71,6 +72,11 @@ struct HomeStoreComposition {
         let featureActions = HomeStoreFeatureActionCoordinator.live(
             components: components,
             contexts: shared.context
+        )
+        let syncPolicy = HomeStoreSyncPolicyCoordinator(
+            source: components.publishedStateCoordinator,
+            lifecycle: lifecycle,
+            settingsStore: components.syncPolicySettingsStore
         )
         let sync = HomeStoreSyncCoordinator.live(
             components: components,
@@ -101,6 +107,7 @@ struct HomeStoreComposition {
             projection: shared.projection,
             context: shared.context,
             lifecycle: lifecycle,
+            syncPolicy: syncPolicy,
             featureActions: featureActions,
             sync: sync,
             state: state,

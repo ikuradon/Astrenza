@@ -5,7 +5,8 @@ protocol HomeTimelineGapRequesting: Sendable {
     func requestGap(
         account: NostrAccount,
         gap: TimelineGap,
-        direction: TimelineGapFillDirection
+        direction: TimelineGapFillDirection,
+        policy: NostrSyncPolicy
     ) async -> HomeTimelineBackwardRequestOutcome
 }
 
@@ -26,8 +27,25 @@ struct HomeTimelineGapBackfillRequest {
     let account: NostrAccount?
     let hasRelayRuntime: Bool
     let resolvedRelayCount: Int
+    let syncPolicy: NostrSyncPolicy
     let gap: TimelineGap
     let direction: TimelineGapFillDirection
+
+    init(
+        account: NostrAccount?,
+        hasRelayRuntime: Bool,
+        resolvedRelayCount: Int,
+        syncPolicy: NostrSyncPolicy = .default(),
+        gap: TimelineGap,
+        direction: TimelineGapFillDirection
+    ) {
+        self.account = account
+        self.hasRelayRuntime = hasRelayRuntime
+        self.resolvedRelayCount = resolvedRelayCount
+        self.syncPolicy = syncPolicy
+        self.gap = gap
+        self.direction = direction
+    }
 }
 
 struct HomeTimelineGapBackfillEffects: Sendable {
@@ -70,7 +88,8 @@ final class HomeTimelineGapBackfillWorkflow {
         let outcome = await requester.requestGap(
             account: account,
             gap: request.gap,
-            direction: request.direction
+            direction: request.direction,
+            policy: request.syncPolicy
         )
         switch outcome {
         case .unavailable:

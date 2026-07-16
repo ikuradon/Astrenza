@@ -250,7 +250,8 @@ private final class GapBackfillProbe:
     func requestGap(
         account: NostrAccount,
         gap: TimelineGap,
-        direction: TimelineGapFillDirection
+        direction: TimelineGapFillDirection,
+        policy: NostrSyncPolicy
     ) async -> HomeTimelineBackwardRequestOutcome {
         events.append(.requestGap(
             accountID: account.pubkey,

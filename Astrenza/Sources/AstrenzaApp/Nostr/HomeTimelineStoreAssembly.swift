@@ -46,6 +46,7 @@ struct HomeTimelineStoreComponents {
     let localMutationInteractionWorkflow:
         HomeLocalMutationInteractionWorkflow?
     let relayRuntime: NostrRelayRuntime?
+    let syncPolicySettingsStore: NostrSyncPolicySettingsStore
 }
 
 struct HomeTimelineStorePersistenceGraph {
@@ -210,7 +211,8 @@ enum HomeTimelineStoreAssembly {
                 HomeTimelinePublishInteractionWorkflow(publish: $0)
             },
             localMutationInteractionWorkflow: makeLocalMutationInteraction(from: graph),
-            relayRuntime: input.relayRuntime
+            relayRuntime: input.relayRuntime,
+            syncPolicySettingsStore: input.syncPolicySettingsStore
         )
     }
 

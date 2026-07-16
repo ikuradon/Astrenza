@@ -126,7 +126,8 @@ struct HomeFeatureContextFactory {
             state: HomeTimelineGapBackfillInteractionState(
                 account: snapshot.account,
                 hasRelayRuntime: snapshot.hasRelayRuntime,
-                resolvedRelays: snapshot.resolvedRelays
+                resolvedRelays: snapshot.resolvedRelays,
+                syncPolicy: snapshot.syncPolicy
             ),
             effects: gapBackfillEffects
         )

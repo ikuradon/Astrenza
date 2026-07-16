@@ -89,6 +89,7 @@ final class HomeTimelineRuntimeSetupCoordinator {
                 identity: identity,
                 account: request.account,
                 contactItems: NostrContactList.items(from: content.contactListEvent),
+                authorRelayListEvents: content.authorRelayListEvents,
                 defaultRelayURLs: request.defaultRelayURLs,
                 policy: request.policy,
                 forceInstall: request.forceInstall
@@ -152,7 +153,11 @@ final class HomeTimelineRuntimeSetupCoordinator {
             lifecycleGeneration: lifecycle.generation,
             resolvedRelays: content.resolvedRelays,
             followedPubkeys: content.followedPubkeys,
-            contactListEventID: content.contactListEvent?.id
+            contactListEventID: content.contactListEvent?.id,
+            authorRelayListEventIDs: Dictionary(
+                content.authorRelayListEvents.map { ($0.pubkey, $0.id) },
+                uniquingKeysWith: { _, latest in latest }
+            )
         )
     }
 

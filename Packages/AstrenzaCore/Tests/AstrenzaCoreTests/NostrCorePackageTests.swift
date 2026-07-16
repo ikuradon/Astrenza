@@ -2565,6 +2565,12 @@ struct NostrCorePackageTests {
             createdAt: 160,
             tags: [["p", followed]]
         )
+        let followedRelayList = nostrEvent(
+            kind: 10_002,
+            pubkey: followed,
+            createdAt: 170,
+            tags: [["r", "wss://followed-write.example", "write"]]
+        )
         let state = NostrHomeTimelineState(
             relays: ["wss://stale.example"],
             followedPubkeys: [],
@@ -2572,6 +2578,7 @@ struct NostrCorePackageTests {
             metadataEvents: [],
             relayListEvent: relayList,
             contactListEvent: contacts,
+            authorRelayListEvents: [followedRelayList],
             hasMoreOlder: true
         )
 
@@ -2582,6 +2589,7 @@ struct NostrCorePackageTests {
         #expect(restored.followedPubkeys == [followed])
         #expect(restored.relayListEvent == relayList)
         #expect(restored.contactListEvent == contacts)
+        #expect(restored.authorRelayListEvents == [followedRelayList])
     }
 
     @Test("Nostr event store restores home state after store recreation")
@@ -2925,6 +2933,79 @@ struct NostrCorePackageTests {
         #expect(await stageCollector.values() == [
             .resolvingRelayList,
             .resolvingContactList,
+            .loadingTimeline
+        ])
+    }
+
+    @Test("Full outbox loader resolves followed authors' kind 10002 and fetches their write relays")
+    func homeTimelineLoaderFullOutboxFlow() async throws {
+        let account = NostrAccount(
+            pubkey: String(repeating: "1", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "2", count: 64)
+        let ownRelayList = nostrEvent(
+            kind: 10_002,
+            pubkey: account.pubkey,
+            tags: [["r", "wss://own-read.example", "read"]]
+        )
+        let contacts = nostrEvent(
+            kind: 3,
+            pubkey: account.pubkey,
+            tags: [["p", followed]]
+        )
+        let authorRelayList = nostrEvent(
+            kind: 10_002,
+            pubkey: followed,
+            tags: [["r", "wss://author-write.example", "write"]]
+        )
+        let note = signedShapeOnlyEvent(
+            kind: 1,
+            pubkey: followed,
+            createdAt: 300,
+            content: "outbox note"
+        )
+        let fake = FakeRelayClient(
+            eventsBySubscriptionID: [
+                "astrenza-nip65": [ownRelayList],
+                "astrenza-kind3": [contacts],
+                "astrenza-outbox-relay-lists": [authorRelayList]
+            ],
+            eventsByRelayAndSubscriptionID: [
+                "wss://author-write.example": [
+                    "astrenza-home-outbox-1": [note]
+                ]
+            ]
+        )
+        let loader = NostrHomeTimelineLoader(
+            relayClient: fake,
+            bootstrapRelays: ["wss://bootstrap.example"],
+            pageLimit: 10
+        )
+        let stageCollector = HomeTimelineLoadStageCollector()
+
+        let state = try await loader.initialState(
+            account: account,
+            policy: NostrSyncPolicy(
+                mode: .fullOutbox,
+                networkType: .wifi,
+                lowPowerMode: false,
+                tapToLoadMedia: false,
+                queueOGPPreviews: true,
+                disableOGPOnCellular: false
+            )
+        ) { stage in
+            await stageCollector.append(stage)
+        }
+
+        #expect(state.authorRelayListEvents == [authorRelayList])
+        #expect(state.noteEvents == [note])
+        #expect(await fake.fetchRelayURLs().contains("wss://author-write.example"))
+        #expect(await stageCollector.values() == [
+            .resolvingRelayList,
+            .resolvingContactList,
+            .resolvingOutboxRelayLists,
             .loadingTimeline
         ])
     }
@@ -4338,7 +4419,7 @@ struct NostrCorePackageTests {
         #expect(cellular.disableOGPOnCellular)
 
         let lowPower = NostrSyncPolicy.default(networkType: .wifi, lowPowerMode: true)
-        #expect(lowPower.mode == .energySaver)
+        #expect(lowPower.mode == .ownRelayList)
         #expect(lowPower.tapToLoadMedia)
     }
 
@@ -4349,13 +4430,12 @@ struct NostrCorePackageTests {
             content: "photo https://cdn.example.test/pic.png read https://example.test/page"
         )
         let policy = NostrSyncPolicy(
-            mode: .energySaver,
+            mode: .ownRelayList,
             networkType: .cellular,
             lowPowerMode: true,
             tapToLoadMedia: true,
             queueOGPPreviews: true,
-            disableOGPOnCellular: true,
-            reduceFullOutboxOnCellular: true
+            disableOGPOnCellular: true
         )
 
         let decisions = NostrContentAttachmentClassifier.remotePreviewDecisions(
@@ -4399,8 +4479,7 @@ struct NostrCorePackageTests {
             lowPowerMode: false,
             tapToLoadMedia: false,
             queueOGPPreviews: true,
-            disableOGPOnCellular: false,
-            reduceFullOutboxOnCellular: true
+            disableOGPOnCellular: false
         )
 
         let decision = try #require(resolver.remotePreviewDecision(

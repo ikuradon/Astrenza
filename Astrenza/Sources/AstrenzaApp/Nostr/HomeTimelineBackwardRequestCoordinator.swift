@@ -43,7 +43,8 @@ final class HomeTimelineBackwardRequestCoordinator {
     }
 
     func requestOlder(
-        account: NostrAccount
+        account: NostrAccount,
+        policy: NostrSyncPolicy = .default()
     ) async -> HomeTimelineBackwardRequestOutcome {
         guard packetInstaller != nil else { return .unavailable }
         let definitionContent = contentCoordinator.snapshot
@@ -60,7 +61,12 @@ final class HomeTimelineBackwardRequestCoordinator {
             account: account,
             followedPubkeys: content.followedPubkeys,
             oldestCreatedAt: oldestCreatedAt,
-            relayURLs: content.resolvedRelays
+            relayURLs: content.resolvedRelays,
+            contactItems: NostrContactList.items(
+                from: content.contactListEvent
+            ),
+            authorRelayListEvents: content.authorRelayListEvents,
+            policy: policy
         )
         else { return .unavailable }
 
@@ -81,7 +87,8 @@ final class HomeTimelineBackwardRequestCoordinator {
     func requestGap(
         account: NostrAccount,
         gap: TimelineGap,
-        direction: TimelineGapFillDirection
+        direction: TimelineGapFillDirection,
+        policy: NostrSyncPolicy = .default()
     ) async -> HomeTimelineBackwardRequestOutcome {
         guard packetInstaller != nil else { return .unavailable }
         let definitionContent = contentCoordinator.snapshot
@@ -106,7 +113,12 @@ final class HomeTimelineBackwardRequestCoordinator {
             newerEvent: newerEvent,
             olderEvent: olderEvent,
             missingEstimate: gap.missingEstimate,
-            relayURLs: content.resolvedRelays
+            relayURLs: content.resolvedRelays,
+            contactItems: NostrContactList.items(
+                from: content.contactListEvent
+            ),
+            authorRelayListEvents: content.authorRelayListEvents,
+            policy: policy
         ) else { return .unavailable }
 
         return await install(

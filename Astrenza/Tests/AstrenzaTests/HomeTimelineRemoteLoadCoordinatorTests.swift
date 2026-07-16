@@ -295,6 +295,7 @@ private struct RemoteStateLoaderStub: HomeTimelineStateLoading {
 
     func bootstrapState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
         try await load(.runtimeBootstrap, onStage: onStage)
@@ -302,6 +303,7 @@ private struct RemoteStateLoaderStub: HomeTimelineStateLoading {
 
     func initialState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
         try await load(.initial, onStage: onStage)
@@ -309,7 +311,8 @@ private struct RemoteStateLoaderStub: HomeTimelineStateLoading {
 
     func refreshedState(
         account: NostrAccount,
-        current: NostrHomeTimelineState
+        current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy
     ) async throws -> NostrHomeTimelineState {
         try await load(
             .refresh(currentEventIDs: current.noteEvents.map(\.id)),
@@ -320,7 +323,8 @@ private struct RemoteStateLoaderStub: HomeTimelineStateLoading {
     func olderState(
         account: NostrAccount,
         current: NostrHomeTimelineState,
-        localBackfillEvents: [NostrEvent]?
+        localBackfillEvents: [NostrEvent]?,
+        policy: NostrSyncPolicy
     ) async throws -> NostrHomeTimelineState {
         try await load(
             .older(

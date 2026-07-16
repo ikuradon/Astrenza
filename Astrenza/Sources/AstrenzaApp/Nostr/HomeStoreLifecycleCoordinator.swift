@@ -100,6 +100,11 @@ final class HomeStoreLifecycleCoordinator {
         accountReset.reset(context: contexts.accountResetContext())
     }
 
+    func restart(account: NostrAccount) {
+        cancel()
+        start(account: account)
+    }
+
     func refreshLatest(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken

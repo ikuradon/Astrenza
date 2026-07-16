@@ -14,6 +14,19 @@ struct HomeTimelineGapBackfillInteractionState: Sendable {
     let account: NostrAccount?
     let hasRelayRuntime: Bool
     let resolvedRelays: [String]
+    let syncPolicy: NostrSyncPolicy
+
+    init(
+        account: NostrAccount?,
+        hasRelayRuntime: Bool,
+        resolvedRelays: [String],
+        syncPolicy: NostrSyncPolicy = .default()
+    ) {
+        self.account = account
+        self.hasRelayRuntime = hasRelayRuntime
+        self.resolvedRelays = resolvedRelays
+        self.syncPolicy = syncPolicy
+    }
 }
 
 enum HomeTimelineGapBackfillStoreAction: Equatable, Sendable {
@@ -58,6 +71,7 @@ final class HomeGapBackfillInteractionWorkflow {
                 account: context.state.account,
                 hasRelayRuntime: context.state.hasRelayRuntime,
                 resolvedRelayCount: context.state.resolvedRelays.count,
+                syncPolicy: context.state.syncPolicy,
                 gap: gap,
                 direction: direction
             ),

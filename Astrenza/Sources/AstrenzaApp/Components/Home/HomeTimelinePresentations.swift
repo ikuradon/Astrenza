@@ -91,7 +91,10 @@ struct HomeTimelinePresentationModifier: ViewModifier {
             accountSummaries: accountSummaries,
             onSelectAccount: actions.onSelectAccount,
             onRemoveAccount: actions.onRemoveAccount,
-            onAddAccount: actions.onAddAccount
+            onAddAccount: actions.onAddAccount,
+            onSyncPolicyChange: { accountID, policy in
+                timelineStore.applySyncPolicy(policy, accountID: accountID)
+            }
         )
         .presentationCornerRadius(26)
     }

@@ -418,7 +418,9 @@ public final class NostrEventStore: Sendable {
         timelineKey: String = "home",
         savedAt: Int = Int(Date().timeIntervalSince1970)
     ) throws {
-        let events = state.noteEvents + state.metadataEvents + [state.relayListEvent, state.contactListEvent].compactMap { $0 }
+        let events = state.noteEvents + state.metadataEvents +
+            state.authorRelayListEvents +
+            [state.relayListEvent, state.contactListEvent].compactMap { $0 }
         try save(events: events, receivedAt: savedAt)
         try saveTimelineEntries(state.noteEvents.map { event in
             NostrTimelineEntryRecord(
@@ -480,6 +482,7 @@ public final class NostrEventStore: Sendable {
         }
 
         let events = state.noteEvents + state.metadataEvents +
+            state.authorRelayListEvents +
             [state.relayListEvent, state.contactListEvent].compactMap { $0 }
         try database.write { db in
             try validateFeedDefinitionWrite(definition, db: db)
@@ -5346,6 +5349,12 @@ public final class NostrEventStore: Sendable {
             now: now,
             db: db
         )
+        let authorRelayListEvents = try latestReplaceableEvents(
+            pubkeys: Set(followedPubkeys),
+            kind: 10_002,
+            now: now,
+            db: db
+        )
         let relayList = NostrRelayList.parse(from: relayListEvent)
         let relays = relayList.readRelays.isEmpty
             ? (stateMetadata?.relays ?? syncRelayURLs(
@@ -5362,6 +5371,7 @@ public final class NostrEventStore: Sendable {
             metadataEvents: metadataEvents,
             relayListEvent: relayListEvent,
             contactListEvent: contactListEvent,
+            authorRelayListEvents: authorRelayListEvents,
             nip05Resolutions: stateMetadata?.nip05Resolutions ?? [:],
             hasMoreOlder: stateMetadata?.hasMoreOlder ?? true,
             relaySyncEvents: Array(try relaySyncEvents(

@@ -3,7 +3,8 @@ import AstrenzaCore
 @MainActor
 protocol HomeTimelineOlderPageRequesting: Sendable {
     func requestOlder(
-        account: NostrAccount
+        account: NostrAccount,
+        policy: NostrSyncPolicy
     ) async -> HomeTimelineBackwardRequestOutcome
 }
 
@@ -15,6 +16,7 @@ protocol HomeTimelineOlderPageRemoteLoading: Sendable {
         account: NostrAccount,
         current: NostrHomeTimelineState,
         localBackfillEvents: [NostrEvent]?,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> HomeTimelineRemoteLoadOutcome
 }
@@ -24,13 +26,15 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineOlderPageRemoteLoading 
         account: NostrAccount,
         current: NostrHomeTimelineState,
         localBackfillEvents: [NostrEvent]?,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> HomeTimelineRemoteLoadOutcome {
         await load(
             .older(
                 account: account,
                 current: current,
-                localBackfillEvents: localBackfillEvents
+                localBackfillEvents: localBackfillEvents,
+                policy: policy
             ),
             isCurrent: isCurrent
         )
@@ -41,6 +45,19 @@ struct HomeTimelineOlderPageRequest: Equatable, Sendable {
     let account: NostrAccount
     let lifecycle: HomeTimelineLifecycleToken
     let hasRelayRuntime: Bool
+    let syncPolicy: NostrSyncPolicy
+
+    init(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken,
+        hasRelayRuntime: Bool,
+        syncPolicy: NostrSyncPolicy = .default()
+    ) {
+        self.account = account
+        self.lifecycle = lifecycle
+        self.hasRelayRuntime = hasRelayRuntime
+        self.syncPolicy = syncPolicy
+    }
 }
 
 struct HomeTimelineOlderPageRemoteInput: Equatable, Sendable {
@@ -118,6 +135,7 @@ final class HomeTimelineOlderPageWorkflow {
             account: request.account,
             current: input.current,
             localBackfillEvents: input.localBackfillEvents,
+            policy: request.syncPolicy,
             isCurrent: { [lifecycleCoordinator] in
                 lifecycleCoordinator.isCurrent(request.lifecycle)
             }
@@ -133,7 +151,10 @@ final class HomeTimelineOlderPageWorkflow {
         _ request: HomeTimelineOlderPageRequest,
         handlers: HomeTimelineOlderPageHandlers
     ) async {
-        let outcome = await requester.requestOlder(account: request.account)
+        let outcome = await requester.requestOlder(
+            account: request.account,
+            policy: request.syncPolicy
+        )
         if case .failed(let diagnostic) = outcome {
             handlers.perform(.recordDiagnostic(diagnostic))
         }

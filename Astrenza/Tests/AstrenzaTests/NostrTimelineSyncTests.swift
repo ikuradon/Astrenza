@@ -133,30 +133,38 @@ struct NostrTimelineSyncTests {
         #expect(sinceByRelay[relays[2]] == .int(40))
     }
 
-    @Test("Full outbox mode groups authors by contact relay hints")
-    func fullOutboxPlannerGroupsAuthorsByRelayHints() throws {
+    @Test("Full outbox mode routes authors through their kind 10002 write relays")
+    func fullOutboxPlannerUsesAuthorWriteRelays() throws {
         let account = NostrAccount(pubkey: String(repeating: "a", count: 64), displayIdentifier: "account", readOnly: true)
-        let hinted = String(repeating: "b", count: 64)
+        let outbox = String(repeating: "b", count: 64)
+        let hinted = String(repeating: "d", count: 64)
         let fallback = String(repeating: "c", count: 64)
-        let missingHint = String(repeating: "d", count: 64)
+        let authorRelayList = NostrEvent(
+            id: "author-relay-list",
+            pubkey: outbox,
+            createdAt: 200,
+            kind: 10_002,
+            tags: [["r", "wss://author-write.example", "write"]],
+            content: "",
+            sig: ""
+        )
         let plan = HomeTimelineSyncPlanner().forwardPlan(
             account: account,
-            followedPubkeys: [hinted, fallback, missingHint],
+            followedPubkeys: [outbox, hinted, fallback],
             contactItems: [
                 NostrContactListItem(pubkey: hinted, relayHints: ["wss://hint.example"]),
-                NostrContactListItem(pubkey: fallback, relayHints: []),
-                NostrContactListItem(pubkey: missingHint, relayHints: ["wss://offline.example"])
+                NostrContactListItem(pubkey: fallback, relayHints: [])
             ],
+            authorRelayListEvents: [authorRelayList],
             newestCreatedAt: nil,
-            relayURLs: ["wss://own.example", "wss://hint.example"],
+            relayURLs: ["wss://own.example"],
             policy: NostrSyncPolicy(
                 mode: .fullOutbox,
                 networkType: .wifi,
                 lowPowerMode: false,
                 tapToLoadMedia: false,
                 queueOGPPreviews: true,
-                disableOGPOnCellular: false,
-                reduceFullOutboxOnCellular: true
+                disableOGPOnCellular: false
             )
         )
 
@@ -164,10 +172,12 @@ struct NostrTimelineSyncTests {
         #expect(plan.totalAuthorCount == 3)
         #expect(plan.packets.map(\.subscriptionID) == [
             "astrenza-home-forward-outbox-1",
-            "astrenza-home-forward-outbox-2"
+            "astrenza-home-forward-outbox-2",
+            "astrenza-home-forward-outbox-3"
         ])
+        #expect(authorsByRelay(in: plan)["wss://author-write.example"] == [outbox])
         #expect(authorsByRelay(in: plan)["wss://hint.example"] == [hinted])
-        #expect(authorsByRelay(in: plan)["wss://own.example"] == [fallback, missingHint])
+        #expect(authorsByRelay(in: plan)["wss://own.example"] == [fallback])
     }
 
     @Test("NIP-77 client messages encode relay frames")

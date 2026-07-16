@@ -6,15 +6,51 @@ struct HomeTimelineRelayRuntimeConfigurationIdentity: Equatable {
     let resolvedRelays: [String]
     let followedPubkeys: [String]
     let contactListEventID: String?
+    let authorRelayListEventIDs: [String: String]
+
+    init(
+        accountID: String,
+        lifecycleGeneration: UInt64,
+        resolvedRelays: [String],
+        followedPubkeys: [String],
+        contactListEventID: String?,
+        authorRelayListEventIDs: [String: String] = [:]
+    ) {
+        self.accountID = accountID
+        self.lifecycleGeneration = lifecycleGeneration
+        self.resolvedRelays = resolvedRelays
+        self.followedPubkeys = followedPubkeys
+        self.contactListEventID = contactListEventID
+        self.authorRelayListEventIDs = authorRelayListEventIDs
+    }
 }
 
 struct HomeTimelineRelayRuntimeConfigurationRequest {
     let identity: HomeTimelineRelayRuntimeConfigurationIdentity
     let account: NostrAccount
     let contactItems: [NostrContactListItem]
+    let authorRelayListEvents: [NostrEvent]
     let defaultRelayURLs: [String]
     let policy: NostrSyncPolicy
     let forceInstall: Bool
+
+    init(
+        identity: HomeTimelineRelayRuntimeConfigurationIdentity,
+        account: NostrAccount,
+        contactItems: [NostrContactListItem],
+        authorRelayListEvents: [NostrEvent] = [],
+        defaultRelayURLs: [String],
+        policy: NostrSyncPolicy,
+        forceInstall: Bool
+    ) {
+        self.identity = identity
+        self.account = account
+        self.contactItems = contactItems
+        self.authorRelayListEvents = authorRelayListEvents
+        self.defaultRelayURLs = defaultRelayURLs
+        self.policy = policy
+        self.forceInstall = forceInstall
+    }
 }
 
 struct HomeTimelineRelayRuntimeFeedPreparation {
@@ -137,21 +173,33 @@ final class HomeTimelineRelayRuntimeConfigurator {
             guard remainsCurrent() else { return }
             try await client.setDefaultRelays(request.defaultRelayURLs)
             guard remainsCurrent() else { return }
-            await handlers.prepareDependencies()
-            guard remainsCurrent(),
-                  let preparation = await handlers.prepareFeed()
+            guard let preparation = await handlers.prepareFeed(),
+                  remainsCurrent()
             else { return }
 
             let plan = syncPlanner.forwardPlan(
                 account: request.account,
                 followedPubkeys: request.identity.followedPubkeys,
                 contactItems: request.contactItems,
+                authorRelayListEvents: request.authorRelayListEvents,
                 newestCreatedAt: preparation.newestCreatedAt,
                 newestCreatedAtByRelay: preparation.newestCreatedAtByRelay,
                 initialCreatedAt: preparation.initialCreatedAt,
                 relayURLs: request.identity.resolvedRelays,
                 policy: request.policy
             )
+            guard remainsCurrent() else { return }
+            let activeRelayURLs = Self.activeRelayURLs(
+                baseRelayURLs: request.defaultRelayURLs,
+                packets: plan.packets
+            )
+            if activeRelayURLs != request.defaultRelayURLs {
+                await client.updateProfileRelayURLs(activeRelayURLs)
+                guard remainsCurrent() else { return }
+                try await client.setDefaultRelays(activeRelayURLs)
+                guard remainsCurrent() else { return }
+            }
+            await handlers.prepareDependencies()
             guard remainsCurrent() else { return }
             let scopedPackets = Self.feedScopedPackets(
                 plan.packets,
@@ -162,7 +210,7 @@ final class HomeTimelineRelayRuntimeConfigurator {
                 scopedPackets,
                 Self.runtimeKeys(
                     packets: scopedPackets,
-                    defaultRelayURLs: request.defaultRelayURLs
+                    defaultRelayURLs: activeRelayURLs
                 ),
                 preparation.context
             )
@@ -190,6 +238,16 @@ final class HomeTimelineRelayRuntimeConfigurator {
                 filters: packet.filters,
                 relayURLs: packet.relayURLs
             )
+        }
+    }
+
+    private static func activeRelayURLs(
+        baseRelayURLs: [String],
+        packets: [NostrREQPacket]
+    ) -> [String] {
+        var seen = Set<String>()
+        return (baseRelayURLs + packets.flatMap(\.relayURLs)).filter {
+            seen.insert($0).inserted
         }
     }
 

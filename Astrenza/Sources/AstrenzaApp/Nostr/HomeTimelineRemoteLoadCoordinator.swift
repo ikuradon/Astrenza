@@ -5,23 +5,27 @@ protocol HomeTimelineStateLoading: Sendable {
 
     func bootstrapState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState
 
     func initialState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState
 
     func refreshedState(
         account: NostrAccount,
-        current: NostrHomeTimelineState
+        current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy
     ) async throws -> NostrHomeTimelineState
 
     func olderState(
         account: NostrAccount,
         current: NostrHomeTimelineState,
-        localBackfillEvents: [NostrEvent]?
+        localBackfillEvents: [NostrEvent]?,
+        policy: NostrSyncPolicy
     ) async throws -> NostrHomeTimelineState
 }
 
@@ -36,14 +40,49 @@ extension HomeTimelineRelayStatusCoordinator:
     HomeTimelineFetchedRelayEventPersisting {}
 
 enum HomeTimelineRemoteLoadRequest: Sendable {
-    case initial(account: NostrAccount)
-    case runtimeBootstrap(account: NostrAccount)
-    case refresh(account: NostrAccount, current: NostrHomeTimelineState)
+    case initial(account: NostrAccount, policy: NostrSyncPolicy)
+    case runtimeBootstrap(account: NostrAccount, policy: NostrSyncPolicy)
+    case refresh(
+        account: NostrAccount,
+        current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy
+    )
     case older(
         account: NostrAccount,
         current: NostrHomeTimelineState,
-        localBackfillEvents: [NostrEvent]?
+        localBackfillEvents: [NostrEvent]?,
+        policy: NostrSyncPolicy
     )
+}
+
+extension HomeTimelineRemoteLoadRequest {
+    static func initial(account: NostrAccount) -> Self {
+        .initial(account: account, policy: .default())
+    }
+
+    static func runtimeBootstrap(account: NostrAccount) -> Self {
+        .runtimeBootstrap(account: account, policy: .default())
+    }
+
+    static func refresh(
+        account: NostrAccount,
+        current: NostrHomeTimelineState
+    ) -> Self {
+        .refresh(account: account, current: current, policy: .default())
+    }
+
+    static func older(
+        account: NostrAccount,
+        current: NostrHomeTimelineState,
+        localBackfillEvents: [NostrEvent]?
+    ) -> Self {
+        .older(
+            account: account,
+            current: current,
+            localBackfillEvents: localBackfillEvents,
+            policy: .default()
+        )
+    }
 }
 
 enum HomeTimelineRemoteLoadOutcome: Equatable, Sendable {
@@ -105,17 +144,30 @@ final class HomeTimelineRemoteLoadCoordinator {
         onStage: @escaping @Sendable (NostrHomeTimelineLoadStage) async -> Void
     ) async throws -> NostrHomeTimelineState {
         switch request {
-        case .initial(let account):
-            try await loader.initialState(account: account, onStage: onStage)
-        case .runtimeBootstrap(let account):
-            try await loader.bootstrapState(account: account, onStage: onStage)
-        case .refresh(let account, let current):
-            try await loader.refreshedState(account: account, current: current)
-        case .older(let account, let current, let localBackfillEvents):
+        case .initial(let account, let policy):
+            try await loader.initialState(
+                account: account,
+                policy: policy,
+                onStage: onStage
+            )
+        case .runtimeBootstrap(let account, let policy):
+            try await loader.bootstrapState(
+                account: account,
+                policy: policy,
+                onStage: onStage
+            )
+        case .refresh(let account, let current, let policy):
+            try await loader.refreshedState(
+                account: account,
+                current: current,
+                policy: policy
+            )
+        case .older(let account, let current, let localBackfillEvents, let policy):
             try await loader.olderState(
                 account: account,
                 current: current,
-                localBackfillEvents: localBackfillEvents
+                localBackfillEvents: localBackfillEvents,
+                policy: policy
             )
         }
     }

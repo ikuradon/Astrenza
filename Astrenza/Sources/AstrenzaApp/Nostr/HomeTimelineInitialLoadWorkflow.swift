@@ -4,6 +4,7 @@ import AstrenzaCore
 protocol HomeTimelineInitialLoadRemoteLoading: Sendable {
     func loadInitialState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
             NostrHomeTimelineLoadStage
@@ -13,6 +14,7 @@ protocol HomeTimelineInitialLoadRemoteLoading: Sendable {
 
     func loadRuntimeBootstrapState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
             NostrHomeTimelineLoadStage
@@ -24,6 +26,7 @@ protocol HomeTimelineInitialLoadRemoteLoading: Sendable {
 extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoading {
     func loadInitialState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
             NostrHomeTimelineLoadStage
@@ -31,7 +34,7 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoadin
         didFetch: @escaping @MainActor @Sendable () -> Void
     ) async -> HomeTimelineRemoteLoadOutcome {
         await load(
-            .initial(account: account),
+            .initial(account: account, policy: policy),
             isCurrent: isCurrent,
             didReceiveStage: didReceiveStage,
             didFetch: didFetch
@@ -40,6 +43,7 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoadin
 
     func loadRuntimeBootstrapState(
         account: NostrAccount,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
             NostrHomeTimelineLoadStage
@@ -47,7 +51,7 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoadin
         didFetch: @escaping @MainActor @Sendable () -> Void
     ) async -> HomeTimelineRemoteLoadOutcome {
         await load(
-            .runtimeBootstrap(account: account),
+            .runtimeBootstrap(account: account, policy: policy),
             isCurrent: isCurrent,
             didReceiveStage: didReceiveStage,
             didFetch: didFetch
@@ -59,6 +63,19 @@ struct HomeTimelineInitialLoadRequest: Equatable, Sendable {
     let account: NostrAccount
     let lifecycle: HomeTimelineLifecycleToken
     let hasRelayRuntime: Bool
+    let syncPolicy: NostrSyncPolicy
+
+    init(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken,
+        hasRelayRuntime: Bool,
+        syncPolicy: NostrSyncPolicy = .default()
+    ) {
+        self.account = account
+        self.lifecycle = lifecycle
+        self.hasRelayRuntime = hasRelayRuntime
+        self.syncPolicy = syncPolicy
+    }
 }
 
 enum HomeTimelineInitialLoadCommand: Equatable, Sendable {
@@ -115,6 +132,7 @@ final class HomeTimelineInitialLoadWorkflow {
 
         let outcome = await remoteLoader.loadInitialState(
             account: request.account,
+            policy: request.syncPolicy,
             isCurrent: currentLifecycleHandler(for: request.lifecycle),
             didReceiveStage: stageHandler(
                 lifecycle: request.lifecycle,
@@ -151,6 +169,7 @@ final class HomeTimelineInitialLoadWorkflow {
 
         let outcome = await remoteLoader.loadRuntimeBootstrapState(
             account: request.account,
+            policy: request.syncPolicy,
             isCurrent: currentLifecycleHandler(for: request.lifecycle),
             didReceiveStage: stageHandler(
                 lifecycle: request.lifecycle,
@@ -212,6 +231,8 @@ final class HomeTimelineInitialLoadWorkflow {
             setPhase(.resolvingRelays, handlers: handlers)
         case .resolvingContactList:
             setPhase(.resolvingContacts, handlers: handlers)
+        case .resolvingOutboxRelayLists:
+            setPhase(.resolvingRelays, handlers: handlers)
         case .loadingTimeline:
             setPhase(.loadingHome, handlers: handlers)
         }

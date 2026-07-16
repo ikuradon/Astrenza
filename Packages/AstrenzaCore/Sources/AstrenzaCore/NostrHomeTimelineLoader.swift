@@ -3,6 +3,7 @@ import Foundation
 public enum NostrHomeTimelineLoadStage: Equatable, Sendable {
     case resolvingRelayList
     case resolvingContactList
+    case resolvingOutboxRelayLists
     case loadingTimeline
 }
 
@@ -13,6 +14,7 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
     public let metadataEvents: [NostrEvent]
     public let relayListEvent: NostrEvent?
     public let contactListEvent: NostrEvent?
+    public let authorRelayListEvents: [NostrEvent]
     public let nip05Resolutions: [String: NostrNIP05Resolution]
     public let hasMoreOlder: Bool
     public let relaySyncEvents: [NostrRelaySyncEventRecord]
@@ -24,6 +26,7 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         metadataEvents: [NostrEvent],
         relayListEvent: NostrEvent? = nil,
         contactListEvent: NostrEvent? = nil,
+        authorRelayListEvents: [NostrEvent] = [],
         nip05Resolutions: [String: NostrNIP05Resolution] = [:],
         hasMoreOlder: Bool = true,
         relaySyncEvents: [NostrRelaySyncEventRecord] = []
@@ -34,6 +37,7 @@ public struct NostrHomeTimelineState: Equatable, Sendable {
         self.metadataEvents = metadataEvents
         self.relayListEvent = relayListEvent
         self.contactListEvent = contactListEvent
+        self.authorRelayListEvents = authorRelayListEvents
         self.nip05Resolutions = nip05Resolutions
         self.hasMoreOlder = hasMoreOlder
         self.relaySyncEvents = relaySyncEvents
@@ -65,10 +69,11 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     public func bootstrapState(
         account: NostrAccount,
+        policy: NostrSyncPolicy = .default(),
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
     ) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
+        let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
         await onStage?(.resolvingRelayList)
         let relayListResult = try await latestEvent(
             relays: discoveryRelays,
@@ -86,8 +91,8 @@ public struct NostrHomeTimelineLoader: Sendable {
         let relayListEvent = relayListResult.event
 
         let relayList = NostrRelayList.parse(from: relayListEvent)
-        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
-        let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
+        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : relayList.readRelays
+        let contactRelays = (readRelays + discoveryRelays).uniqued()
 
         await onStage?(.resolvingContactList)
         let contactResult = try await settledLatestEvent(
@@ -105,6 +110,14 @@ public struct NostrHomeTimelineLoader: Sendable {
         relaySyncEvents.append(contentsOf: contactResult.syncEvents)
         let contactEvent = contactResult.event
         let contacts = NostrContactList.pubkeys(from: contactEvent)
+        let authorRelayListEvents = try await authorRelayListEvents(
+            authors: contacts,
+            relays: contactRelays,
+            accountID: account.pubkey,
+            policy: policy,
+            onStage: onStage,
+            relaySyncEvents: &relaySyncEvents
+        )
 
         return NostrHomeTimelineState(
             relays: readRelays,
@@ -113,6 +126,7 @@ public struct NostrHomeTimelineLoader: Sendable {
             metadataEvents: [],
             relayListEvent: relayListEvent,
             contactListEvent: contactEvent,
+            authorRelayListEvents: authorRelayListEvents,
             nip05Resolutions: [:],
             hasMoreOlder: true,
             relaySyncEvents: relaySyncEvents
@@ -121,10 +135,11 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     public func initialState(
         account: NostrAccount,
+        policy: NostrSyncPolicy = .default(),
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
     ) async throws -> NostrHomeTimelineState {
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let discoveryRelays = Array((normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued().prefix(8))
+        let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
         await onStage?(.resolvingRelayList)
         let relayListResult = try await latestEvent(
             relays: discoveryRelays,
@@ -142,8 +157,8 @@ public struct NostrHomeTimelineLoader: Sendable {
         let relayListEvent = relayListResult.event
 
         let relayList = NostrRelayList.parse(from: relayListEvent)
-        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : Array(relayList.readRelays.prefix(8))
-        let contactRelays = Array((readRelays + discoveryRelays).uniqued().prefix(10))
+        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : relayList.readRelays
+        let contactRelays = (readRelays + discoveryRelays).uniqued()
 
         await onStage?(.resolvingContactList)
         let contactResult = try await latestEvent(
@@ -161,6 +176,14 @@ public struct NostrHomeTimelineLoader: Sendable {
         relaySyncEvents.append(contentsOf: contactResult.syncEvents)
         let contactEvent = contactResult.event
         let contacts = NostrContactList.pubkeys(from: contactEvent)
+        let authorRelayListEvents = try await authorRelayListEvents(
+            authors: contacts,
+            relays: contactRelays,
+            accountID: account.pubkey,
+            policy: policy,
+            onStage: onStage,
+            relaySyncEvents: &relaySyncEvents
+        )
 
         guard !contacts.isEmpty else {
             return NostrHomeTimelineState(
@@ -170,6 +193,7 @@ public struct NostrHomeTimelineLoader: Sendable {
                 metadataEvents: [],
                 relayListEvent: relayListEvent,
                 contactListEvent: contactEvent,
+                authorRelayListEvents: authorRelayListEvents,
                 nip05Resolutions: [:],
                 hasMoreOlder: true,
                 relaySyncEvents: relaySyncEvents
@@ -177,12 +201,17 @@ public struct NostrHomeTimelineLoader: Sendable {
         }
 
         await onStage?(.loadingTimeline)
-        let planner = NostrHomeFetchPlanner(authors: contacts, pageLimit: pageLimit)
-        let homeResult = try await mergedEvents(
-            relays: readRelays,
-            request: planner.initialRequest(subscriptionID: "astrenza-home"),
-            accountID: account.pubkey
-        )
+        let homeResult = try await timelineEvents(
+            authors: contacts,
+            authorRelayListEvents: authorRelayListEvents,
+            contactListEvent: contactEvent,
+            fallbackRelays: readRelays,
+            policy: policy,
+            accountID: account.pubkey,
+            subscriptionID: "astrenza-home"
+        ) { planner, subscriptionID in
+            planner.initialRequest(subscriptionID: subscriptionID)
+        }
         relaySyncEvents.append(contentsOf: homeResult.syncEvents)
         let homeEvents = homeResult.events
         let metadataEvents = try await metadataEvents(
@@ -204,27 +233,52 @@ public struct NostrHomeTimelineLoader: Sendable {
             metadataEvents: sortedUnique(metadataEvents),
             relayListEvent: relayListEvent,
             contactListEvent: contactEvent,
+            authorRelayListEvents: authorRelayListEvents,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: true,
             relaySyncEvents: relaySyncEvents
         )
     }
 
-    public func refreshedState(account: NostrAccount, current: NostrHomeTimelineState) async throws -> NostrHomeTimelineState {
+    public func refreshedState(
+        account: NostrAccount,
+        current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy = .default()
+    ) async throws -> NostrHomeTimelineState {
         guard !current.noteEvents.isEmpty else {
-            return try await initialState(account: account)
+            return try await initialState(account: account, policy: policy)
         }
 
         let relays = current.relays.isEmpty ? bootstrapRelays : current.relays
         let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : current.followedPubkeys
         let newestCreatedAt = current.noteEvents.map(\.createdAt).max() ?? 0
-        let planner = NostrHomeFetchPlanner(authors: authors, pageLimit: pageLimit)
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let freshResult = try await mergedEvents(
+        let refreshedRelayListEvents = try await authorRelayListEvents(
+            authors: authors,
             relays: relays,
-            request: planner.newerRequest(subscriptionID: "astrenza-home-newer", after: newestCreatedAt),
-            accountID: account.pubkey
+            accountID: account.pubkey,
+            policy: policy,
+            onStage: nil,
+            relaySyncEvents: &relaySyncEvents
         )
+        let authorRelayListEvents = latestRelayListEvents(
+            current.authorRelayListEvents + refreshedRelayListEvents,
+            authors: Set(authors.map { $0.lowercased() })
+        )
+        let freshResult = try await timelineEvents(
+            authors: authors,
+            authorRelayListEvents: authorRelayListEvents,
+            contactListEvent: current.contactListEvent,
+            fallbackRelays: relays,
+            policy: policy,
+            accountID: account.pubkey,
+            subscriptionID: "astrenza-home-newer"
+        ) { planner, subscriptionID in
+            planner.newerRequest(
+                subscriptionID: subscriptionID,
+                after: newestCreatedAt
+            )
+        }
         relaySyncEvents.append(contentsOf: freshResult.syncEvents)
         let freshEvents = freshResult.events
         let noteEvents = sortedUnique(current.noteEvents + freshEvents)
@@ -248,6 +302,7 @@ public struct NostrHomeTimelineLoader: Sendable {
             metadataEvents: metadataEvents,
             relayListEvent: current.relayListEvent,
             contactListEvent: current.contactListEvent,
+            authorRelayListEvents: authorRelayListEvents,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: current.hasMoreOlder,
             relaySyncEvents: relaySyncEvents
@@ -257,7 +312,8 @@ public struct NostrHomeTimelineLoader: Sendable {
     public func olderState(
         account: NostrAccount,
         current: NostrHomeTimelineState,
-        localBackfillEvents: [NostrEvent]? = nil
+        localBackfillEvents: [NostrEvent]? = nil,
+        policy: NostrSyncPolicy = .default()
     ) async throws -> NostrHomeTimelineState {
         let relays = current.relays.isEmpty ? bootstrapRelays : current.relays
         let authors = current.followedPubkeys.isEmpty ? [account.pubkey] : current.followedPubkeys
@@ -265,14 +321,22 @@ public struct NostrHomeTimelineLoader: Sendable {
             return current
         }
 
-        let planner = NostrHomeFetchPlanner(authors: authors, pageLimit: pageLimit)
         let until = max(0, oldestCreatedAt - 1)
         var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let olderResult = try await mergedEvents(
-            relays: relays,
-            request: planner.olderRequest(subscriptionID: "astrenza-home-older", before: oldestCreatedAt),
-            accountID: account.pubkey
-        )
+        let olderResult = try await timelineEvents(
+            authors: authors,
+            authorRelayListEvents: current.authorRelayListEvents,
+            contactListEvent: current.contactListEvent,
+            fallbackRelays: relays,
+            policy: policy,
+            accountID: account.pubkey,
+            subscriptionID: "astrenza-home-older"
+        ) { planner, subscriptionID in
+            planner.olderRequest(
+                subscriptionID: subscriptionID,
+                before: oldestCreatedAt
+            )
+        }
         relaySyncEvents.append(contentsOf: olderResult.syncEvents)
         var olderEvents = olderResult.events
         if olderEvents.isEmpty {
@@ -293,6 +357,7 @@ public struct NostrHomeTimelineLoader: Sendable {
                 metadataEvents: current.metadataEvents,
                 relayListEvent: current.relayListEvent,
                 contactListEvent: current.contactListEvent,
+                authorRelayListEvents: current.authorRelayListEvents,
                 nip05Resolutions: current.nip05Resolutions,
                 hasMoreOlder: false,
                 relaySyncEvents: relaySyncEvents
@@ -318,10 +383,171 @@ public struct NostrHomeTimelineLoader: Sendable {
             metadataEvents: metadataEvents,
             relayListEvent: current.relayListEvent,
             contactListEvent: current.contactListEvent,
+            authorRelayListEvents: current.authorRelayListEvents,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: true,
             relaySyncEvents: relaySyncEvents
         )
+    }
+
+    private func timelineEvents(
+        authors: [String],
+        authorRelayListEvents: [NostrEvent],
+        contactListEvent: NostrEvent?,
+        fallbackRelays: [String],
+        policy: NostrSyncPolicy,
+        accountID: String,
+        subscriptionID: String,
+        makeRequest: (NostrHomeFetchPlanner, String) -> NostrRelayRequest
+    ) async throws -> (
+        events: [NostrEvent],
+        syncEvents: [NostrRelaySyncEventRecord]
+    ) {
+        guard policy.mode == .fullOutbox else {
+            return try await mergedEvents(
+                relays: fallbackRelays,
+                request: makeRequest(
+                    NostrHomeFetchPlanner(
+                        authors: authors,
+                        pageLimit: pageLimit
+                    ),
+                    subscriptionID
+                ),
+                accountID: accountID
+            )
+        }
+
+        let routing = NostrOutboxRelayRouting()
+        let relayURLsByAuthor = routing.relayURLsByAuthor(
+            authors: authors,
+            relayListEvents: authorRelayListEvents,
+            contactItems: NostrContactList.items(from: contactListEvent),
+            fallbackRelayURLs: fallbackRelays
+        )
+        let authorsByRelay = routing.authorsByRelay(
+            relayURLsByAuthor: relayURLsByAuthor
+        )
+        let relayClient = relayClient
+        return try await withThrowingTaskGroup(
+            of: (
+                String,
+                NostrRelayRequest,
+                Result<[NostrEvent], Error>,
+                Int,
+                Int
+            ).self
+        ) { group in
+            for (index, relayURL) in authorsByRelay.keys.sorted().enumerated() {
+                let relayAuthors = authorsByRelay[relayURL] ?? []
+                let request = makeRequest(
+                    NostrHomeFetchPlanner(
+                        authors: relayAuthors,
+                        pageLimit: pageLimit
+                    ),
+                    "\(subscriptionID)-outbox-\(index + 1)"
+                )
+                group.addTask {
+                    let started = Date()
+                    do {
+                        let events = try await relayClient.fetch(
+                            relayURL: relayURL,
+                            request: request
+                        )
+                        return (
+                            relayURL,
+                            request,
+                            .success(events),
+                            Int(started.timeIntervalSince1970),
+                            Int(Date().timeIntervalSince(started) * 1_000)
+                        )
+                    } catch {
+                        return (
+                            relayURL,
+                            request,
+                            .failure(error),
+                            Int(started.timeIntervalSince1970),
+                            Int(Date().timeIntervalSince(started) * 1_000)
+                        )
+                    }
+                }
+            }
+
+            var eventsByID: [String: NostrEvent] = [:]
+            var syncEvents: [NostrRelaySyncEventRecord] = []
+            for try await (relay, request, result, startedAt, latency) in group {
+                syncEvents.append(relaySyncEvent(
+                    relay: relay,
+                    result: result,
+                    startedAt: startedAt,
+                    latency: latency,
+                    request: request,
+                    accountID: accountID
+                ))
+                if case .success(let relayEvents) = result {
+                    for event in relayEvents {
+                        eventsByID[event.id] = event
+                    }
+                }
+            }
+            return (sortedUnique(Array(eventsByID.values)), syncEvents)
+        }
+    }
+
+    private func authorRelayListEvents(
+        authors: [String],
+        relays: [String],
+        accountID: String,
+        policy: NostrSyncPolicy,
+        onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?,
+        relaySyncEvents: inout [NostrRelaySyncEventRecord]
+    ) async throws -> [NostrEvent] {
+        guard policy.mode == .fullOutbox, !authors.isEmpty else { return [] }
+        await onStage?(.resolvingOutboxRelayLists)
+        let sortedAuthors = authors.sorted()
+        let filters = stride(from: 0, to: sortedAuthors.count, by: 200)
+            .map { offset in
+                let chunk = Array(sortedAuthors[offset..<min(offset + 200, sortedAuthors.count)])
+                return [
+                    "authors": AnySendableJSON.strings(chunk),
+                    "kinds": .ints([10_002]),
+                    "limit": .int(chunk.count)
+                ]
+            }
+        let result = try await mergedEvents(
+            relays: relays,
+            request: NostrRelayRequest(
+                subscriptionID: "astrenza-outbox-relay-lists",
+                filters: filters
+            ),
+            accountID: accountID
+        )
+        relaySyncEvents.append(contentsOf: result.syncEvents)
+        return latestRelayListEvents(
+            result.events,
+            authors: Set(authors.map { $0.lowercased() })
+        )
+    }
+
+    private func latestRelayListEvents(
+        _ events: [NostrEvent],
+        authors: Set<String>
+    ) -> [NostrEvent] {
+        var latestByAuthor: [String: NostrEvent] = [:]
+        for event in events where event.kind == 10_002 {
+            let author = event.pubkey.lowercased()
+            guard authors.contains(author) else { continue }
+            guard let current = latestByAuthor[author] else {
+                latestByAuthor[author] = event
+                continue
+            }
+            if event.createdAt > current.createdAt ||
+                (event.createdAt == current.createdAt && event.id < current.id) {
+                latestByAuthor[author] = event
+            }
+        }
+        return latestByAuthor.values.sorted { lhs, rhs in
+            lhs.pubkey < rhs.pubkey
+        }
     }
 
     private func nip05Resolutions(

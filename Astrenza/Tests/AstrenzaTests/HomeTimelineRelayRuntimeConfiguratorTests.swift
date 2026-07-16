@@ -126,8 +126,64 @@ struct HomeTimelineRelayRuntimeConfiguratorTests {
         #expect(recorder.failures == ["installationFailed"])
     }
 
+    @Test("Full outbox adds author write relays to the active runtime")
     @MainActor
-    private func configurationFixture() throws -> RelayRuntimeConfigurationFixture {
+    func fullOutboxExpandsActiveRelays() async throws {
+        let followedPubkey = String(repeating: "b", count: 64)
+        let authorRelayList = NostrEvent(
+            id: "author-relay-list",
+            pubkey: followedPubkey,
+            createdAt: 200,
+            kind: 10_002,
+            tags: [["r", "wss://author-write.example", "write"]],
+            content: "",
+            sig: ""
+        )
+        let recorder = RelayRuntimeConfigurationRecorder()
+        let configurator = HomeTimelineRelayRuntimeConfigurator(
+            client: recorder.client(waitUntilReady: { true })
+        )
+        let fixture = try configurationFixture(
+            authorRelayListEvents: [authorRelayList],
+            policy: NostrSyncPolicy(
+                mode: .fullOutbox,
+                networkType: .wifi,
+                lowPowerMode: false,
+                tapToLoadMedia: false,
+                queueOGPPreviews: true,
+                disableOGPOnCellular: false
+            )
+        )
+        recorder.currentIdentity = fixture.identity
+
+        await configurator.configure(
+            fixture.request,
+            handlers: fixture.handlers(recorder: recorder)
+        )
+
+        #expect(recorder.defaultRelayUpdates == [
+            ["wss://one.example", "wss://two.example"],
+            [
+                "wss://one.example",
+                "wss://two.example",
+                "wss://author-write.example"
+            ]
+        ])
+        #expect(recorder.profileRelayUpdates.last == [
+            "wss://one.example",
+            "wss://two.example",
+            "wss://author-write.example"
+        ])
+        #expect(recorder.installAttempts.first?.flatMap(\.relayURLs) == [
+            "wss://author-write.example"
+        ])
+    }
+
+    @MainActor
+    private func configurationFixture(
+        authorRelayListEvents: [NostrEvent] = [],
+        policy: NostrSyncPolicy = .default()
+    ) throws -> RelayRuntimeConfigurationFixture {
         let accountID = String(repeating: "a", count: 64)
         let followedPubkey = String(repeating: "b", count: 64)
         let relays = ["wss://one.example", "wss://two.example"]
@@ -136,7 +192,10 @@ struct HomeTimelineRelayRuntimeConfiguratorTests {
             lifecycleGeneration: 7,
             resolvedRelays: relays,
             followedPubkeys: [followedPubkey],
-            contactListEventID: "contacts"
+            contactListEventID: "contacts",
+            authorRelayListEventIDs: Dictionary(uniqueKeysWithValues:
+                authorRelayListEvents.map { ($0.pubkey, $0.id) }
+            )
         )
         let specification = try JSONEncoder().encode(
             HomeFeedSpecification(authors: [followedPubkey], kinds: [1, 6])
@@ -161,7 +220,9 @@ struct HomeTimelineRelayRuntimeConfiguratorTests {
                 readOnly: true
             ),
             context: context,
-            relays: relays
+            relays: relays,
+            authorRelayListEvents: authorRelayListEvents,
+            policy: policy
         )
     }
 
@@ -183,6 +244,8 @@ private struct RelayRuntimeConfigurationFixture {
     let account: NostrAccount
     let context: HomeFeedRuntimeContext
     let relays: [String]
+    let authorRelayListEvents: [NostrEvent]
+    let policy: NostrSyncPolicy
 
     var request: HomeTimelineRelayRuntimeConfigurationRequest {
         request(forceInstall: false)
@@ -193,8 +256,9 @@ private struct RelayRuntimeConfigurationFixture {
             identity: identity,
             account: account,
             contactItems: [],
+            authorRelayListEvents: authorRelayListEvents,
             defaultRelayURLs: relays,
-            policy: .default(),
+            policy: policy,
             forceInstall: forceInstall
         )
     }
@@ -240,12 +304,16 @@ private struct RelayRuntimeConfigurationFixture {
         identity: HomeTimelineRelayRuntimeConfigurationIdentity,
         account: NostrAccount,
         context: HomeFeedRuntimeContext,
-        relays: [String]
+        relays: [String],
+        authorRelayListEvents: [NostrEvent] = [],
+        policy: NostrSyncPolicy = .default()
     ) {
         self.identity = identity
         self.account = account
         self.context = context
         self.relays = relays
+        self.authorRelayListEvents = authorRelayListEvents
+        self.policy = policy
     }
 }
 

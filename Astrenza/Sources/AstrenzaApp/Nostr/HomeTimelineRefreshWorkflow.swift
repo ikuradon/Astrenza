@@ -5,6 +5,7 @@ protocol HomeTimelineRefreshRemoteLoading: Sendable {
     func refreshState(
         account: NostrAccount,
         current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> HomeTimelineRemoteLoadOutcome
 }
@@ -13,10 +14,15 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineRefreshRemoteLoading {
     func refreshState(
         account: NostrAccount,
         current: NostrHomeTimelineState,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> HomeTimelineRemoteLoadOutcome {
         await load(
-            .refresh(account: account, current: current),
+            .refresh(
+                account: account,
+                current: current,
+                policy: policy
+            ),
             isCurrent: isCurrent
         )
     }
@@ -27,6 +33,21 @@ struct HomeTimelineRefreshRequest: Equatable, Sendable {
     let lifecycle: HomeTimelineLifecycleToken
     let hasTimelineEvents: Bool
     let hasRelayRuntime: Bool
+    let syncPolicy: NostrSyncPolicy
+
+    init(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken,
+        hasTimelineEvents: Bool,
+        hasRelayRuntime: Bool,
+        syncPolicy: NostrSyncPolicy = .default()
+    ) {
+        self.account = account
+        self.lifecycle = lifecycle
+        self.hasTimelineEvents = hasTimelineEvents
+        self.hasRelayRuntime = hasRelayRuntime
+        self.syncPolicy = syncPolicy
+    }
 }
 
 struct HomeTimelineRefreshRemoteInput: Equatable, Sendable {
@@ -106,6 +127,7 @@ final class HomeTimelineRefreshWorkflow {
         let outcome = await remoteLoader.refreshState(
             account: request.account,
             current: input.current,
+            policy: request.syncPolicy,
             isCurrent: { [lifecycleCoordinator] in
                 lifecycleCoordinator.isCurrent(request.lifecycle)
             }

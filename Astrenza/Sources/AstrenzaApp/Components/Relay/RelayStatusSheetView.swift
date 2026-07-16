@@ -1253,10 +1253,8 @@ private extension NostrSyncPolicy {
 private extension NostrSyncMode {
     var displayTitle: String {
         switch self {
-        case .energySaver:
-            "Energy Saver"
         case .ownRelayList:
-            "Own Relays"
+            "3 / 10002"
         case .fullOutbox:
             "Full Outbox"
         }

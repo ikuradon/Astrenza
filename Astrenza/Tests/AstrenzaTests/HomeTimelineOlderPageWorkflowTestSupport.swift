@@ -252,7 +252,8 @@ final class OlderPageProbe:
     }
 
     func requestOlder(
-        account: NostrAccount
+        account: NostrAccount,
+        policy: NostrSyncPolicy
     ) async -> HomeTimelineBackwardRequestOutcome {
         events.append(.requestOlder(account.pubkey))
         beforeRuntimeReturn?()
@@ -263,6 +264,7 @@ final class OlderPageProbe:
         account: NostrAccount,
         current: NostrHomeTimelineState,
         localBackfillEvents: [NostrEvent]?,
+        policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> HomeTimelineRemoteLoadOutcome {
         events.append(.loadRemote(

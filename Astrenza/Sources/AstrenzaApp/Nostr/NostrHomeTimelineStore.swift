@@ -35,6 +35,10 @@ extension NostrHomeTimelineStore {
         composition.viewport.refresh()
     }
 
+    func applySyncPolicy(_ policy: NostrSyncPolicy, accountID: String?) {
+        composition.syncPolicy.apply(policy, accountID: accountID)
+    }
+
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
         composition.viewport.setTimelineAtNewestWindow(isAtNewestWindow)
     }

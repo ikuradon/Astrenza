@@ -11,12 +11,6 @@ struct HomeTimelineRuntimeInteractionState: Equatable, Sendable {
 }
 
 struct HomeTimelineRuntimeRelayPlanner: Sendable {
-    private let runtimeRelayLimit: Int
-
-    init(runtimeRelayLimit: Int = 10) {
-        self.runtimeRelayLimit = max(0, runtimeRelayLimit)
-    }
-
     func sessionRequest(
         state: HomeTimelineRuntimeInteractionState
     ) -> HomeTimelineRuntimeSessionRequest {
@@ -58,15 +52,12 @@ struct HomeTimelineRuntimeRelayPlanner: Sendable {
         resolvedRelayURLs: [String],
         bootstrapRelayURLs: [String]
     ) -> [String] {
-        Array(
-            deduplicatedRelayURLs(
-                normalizedRelayURLs(
-                    resolvedRelayURLs +
-                        account.discoveryRelays +
-                        bootstrapRelayURLs
-                )
+        deduplicatedRelayURLs(
+            normalizedRelayURLs(
+                resolvedRelayURLs +
+                    account.discoveryRelays +
+                    bootstrapRelayURLs
             )
-            .prefix(runtimeRelayLimit)
         )
     }
 

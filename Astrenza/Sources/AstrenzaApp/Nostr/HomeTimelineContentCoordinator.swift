@@ -7,7 +7,28 @@ struct HomeTimelineContentSnapshot: Equatable, Sendable {
     let metadataEvents: [NostrEvent]
     let relayListEvent: NostrEvent?
     let contactListEvent: NostrEvent?
+    let authorRelayListEvents: [NostrEvent]
     let hasMoreOlder: Bool
+
+    init(
+        resolvedRelays: [String],
+        followedPubkeys: [String],
+        noteEvents: [NostrEvent],
+        metadataEvents: [NostrEvent],
+        relayListEvent: NostrEvent?,
+        contactListEvent: NostrEvent?,
+        authorRelayListEvents: [NostrEvent] = [],
+        hasMoreOlder: Bool
+    ) {
+        self.resolvedRelays = resolvedRelays
+        self.followedPubkeys = followedPubkeys
+        self.noteEvents = noteEvents
+        self.metadataEvents = metadataEvents
+        self.relayListEvent = relayListEvent
+        self.contactListEvent = contactListEvent
+        self.authorRelayListEvents = authorRelayListEvents
+        self.hasMoreOlder = hasMoreOlder
+    }
 
     static let initial = HomeTimelineContentSnapshot(
         resolvedRelays: [],
@@ -95,6 +116,15 @@ final class HomeTimelineContentCoordinator {
         } else {
             effectiveFollowedPubkeys = incoming.followedPubkeys
         }
+        let storedAuthorRelayListEvents = (try? eventStore?.latestReplaceableEvents(
+            pubkeys: Set(effectiveFollowedPubkeys),
+            kind: 10_002
+        )) ?? []
+        let effectiveAuthorRelayListEvents = freshestReplaceableEventsByAuthor(
+            state.authorRelayListEvents + incoming.authorRelayListEvents +
+                storedAuthorRelayListEvents,
+            authors: Set(effectiveFollowedPubkeys)
+        )
 
         state = HomeTimelineContentSnapshot(
             resolvedRelays: effectiveRelays,
@@ -103,6 +133,7 @@ final class HomeTimelineContentCoordinator {
             metadataEvents: incoming.metadataEvents,
             relayListEvent: effectiveRelayListEvent,
             contactListEvent: effectiveContactListEvent,
+            authorRelayListEvents: effectiveAuthorRelayListEvents,
             hasMoreOlder: incoming.hasMoreOlder
         )
         return state
@@ -192,6 +223,7 @@ final class HomeTimelineContentCoordinator {
             metadataEvents: state.metadataEvents,
             relayListEvent: state.relayListEvent,
             contactListEvent: state.contactListEvent,
+            authorRelayListEvents: state.authorRelayListEvents,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: state.hasMoreOlder,
             relaySyncEvents: relaySyncEvents
@@ -209,6 +241,7 @@ final class HomeTimelineContentCoordinator {
             metadataEvents: state.metadataEvents,
             relayListEvent: bootstrapState.relayListEvent,
             contactListEvent: bootstrapState.contactListEvent,
+            authorRelayListEvents: bootstrapState.authorRelayListEvents,
             nip05Resolutions: nip05Resolutions,
             hasMoreOlder: state.hasMoreOlder,
             relaySyncEvents: bootstrapState.relaySyncEvents.map { event in
@@ -237,6 +270,24 @@ final class HomeTimelineContentCoordinator {
             return lhs.createdAt < rhs.createdAt
         }
     }
+
+    private func freshestReplaceableEventsByAuthor(
+        _ events: [NostrEvent],
+        authors: Set<String>
+    ) -> [NostrEvent] {
+        let normalizedAuthors = Set(authors.map { $0.lowercased() })
+        var latestByAuthor: [String: NostrEvent] = [:]
+        for event in events where event.kind == 10_002 {
+            let author = event.pubkey.lowercased()
+            guard normalizedAuthors.contains(author) else { continue }
+            let latest = freshestReplaceableEvent([
+                latestByAuthor[author],
+                event
+            ])
+            latestByAuthor[author] = latest
+        }
+        return latestByAuthor.values.sorted { $0.pubkey < $1.pubkey }
+    }
 }
 
 private extension HomeTimelineContentSnapshot {
@@ -254,6 +305,7 @@ private extension HomeTimelineContentSnapshot {
             metadataEvents: metadataEvents ?? self.metadataEvents,
             relayListEvent: relayListEvent,
             contactListEvent: contactListEvent,
+            authorRelayListEvents: authorRelayListEvents,
             hasMoreOlder: hasMoreOlder ?? self.hasMoreOlder
         )
     }

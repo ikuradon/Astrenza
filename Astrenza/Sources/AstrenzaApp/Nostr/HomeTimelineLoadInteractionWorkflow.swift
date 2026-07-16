@@ -23,6 +23,17 @@ extension HomeTimelineLoadWorkflow: HomeTimelineLoadRouting {}
 struct HomeTimelineLoadInteractionState: Equatable, Sendable {
     let hasRelayRuntime: Bool
     let hasTimelineEvents: Bool
+    let syncPolicy: NostrSyncPolicy
+
+    init(
+        hasRelayRuntime: Bool,
+        hasTimelineEvents: Bool,
+        syncPolicy: NostrSyncPolicy = .default()
+    ) {
+        self.hasRelayRuntime = hasRelayRuntime
+        self.hasTimelineEvents = hasTimelineEvents
+        self.syncPolicy = syncPolicy
+    }
 }
 
 struct HomeTimelineLoadEnvironment: Sendable {
@@ -97,7 +108,8 @@ final class HomeTimelineLoadInteractionWorkflow {
             HomeTimelineInitialLoadRequest(
                 account: account,
                 lifecycle: lifecycle,
-                hasRelayRuntime: context.state.hasRelayRuntime
+                hasRelayRuntime: context.state.hasRelayRuntime,
+                syncPolicy: context.state.syncPolicy
             ),
             effects: loadEffects(account: account, for: context.effects)
         )
@@ -113,7 +125,8 @@ final class HomeTimelineLoadInteractionWorkflow {
                 account: account,
                 lifecycle: lifecycle,
                 hasTimelineEvents: context.state.hasTimelineEvents,
-                hasRelayRuntime: context.state.hasRelayRuntime
+                hasRelayRuntime: context.state.hasRelayRuntime,
+                syncPolicy: context.state.syncPolicy
             ),
             effects: loadEffects(account: account, for: context.effects)
         )
@@ -128,7 +141,8 @@ final class HomeTimelineLoadInteractionWorkflow {
             HomeTimelineOlderPageRequest(
                 account: account,
                 lifecycle: lifecycle,
-                hasRelayRuntime: context.state.hasRelayRuntime
+                hasRelayRuntime: context.state.hasRelayRuntime,
+                syncPolicy: context.state.syncPolicy
             ),
             effects: loadEffects(account: account, for: context.effects)
         )
