@@ -1,3 +1,4 @@
+import AstrenzaCore
 import Testing
 @testable import Astrenza
 
@@ -113,6 +114,16 @@ struct HomeStorePresentationCoordinatorTests {
         #expect(fixture.coordinator.resolvedContentRevision == 11)
         #expect(fixture.coordinator.profileMetadataRevision == 13)
         #expect(fixture.coordinator.realtimeFollowSourceRevision == 17)
+        #expect(fixture.projection.requests.isEmpty)
+        #expect(fixture.scheduler.commands.isEmpty)
+    }
+
+    @Test("Presentation resources stay behind the coordinator")
+    func ownsPresentationResources() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let fixture = StorePresentationFixture(eventStore: eventStore)
+
+        #expect(fixture.coordinator.presentationEventStore === eventStore)
         #expect(fixture.projection.requests.isEmpty)
         #expect(fixture.scheduler.commands.isEmpty)
     }

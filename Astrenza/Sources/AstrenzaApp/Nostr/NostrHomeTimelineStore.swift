@@ -5,21 +5,10 @@ import AstrenzaCore
 final class NostrHomeTimelineStore {
     typealias Phase = NostrHomeTimelinePhase
 
-    private let viewportCoordinator: HomeStoreViewportCoordinator
-    private let eventStore: NostrEventStore?
-    private let runtimeCoordinator: HomeStoreRuntimeCoordinator
-    private let queryStoreCoordinator: HomeStoreQueryCoordinator
-    private let projectionCoordinator: HomeStoreProjectionCoordinator
-    private let applicationCoordinator: HomeStoreApplicationCoordinator
-    private let lifecycleCoordinator: HomeStoreLifecycleCoordinator
-    private let featureActionCoordinator: HomeStoreFeatureActionCoordinator
-    private let syncCoordinator: HomeStoreSyncCoordinator
-    private let stateCoordinator: HomeStoreStateCoordinator
-    private let presentationCoordinator: HomeStorePresentationCoordinator
-    private let statusCoordinator: HomeStoreStatusCoordinator
+    private let composition: HomeStoreComposition
 
     var presentationEventStore: NostrEventStore? {
-        eventStore
+        composition.presentation.presentationEventStore
     }
 
     init(
@@ -47,127 +36,115 @@ final class NostrHomeTimelineStore {
                 syncPolicySettingsStore: syncPolicySettingsStore
             )
         )
-        let composition = HomeStoreComposition.make(
+        self.composition = HomeStoreComposition.make(
             components: components
         )
-        self.viewportCoordinator = composition.viewport
-        self.eventStore = components.eventStore
-        self.runtimeCoordinator = composition.runtime
-        self.queryStoreCoordinator = composition.query
-        self.projectionCoordinator = composition.projection
-        self.applicationCoordinator = composition.application
-        self.lifecycleCoordinator = composition.lifecycle
-        self.featureActionCoordinator = composition.featureActions
-        self.syncCoordinator = composition.sync
-        self.stateCoordinator = composition.state
-        self.presentationCoordinator = composition.presentation
-        self.statusCoordinator = composition.status
     }
 }
 
 extension NostrHomeTimelineStore {
     func start(account: NostrAccount) {
-        lifecycleCoordinator.start(account: account)
+        composition.lifecycle.start(account: account)
     }
 
     func setRestoreProjectionAnchor(_ anchorEventID: String?) {
-        viewportCoordinator.setRestoreProjectionAnchor(anchorEventID)
+        composition.viewport.setRestoreProjectionAnchor(anchorEventID)
     }
 
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
-        projectionCoordinator.restoredViewportState(
+        composition.projection.restoredViewportState(
             accountID: accountID,
             timelineKey: timelineKey
         )
     }
 
     func refresh() {
-        viewportCoordinator.refresh()
+        composition.viewport.refresh()
     }
 
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool) {
-        viewportCoordinator.setTimelineAtNewestWindow(isAtNewestWindow)
+        composition.viewport.setTimelineAtNewestWindow(isAtNewestWindow)
     }
 
     func setTimelineScrollActive(_ isActive: Bool) {
-        viewportCoordinator.setTimelineScrollActive(isActive)
+        composition.viewport.setTimelineScrollActive(isActive)
     }
 
     func dismissUnreadBadge() {
-        viewportCoordinator.dismissUnreadBadge()
+        composition.viewport.dismissUnreadBadge()
     }
 
     func markMaterializedPostsRead(visiblePostIDs: [TimelinePost.ID]) {
-        viewportCoordinator.markMaterializedPostsRead(
+        composition.viewport.markMaterializedPostsRead(
             visiblePostIDs: visiblePostIDs
         )
     }
 
     func markNewestMaterializedWindowRead() {
-        viewportCoordinator.markNewestMaterializedWindowRead()
+        composition.viewport.markNewestMaterializedWindowRead()
     }
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        viewportCoordinator.applyPendingNewEvents()
+        composition.viewport.applyPendingNewEvents()
     }
 
     func loadOlder() {
-        viewportCoordinator.loadOlder()
+        composition.viewport.loadOlder()
     }
 
     func backfillGap(_ gap: TimelineGap, direction: TimelineGapFillDirection) async -> Bool {
-        await featureActionCoordinator.backfillGap(
+        await composition.featureActions.backfillGap(
             gap,
             direction: direction
         )
     }
 
     func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
-        try await featureActionCoordinator.enqueuePublish(
+        try await composition.featureActions.enqueuePublish(
             input,
             signer: signer
         )
     }
 
     func muteAuthor(authorPubkey: String) {
-        featureActionCoordinator.muteAuthor(authorPubkey: authorPubkey)
+        composition.featureActions.muteAuthor(authorPubkey: authorPubkey)
     }
 
     func bookmark(eventID: String) {
-        featureActionCoordinator.bookmark(eventID: eventID)
+        composition.featureActions.bookmark(eventID: eventID)
     }
 
     func cancel() {
-        lifecycleCoordinator.cancel()
+        composition.lifecycle.cancel()
     }
 }
 
 extension NostrHomeTimelineStore {
     func suspendTimelineFilters() {
-        featureActionCoordinator.suspendFilters()
+        composition.featureActions.suspendFilters()
     }
 
     func resumeTimelineFilters() {
-        featureActionCoordinator.resumeFilters()
+        composition.featureActions.resumeFilters()
     }
 }
 
 extension NostrHomeTimelineStore {
     func isBookmarked(_ post: TimelinePost) -> Bool {
-        queryStoreCoordinator.isBookmarked(post)
+        composition.query.isBookmarked(post)
     }
 
     func listEntries(limit: Int = 500) -> [TimelineFeedEntry] {
-        queryStoreCoordinator.listEntries(limit: limit)
+        composition.query.listEntries(limit: limit)
     }
 
     func post(eventID: String) -> TimelinePost? {
-        queryStoreCoordinator.post(eventID: eventID)
+        composition.query.post(eventID: eventID)
     }
 
     func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
-        queryStoreCoordinator.profile(
+        composition.query.profile(
             pubkey: pubkey,
             isCurrentUser: isCurrentUser
         )
@@ -178,7 +155,7 @@ extension NostrHomeTimelineStore {
         isCurrentUser: Bool = false,
         postsLimit: Int = 80
     ) -> HomeTimelineProfileProjection {
-        queryStoreCoordinator.profileProjection(
+        composition.query.profileProjection(
             pubkey: pubkey,
             isCurrentUser: isCurrentUser,
             postsLimit: postsLimit
@@ -186,7 +163,7 @@ extension NostrHomeTimelineStore {
     }
 
     func profilePosts(pubkey: String, limit: Int = 80) -> [TimelinePost] {
-        queryStoreCoordinator.profilePosts(
+        composition.query.profilePosts(
             pubkey: pubkey,
             limit: limit
         )
@@ -196,14 +173,14 @@ extension NostrHomeTimelineStore {
         for post: TimelinePost,
         limit: Int = 8
     ) -> [TimelinePost] {
-        queryStoreCoordinator.replyAncestors(
+        composition.query.replyAncestors(
             for: post,
             limit: limit
         )
     }
 
     func replies(for post: TimelinePost, limit: Int = 24) -> [TimelinePost] {
-        queryStoreCoordinator.replies(
+        composition.query.replies(
             for: post,
             limit: limit
         )
@@ -212,95 +189,95 @@ extension NostrHomeTimelineStore {
 
 extension NostrHomeTimelineStore {
     var account: NostrAccount? {
-        stateCoordinator.account
+        composition.state.account
     }
 
     var currentSyncPolicy: NostrSyncPolicy {
-        stateCoordinator.currentSyncPolicy
+        composition.state.currentSyncPolicy
     }
 
     var unmaterializedNewCount: Int {
-        viewportCoordinator.pendingEventCount
+        composition.viewport.pendingEventCount
     }
 
     var listContentRevision: Int {
-        queryStoreCoordinator.listContentRevision
+        composition.query.listContentRevision
     }
 
     var relayStatusRevision: Int {
-        statusCoordinator.relayStatusRevision
+        composition.status.relayStatusRevision
     }
 
     var relayRuntimeStates: [String: NostrRelayConnectionState] {
-        statusCoordinator.relayRuntimeStates
+        composition.status.relayRuntimeStates
     }
 
     var relayStatusCounts: (connected: Int, planned: Int) {
-        statusCoordinator.relayStatusCounts
+        composition.status.relayStatusCounts
     }
 
     var activityStatus: NostrTimelineActivityStatus? {
-        statusCoordinator.activityStatus
+        composition.status.activityStatus
     }
 
     var isRelayProcessing: Bool {
-        statusCoordinator.isRelayProcessing
+        composition.status.isRelayProcessing
     }
 
     var phase: Phase {
-        statusCoordinator.phase
+        composition.status.phase
     }
 
     var isRefreshing: Bool {
-        statusCoordinator.isRefreshing
+        composition.status.isRefreshing
     }
 
     var isLoadingOlder: Bool {
-        statusCoordinator.isLoadingOlder
+        composition.status.isLoadingOlder
     }
 
     var isHomeTimelineRealtime: Bool {
-        statusCoordinator.isRealtime
+        composition.status.isRealtime
     }
 
     var resolvedRelays: [String] {
-        stateCoordinator.resolvedRelays
+        composition.state.resolvedRelays
     }
 
     var followedPubkeys: [String] {
-        stateCoordinator.followedPubkeys
+        composition.state.followedPubkeys
     }
 
     var hasMoreOlder: Bool {
-        stateCoordinator.hasMoreOlder
+        composition.state.hasMoreOlder
     }
 
     var entries: [TimelineFeedEntry] {
-        presentationCoordinator.entries
+        composition.presentation.entries
     }
 
     var filterStatus: TimelineFilterStatus {
-        presentationCoordinator.filterStatus
+        composition.presentation.filterStatus
     }
 
     var materializedUnreadCount: Int {
-        presentationCoordinator.materializedUnreadCount
+        composition.presentation.materializedUnreadCount
     }
 
     var visibleUnreadBadgeCount: Int {
-        presentationCoordinator.visibleUnreadBadgeCount
+        composition.presentation.visibleUnreadBadgeCount
     }
 
     var resolvedContentRevision: Int {
-        presentationCoordinator.resolvedContentRevision
+        composition.presentation.resolvedContentRevision
     }
 
     var profileMetadataRevision: Int {
-        presentationCoordinator.profileMetadataRevision
+        composition.presentation.profileMetadataRevision
     }
 
     var realtimeFollowSourceRevision: Int? {
-        presentationCoordinator.realtimeFollowSourceRevision
+        composition.presentation.realtimeFollowSourceRevision
     }
 }
 
@@ -308,13 +285,13 @@ extension NostrHomeTimelineStore {
 extension NostrHomeTimelineStore {
     var testingDependencies: HomeStoreTestingDependencies {
         HomeStoreTestingDependencies(
-            application: applicationCoordinator,
-            runtime: runtimeCoordinator,
-            projection: projectionCoordinator,
-            sync: syncCoordinator,
-            state: stateCoordinator,
-            viewport: viewportCoordinator,
-            presentation: presentationCoordinator
+            application: composition.application,
+            runtime: composition.runtime,
+            projection: composition.projection,
+            sync: composition.sync,
+            state: composition.state,
+            viewport: composition.viewport,
+            presentation: composition.presentation
         )
     }
 }

@@ -151,7 +151,7 @@ struct StorePresentationFixture {
     let scheduler: StorePresentationSchedulingSpy
     let coordinator: HomeStorePresentationCoordinator
 
-    init() {
+    init(eventStore: NostrEventStore? = nil) {
         let initialSnapshot = Self.snapshot(
             account: account,
             resolutionKey: "initial",
@@ -184,6 +184,7 @@ struct StorePresentationFixture {
         self.source = source
         self.scheduler = scheduler
         coordinator = HomeStorePresentationCoordinator(
+            eventStore: eventStore,
             source: source,
             projection: projection,
             scheduler: scheduler
@@ -284,6 +285,7 @@ struct RetainedStorePresentationFixture {
 
     func makeCoordinator() -> HomeStorePresentationCoordinator {
         HomeStorePresentationCoordinator(
+            eventStore: nil,
             source: source,
             projection: projection,
             scheduler: scheduler

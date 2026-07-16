@@ -122,15 +122,18 @@ extension HomeTimelinePresentationWorkflow:
 
 @MainActor
 final class HomeStorePresentationCoordinator {
+    private let eventStore: NostrEventStore?
     private let source: any HomeStorePresentationSourcing
     private let projection: any HomeStoreProjectionMaterializing
     private let scheduler: any HomeStorePresentationScheduling
 
     init(
+        eventStore: NostrEventStore?,
         source: any HomeStorePresentationSourcing,
         projection: any HomeStoreProjectionMaterializing,
         scheduler: any HomeStorePresentationScheduling
     ) {
+        self.eventStore = eventStore
         self.source = source
         self.projection = projection
         self.scheduler = scheduler
@@ -140,6 +143,7 @@ final class HomeStorePresentationCoordinator {
         components: HomeTimelineStoreComponents
     ) -> HomeStorePresentationCoordinator {
         HomeStorePresentationCoordinator(
+            eventStore: components.eventStore,
             source: HomeStorePresentationSource(
                 publishedState: components.publishedStateCoordinator,
                 dataInteraction: components.dataInteractionWorkflow
@@ -147,6 +151,10 @@ final class HomeStorePresentationCoordinator {
             projection: components.projectionInteractionWorkflow,
             scheduler: components.presentationWorkflow
         )
+    }
+
+    var presentationEventStore: NostrEventStore? {
+        eventStore
     }
 
     var entries: [TimelineFeedEntry] {
