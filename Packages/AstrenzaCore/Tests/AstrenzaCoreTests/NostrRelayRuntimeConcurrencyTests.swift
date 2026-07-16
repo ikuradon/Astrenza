@@ -4,6 +4,27 @@ import Testing
 
 @Suite("Nostr relay runtime concurrency")
 struct NostrRelayRuntimeConcurrencyTests {
+    @Test("Relay demand registry releases independent owners without disconnecting early")
+    func relayDemandRegistryTracksTypedOwners() throws {
+        let relayURL = try #require(NostrRelayURL("wss://relay.example"))
+        let installation = NostrRelayDemand.backwardInstallation(UUID())
+        let subscription = NostrRelayDemand.backwardSubscription(
+            subscriptionID: "profile-backward",
+            generation: 1
+        )
+        var registry = NostrRelayDemandRegistry()
+
+        registry.acquire(installation, for: [relayURL])
+        registry.acquire(subscription, for: [relayURL])
+        registry.release(installation, from: [relayURL])
+
+        #expect(registry.hasDemand(for: relayURL))
+        #expect(registry.demands(for: relayURL) == [subscription])
+
+        registry.release(subscription, from: [relayURL])
+        #expect(!registry.hasDemand(for: relayURL))
+    }
+
     @Test("Session accepts an EVENT that arrives before REQ send returns")
     func sessionStagesSubscriptionBeforeSendReturns() async throws {
         let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "51", count: 32))
@@ -455,9 +476,11 @@ struct NostrRelayRuntimeConcurrencyTests {
         #expect(completions.allSatisfy { $0.eoseCount == 2 })
     }
 
-    @Test("Removing a relay keeps backward group aggregation and completes it once")
-    func removingRelayCompletesBackwardProgressIdempotently() async throws {
-        let removedConnection = RelayConcurrencyTestConnection()
+    @Test("Removing a default relay keeps an active backward demand until completion")
+    func removingDefaultRelayKeepsBackwardDemand() async throws {
+        let removedConnection = RelayConcurrencyTestConnection(
+            inboundFrames: [#"["EOSE","profile-backward"]"#]
+        )
         let remainingConnection = RelayConcurrencyTestConnection(
             inboundFrames: [#"["EOSE","profile-backward"]"#]
         )
@@ -493,16 +516,20 @@ struct NostrRelayRuntimeConcurrencyTests {
         try await runtime.installBackward([packet], mergeField: .authors)
         try await runtime.setDefaultRelays(["wss://remaining.example"])
         try await runtime.setDefaultRelays(["wss://remaining.example"])
-        await collector.waitForRequestEnds(1)
 
         let earlyCompletions = await collector.packets().compactMap { packet -> NostrBackwardREQCompletion? in
             guard case .backwardCompleted(let completion) = packet else { return nil }
             return completion
         }
         #expect(earlyCompletions.isEmpty)
-        #expect(await collector.requestEnds().contains {
-            $0.relayURL == "wss://removed.example" && $0.reason == .cancelled
-        })
+        #expect(await runtime.temporaryRelayURLs() == ["wss://removed.example"])
+        #expect(await removedConnection.closeCallCount() == 0)
+
+        try await runtime.receiveNext(relayURL: "wss://removed.example")
+        for _ in 0..<100 where await runtime.temporaryRelayURLs() == ["wss://removed.example"] {
+            await Task.yield()
+        }
+        #expect(await runtime.temporaryRelayURLs().isEmpty)
 
         try await runtime.receiveNext(relayURL: "wss://remaining.example")
         try await Task.sleep(nanoseconds: 30_000_000)
@@ -513,13 +540,13 @@ struct NostrRelayRuntimeConcurrencyTests {
         }
         #expect(completions.count == 1)
         #expect(completions.first?.groupID == "profile-group")
-        #expect(completions.first?.status == .partial)
-        #expect(completions.first?.eoseCount == 1)
-        #expect(completions.first?.closedCount == 1)
+        #expect(completions.first?.status == .completed)
+        #expect(completions.first?.eoseCount == 2)
+        #expect(completions.first?.closedCount == 0)
     }
 
-    @Test("Backward install fails before registration when scoped relays are unavailable")
-    func backwardInstallRejectsMissingEligibleRelays() async throws {
+    @Test("Backward install rejects an invalid scoped relay before registration")
+    func backwardInstallRejectsInvalidScopedRelay() async throws {
         let connection = RelayConcurrencyTestConnection()
         let runtime = NostrRelayRuntime(
             transportFactory: { _ in RelayConcurrencyTestTransport(connection: connection) },
@@ -530,7 +557,7 @@ struct NostrRelayRuntimeConcurrencyTests {
         let packet = NostrREQPacket.backward(
             purpose: "profile",
             filters: [["kinds": .ints([0])]],
-            relayURLs: ["wss://scoped.example"],
+            relayURLs: ["https://scoped.example"],
             groupID: "profile-scoped-group",
             subscriptionID: "profile-scoped-subscription"
         )
