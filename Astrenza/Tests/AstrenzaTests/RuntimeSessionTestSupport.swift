@@ -31,6 +31,7 @@ final class RuntimeSessionPumpSpy: HomeTimelineRuntimeEventPumping {
 final class RuntimeSessionProfileObserverSpy: HomeTimelineProfileUpdateObserving {
     var startResults = [true]
     private(set) var relayLists: [[String]] = []
+    private(set) var initialEventLists: [[NostrEvent]] = []
     private(set) var updateHandlers: [
         HomeTimelineDependencyResolutionCoordinator.ProfileUpdateHandler
     ] = []
@@ -38,9 +39,11 @@ final class RuntimeSessionProfileObserverSpy: HomeTimelineProfileUpdateObserving
 
     func startProfileUpdates(
         relayURLs: [String],
+        initialEvents: [NostrEvent],
         onUpdate: @escaping HomeTimelineDependencyResolutionCoordinator.ProfileUpdateHandler
     ) -> Bool {
         relayLists.append(relayURLs)
+        initialEventLists.append(initialEvents)
         updateHandlers.append(onUpdate)
         return startResults.indices.contains(relayLists.count - 1)
             ? startResults[relayLists.count - 1]
@@ -162,6 +165,7 @@ struct RuntimeSessionTestSystem {
         HomeTimelineRuntimeSessionRequest(
             account: includesAccount ? account : nil,
             profileRelayURLs: ["wss://profile.example"],
+            profileEvents: [Self.profileSourceEvent(pubkey: account.pubkey)],
             hasRelayRuntime: hasRelayRuntime,
             isTerminating: isTerminating
         )
@@ -178,6 +182,18 @@ struct RuntimeSessionTestSystem {
             kind: 0,
             tags: [],
             content: #"{"name":"Alice"}"#,
+            sig: String(repeating: "0", count: 128)
+        )
+    }
+
+    static func profileSourceEvent(pubkey: String) -> NostrEvent {
+        NostrEvent(
+            id: String(repeating: "f", count: 64),
+            pubkey: pubkey,
+            createdAt: 90,
+            kind: 1,
+            tags: [],
+            content: "profile source",
             sig: String(repeating: "0", count: 128)
         )
     }

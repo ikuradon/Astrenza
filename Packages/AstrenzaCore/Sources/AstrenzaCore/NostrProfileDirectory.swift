@@ -73,6 +73,7 @@ public actor NostrProfileDirectory {
     }
 
     private struct PendingProfilePersistence: Sendable {
+        let groupID: String
         let event: NostrEvent
         let source: NostrEventSourceRecord
         let fetchRecord: NostrProfileFetchRecord
@@ -95,6 +96,9 @@ public actor NostrProfileDirectory {
     private var retryTask: Task<Void, Never>?
     private var persistenceFlushTask: Task<Void, Never>?
     private var pendingProfilePersistence: [PendingProfilePersistence] = []
+    private var deferredCompletionsByGroupID: [
+        String: NostrBackwardREQCompletion
+    ] = [:]
     private var requestContexts: [String: RequestContext] = [:]
     private var retryAtByPubkey: [String: Int] = [:]
     private var lifecycleGeneration: UInt64 = 0
@@ -148,7 +152,7 @@ public actor NostrProfileDirectory {
     }
 
     public func stop() {
-        flushProfilePersistence()
+        _ = flushProfilePersistence()
         lifecycleGeneration &+= 1
         runtimeTask?.cancel()
         foregroundFlushTask?.cancel()
@@ -164,6 +168,7 @@ public actor NostrProfileDirectory {
         backgroundQueue.removeAll()
         cachedQueuedPubkeys.removeAll()
         requestGroups.removeAll()
+        deferredCompletionsByGroupID.removeAll()
         activePubkeys.removeAll()
         requestContexts.removeAll()
         retryAtByPubkey.removeAll()
@@ -380,7 +385,7 @@ public actor NostrProfileDirectory {
     private func handleMetadataEvent(relayURL: String, subscriptionID: String, event: NostrEvent) {
         guard event.kind == 0,
               let groupID = requestGroupID(for: subscriptionID),
-              var group = requestGroups[groupID],
+              let group = requestGroups[groupID],
               group.pubkeys.contains(event.pubkey)
         else { return }
 
@@ -391,14 +396,8 @@ public actor NostrProfileDirectory {
             firstSeenAt: now,
             lastSeenAt: now
         )
-        group.resolvedPubkeys.insert(event.pubkey)
-        requestGroups[groupID] = group
-        activePubkeys.remove(event.pubkey)
-        cachedQueuedPubkeys.remove(event.pubkey)
-        clearRetry(for: event.pubkey, removeRequestContext: true)
-        var changedStates: [String: NostrProfileResolutionState] = [:]
-        setState(.resolved, for: event.pubkey, changedStates: &changedStates)
         enqueueProfilePersistence(PendingProfilePersistence(
+            groupID: groupID,
             event: event,
             source: source,
             fetchRecord: NostrProfileFetchRecord(
@@ -410,12 +409,19 @@ public actor NostrProfileDirectory {
             ),
             receivedAt: now
         ))
-        emit(NostrProfileDirectoryUpdate(states: changedStates, metadataEvents: [event]))
-        scheduleRetryTask()
     }
 
     private func handleCompletion(_ completion: NostrBackwardREQCompletion) {
-        flushProfilePersistence()
+        guard flushProfilePersistence() else {
+            deferredCompletionsByGroupID[completion.groupID] = completion
+            return
+        }
+        completeRequestGroup(completion)
+    }
+
+    private func completeRequestGroup(
+        _ completion: NostrBackwardREQCompletion
+    ) {
         guard Self.handles(groupID: completion.groupID),
               let group = requestGroups.removeValue(forKey: completion.groupID)
         else { return }
@@ -462,27 +468,79 @@ public actor NostrProfileDirectory {
             flushProfilePersistence()
             return
         }
-        guard persistenceFlushTask == nil else { return }
-        let delay = policy.persistenceBatchDelayMilliseconds
+        scheduleProfilePersistenceFlush()
+    }
+
+    @discardableResult
+    private func flushProfilePersistence() -> Bool {
+        persistenceFlushTask?.cancel()
+        persistenceFlushTask = nil
+        guard !pendingProfilePersistence.isEmpty else { return true }
+        let pending = pendingProfilePersistence
+        do {
+            try eventStore?.ingestProfileResolutions(
+                events: pending.map(\.event),
+                eventSources: pending.map(\.source),
+                fetchRecords: pending.map(\.fetchRecord),
+                receivedAt: pending.map(\.receivedAt).max() ?? 0
+            )
+        } catch {
+            scheduleProfilePersistenceFlush()
+            return false
+        }
+        pendingProfilePersistence.removeAll(keepingCapacity: true)
+        publishPersistedProfiles(pending)
+        completeDeferredCompletions()
+        return true
+    }
+
+    private func scheduleProfilePersistenceFlush() {
+        guard persistenceFlushTask == nil,
+              !pendingProfilePersistence.isEmpty
+        else { return }
+        let delay = max(1, policy.persistenceBatchDelayMilliseconds)
         persistenceFlushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(delay))
+            do {
+                try await Task.sleep(for: .milliseconds(delay))
+            } catch {
+                return
+            }
             guard !Task.isCancelled else { return }
             await self?.flushProfilePersistence()
         }
     }
 
-    private func flushProfilePersistence() {
-        persistenceFlushTask?.cancel()
-        persistenceFlushTask = nil
-        guard !pendingProfilePersistence.isEmpty else { return }
-        let pending = pendingProfilePersistence
-        pendingProfilePersistence.removeAll(keepingCapacity: true)
-        try? eventStore?.ingestProfileResolutions(
-            events: pending.map(\.event),
-            eventSources: pending.map(\.source),
-            fetchRecords: pending.map(\.fetchRecord),
-            receivedAt: pending.map(\.receivedAt).max() ?? 0
-        )
+    private func publishPersistedProfiles(
+        _ pending: [PendingProfilePersistence]
+    ) {
+        var changedStates: [String: NostrProfileResolutionState] = [:]
+        for item in pending {
+            if var group = requestGroups[item.groupID] {
+                group.resolvedPubkeys.insert(item.event.pubkey)
+                requestGroups[item.groupID] = group
+            }
+            activePubkeys.remove(item.event.pubkey)
+            cachedQueuedPubkeys.remove(item.event.pubkey)
+            clearRetry(for: item.event.pubkey, removeRequestContext: true)
+            setState(
+                .resolved,
+                for: item.event.pubkey,
+                changedStates: &changedStates
+            )
+        }
+        emit(NostrProfileDirectoryUpdate(
+            states: changedStates,
+            metadataEvents: pending.map(\.event)
+        ))
+        scheduleRetryTask()
+    }
+
+    private func completeDeferredCompletions() {
+        let completions = Array(deferredCompletionsByGroupID.values)
+        deferredCompletionsByGroupID.removeAll()
+        for completion in completions {
+            completeRequestGroup(completion)
+        }
     }
 
     private func failRequestGroup(groupID: String, message: String, now: Int) {
@@ -641,7 +699,7 @@ public actor NostrProfileDirectory {
 
     private func runtimePumpFinished(generation: UInt64) {
         guard lifecycleGeneration == generation else { return }
-        flushProfilePersistence()
+        _ = flushProfilePersistence()
         runtimeTask = nil
     }
 }

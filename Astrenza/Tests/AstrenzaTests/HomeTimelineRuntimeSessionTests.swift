@@ -19,6 +19,11 @@ struct HomeTimelineRuntimeSessionTests {
             didStartRuntimeEvents: true
         ))
         #expect(system.profileObserver.relayLists == [["wss://profile.example"]])
+        #expect(system.profileObserver.initialEventLists == [[
+            RuntimeSessionTestSystem.profileSourceEvent(
+                pubkey: system.account.pubkey
+            )
+        ]])
         let sourceValidity = try #require(system.pump.sourceValidities.first)
         #expect(sourceValidity())
         let packet = NostrRelayRuntimePacket.notice(

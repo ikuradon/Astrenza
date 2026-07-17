@@ -17,6 +17,7 @@ extension HomeTimelineRuntimeEventPump: HomeTimelineRuntimeEventPumping {}
 protocol HomeTimelineProfileUpdateObserving: AnyObject {
     func startProfileUpdates(
         relayURLs: [String],
+        initialEvents: [NostrEvent],
         onUpdate: @escaping HomeTimelineDependencyResolutionCoordinator.ProfileUpdateHandler
     ) -> Bool
 
@@ -43,8 +44,23 @@ protocol HomeTimelineProfileUpdateApplying: AnyObject {
 struct HomeTimelineRuntimeSessionRequest: Equatable, Sendable {
     let account: NostrAccount?
     let profileRelayURLs: [String]
+    let profileEvents: [NostrEvent]
     let hasRelayRuntime: Bool
     let isTerminating: Bool
+
+    init(
+        account: NostrAccount?,
+        profileRelayURLs: [String],
+        profileEvents: [NostrEvent] = [],
+        hasRelayRuntime: Bool,
+        isTerminating: Bool
+    ) {
+        self.account = account
+        self.profileRelayURLs = profileRelayURLs
+        self.profileEvents = profileEvents
+        self.hasRelayRuntime = hasRelayRuntime
+        self.isTerminating = isTerminating
+    }
 }
 
 struct HomeTimelineRuntimeSessionStart: Equatable, Sendable {
@@ -112,7 +128,8 @@ final class HomeTimelineRuntimeSessionCoordinator {
         else { return .inactive }
 
         let didStartProfileUpdates = profileUpdateObserver.startProfileUpdates(
-            relayURLs: request.profileRelayURLs
+            relayURLs: request.profileRelayURLs,
+            initialEvents: request.profileEvents
         ) { [weak self] update in
             self?.applyProfileUpdate(
                 update,

@@ -125,6 +125,7 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
             account: publishedState.accountContext.account,
             resolvedRelays: publishedState.content.resolvedRelays,
             bootstrapRelayURLs: remoteLoad.bootstrapRelays,
+            profileEvents: dataInteraction.contentState.noteEvents,
             policy: publishedState.accountContext.syncPolicy,
             hasRelayRuntime: hasRelayRuntime,
             isTerminating: accountResetInteraction.isRuntimeTerminating,

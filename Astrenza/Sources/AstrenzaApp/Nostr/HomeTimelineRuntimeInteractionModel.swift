@@ -5,9 +5,28 @@ struct HomeTimelineRuntimeInteractionState: Equatable, Sendable {
     let account: NostrAccount?
     let resolvedRelays: [String]
     let bootstrapRelayURLs: [String]
+    let profileEvents: [NostrEvent]
     let policy: NostrSyncPolicy
     let hasRelayRuntime: Bool
     let isTerminating: Bool
+
+    init(
+        account: NostrAccount?,
+        resolvedRelays: [String],
+        bootstrapRelayURLs: [String],
+        profileEvents: [NostrEvent] = [],
+        policy: NostrSyncPolicy,
+        hasRelayRuntime: Bool,
+        isTerminating: Bool
+    ) {
+        self.account = account
+        self.resolvedRelays = resolvedRelays
+        self.bootstrapRelayURLs = bootstrapRelayURLs
+        self.profileEvents = profileEvents
+        self.policy = policy
+        self.hasRelayRuntime = hasRelayRuntime
+        self.isTerminating = isTerminating
+    }
 }
 
 struct HomeTimelineRuntimeRelayPlanner: Sendable {
@@ -23,6 +42,7 @@ struct HomeTimelineRuntimeRelayPlanner: Sendable {
                     bootstrapRelayURLs: state.bootstrapRelayURLs
                 )
             } ?? [],
+            profileEvents: state.profileEvents,
             hasRelayRuntime: state.hasRelayRuntime,
             isTerminating: state.isTerminating
         )
@@ -90,6 +110,7 @@ struct HomeTimelineRuntimeStoreSnapshot: Equatable, Sendable {
     let account: NostrAccount?
     let resolvedRelays: [String]
     let bootstrapRelayURLs: [String]
+    let profileEvents: [NostrEvent]
     let policy: NostrSyncPolicy
     let hasRelayRuntime: Bool
     let isTerminating: Bool
@@ -99,11 +120,40 @@ struct HomeTimelineRuntimeStoreSnapshot: Equatable, Sendable {
     let isTimelineAtNewestWindow: Bool
     let hasPendingEvents: Bool
 
+    init(
+        account: NostrAccount?,
+        resolvedRelays: [String],
+        bootstrapRelayURLs: [String],
+        profileEvents: [NostrEvent] = [],
+        policy: NostrSyncPolicy,
+        hasRelayRuntime: Bool,
+        isTerminating: Bool,
+        isRuntimeActive: Bool,
+        isRealtime: Bool,
+        hasRestoreProjectionAnchor: Bool,
+        isTimelineAtNewestWindow: Bool,
+        hasPendingEvents: Bool
+    ) {
+        self.account = account
+        self.resolvedRelays = resolvedRelays
+        self.bootstrapRelayURLs = bootstrapRelayURLs
+        self.profileEvents = profileEvents
+        self.policy = policy
+        self.hasRelayRuntime = hasRelayRuntime
+        self.isTerminating = isTerminating
+        self.isRuntimeActive = isRuntimeActive
+        self.isRealtime = isRealtime
+        self.hasRestoreProjectionAnchor = hasRestoreProjectionAnchor
+        self.isTimelineAtNewestWindow = isTimelineAtNewestWindow
+        self.hasPendingEvents = hasPendingEvents
+    }
+
     static var empty: Self {
         HomeTimelineRuntimeStoreSnapshot(
             account: nil,
             resolvedRelays: [],
             bootstrapRelayURLs: [],
+            profileEvents: [],
             policy: .default(),
             hasRelayRuntime: false,
             isTerminating: false,
@@ -125,6 +175,7 @@ struct HomeTimelineRuntimeContextProjector {
             account: snapshot.account,
             resolvedRelays: snapshot.resolvedRelays,
             bootstrapRelayURLs: snapshot.bootstrapRelayURLs,
+            profileEvents: snapshot.profileEvents,
             policy: snapshot.policy,
             hasRelayRuntime: snapshot.hasRelayRuntime,
             isTerminating: snapshot.isTerminating

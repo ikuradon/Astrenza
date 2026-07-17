@@ -146,6 +146,7 @@ final class HomeTimelineDependencyResolutionCoordinator {
     @discardableResult
     func startProfileUpdates(
         relayURLs: [String],
+        initialEvents: [NostrEvent] = [],
         onUpdate: @escaping ProfileUpdateHandler
     ) -> Bool {
         guard let profileUpdateSource, profileUpdateTask == nil else { return false }
@@ -162,6 +163,14 @@ final class HomeTimelineDependencyResolutionCoordinator {
             else { return }
 
             await profileUpdateSource.start(relayURLs)
+            guard !Task.isCancelled,
+                  self?.isCurrentProfileUpdate(
+                    lifecycleGeneration: expectedLifecycleGeneration,
+                    sequence: expectedSequence
+                  ) == true
+            else { return }
+
+            await self?.ensureProfiles(for: initialEvents)
             guard !Task.isCancelled,
                   self?.isCurrentProfileUpdate(
                     lifecycleGeneration: expectedLifecycleGeneration,
