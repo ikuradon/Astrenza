@@ -156,6 +156,25 @@ struct FilterCandidateUser: Identifiable {
         )
     }
 
+    static func filteredCandidates(
+        _ candidates: [FilterCandidateUser],
+        query input: String
+    ) -> [FilterCandidateUser] {
+        let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return candidates }
+        var matches = candidates.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query)
+                || $0.nip05.localizedCaseInsensitiveContains(query)
+                || $0.npub.localizedCaseInsensitiveContains(query)
+                || $0.id.localizedCaseInsensitiveContains(query)
+        }
+        if let directCandidate = directCandidate(from: query),
+           !matches.contains(where: { $0.id == directCandidate.id }) {
+            matches.append(directCandidate)
+        }
+        return matches
+    }
+
     static let mockCandidates: [FilterCandidateUser] = [
         FilterCandidateUser(
             id: String(repeating: "1", count: 64),

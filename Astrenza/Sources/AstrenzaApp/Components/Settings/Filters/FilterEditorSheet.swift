@@ -207,19 +207,9 @@ struct FilterEditorSheet: View {
     }
 
     private var filteredCandidates: [FilterCandidateUser] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseCandidates = candidateUsers.isEmpty ? FilterCandidateUser.mockCandidates : candidateUsers
-        guard !query.isEmpty else { return baseCandidates }
-        var candidates = baseCandidates.filter {
-            $0.displayName.localizedCaseInsensitiveContains(query)
-                || $0.nip05.localizedCaseInsensitiveContains(query)
-                || $0.npub.localizedCaseInsensitiveContains(query)
-                || $0.id.localizedCaseInsensitiveContains(query)
-        }
-        if let directCandidate = FilterCandidateUser.directCandidate(from: query),
-           !candidates.contains(where: { $0.id == directCandidate.id }) {
-            candidates.append(directCandidate)
-        }
-        return candidates
+        FilterCandidateUser.filteredCandidates(
+            candidateUsers,
+            query: searchText
+        )
     }
 }

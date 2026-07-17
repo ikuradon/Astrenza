@@ -70,17 +70,11 @@ struct HomeTimelineFeedContentView: View {
         guard hasLiveAccount else {
             return MockTimelineData.entries(for: selectedTimeline)
         }
-
-        switch selectedTimeline {
-        case .home:
-            return store.entries
-        case .relays:
-            return MockTimelineData.entries(for: selectedTimeline)
-        case .lists:
-            let entries = store.listEntries()
-            return entries.isEmpty ?
-                MockTimelineData.entries(for: selectedTimeline) : entries
-        }
+        return HomeTimelineLiveEntryPolicy.entries(
+            for: selectedTimeline,
+            home: store.entries,
+            lists: store.listEntries()
+        )
     }
 
     private var sourceRevision: Int {
@@ -126,5 +120,22 @@ struct HomeTimelineFeedContentView: View {
 
     private var emptyState: TimelineEmptyState {
         HomeTimelineEmptyStatePolicy.resolve(emptyStateContext).emptyState
+    }
+}
+
+enum HomeTimelineLiveEntryPolicy {
+    static func entries(
+        for timeline: TimelineKind,
+        home: @autoclosure () -> [TimelineFeedEntry],
+        lists: @autoclosure () -> [TimelineFeedEntry]
+    ) -> [TimelineFeedEntry] {
+        switch timeline {
+        case .home:
+            home()
+        case .relays:
+            []
+        case .lists:
+            lists()
+        }
     }
 }

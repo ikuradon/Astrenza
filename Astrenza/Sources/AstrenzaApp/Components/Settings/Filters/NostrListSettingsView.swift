@@ -249,10 +249,9 @@ struct NostrListSettingsView: View {
     }
 
     private func candidateUsers(query: String = "") -> [FilterCandidateUser] {
-        guard let eventStore else { return FilterCandidateUser.mockCandidates }
+        guard let eventStore else { return [] }
         let profiles = (try? eventStore.profileSearchCandidates(query: query, limit: 50)) ?? []
-        let candidates = profiles.map(FilterCandidateUser.init(profile:))
-        return candidates.isEmpty ? FilterCandidateUser.mockCandidates : candidates
+        return profiles.map(FilterCandidateUser.init(profile:))
     }
 
     private func cachedCandidate(pubkey: String) -> FilterCandidateUser? {

@@ -75,6 +75,28 @@ struct HomeEmptyStateActionCoordinatorTests {
         #expect(lists.secondaryAction == nil)
     }
 
+    @Test("Live timelines never substitute mock entries")
+    func liveTimelinesNeverSubstituteMockEntries() {
+        let home = MockTimelineData.entries(for: .home)
+        let lists = MockTimelineData.entries(for: .lists)
+
+        #expect(HomeTimelineLiveEntryPolicy.entries(
+            for: .home,
+            home: home,
+            lists: lists
+        ).map(\.id) == home.map(\.id))
+        #expect(HomeTimelineLiveEntryPolicy.entries(
+            for: .relays,
+            home: home,
+            lists: lists
+        ).isEmpty)
+        #expect(HomeTimelineLiveEntryPolicy.entries(
+            for: .lists,
+            home: home,
+            lists: []
+        ).isEmpty)
+    }
+
     @Test("Coordinator routes refresh and navigation effects")
     func coordinatorRoutesEffects() {
         let actions = EmptyStateActionHandlerSpy()

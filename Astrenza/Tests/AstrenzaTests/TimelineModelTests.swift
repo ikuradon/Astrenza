@@ -7466,6 +7466,22 @@ struct TimelineModelTests {
         #expect(FilterCandidateUser.directCandidate(from: "not a key") == nil)
     }
 
+    @Test("Filter user search does not synthesize mock candidates")
+    func filterUserSearchDoesNotSynthesizeMockCandidates() {
+        #expect(FilterCandidateUser.filteredCandidates([], query: "").isEmpty)
+        #expect(FilterCandidateUser.filteredCandidates([], query: "someone").isEmpty)
+    }
+
+    @Test("Filter user search still accepts a direct public key")
+    func filterUserSearchAcceptsDirectPublicKey() throws {
+        let pubkey = String(repeating: "a", count: 64)
+        let candidate = try #require(
+            FilterCandidateUser.filteredCandidates([], query: pubkey).first
+        )
+
+        #expect(candidate.id == pubkey)
+    }
+
     @Test("Unresolved authors display a valid npub-like abbreviated pubkey")
     func unresolvedAuthorDisplay() {
         let author = TimelineAuthor.unresolved(pubkey: TimelineAuthor.mockPubkey(for: "unresolved"))
