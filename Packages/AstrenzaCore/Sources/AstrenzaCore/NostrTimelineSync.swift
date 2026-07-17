@@ -1,6 +1,7 @@
 import Foundation
-import Negentropy
 import NostrProtocol
+import NostrReconciliationAPI
+import NostrReconciliationNegentropy
 
 public struct NostrHomeFetchPlanner: Sendable {
     public let authors: [String]
@@ -132,20 +133,30 @@ public enum NIP77RelayMessageError: Error, Equatable {
 }
 
 public final class NIP77SyncSession {
-    private let negentropy: Negentropy<NegentropyStorageVector>
+    private let reconciliationSession: any NostrReconciliationSession
 
-    public init(localEvents: [NostrEvent], frameSizeLimit: Int = 60_000) throws {
-        let storage = NegentropyStorageVector(capacity: localEvents.count)
-        for event in localEvents where NostrHex.isLowercaseHex(event.id, byteCount: 32) {
-            guard let idBytes = NostrHex.bytes(fromLowercaseHex: event.id) else { continue }
-            try storage.insert(timestamp: UInt64(max(0, event.createdAt)), id: Id(bytes: idBytes))
+    public init(
+        localEvents: [NostrEvent],
+        frameSizeLimit: Int = 60_000,
+        reconciliationFactory: any NostrReconciliationSessionCreating = NegentropySwiftReconciliationSessionFactory()
+    ) throws {
+        let records = localEvents.compactMap { event -> NostrReconciliationRecord? in
+            guard NostrHex.isLowercaseHex(event.id, byteCount: 32),
+                  let idBytes = NostrHex.bytes(fromLowercaseHex: event.id)
+            else { return nil }
+            return NostrReconciliationRecord(
+                timestamp: UInt64(max(0, event.createdAt)),
+                id: idBytes
+            )
         }
-        try storage.seal()
-        negentropy = try Negentropy(storage: storage, frameSizeLimit: frameSizeLimit)
+        reconciliationSession = try reconciliationFactory.makeSession(
+            records: records,
+            frameSizeLimit: frameSizeLimit
+        )
     }
 
     public func openMessage(subscriptionID: String, filter: NostrRelayFilter) throws -> NIP77ClientMessage {
-        let initialMessageHex = NostrHex.hexString(try negentropy.initiate())
+        let initialMessageHex = NostrHex.hexString(try reconciliationSession.initiate())
         return .negOpen(subscriptionID: subscriptionID, filter: filter, initialMessageHex: initialMessageHex)
     }
 
@@ -154,12 +165,10 @@ public final class NIP77SyncSession {
             throw NIP77RelayMessageError.invalidHex(relayMessageHex)
         }
 
-        var haveIds: [Id] = []
-        var needIds: [Id] = []
-        let nextMessage = try negentropy.reconcile(relayMessage, haveIds: &haveIds, needIds: &needIds)
+        let result = try reconciliationSession.reconcile(relayMessage)
         return NIP77ReconcileResult(
-            missingEventIDs: needIds.map { NostrHex.hexString($0.toBytes()) },
-            nextMessageHex: nextMessage.map(NostrHex.hexString)
+            missingEventIDs: result.needIDs.map(NostrHex.hexString),
+            nextMessageHex: result.nextMessage.map(NostrHex.hexString)
         )
     }
 }

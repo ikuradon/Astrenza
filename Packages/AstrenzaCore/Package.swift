@@ -12,7 +12,9 @@ let package = Package(
         .library(name: "AstrenzaCore", targets: ["AstrenzaCore"]),
         .library(name: "NostrProtocol", targets: ["NostrProtocol"]),
         .library(name: "NostrCryptoAPI", targets: ["NostrCryptoAPI"]),
-        .library(name: "NostrCryptoSecp256k1", targets: ["NostrCryptoSecp256k1"])
+        .library(name: "NostrCryptoSecp256k1", targets: ["NostrCryptoSecp256k1"]),
+        .library(name: "NostrReconciliationAPI", targets: ["NostrReconciliationAPI"]),
+        .library(name: "NostrReconciliationNegentropy", targets: ["NostrReconciliationNegentropy"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
@@ -33,14 +35,23 @@ let package = Package(
                 .product(name: "secp256k1", package: "secp256k1.swift")
             ]
         ),
+        .target(name: "NostrReconciliationAPI"),
+        .target(
+            name: "NostrReconciliationNegentropy",
+            dependencies: [
+                "NostrReconciliationAPI",
+                .product(name: "Negentropy", package: "negentropy-swift")
+            ]
+        ),
         .target(
             name: "AstrenzaCore",
             dependencies: [
                 "NostrProtocol",
                 "NostrCryptoAPI",
                 "NostrCryptoSecp256k1",
-                .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "Negentropy", package: "negentropy-swift")
+                "NostrReconciliationAPI",
+                "NostrReconciliationNegentropy",
+                .product(name: "GRDB", package: "GRDB.swift")
             ]
         ),
         .testTarget(
@@ -60,6 +71,13 @@ let package = Package(
                 "NostrProtocol",
                 "NostrCryptoAPI",
                 "NostrCryptoSecp256k1"
+            ]
+        ),
+        .testTarget(
+            name: "NostrReconciliationNegentropyTests",
+            dependencies: [
+                "NostrReconciliationAPI",
+                "NostrReconciliationNegentropy"
             ]
         )
     ]
