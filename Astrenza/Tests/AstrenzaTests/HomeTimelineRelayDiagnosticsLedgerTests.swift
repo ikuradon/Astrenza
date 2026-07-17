@@ -51,6 +51,42 @@ struct HomeTimelineRelayDiagnosticsLedgerTests {
         #expect(persisted.count == 5)
     }
 
+    @Test("Production diagnostics preserve write order through the persistence worker")
+    @MainActor
+    func productionDiagnosticsPersistOffMainActorInOrder() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let worker = HomeTimelinePersistenceWorker(eventStore: eventStore)
+        let accountID = String(repeating: "a", count: 64)
+        let ledger = HomeTimelineRelayDiagnosticsLedger(
+            eventStore: eventStore,
+            persistenceWorker: worker
+        )
+
+        for index in 0..<5 {
+            ledger.record(
+                accountID: accountID,
+                relayURL: "wss://relay.example",
+                kind: .eose,
+                occurredAt: 100 + index,
+                subscriptionID: "astrenza-home-\(index)",
+                eventCount: index,
+                message: "eose-\(index)"
+            )
+        }
+
+        await ledger.waitForPendingDiagnosticPersistence()
+
+        let persisted = try eventStore.relaySyncEvents(
+            accountID: accountID,
+            timelineKey: "home",
+            relayURL: "wss://relay.example",
+            limit: 10
+        )
+        #expect(persisted.map(\.message) == [
+            "eose-4", "eose-3", "eose-2", "eose-1", "eose-0"
+        ])
+    }
+
     @Test("Relay counts combine fresh history with authoritative runtime state")
     @MainActor
     func relayStatusCountsUseRuntimeOverride() {

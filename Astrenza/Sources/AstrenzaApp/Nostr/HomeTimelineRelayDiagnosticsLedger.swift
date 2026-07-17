@@ -15,6 +15,7 @@ final class HomeTimelineRelayDiagnosticsLedger {
     private(set) var events: [NostrRelaySyncEventRecord] = []
     private var pendingRelayTrafficDeltas: [NostrRelayTrafficDelta] = []
     private var lastRelayTrafficFlushAt = 0
+    private var diagnosticPersistenceTask: Task<Void, Never>?
 
     var pendingRelayTrafficDeltaCount: Int {
         pendingRelayTrafficDeltas.count
@@ -80,8 +81,12 @@ final class HomeTimelineRelayDiagnosticsLedger {
         )
         events.append(event)
         trimEventsIfNeeded()
-        try? eventStore?.saveRelaySyncEvents([event])
+        persistRecordedEvent(event)
         return event
+    }
+
+    func waitForPendingDiagnosticPersistence() async {
+        await diagnosticPersistenceTask?.value
     }
 
     func persistFetchedEvents(_ events: [NostrRelaySyncEventRecord]) async {
@@ -155,6 +160,19 @@ final class HomeTimelineRelayDiagnosticsLedger {
     private func trimEventsIfNeeded() {
         guard events.count > eventLimit else { return }
         events.removeFirst(events.count - eventLimit)
+    }
+
+    private func persistRecordedEvent(_ event: NostrRelaySyncEventRecord) {
+        guard let persistenceWorker else {
+            try? eventStore?.saveRelaySyncEvents([event])
+            return
+        }
+
+        let previousTask = diagnosticPersistenceTask
+        diagnosticPersistenceTask = Task {
+            await previousTask?.value
+            try? await persistenceWorker.saveRelaySyncEvents([event])
+        }
     }
 
     private static func normalizeFetchedEvent(
