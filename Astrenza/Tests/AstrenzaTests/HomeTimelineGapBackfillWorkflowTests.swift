@@ -52,7 +52,7 @@ struct HomeTimelineGapBackfillWorkflowTests {
         ])
     }
 
-    @Test("Success marks the gap then reloads and materializes in order")
+    @Test("Success reloads and materializes in order")
     func successPreservesApplicationOrder() async {
         let fixture = GapBackfillFixture()
 
@@ -62,15 +62,6 @@ struct HomeTimelineGapBackfillWorkflowTests {
         #expect(fixture.probe.events == fixture.successEvents)
     }
 
-    @Test("A gap mark failure preserves the existing successful application behavior")
-    func markFailureStillReloadsAndMaterializes() async {
-        let fixture = GapBackfillFixture(markError: .markFailed)
-
-        let didStart = await fixture.run()
-
-        #expect(didStart)
-        #expect(fixture.probe.events == fixture.successEvents)
-    }
 }
 
 enum GapBackfillAvailabilityScenario: CaseIterable, Sendable {
@@ -105,10 +96,6 @@ extension GapBackfillAvailabilityScenario: CustomTestStringConvertible {
     }
 }
 
-private enum GapBackfillTestError: Error {
-    case markFailed
-}
-
 @MainActor
 private struct GapBackfillFixture {
     let account: NostrAccount
@@ -138,11 +125,6 @@ private struct GapBackfillFixture {
     var successEvents: [GapBackfillProbe.Event] {
         [
             requestEvent,
-            .markGapRequested(
-                newerEventID: gap.newerPostID,
-                olderEventID: gap.olderPostID,
-                feedID: definition.feedID
-            ),
             .reloadProjection(
                 accountID: account.pubkey,
                 anchorEventID: gap.newerPostID
@@ -152,8 +134,7 @@ private struct GapBackfillFixture {
     }
 
     init(
-        outcome: HomeTimelineBackwardRequestOutcome? = nil,
-        markError: GapBackfillTestError? = nil
+        outcome: HomeTimelineBackwardRequestOutcome? = nil
     ) {
         let accountID = String(repeating: "a", count: 64)
         account = NostrAccount(
@@ -181,12 +162,10 @@ private struct GapBackfillFixture {
             updatedAt: 100
         )
         probe = GapBackfillProbe(
-            outcome: outcome ?? .completed(definition),
-            markError: markError
+            outcome: outcome ?? .completed(definition)
         )
         workflow = HomeTimelineGapBackfillWorkflow(
-            requester: probe,
-            persistence: probe
+            requester: probe
         )
     }
 
@@ -200,18 +179,12 @@ private struct GapBackfillFixture {
 
 @MainActor
 private final class GapBackfillProbe:
-    HomeTimelineGapRequesting,
-    HomeTimelineGapRequestPersisting {
+    HomeTimelineGapRequesting {
     enum Event: Equatable {
         case requestGap(
             accountID: String,
             gapID: String,
             direction: TimelineGapFillDirection
-        )
-        case markGapRequested(
-            newerEventID: String,
-            olderEventID: String,
-            feedID: String
         )
         case recordDiagnostic(HomeTimelineBackwardRequestDiagnostic)
         case reloadProjection(accountID: String, anchorEventID: String)
@@ -219,15 +192,12 @@ private final class GapBackfillProbe:
     }
 
     private let outcome: HomeTimelineBackwardRequestOutcome
-    private let markError: GapBackfillTestError?
     private(set) var events: [Event] = []
 
     init(
-        outcome: HomeTimelineBackwardRequestOutcome,
-        markError: GapBackfillTestError?
+        outcome: HomeTimelineBackwardRequestOutcome
     ) {
         self.outcome = outcome
-        self.markError = markError
     }
 
     func effects() -> HomeTimelineGapBackfillEffects {
@@ -261,18 +231,4 @@ private final class GapBackfillProbe:
         return outcome
     }
 
-    func markGapRequested(
-        newerEventID: String,
-        olderEventID: String,
-        definition: NostrFeedDefinitionRecord
-    ) throws {
-        events.append(.markGapRequested(
-            newerEventID: newerEventID,
-            olderEventID: olderEventID,
-            feedID: definition.feedID
-        ))
-        if let markError {
-            throw markError
-        }
-    }
 }

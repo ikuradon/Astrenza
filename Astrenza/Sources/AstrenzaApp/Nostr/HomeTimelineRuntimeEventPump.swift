@@ -23,6 +23,7 @@ final class HomeTimelineRuntimeEventPump {
     private var readinessWaiters: [CheckedContinuation<Bool, Never>] = []
     private var pendingEvents: [NostrRelayRuntimePacket] = []
     private var pendingBatches: [[NostrRelayRuntimePacket]] = []
+    private var pendingBatchIndex = 0
     private var packetHandler: PacketHandler?
     private var sourceValidity: SourceValidity?
     private var inputFinished = false
@@ -104,6 +105,7 @@ final class HomeTimelineRuntimeEventPump {
         flushTask = nil
         pendingEvents.removeAll(keepingCapacity: true)
         pendingBatches.removeAll(keepingCapacity: true)
+        pendingBatchIndex = 0
         packetHandler = nil
         sourceValidity = nil
         inputFinished = false
@@ -178,21 +180,34 @@ final class HomeTimelineRuntimeEventPump {
 
     private func drainBatches(sequence: UInt64) async {
         while isCurrent(sequence: sequence), !Task.isCancelled,
-              sourceValidity?() == true, !pendingBatches.isEmpty {
-            let batch = pendingBatches.removeFirst()
+              sourceValidity?() == true,
+              pendingBatchIndex < pendingBatches.count {
+            let batch = pendingBatches[pendingBatchIndex]
+            pendingBatchIndex += 1
             guard let packetHandler else { break }
             await packetHandler(batch)
         }
+
+        compactDeliveredBatches()
 
         guard isCurrent(sequence: sequence) else { return }
         deliveryTask = nil
         if sourceValidity?() != true {
             pendingBatches.removeAll(keepingCapacity: true)
+            pendingBatchIndex = 0
             pendingEvents.removeAll(keepingCapacity: true)
             inputFinished = true
         }
         if inputFinished {
             finish(sequence: sequence)
+        }
+    }
+
+    private func compactDeliveredBatches() {
+        guard pendingBatchIndex > 0 else { return }
+        if pendingBatchIndex == pendingBatches.count {
+            pendingBatches.removeAll(keepingCapacity: true)
+            pendingBatchIndex = 0
         }
     }
 

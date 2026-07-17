@@ -12,17 +12,6 @@ protocol HomeTimelineGapRequesting: Sendable {
 
 extension HomeTimelineBackwardRequestCoordinator: HomeTimelineGapRequesting {}
 
-@MainActor
-protocol HomeTimelineGapRequestPersisting: Sendable {
-    func markGapRequested(
-        newerEventID: String,
-        olderEventID: String,
-        definition: NostrFeedDefinitionRecord
-    ) throws
-}
-
-extension HomeTimelineBackfillPersistence: HomeTimelineGapRequestPersisting {}
-
 struct HomeTimelineGapBackfillRequest {
     let account: NostrAccount?
     let hasRelayRuntime: Bool
@@ -66,14 +55,9 @@ struct HomeTimelineGapBackfillEffects: Sendable {
 @MainActor
 final class HomeTimelineGapBackfillWorkflow {
     private let requester: any HomeTimelineGapRequesting
-    private let persistence: any HomeTimelineGapRequestPersisting
 
-    init(
-        requester: any HomeTimelineGapRequesting,
-        persistence: any HomeTimelineGapRequestPersisting
-    ) {
+    init(requester: any HomeTimelineGapRequesting) {
         self.requester = requester
-        self.persistence = persistence
     }
 
     func backfill(
@@ -97,12 +81,7 @@ final class HomeTimelineGapBackfillWorkflow {
         case .failed(let diagnostic):
             effects.recordDiagnostic(diagnostic)
             return false
-        case .completed(let definition):
-            try? persistence.markGapRequested(
-                newerEventID: request.gap.newerPostID,
-                olderEventID: request.gap.olderPostID,
-                definition: definition
-            )
+        case .completed:
             effects.reloadProjection(account, request.gap.newerPostID)
             effects.materializeEntries()
             return true

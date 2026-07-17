@@ -3657,6 +3657,7 @@ struct TimelineModelTests {
 
         store.start(account: account)
         _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await waitForRelayProcessing(in: store, isProcessing: false)
         store.loadOlder()
         let olderSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-older-notes")
         #expect(store.isRelayProcessing)
@@ -3888,11 +3889,15 @@ struct TimelineModelTests {
             backfilledPosts: []
         )
 
-        let didStart = await store.backfillGap(gap, direction: .older)
+        let backfill = Task { @MainActor in
+            await store.backfillGap(gap, direction: .older)
+        }
         let gapSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-gap-notes")
         let sentFrames = await connection.sentFrames()
-        let gapREQFrame = try #require(sentFrames.last { $0.contains(gapSubscriptionID) })
-        #expect(didStart)
+        let gapREQFrame = try #require(sentFrames.last { frame in
+            reqSubscriptionID(from: frame, containing: "astrenza-gap-notes") ==
+                gapSubscriptionID
+        })
         #expect(gapREQFrame.contains(#""since":101"#))
         #expect(gapREQFrame.contains(#""until":299"#))
         #expect(gapREQFrame.contains(#""limit":8"#))
@@ -3903,6 +3908,7 @@ struct TimelineModelTests {
         ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        #expect(await backfill.value)
         try await waitForTimelinePostIDs(in: store, ids: [newer.id, middle.id, older.id])
         try await waitForHomeFeedGapState(
             in: eventStore,
@@ -3999,10 +4005,13 @@ struct TimelineModelTests {
             backfilledPosts: []
         )
 
-        #expect(await store.backfillGap(gap, direction: .older))
+        let backfill = Task { @MainActor in
+            await store.backfillGap(gap, direction: .older)
+        }
         let gapSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-gap-notes")
         await connection.appendInboundFrames([try relayEOSEFrame(subscriptionID: gapSubscriptionID)])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        #expect(await backfill.value)
         try await waitForTimelinePostIDs(in: store, ids: [newer.id, older.id])
         try await waitForHomeFeedGapState(
             in: eventStore,
@@ -4120,12 +4129,15 @@ struct TimelineModelTests {
             backfilledPosts: []
         )
 
-        #expect(await store.backfillGap(gap, direction: .older))
+        let backfill = Task { @MainActor in
+            await store.backfillGap(gap, direction: .older)
+        }
         let gapSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-gap-notes")
         await connection.appendInboundFrames([
             try relayEOSEFrame(subscriptionID: gapSubscriptionID)
         ])
         try await relayRuntime.receiveNext(relayURL: "wss://relay.example")
+        #expect(await backfill.value)
         try await waitForRelayProcessing(in: store, isProcessing: false)
         let expectedEntryIDs = [
             newer.id,
@@ -4241,7 +4253,9 @@ struct TimelineModelTests {
             backfilledPosts: []
         )
 
-        #expect(await store.backfillGap(gap, direction: .older))
+        let backfill = Task { @MainActor in
+            await store.backfillGap(gap, direction: .older)
+        }
         let gapSubscriptionID = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-gap-notes")
         _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-gap-notes")
 
@@ -4258,6 +4272,7 @@ struct TimelineModelTests {
             kind: .timeout,
             subscriptionID: gapSubscriptionID
         )
+        #expect(await backfill.value)
         try await waitForRelayProcessing(in: store, isProcessing: false)
         let expectedEntryIDs = [
             newer.id,

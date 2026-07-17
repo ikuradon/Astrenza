@@ -13,6 +13,23 @@ enum HomeTimelineBackwardRequestOutcome: Equatable, Sendable {
 }
 
 @MainActor
+protocol HomeTimelineGapRequestStatePersisting: Sendable {
+    func markGapRequested(
+        newerEventID: String,
+        olderEventID: String,
+        definition: NostrFeedDefinitionRecord
+    ) throws
+
+    func markGapUnresolved(
+        _ gap: PendingGapBackfill,
+        context: HomeFeedRuntimeContext
+    )
+}
+
+extension HomeTimelineBackfillPersistence:
+    HomeTimelineGapRequestStatePersisting {}
+
+@MainActor
 final class HomeTimelineBackwardRequestCoordinator {
     typealias PacketInstaller = @MainActor @Sendable (
         _ packets: [NostrREQPacket],
@@ -25,6 +42,8 @@ final class HomeTimelineBackwardRequestCoordinator {
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let syncPlanner: HomeTimelineSyncPlanner
     private let packetInstaller: PacketInstaller?
+    private let gapStatePersistence:
+        (any HomeTimelineGapRequestStatePersisting)?
 
     init(
         contentCoordinator: HomeTimelineContentCoordinator,
@@ -32,7 +51,9 @@ final class HomeTimelineBackwardRequestCoordinator {
         projectionController: HomeFeedProjectionController,
         backwardRequestRegistry: HomeTimelineBackwardRequestRegistry,
         syncPlanner: HomeTimelineSyncPlanner,
-        packetInstaller: PacketInstaller?
+        packetInstaller: PacketInstaller?,
+        gapStatePersistence:
+            (any HomeTimelineGapRequestStatePersisting)? = nil
     ) {
         self.contentCoordinator = contentCoordinator
         self.timelineRepository = timelineRepository
@@ -40,6 +61,7 @@ final class HomeTimelineBackwardRequestCoordinator {
         self.backwardRequestRegistry = backwardRequestRegistry
         self.syncPlanner = syncPlanner
         self.packetInstaller = packetInstaller
+        self.gapStatePersistence = gapStatePersistence
     }
 
     func requestOlder(
@@ -128,11 +150,22 @@ final class HomeTimelineBackwardRequestCoordinator {
             policy: policy
         ) else { return .unavailable }
 
+        let pendingGap = PendingGapBackfill(
+            newerPostID: gap.newerPostID,
+            olderPostID: gap.olderPostID,
+            direction: direction
+        )
         return await install(
             packet,
             feed: feed,
             fallbackRelayURL: content.resolvedRelays.first,
-            failurePrefix: "gap enqueue failed"
+            failurePrefix: "gap enqueue failed",
+            rollback: { [gapStatePersistence] in
+                gapStatePersistence?.markGapUnresolved(
+                    pendingGap,
+                    context: feed.context
+                )
+            }
         ) {
             backwardRequestRegistry.registerGap(
                 groupID: packet.groupID,
@@ -140,6 +173,11 @@ final class HomeTimelineBackwardRequestCoordinator {
                 newerEventID: gap.newerPostID,
                 olderEventID: gap.olderPostID,
                 direction: direction
+            )
+            try gapStatePersistence?.markGapRequested(
+                newerEventID: gap.newerPostID,
+                olderEventID: gap.olderPostID,
+                definition: feed.definition
             )
         }
     }
@@ -165,17 +203,33 @@ final class HomeTimelineBackwardRequestCoordinator {
         feed: (definition: NostrFeedDefinitionRecord, context: HomeFeedRuntimeContext),
         fallbackRelayURL: String?,
         failurePrefix: String,
-        register: () -> Void
+        rollback: (() -> Void)? = nil,
+        register: () throws -> Void
     ) async -> HomeTimelineBackwardRequestOutcome {
         guard let packetInstaller, !Task.isCancelled else { return .unavailable }
-        register()
+        do {
+            try register()
+        } catch {
+            backwardRequestRegistry.remove(groupID: packet.groupID)
+            return .failed(HomeTimelineBackwardRequestDiagnostic(
+                relayURL: fallbackRelayURL ?? "runtime",
+                subscriptionID: packet.subscriptionID,
+                message: "\(failurePrefix): \(error.localizedDescription)"
+            ))
+        }
         do {
             try await packetInstaller([packet], .authors)
         } catch is CancellationError {
-            backwardRequestRegistry.remove(groupID: packet.groupID)
+            rollbackRequest(
+                groupID: packet.groupID,
+                rollback: rollback
+            )
             return .unavailable
         } catch {
-            backwardRequestRegistry.remove(groupID: packet.groupID)
+            rollbackRequest(
+                groupID: packet.groupID,
+                rollback: rollback
+            )
             return .failed(HomeTimelineBackwardRequestDiagnostic(
                 relayURL: fallbackRelayURL ?? "runtime",
                 subscriptionID: packet.subscriptionID,
@@ -189,7 +243,10 @@ final class HomeTimelineBackwardRequestCoordinator {
                 accountID: feed.definition.accountID
               )
         else {
-            backwardRequestRegistry.remove(groupID: packet.groupID)
+            rollbackRequest(
+                groupID: packet.groupID,
+                rollback: rollback
+            )
             return .unavailable
         }
         guard await backwardRequestRegistry.waitForCompletion(
@@ -202,6 +259,16 @@ final class HomeTimelineBackwardRequestCoordinator {
               )
         else { return .unavailable }
         return .completed(feed.definition)
+    }
+
+    private func rollbackRequest(
+        groupID: String,
+        rollback: (() -> Void)?
+    ) {
+        guard backwardRequestRegistry.remove(groupID: groupID) != nil else {
+            return
+        }
+        rollback?()
     }
 
     private func timelineEvent(

@@ -127,14 +127,14 @@ extension HomeTimelineStoreAssembly {
             projectionController: persistence.homeFeedProjection,
             backwardRequestRegistry: registry,
             syncPlanner: syncPlanner,
-            packetInstaller: installer
+            packetInstaller: installer,
+            gapStatePersistence: persistence.backfillPersistence
         )
         return HomeTimelineStoreBackwardCoordination(
             registry: registry,
             coordinator: coordinator,
             gapBackfillWorkflow: HomeTimelineGapBackfillWorkflow(
-                requester: coordinator,
-                persistence: persistence.backfillPersistence
+                requester: coordinator
             ),
             feedSyncCoordinator: HomeTimelineFeedSyncCoordinator(
                 eventStore: input.eventStore,

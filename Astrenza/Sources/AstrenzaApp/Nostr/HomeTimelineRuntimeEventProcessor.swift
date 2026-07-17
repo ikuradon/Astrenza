@@ -54,21 +54,54 @@ enum HomeTimelineRuntimeEventProcessingOutcome: Equatable, Sendable {
 
 @MainActor
 final class HomeTimelineRuntimeEventProcessor {
+    struct PersistenceRetryPolicy: Equatable, Sendable {
+        let maxAttempts: Int
+        let initialDelayNanoseconds: UInt64
+        let maximumDelayNanoseconds: UInt64
+
+        static let `default` = PersistenceRetryPolicy(
+            maxAttempts: 3,
+            initialDelayNanoseconds: 25_000_000,
+            maximumDelayNanoseconds: 100_000_000
+        )
+
+        func delayNanoseconds(afterFailedAttempt attempt: Int) -> UInt64 {
+            guard attempt > 0, initialDelayNanoseconds > 0 else { return 0 }
+            let shift = min(attempt - 1, 10)
+            let (multiplied, overflow) = initialDelayNanoseconds
+                .multipliedReportingOverflow(by: UInt64(1 << shift))
+            return min(
+                overflow ? UInt64.max : multiplied,
+                maximumDelayNanoseconds
+            )
+        }
+    }
+
+    typealias Sleep = @Sendable (_ nanoseconds: UInt64) async throws -> Void
+
     private let eventIngestor: any HomeTimelineProjectedEventIngesting
     private let backwardRequestRegistry: HomeTimelineBackwardRequestRegistry
     private let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
     private let applicationPlanner: HomeTimelineRuntimeEventApplicationPlanner
+    private let persistenceRetryPolicy: PersistenceRetryPolicy
+    private let sleep: Sleep
 
     init(
         eventIngestor: any HomeTimelineProjectedEventIngesting,
         backwardRequestRegistry: HomeTimelineBackwardRequestRegistry,
         feedSyncCoordinator: HomeTimelineFeedSyncCoordinator,
-        applicationPlanner: HomeTimelineRuntimeEventApplicationPlanner = .init()
+        applicationPlanner: HomeTimelineRuntimeEventApplicationPlanner = .init(),
+        persistenceRetryPolicy: PersistenceRetryPolicy = .default,
+        sleep: @escaping Sleep = { nanoseconds in
+            try await Task.sleep(nanoseconds: nanoseconds)
+        }
     ) {
         self.eventIngestor = eventIngestor
         self.backwardRequestRegistry = backwardRequestRegistry
         self.feedSyncCoordinator = feedSyncCoordinator
         self.applicationPlanner = applicationPlanner
+        self.persistenceRetryPolicy = persistenceRetryPolicy
+        self.sleep = sleep
     }
 
     func process(
@@ -107,8 +140,11 @@ final class HomeTimelineRuntimeEventProcessor {
 
         let ingestResults: [HomeTimelineProjectedEventIngestResult]
         do {
-            ingestResults = try await eventIngestor.ingestProjectedEvents(ingestRequests)
+            ingestResults = try await ingestWithRetry(ingestRequests)
         } catch {
+            guard !Task.isCancelled, !(error is CancellationError) else {
+                return prepared.map { _ in .ignored }
+            }
             return prepared.map { item in
                 guard let item else { return .ignored }
                 return .persistenceFailed(
@@ -147,6 +183,31 @@ final class HomeTimelineRuntimeEventProcessor {
                 applicationPlan: applicationPlan,
                 backwardRequestKey: item.backwardRequestKey
             ))
+        }
+    }
+
+    private func ingestWithRetry(
+        _ requests: [HomeTimelineProjectedEventIngestRequest]
+    ) async throws -> [HomeTimelineProjectedEventIngestResult] {
+        let maximumAttempts = max(1, persistenceRetryPolicy.maxAttempts)
+        var attempt = 1
+        while true {
+            try Task.checkCancellation()
+            do {
+                return try await eventIngestor.ingestProjectedEvents(requests)
+            } catch {
+                guard !(error is CancellationError), !Task.isCancelled else {
+                    throw CancellationError()
+                }
+                guard attempt < maximumAttempts else { throw error }
+                let delay = persistenceRetryPolicy.delayNanoseconds(
+                    afterFailedAttempt: attempt
+                )
+                if delay > 0 {
+                    try await sleep(delay)
+                }
+                attempt += 1
+            }
         }
     }
 

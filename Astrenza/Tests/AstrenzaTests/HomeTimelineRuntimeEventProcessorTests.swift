@@ -224,7 +224,12 @@ struct HomeTimelineRuntimeEventProcessorTests {
         let processor = HomeTimelineRuntimeEventProcessor(
             eventIngestor: FailingProjectedEventIngestor(),
             backwardRequestRegistry: registry,
-            feedSyncCoordinator: feedSyncCoordinator
+            feedSyncCoordinator: feedSyncCoordinator,
+            persistenceRetryPolicy: .init(
+                maxAttempts: 1,
+                initialDelayNanoseconds: 0,
+                maximumDelayNanoseconds: 0
+            )
         )
         let note = event(idCharacter: "4", pubkey: followedPubkey, createdAt: 400)
         var ensureCount = 0
@@ -249,6 +254,46 @@ struct HomeTimelineRuntimeEventProcessorTests {
         #expect(forward == .persistenceFailed("event save failed: unavailable"))
         #expect(backward == .persistenceFailed("backward event save failed: unavailable"))
         #expect(ensureCount == 1)
+    }
+
+    @Test("A transient persistence failure retries the complete event batch")
+    func transientPersistenceFailureRetriesBatch() async {
+        let registry = HomeTimelineBackwardRequestRegistry()
+        let feedSyncCoordinator = HomeTimelineFeedSyncCoordinator(
+            eventStore: nil,
+            backwardRequestRegistry: registry
+        )
+        let ingestor = RetryingProjectedEventIngestor(failuresBeforeSuccess: 2)
+        let processor = HomeTimelineRuntimeEventProcessor(
+            eventIngestor: ingestor,
+            backwardRequestRegistry: registry,
+            feedSyncCoordinator: feedSyncCoordinator,
+            persistenceRetryPolicy: .init(
+                maxAttempts: 3,
+                initialDelayNanoseconds: 0,
+                maximumDelayNanoseconds: 0
+            )
+        )
+        let note = event(
+            idCharacter: "6",
+            pubkey: followedPubkey,
+            createdAt: 600
+        )
+
+        let outcome = await processor.process(
+            relayURL: relayURL,
+            subscriptionID: "astrenza-home-forward-retry",
+            event: note,
+            forwardPresentationState: { presentationState },
+            ensureFeedDefinition: {},
+            activeFeedContext: { nil }
+        )
+
+        guard case .processed = outcome else {
+            Issue.record("The event batch should succeed on its final retry")
+            return
+        }
+        #expect(await ingestor.requestCount() == 3)
     }
 
     private func makeFixture(eventStore: NostrEventStore) throws -> Fixture {
@@ -333,6 +378,41 @@ private struct FailingProjectedEventIngestor: HomeTimelineProjectedEventIngestin
     ) async throws -> HomeTimelineProjectedEventIngestResult {
         throw ProjectedEventIngestError.unavailable
     }
+}
+
+private actor RetryingProjectedEventIngestor:
+    HomeTimelineProjectedEventIngesting {
+    private let failuresBeforeSuccess: Int
+    private var requests = 0
+
+    init(failuresBeforeSuccess: Int) {
+        self.failuresBeforeSuccess = failuresBeforeSuccess
+    }
+
+    func ingestForward(
+        _ request: HomeTimelineForwardEventIngestRequest
+    ) async throws -> HomeTimelineProjectedEventIngestResult {
+        requests += 1
+        if requests <= failuresBeforeSuccess {
+            throw ProjectedEventIngestError.unavailable
+        }
+        return HomeTimelineProjectedEventIngestResult(
+            eventResult: HomeTimelineEventIngestResult(
+                primaryEventID: request.event.id,
+                embeddedEvent: nil,
+                savedEventIDs: [request.event.id]
+            ),
+            projectsIntoCurrentFeed: true
+        )
+    }
+
+    func ingestBackward(
+        _ request: HomeTimelineBackwardEventIngestRequest
+    ) async throws -> HomeTimelineProjectedEventIngestResult {
+        throw ProjectedEventIngestError.unavailable
+    }
+
+    func requestCount() -> Int { requests }
 }
 
 @MainActor

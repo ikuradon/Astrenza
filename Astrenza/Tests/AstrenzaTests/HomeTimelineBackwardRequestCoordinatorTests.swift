@@ -66,6 +66,13 @@ struct BackwardRequestCoordinatorTests {
             direction: .newer
         ))
         #expect(!request.isOlderPage)
+        #expect(system.gapStatePersistence.events == [
+            .requested(
+                newerEventID: system.newerEvent.id,
+                olderEventID: system.olderEvent.id,
+                feedID: system.activeDefinition.feedID
+            )
+        ])
     }
 
     @Test("An active older page request rejects duplicate installation")
@@ -179,6 +186,20 @@ struct BackwardRequestCoordinatorTests {
             message: "\(scenario.failurePrefix): installation failed"
         ))
         #expect(system.registry.requestCount == 0)
+        if scenario == .gap {
+            #expect(system.gapStatePersistence.events == [
+                .requested(
+                    newerEventID: system.newerEvent.id,
+                    olderEventID: system.olderEvent.id,
+                    feedID: system.activeDefinition.feedID
+                ),
+                .unresolved(
+                    newerEventID: system.newerEvent.id,
+                    olderEventID: system.olderEvent.id,
+                    feedID: system.activeDefinition.feedID
+                )
+            ])
+        }
     }
 
     @Test("A cancelled installation rolls back without reporting a failure")
@@ -219,6 +240,11 @@ struct BackwardRequestCoordinatorTests {
         #expect(outcome == .unavailable)
         #expect(installer.installations.count == 1)
         #expect(system.registry.requestCount == 0)
+        #expect(system.gapStatePersistence.events.last == .unresolved(
+            newerEventID: system.newerEvent.id,
+            olderEventID: system.olderEvent.id,
+            feedID: system.activeDefinition.feedID
+        ))
     }
 
     @MainActor
@@ -280,6 +306,7 @@ private struct BackwardRequestTestSystem {
     let activeContext: HomeFeedRuntimeContext
     let projection: HomeFeedProjectionController
     let registry: HomeTimelineBackwardRequestRegistry
+    let gapStatePersistence: BackwardRequestGapStatePersistenceSpy
     let application: HomeTimelineBackwardRequestCoordinator
 
     init(
@@ -294,6 +321,7 @@ private struct BackwardRequestTestSystem {
         )
         let projection = Self.projection(model: model)
         let registry = HomeTimelineBackwardRequestRegistry()
+        let gapStatePersistence = BackwardRequestGapStatePersistenceSpy()
 
         self.account = model.account
         self.newerEvent = model.newerEvent
@@ -303,13 +331,15 @@ private struct BackwardRequestTestSystem {
         self.activeContext = HomeFeedRuntimeContext(definition: model.definition)
         self.projection = projection
         self.registry = registry
+        self.gapStatePersistence = gapStatePersistence
         self.application = HomeTimelineBackwardRequestCoordinator(
             contentCoordinator: content,
             timelineRepository: HomeTimelineRepository(eventStore: nil),
             projectionController: projection,
             backwardRequestRegistry: registry,
             syncPlanner: HomeTimelineSyncPlanner(),
-            packetInstaller: Self.packetInstaller(for: installer)
+            packetInstaller: Self.packetInstaller(for: installer),
+            gapStatePersistence: gapStatePersistence
         )
     }
 
@@ -427,6 +457,48 @@ private struct BackwardRequestTestSystem {
             content: String(idCharacter),
             sig: String(repeating: "0", count: 128)
         )
+    }
+}
+
+@MainActor
+private final class BackwardRequestGapStatePersistenceSpy:
+    HomeTimelineGapRequestStatePersisting {
+    enum Event: Equatable {
+        case requested(
+            newerEventID: String,
+            olderEventID: String,
+            feedID: String
+        )
+        case unresolved(
+            newerEventID: String,
+            olderEventID: String,
+            feedID: String
+        )
+    }
+
+    private(set) var events: [Event] = []
+
+    func markGapRequested(
+        newerEventID: String,
+        olderEventID: String,
+        definition: NostrFeedDefinitionRecord
+    ) throws {
+        events.append(.requested(
+            newerEventID: newerEventID,
+            olderEventID: olderEventID,
+            feedID: definition.feedID
+        ))
+    }
+
+    func markGapUnresolved(
+        _ gap: PendingGapBackfill,
+        context: HomeFeedRuntimeContext
+    ) {
+        events.append(.unresolved(
+            newerEventID: gap.newerPostID,
+            olderEventID: gap.olderPostID,
+            feedID: context.feedID
+        ))
     }
 }
 
