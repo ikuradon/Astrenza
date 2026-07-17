@@ -20,10 +20,12 @@ struct HomeTimelineRuntimePacketHandlers: Sendable {
     typealias BackwardCompletionHandler = @MainActor @Sendable (
         _ completion: NostrBackwardREQCompletion
     ) -> Void
+    typealias PresentationSettlement = @MainActor @Sendable () async -> Void
 
     let applyState: StateHandler
     let handleEvent: EventHandler
     let handleBackwardCompletion: BackwardCompletionHandler
+    let waitForPendingPresentation: PresentationSettlement
 }
 
 @MainActor
@@ -60,9 +62,9 @@ final class HomeTimelineRuntimePacketWorkflow {
             let application = packetHandler.handle(packet, context: context)
             guard application.wasHandled else { continue }
 
-            handlers.applyState(application)
             switch application.action {
             case .event(let relayURL, let subscriptionID, let event):
+                handlers.applyState(application)
                 pendingEvents.append(HomeTimelineRuntimeEventEnvelope(
                     relayURL: relayURL,
                     subscriptionID: subscriptionID,
@@ -70,9 +72,14 @@ final class HomeTimelineRuntimePacketWorkflow {
                 ))
             case .backwardCompleted(let completion):
                 await flushEvents()
+                handlers.applyState(application)
                 handlers.handleBackwardCompletion(completion)
             case nil:
                 await flushEvents()
+                if application.requiresPresentationSettlement {
+                    await handlers.waitForPendingPresentation()
+                }
+                handlers.applyState(application)
             }
         }
         await flushEvents()

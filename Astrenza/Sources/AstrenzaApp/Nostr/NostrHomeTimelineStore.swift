@@ -217,6 +217,10 @@ extension NostrHomeTimelineStore {
         composition.status.isRealtime
     }
 
+    var initialHomeTimelineSyncState: HomeTimelineInitialSyncState {
+        composition.status.initialSyncState
+    }
+
     var resolvedRelays: [String] {
         composition.state.resolvedRelays
     }

@@ -301,7 +301,8 @@ struct RuntimeInteractionFixture {
                 ),
                 runtimeApplication: probe.runtimeApplicationEffects,
                 apply: { [probe] in probe.applications.append($0) },
-                perform: { [probe] in probe.asyncApplications.append($0) }
+                perform: { [probe] in probe.asyncApplications.append($0) },
+                waitForPendingPresentation: {}
             )
         )
     }

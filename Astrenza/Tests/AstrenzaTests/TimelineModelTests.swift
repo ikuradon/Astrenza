@@ -2496,7 +2496,11 @@ struct TimelineModelTests {
         #expect(store.activityStatus?.detail.contains("kind:10002") == true)
 
         await relayClient.releaseBootstrap()
-        try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 1)
+        try await waitForREQFrameCount(
+            in: connection,
+            containing: "astrenza-home-forward",
+            count: 1
+        )
 
         let forwardFrame = try #require(await connection.sentFrames().first { $0.contains("astrenza-home-forward") })
         #expect(forwardFrame.contains(followed))
@@ -2561,13 +2565,22 @@ struct TimelineModelTests {
         #expect(await connection.sentFrames().allSatisfy { !$0.contains("astrenza-home-forward") })
 
         await relayClient.releaseBootstrap()
-        try await waitForREQFrameCount(in: connection, containing: "astrenza-home-forward", count: 1)
+        let forwardSubscriptionID = try await waitForREQSubscriptionID(
+            in: connection,
+            containing: "astrenza-home-forward"
+        )
         for _ in 0..<100 {
             if store.phase == .loaded { break }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
 
         #expect(store.phase == .loaded)
+        #expect(store.activityStatus?.compactLabel == "Syncing")
+        await connection.appendInboundFrames([
+            try relayEOSEFrame(subscriptionID: forwardSubscriptionID)
+        ])
+        try await relayRuntime.receiveNext(relayURL: relayURL)
+        try await waitForRelayProcessing(in: store, isProcessing: false)
         #expect(store.activityStatus == nil)
     }
 
@@ -3656,7 +3669,11 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: connection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://relay.example"
+        )
         try await waitForRelayProcessing(in: store, isProcessing: false)
         store.loadOlder()
         let olderSubscriptionID = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-older-notes")
@@ -3878,7 +3895,11 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: connection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://relay.example"
+        )
         let gap = TimelineGap(
             id: "gap-\(newer.id)-\(older.id)",
             newerPostID: newer.id,
@@ -3994,7 +4015,11 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: connection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://relay.example"
+        )
         let gap = TimelineGap(
             id: "gap-\(newer.id)-\(older.id)",
             newerPostID: newer.id,
@@ -4118,7 +4143,11 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: connection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://relay.example"
+        )
         let gap = TimelineGap(
             id: "gap-\(newer.id)-\(older.id)",
             newerPostID: newer.id,
@@ -4234,8 +4263,16 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-home-forward")
-        _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: fastConnection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://fast.example"
+        )
+        try await completeInitialHomeForwardSync(
+            in: slowConnection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://slow.example"
+        )
         try seedHomeFeedProjection(
             in: eventStore,
             accountID: account.pubkey,
@@ -4366,7 +4403,11 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: connection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://relay.example"
+        )
         let gap = TimelineGap(
             id: "gap-\(newer.id)-\(older.id)",
             newerPostID: newer.id,
@@ -4475,7 +4516,11 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: connection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: connection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://relay.example"
+        )
         let gap = TimelineGap(
             id: "gap-\(newer.id)-\(older.id)",
             newerPostID: newer.id,
@@ -4579,8 +4624,16 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-home-forward")
-        _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: fastConnection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://fast.example"
+        )
+        try await completeInitialHomeForwardSync(
+            in: slowConnection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://slow.example"
+        )
         store.loadOlder()
         let olderSubscriptionID = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-older-notes")
         _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-older-notes")
@@ -4692,8 +4745,16 @@ struct TimelineModelTests {
         )
 
         store.start(account: account)
-        _ = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-home-forward")
-        _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-home-forward")
+        try await completeInitialHomeForwardSync(
+            in: fastConnection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://fast.example"
+        )
+        try await completeInitialHomeForwardSync(
+            in: slowConnection,
+            relayRuntime: relayRuntime,
+            relayURL: "wss://slow.example"
+        )
         store.loadOlder()
         let olderSubscriptionID = try await waitForREQSubscriptionID(in: fastConnection, containing: "astrenza-older-notes")
         _ = try await waitForREQSubscriptionID(in: slowConnection, containing: "astrenza-older-notes")
@@ -8865,6 +8926,21 @@ private func waitForREQFrameCount(
         reqSubscriptionID(from: frame, containing: needle) != nil
     }.count
     #expect(matchingCount >= count)
+}
+
+private func completeInitialHomeForwardSync(
+    in connection: FakeRelayRuntimeConnection,
+    relayRuntime: NostrRelayRuntime,
+    relayURL: String
+) async throws {
+    let subscriptionID = try await waitForREQSubscriptionID(
+        in: connection,
+        containing: "astrenza-home-forward"
+    )
+    await connection.appendInboundFrames([
+        try relayEOSEFrame(subscriptionID: subscriptionID)
+    ])
+    try await relayRuntime.receiveNext(relayURL: relayURL)
 }
 
 @MainActor

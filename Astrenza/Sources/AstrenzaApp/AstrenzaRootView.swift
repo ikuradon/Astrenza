@@ -79,6 +79,9 @@ struct AstrenzaRootView: View {
         .onChange(of: homeTimelineStore.entries.count) { _, _ in
             scheduleStartupSplashDismissIfReady()
         }
+        .onChange(of: homeTimelineStore.initialHomeTimelineSyncState) { _, _ in
+            scheduleStartupSplashDismissIfReady()
+        }
     }
 
     private var themeMode: AstrenzaThemeMode {
@@ -99,12 +102,10 @@ struct AstrenzaRootView: View {
             return true
         }
 
-        switch homeTimelineStore.phase {
-        case .loaded, .failed:
-            return true
-        case .idle, .resolvingRelays, .resolvingContacts, .loadingHome:
-            return false
-        }
+        return HomeTimelineStartupPresentationPolicy.isContentReady(
+            phase: homeTimelineStore.phase,
+            initialSyncState: homeTimelineStore.initialHomeTimelineSyncState
+        )
     }
 
     private var startupStatus: NostrTimelineActivityStatus {
@@ -126,11 +127,32 @@ struct AstrenzaRootView: View {
                 compactLabel: "Error"
             )
         case .loaded:
-            return NostrTimelineActivityStatus(
-                title: "Home timeline ready",
-                detail: "Restoring your last reading position",
-                compactLabel: "Ready"
-            )
+            switch homeTimelineStore.initialHomeTimelineSyncState {
+            case .awaitingRelayResponses:
+                return NostrTimelineActivityStatus(
+                    title: "Synchronizing Home timeline",
+                    detail: "Waiting for initial relay responses",
+                    compactLabel: "Syncing"
+                )
+            case .synchronized:
+                return NostrTimelineActivityStatus(
+                    title: "Home timeline ready",
+                    detail: "Restoring your last reading position",
+                    compactLabel: "Ready"
+                )
+            case .degraded:
+                return NostrTimelineActivityStatus(
+                    title: "Home timeline partially synchronized",
+                    detail: "Some relays did not complete the initial request",
+                    compactLabel: "Partial"
+                )
+            case .unavailable:
+                return NostrTimelineActivityStatus(
+                    title: "Home timeline unavailable",
+                    detail: "No Home relay completed the initial request",
+                    compactLabel: "Error"
+                )
+            }
         case .idle, .resolvingRelays, .resolvingContacts, .loadingHome:
             return NostrTimelineActivityStatus(
                 title: "Preparing Home timeline",
@@ -173,6 +195,22 @@ struct AstrenzaRootView: View {
                     isStartupSplashVisible = false
                 }
             }
+        }
+    }
+}
+
+enum HomeTimelineStartupPresentationPolicy {
+    static func isContentReady(
+        phase: NostrHomeTimelinePhase,
+        initialSyncState: HomeTimelineInitialSyncState
+    ) -> Bool {
+        switch phase {
+        case .failed:
+            true
+        case .loaded:
+            initialSyncState.isSettled
+        case .idle, .resolvingRelays, .resolvingContacts, .loadingHome:
+            false
         }
     }
 }

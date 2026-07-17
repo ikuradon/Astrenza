@@ -26,6 +26,7 @@ struct HomeTimelineActivityCoordinatorTests {
         let loadingContext = HomeTimelineActivityContext(
             connectedRelayCount: 2,
             plannedRelayCount: 5,
+            initialSyncState: .awaitingRelayResponses,
             hasOlderPageRequest: false,
             hasGapWork: false,
             hasBackwardRequests: false,
@@ -47,6 +48,7 @@ struct HomeTimelineActivityCoordinatorTests {
         let allWork = HomeTimelineActivityContext(
             connectedRelayCount: 1,
             plannedRelayCount: 1,
+            initialSyncState: .synchronized,
             hasOlderPageRequest: true,
             hasGapWork: true,
             hasBackwardRequests: true,
@@ -62,6 +64,7 @@ struct HomeTimelineActivityCoordinatorTests {
         let gapWork = HomeTimelineActivityContext(
             connectedRelayCount: 1,
             plannedRelayCount: 1,
+            initialSyncState: .synchronized,
             hasOlderPageRequest: false,
             hasGapWork: true,
             hasBackwardRequests: true,
@@ -72,6 +75,7 @@ struct HomeTimelineActivityCoordinatorTests {
         let dependencyWork = HomeTimelineActivityContext(
             connectedRelayCount: 1,
             plannedRelayCount: 1,
+            initialSyncState: .synchronized,
             hasOlderPageRequest: false,
             hasGapWork: false,
             hasBackwardRequests: true,
@@ -136,12 +140,45 @@ struct HomeTimelineActivityCoordinatorTests {
         #expect(transition.snapshot.isRealtime)
         #expect(coordinator.activityStatus(context: .empty) == nil)
     }
+
+    @Test("Loaded Home reports initial EOSE wait without treating realtime reconnects as work")
+    func initialSyncActivityEndsAtTerminalResult() {
+        let coordinator = HomeTimelineActivityCoordinator()
+        let awaiting = HomeTimelineActivityContext(
+            connectedRelayCount: 2,
+            plannedRelayCount: 3,
+            initialSyncState: .awaitingRelayResponses,
+            hasOlderPageRequest: false,
+            hasGapWork: false,
+            hasBackwardRequests: false,
+            hasPendingDependencyWork: false
+        )
+        let synchronized = HomeTimelineActivityContext(
+            connectedRelayCount: 2,
+            plannedRelayCount: 3,
+            initialSyncState: .synchronized,
+            hasOlderPageRequest: false,
+            hasGapWork: false,
+            hasBackwardRequests: false,
+            hasPendingDependencyWork: false
+        )
+
+        #expect(coordinator.activityStatus(context: awaiting) == nil)
+        _ = coordinator.setPhase(.loaded)
+        #expect(coordinator.activityStatus(context: awaiting) == NostrTimelineActivityStatus(
+            title: "Synchronizing Home timeline",
+            detail: "2 of 3 relays connected; waiting for initial EOSE",
+            compactLabel: "Syncing"
+        ))
+        #expect(coordinator.activityStatus(context: synchronized) == nil)
+    }
 }
 
 private extension HomeTimelineActivityContext {
     static let empty = HomeTimelineActivityContext(
         connectedRelayCount: 0,
         plannedRelayCount: 1,
+        initialSyncState: .synchronized,
         hasOlderPageRequest: false,
         hasGapWork: false,
         hasBackwardRequests: false,
@@ -151,6 +188,7 @@ private extension HomeTimelineActivityContext {
     static let allWork = HomeTimelineActivityContext(
         connectedRelayCount: 1,
         plannedRelayCount: 2,
+        initialSyncState: .synchronized,
         hasOlderPageRequest: true,
         hasGapWork: true,
         hasBackwardRequests: true,

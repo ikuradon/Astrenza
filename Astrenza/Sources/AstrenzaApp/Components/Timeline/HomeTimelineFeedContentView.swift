@@ -108,12 +108,14 @@ struct HomeTimelineFeedContentView: View {
             return HomeTimelineEmptyStateContext(
                 interaction: interaction,
                 phase: .idle,
+                initialSyncState: .awaitingRelayResponses,
                 hasFollowedPubkeys: false
             )
         }
         return HomeTimelineEmptyStateContext(
             interaction: interaction,
             phase: store.phase,
+            initialSyncState: store.initialHomeTimelineSyncState,
             hasFollowedPubkeys: !store.followedPubkeys.isEmpty
         )
     }

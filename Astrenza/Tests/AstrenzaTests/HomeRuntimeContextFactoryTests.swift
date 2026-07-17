@@ -147,6 +147,7 @@ private final class RuntimeContextFactoryProbe {
                 validatedFeedIDs.append(context.feedID)
                 return context.feedID == "home:replacement"
             },
+            waitForPendingPresentation: {},
             runtimeApplication: runtimeApplicationEffects,
             applications: applicationFixture.effects
         )

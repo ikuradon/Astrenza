@@ -38,21 +38,73 @@ struct HomeEmptyStateActionCoordinatorTests {
         #expect(missingContacts.primaryAction == .refresh)
     }
 
-    @Test("Idle and loaded Home preserve their existing contact policy")
-    func idleAndLoadedPreserveContactPolicy() {
+    @Test("Idle and pending loaded Home remain progress instead of claiming an empty result")
+    func unresolvedHomeRemainsProgress() {
         let idleWithoutFollows = resolve(
             phase: .idle,
+            initialSyncState: .awaitingRelayResponses,
             hasFollows: false
         )
-        let loadedWithFollows = resolve(
+        let pendingLoaded = resolve(
             phase: .loaded,
+            initialSyncState: .awaitingRelayResponses,
             hasFollows: true
         )
 
-        #expect(idleWithoutFollows.emptyState == .noContacts)
+        #expect(idleWithoutFollows.emptyState == .loadingHome(
+            message: NostrHomeTimelinePhase.idle.copy
+        ))
         #expect(idleWithoutFollows.primaryAction == .relayStatus)
-        #expect(loadedWithFollows.emptyState == .home)
-        #expect(loadedWithFollows.primaryAction == .relayStatus)
+        #expect(pendingLoaded.emptyState == .loadingHome(
+            message: "Waiting for initial responses from Home relays"
+        ))
+        #expect(pendingLoaded.primaryAction == .relayStatus)
+    }
+
+    @Test("Only a synchronized initial request concludes that Home has no notes")
+    func synchronizedInitialRequestConcludesEmptyHome() {
+        let synchronized = resolve(
+            phase: .loaded,
+            initialSyncState: .synchronized,
+            hasFollows: true
+        )
+        let degraded = resolve(
+            phase: .loaded,
+            initialSyncState: .degraded,
+            hasFollows: true
+        )
+        let unavailable = resolve(
+            phase: .loaded,
+            initialSyncState: .unavailable,
+            hasFollows: true
+        )
+
+        #expect(synchronized.emptyState == .home)
+        #expect(synchronized.primaryAction == .relayStatus)
+        #expect(degraded.emptyState.title == "Home unavailable")
+        #expect(degraded.primaryAction == .refresh)
+        #expect(unavailable.emptyState.title == "Home unavailable")
+        #expect(unavailable.primaryAction == .refresh)
+    }
+
+    @Test("Startup keeps an empty loaded timeline covered until initial sync settles")
+    func startupWaitsForInitialSyncSettlement() {
+        #expect(!HomeTimelineStartupPresentationPolicy.isContentReady(
+            phase: .loaded,
+            initialSyncState: .awaitingRelayResponses
+        ))
+        #expect(HomeTimelineStartupPresentationPolicy.isContentReady(
+            phase: .loaded,
+            initialSyncState: .synchronized
+        ))
+        #expect(HomeTimelineStartupPresentationPolicy.isContentReady(
+            phase: .loaded,
+            initialSyncState: .degraded
+        ))
+        #expect(HomeTimelineStartupPresentationPolicy.isContentReady(
+            phase: .failed("offline"),
+            initialSyncState: .awaitingRelayResponses
+        ))
     }
 
     @Test("Non-live and generic timelines keep their existing destinations")
@@ -145,12 +197,14 @@ struct HomeEmptyStateActionCoordinatorTests {
         hasLiveAccount: Bool = true,
         timeline: TimelineKind = .home,
         phase: NostrHomeTimelinePhase = .loaded,
+        initialSyncState: HomeTimelineInitialSyncState = .synchronized,
         hasFollows: Bool = true
     ) -> HomeTimelineEmptyStatePolicy.Resolution {
         HomeTimelineEmptyStatePolicy.resolve(context(
             hasLiveAccount: hasLiveAccount,
             timeline: timeline,
             phase: phase,
+            initialSyncState: initialSyncState,
             hasFollows: hasFollows
         ))
     }
@@ -159,6 +213,7 @@ struct HomeEmptyStateActionCoordinatorTests {
         hasLiveAccount: Bool = true,
         timeline: TimelineKind = .home,
         phase: NostrHomeTimelinePhase = .loaded,
+        initialSyncState: HomeTimelineInitialSyncState = .synchronized,
         hasFollows: Bool = true
     ) -> HomeTimelineEmptyStateContext {
         HomeTimelineEmptyStateContext(
@@ -167,6 +222,7 @@ struct HomeEmptyStateActionCoordinatorTests {
                 timeline: timeline
             ),
             phase: phase,
+            initialSyncState: initialSyncState,
             hasFollowedPubkeys: hasFollows
         )
     }
@@ -189,6 +245,7 @@ private extension HomeTimelineInteractionContext {
 private final class EmptyStateActionHandlerSpy:
     HomeTimelineEmptyStateActionHandling {
     var phase: NostrHomeTimelinePhase = .failed("offline")
+    var initialHomeTimelineSyncState = HomeTimelineInitialSyncState.awaitingRelayResponses
     var hasFollowedPubkeysForEmptyState = false
     private(set) var refreshCount = 0
 

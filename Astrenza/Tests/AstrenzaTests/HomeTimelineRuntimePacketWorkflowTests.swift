@@ -29,6 +29,22 @@ struct HomeTimelineRuntimePacketWorkflowTests {
         #expect(fixture.probe.events == [.applyState(application)])
     }
 
+    @Test("Initial terminal state waits for pending presentation before publication")
+    func initialTerminalStateWaitsForPresentation() async {
+        let application = HomeTimelineRuntimePacketApplication.handled(
+            realtimeState: true,
+            requiresPresentationSettlement: true
+        )
+        let fixture = RuntimePacketWorkflowFixture(application: application)
+
+        await fixture.run()
+
+        #expect(fixture.probe.events == [
+            .waitForPendingPresentation,
+            .applyState(application)
+        ])
+    }
+
     @Test("An event applies packet state before awaiting event delivery")
     func eventRoutesAfterStateApplication() async {
         let event = runtimePacketEvent(idSeed: "4", createdAt: 400)
@@ -161,6 +177,9 @@ private final class RuntimePacketWorkflowProbe {
             },
             handleBackwardCompletion: { [weak self] completion in
                 self?.events.append(.handleBackwardCompletion(completion))
+            },
+            waitForPendingPresentation: { [weak self] in
+                self?.events.append(.waitForPendingPresentation)
             }
         )
     }
@@ -168,6 +187,7 @@ private final class RuntimePacketWorkflowProbe {
 
 private enum RuntimePacketWorkflowProbeEvent: Equatable, Sendable {
     case applyState(HomeTimelineRuntimePacketApplication)
+    case waitForPendingPresentation
     case handleEvent(
         relayURL: String,
         subscriptionID: String,

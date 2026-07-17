@@ -65,6 +65,8 @@ struct HomeTimelineRuntimePacketEffects: Sendable {
     let handleEvent: HomeTimelineRuntimePacketHandlers.EventHandler
     let handleBackwardCompletion:
         HomeTimelineRuntimePacketHandlers.BackwardCompletionHandler
+    let waitForPendingPresentation:
+        HomeTimelineRuntimePacketHandlers.PresentationSettlement
 }
 
 struct HomeTimelineRuntimeSessionEffects: Sendable {
@@ -181,7 +183,8 @@ final class HomeTimelineRuntimeWorkflow {
                 self?.apply(application, effects: effects)
             },
             handleEvent: effects.handleEvent,
-            handleBackwardCompletion: effects.handleBackwardCompletion
+            handleBackwardCompletion: effects.handleBackwardCompletion,
+            waitForPendingPresentation: effects.waitForPendingPresentation
         )
     }
 

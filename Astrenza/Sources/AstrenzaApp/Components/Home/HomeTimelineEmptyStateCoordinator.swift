@@ -1,6 +1,7 @@
 struct HomeTimelineEmptyStateContext {
     let interaction: HomeTimelineInteractionContext
     let phase: NostrHomeTimelinePhase
+    let initialSyncState: HomeTimelineInitialSyncState
     let hasFollowedPubkeys: Bool
 }
 
@@ -40,12 +41,27 @@ enum HomeTimelineEmptyStatePolicy {
         }
 
         switch context.phase {
-        case .resolvingRelays, .resolvingContacts, .loadingHome:
+        case .idle, .resolvingRelays, .resolvingContacts, .loadingHome:
             return .loadingHome(message: context.phase.copy)
         case .failed(let message):
             return .liveError(message: message)
-        case .idle, .loaded:
-            return context.hasFollowedPubkeys ? .home : .noContacts
+        case .loaded:
+            switch context.initialSyncState {
+            case .awaitingRelayResponses:
+                return .loadingHome(
+                    message: "Waiting for initial responses from Home relays"
+                )
+            case .synchronized:
+                return context.hasFollowedPubkeys ? .home : .noContacts
+            case .degraded:
+                return .liveError(
+                    message: "Some Home relays did not complete the initial timeline request."
+                )
+            case .unavailable:
+                return .liveError(
+                    message: "Home relays did not return a complete initial timeline response."
+                )
+            }
         }
     }
 
@@ -56,7 +72,11 @@ enum HomeTimelineEmptyStatePolicy {
             switch context.phase {
             case .failed:
                 return .refresh
-            case .loaded where !context.hasFollowedPubkeys:
+            case .loaded where context.initialSyncState == .degraded ||
+                    context.initialSyncState == .unavailable:
+                return .refresh
+            case .loaded where context.initialSyncState == .synchronized &&
+                    !context.hasFollowedPubkeys:
                 return .refresh
             case .idle, .resolvingRelays, .resolvingContacts,
                     .loadingHome, .loaded:
@@ -76,6 +96,7 @@ enum HomeTimelineEmptyStatePolicy {
 @MainActor
 protocol HomeTimelineEmptyStateActionHandling: AnyObject {
     var phase: NostrHomeTimelinePhase { get }
+    var initialHomeTimelineSyncState: HomeTimelineInitialSyncState { get }
     var hasFollowedPubkeysForEmptyState: Bool { get }
 
     func refresh()
@@ -130,6 +151,7 @@ final class HomeTimelineEmptyStateActionCoordinator {
                 HomeTimelineEmptyStateContext(
                     interaction: interaction,
                     phase: .idle,
+                    initialSyncState: .awaitingRelayResponses,
                     hasFollowedPubkeys: false
                 )
             )
@@ -138,6 +160,7 @@ final class HomeTimelineEmptyStateActionCoordinator {
             HomeTimelineEmptyStateContext(
                 interaction: interaction,
                 phase: actions.phase,
+                initialSyncState: actions.initialHomeTimelineSyncState,
                 hasFollowedPubkeys:
                     actions.hasFollowedPubkeysForEmptyState
             )

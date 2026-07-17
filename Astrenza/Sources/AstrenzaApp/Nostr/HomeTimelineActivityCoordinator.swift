@@ -35,6 +35,7 @@ struct NostrTimelineActivityStatus: Equatable, Sendable {
 struct HomeTimelineActivityContext: Equatable, Sendable {
     let connectedRelayCount: Int
     let plannedRelayCount: Int
+    let initialSyncState: HomeTimelineInitialSyncState
     let hasOlderPageRequest: Bool
     let hasGapWork: Bool
     let hasBackwardRequests: Bool
@@ -176,6 +177,14 @@ final class HomeTimelineActivityCoordinator {
                 title: "Filling a timeline gap",
                 detail: "Reconciling missing events between local windows",
                 compactLabel: "Gap"
+            )
+        }
+        if phase == .loaded,
+           context.initialSyncState == .awaitingRelayResponses {
+            return NostrTimelineActivityStatus(
+                title: "Synchronizing Home timeline",
+                detail: "\(context.connectedRelayCount) of \(context.plannedRelayCount) relays connected; waiting for initial EOSE",
+                compactLabel: "Syncing"
             )
         }
         if context.hasBackwardRequests || context.hasPendingDependencyWork {

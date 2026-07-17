@@ -260,6 +260,9 @@ final class HomeStoreContextCoordinator {
                 isCurrentFeedContext: { context in
                     source.isCurrentFeedContext(context)
                 },
+                waitForPendingPresentation: {
+                    await source.waitForPendingPresentation()
+                },
                 runtimeApplication: runtimeApplication,
                 applications: applications
             )

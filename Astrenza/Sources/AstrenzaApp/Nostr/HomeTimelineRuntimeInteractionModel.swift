@@ -288,6 +288,8 @@ struct HomeTimelineRuntimeInteractionEffects: Sendable {
     let runtimeApplication: HomeTimelineRuntimeApplicationEffects
     let apply: ApplicationEffect
     let perform: AsyncApplicationEffect
+    let waitForPendingPresentation:
+        HomeTimelineRuntimePacketHandlers.PresentationSettlement
 }
 
 struct HomeTimelineRuntimeInteractionContext: Sendable {

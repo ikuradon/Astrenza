@@ -38,6 +38,7 @@ extension HomeTimelineActivityInteractionWorkflow:
 @MainActor
 protocol HomeStoreSyncStatusSourcing: AnyObject {
     var backwardRequestState: HomeTimelineBackwardRequestState { get }
+    var initialSyncState: HomeTimelineInitialSyncState { get }
 
     func relayStatusSnapshot(
         resolvedRelays: [String]
@@ -123,6 +124,12 @@ final class HomeStoreStatusCoordinator {
         activitySnapshot.isRealtime
     }
 
+    var initialSyncState: HomeTimelineInitialSyncState {
+        // EOSE/CLOSED/timeout diagnostics advance this observable revision.
+        _ = relayStatusRevision
+        return sync.initialSyncState
+    }
+
     var relayStatusCounts: (connected: Int, planned: Int) {
         let snapshot = relayStatusSnapshot
         return (
@@ -141,6 +148,7 @@ final class HomeStoreStatusCoordinator {
             context: HomeTimelineActivityContext(
                 connectedRelayCount: relay.connectedRelayCount,
                 plannedRelayCount: relay.plannedRelayCount,
+                initialSyncState: sync.initialSyncState,
                 hasOlderPageRequest: backward.hasOlderPageRequest,
                 hasGapWork: backward.hasGapWork,
                 hasBackwardRequests: backward.hasRequests,

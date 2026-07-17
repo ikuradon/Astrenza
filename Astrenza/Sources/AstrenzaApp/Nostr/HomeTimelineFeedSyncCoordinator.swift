@@ -59,6 +59,10 @@ final class HomeTimelineFeedSyncCoordinator {
         state.isRealtime
     }
 
+    var initialSyncState: HomeTimelineInitialSyncState {
+        state.initialSyncState
+    }
+
     var activeRequestCount: Int {
         state.activeRequestCount
     }
@@ -151,7 +155,7 @@ final class HomeTimelineFeedSyncCoordinator {
             )
         }
         if attempt.packet.strategy == .forward {
-            state.invalidateForwardSubscription(
+            state.beginForwardAttempt(
                 key(relayURL: attempt.relayURL, subscriptionID: attempt.packet.subscriptionID)
             )
         }
@@ -351,6 +355,7 @@ final class HomeTimelineFeedSyncCoordinator {
     ) {
         let key = key(relayURL: relayURL, subscriptionID: subscriptionID)
         state.invalidateForwardSubscription(key)
+        state.markForwardFailure(key)
         guard let requestID = state.takeRequest(for: key)?.requestID else { return }
         try? eventStore?.endFeedSyncRequest(
             requestID: requestID,
@@ -366,6 +371,9 @@ final class HomeTimelineFeedSyncCoordinator {
     func endRequestAttempt(_ end: NostrRelayRequestAttemptEnd) {
         let key = key(relayURL: end.relayURL, subscriptionID: end.subscriptionID)
         state.invalidateForwardSubscription(key)
+        if end.reason == .installFailed {
+            state.markForwardFailure(key)
+        }
         let activeRequest = state.takeRequest(for: key, matching: end.requestID)
         let window = activeRequest?.window ?? RuntimeSyncWindow()
         let reason: NostrFeedSyncEndReason

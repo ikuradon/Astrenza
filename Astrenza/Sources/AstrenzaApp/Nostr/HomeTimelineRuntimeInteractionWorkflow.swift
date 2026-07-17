@@ -315,7 +315,8 @@ final class HomeTimelineRuntimeInteractionWorkflow {
             },
             handleBackwardCompletion: { completion in
                 effects.apply(.handleBackwardCompletion(completion))
-            }
+            },
+            waitForPendingPresentation: effects.waitForPendingPresentation
         )
     }
 

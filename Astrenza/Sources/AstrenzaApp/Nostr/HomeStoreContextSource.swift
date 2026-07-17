@@ -13,6 +13,7 @@ protocol HomeStoreContextSourcing: AnyObject {
 
     func runtimeSnapshot() -> HomeTimelineRuntimeStoreSnapshot?
     func isCurrentFeedContext(_ context: HomeFeedRuntimeContext) -> Bool
+    func waitForPendingPresentation() async
     func runtimeApplicationEffects(
         context: HomeTimelineStateInteractionContext
     ) -> HomeTimelineRuntimeApplicationEffects
@@ -229,6 +230,10 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
     }
 
     func waitForCachedPresentation() async {
+        _ = await projectionInteraction.waitForPendingPresentation()
+    }
+
+    func waitForPendingPresentation() async {
         _ = await projectionInteraction.waitForPendingPresentation()
     }
 

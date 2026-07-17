@@ -173,6 +173,8 @@ private final class FeedSyncInteractionTrackerSpy:
         return realtime
     }
 
+    let initialSyncState = HomeTimelineInitialSyncState.synchronized
+
     func prepareForwardSubscriptions(
         _ subscriptions: Set<RuntimeSubscriptionKey>
     ) {

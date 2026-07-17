@@ -6,6 +6,17 @@ struct RuntimeSubscriptionKey: Hashable, Sendable {
     let subscriptionID: String
 }
 
+enum HomeTimelineInitialSyncState: Equatable, Sendable {
+    case awaitingRelayResponses
+    case synchronized
+    case degraded
+    case unavailable
+
+    var isSettled: Bool {
+        self != .awaitingRelayResponses
+    }
+}
+
 struct HomeFeedRuntimeContext: Equatable, Sendable {
     let feedID: String
     let accountID: String
@@ -70,6 +81,11 @@ struct RuntimeSyncWindow: Equatable {
 }
 
 struct HomeTimelineRuntimeSyncState {
+    private enum InitialForwardResult: Equatable {
+        case eose
+        case failed
+    }
+
     struct ActiveRequest: Equatable {
         let key: RuntimeSubscriptionKey
         let requestID: String
@@ -83,10 +99,29 @@ struct HomeTimelineRuntimeSyncState {
     private var forwardContextsByGroupID: [String: HomeFeedRuntimeContext] = [:]
     private var expectedForwardSubscriptions = Set<RuntimeSubscriptionKey>()
     private var forwardEOSESubscriptions = Set<RuntimeSubscriptionKey>()
+    private var initialForwardResults: [RuntimeSubscriptionKey: InitialForwardResult] = [:]
 
     var isRealtime: Bool {
         !expectedForwardSubscriptions.isEmpty &&
             expectedForwardSubscriptions.isSubset(of: forwardEOSESubscriptions)
+    }
+
+    var initialSyncState: HomeTimelineInitialSyncState {
+        guard !expectedForwardSubscriptions.isEmpty,
+              expectedForwardSubscriptions.allSatisfy({ initialForwardResults[$0] != nil })
+        else {
+            return .awaitingRelayResponses
+        }
+
+        let eoseCount = expectedForwardSubscriptions.reduce(into: 0) { count, key in
+            if initialForwardResults[key] == .eose {
+                count += 1
+            }
+        }
+        if eoseCount == expectedForwardSubscriptions.count {
+            return .synchronized
+        }
+        return eoseCount > 0 ? .degraded : .unavailable
     }
 
     var activeRequestCount: Int {
@@ -104,11 +139,26 @@ struct HomeTimelineRuntimeSyncState {
         forwardContextsByGroupID.removeAll()
         expectedForwardSubscriptions.removeAll()
         forwardEOSESubscriptions.removeAll()
+        initialForwardResults.removeAll()
     }
 
     mutating func prepareForwardSubscriptions(_ subscriptions: Set<RuntimeSubscriptionKey>) {
+        if subscriptions != expectedForwardSubscriptions {
+            initialForwardResults.removeAll(keepingCapacity: true)
+        } else {
+            initialForwardResults = initialForwardResults.filter {
+                subscriptions.contains($0.key)
+            }
+        }
         expectedForwardSubscriptions = subscriptions
         forwardEOSESubscriptions.removeAll()
+    }
+
+    mutating func beginForwardAttempt(_ key: RuntimeSubscriptionKey) {
+        forwardEOSESubscriptions.remove(key)
+        if initialForwardResults[key] == .failed {
+            initialForwardResults.removeValue(forKey: key)
+        }
     }
 
     mutating func invalidateForwardSubscription(_ key: RuntimeSubscriptionKey) {
@@ -122,6 +172,14 @@ struct HomeTimelineRuntimeSyncState {
     mutating func markForwardEOSE(_ key: RuntimeSubscriptionKey) {
         guard expectedForwardSubscriptions.contains(key) else { return }
         forwardEOSESubscriptions.insert(key)
+        initialForwardResults[key] = .eose
+    }
+
+    mutating func markForwardFailure(_ key: RuntimeSubscriptionKey) {
+        guard expectedForwardSubscriptions.contains(key),
+              initialForwardResults[key] != .eose
+        else { return }
+        initialForwardResults[key] = .failed
     }
 
     mutating func registerForwardContext(_ context: HomeFeedRuntimeContext, groupID: String) {

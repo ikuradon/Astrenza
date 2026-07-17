@@ -320,7 +320,8 @@ private struct RuntimeWorkflowFixture {
             },
             handleBackwardCompletion: { [probe] completion in
                 probe.completions.append(completion)
-            }
+            },
+            waitForPendingPresentation: {}
         )
     }
 

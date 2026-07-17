@@ -24,6 +24,7 @@ final class StoreContextSourceSpy: HomeStoreContextSourcing {
         case restoreCachedSnapshot(String)
         case restoredViewport(String)
         case waitForCachedPresentation
+        case waitForPendingPresentation
         case restoreCachedReadState(String)
         case load(String)
         case scheduleReadBoundarySave
@@ -84,6 +85,10 @@ final class StoreContextSourceSpy: HomeStoreContextSourcing {
     func isCurrentFeedContext(_ context: HomeFeedRuntimeContext) -> Bool {
         dependencyCalls.append(.currentFeed(context.feedID))
         return currentFeedResult
+    }
+
+    func waitForPendingPresentation() async {
+        dependencyCalls.append(.waitForPendingPresentation)
     }
 
     func runtimeApplicationEffects(

@@ -19,15 +19,46 @@ struct HomeTimelineRuntimeSyncStateTests {
 
         state.prepareForwardSubscriptions([first, second])
         #expect(!state.isRealtime)
+        #expect(state.initialSyncState == .awaitingRelayResponses)
 
         state.markForwardEOSE(first)
         #expect(!state.isRealtime)
+        #expect(state.initialSyncState == .awaitingRelayResponses)
 
         state.markForwardEOSE(second)
         #expect(state.isRealtime)
+        #expect(state.initialSyncState == .synchronized)
 
         state.invalidateForwardSubscriptions(relayURL: first.relayURL)
         #expect(!state.isRealtime)
+        #expect(state.initialSyncState == .synchronized)
+    }
+
+    @Test("Initial sync distinguishes partial and unavailable terminal results")
+    func initialSyncClassifiesTerminalResults() {
+        let first = RuntimeSubscriptionKey(
+            relayURL: "wss://relay-one.example",
+            subscriptionID: "home-0"
+        )
+        let second = RuntimeSubscriptionKey(
+            relayURL: "wss://relay-two.example",
+            subscriptionID: "home-0"
+        )
+        var state = HomeTimelineRuntimeSyncState()
+
+        state.prepareForwardSubscriptions([first, second])
+        state.markForwardFailure(first)
+        state.markForwardFailure(second)
+        #expect(state.initialSyncState == .unavailable)
+
+        state.beginForwardAttempt(first)
+        #expect(state.initialSyncState == .awaitingRelayResponses)
+        state.markForwardEOSE(first)
+        #expect(state.initialSyncState == .degraded)
+
+        state.beginForwardAttempt(second)
+        state.markForwardEOSE(second)
+        #expect(state.initialSyncState == .synchronized)
     }
 
     @Test("Request lifecycle keeps provenance context and event window atomic")

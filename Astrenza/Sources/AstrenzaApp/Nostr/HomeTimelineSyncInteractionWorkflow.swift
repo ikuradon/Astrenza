@@ -3,6 +3,7 @@ import AstrenzaCore
 @MainActor
 protocol HomeTimelineFeedSyncTracking: AnyObject {
     var isRealtime: Bool { get }
+    var initialSyncState: HomeTimelineInitialSyncState { get }
     var activeRequestCount: Int { get }
     var activeContextCount: Int { get }
 
@@ -113,6 +114,10 @@ final class HomeTimelineSyncInteractionWorkflow {
 
     var backwardRequestState: HomeTimelineBackwardRequestState {
         backwardRequests.requestState
+    }
+
+    var initialSyncState: HomeTimelineInitialSyncState {
+        feedSync.initialSyncState
     }
 
     var relaySyncEvents: [NostrRelaySyncEventRecord] {

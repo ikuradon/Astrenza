@@ -54,6 +54,7 @@ struct HomeTimelineActivityInteractionTests {
         let context = HomeTimelineActivityContext(
             connectedRelayCount: 2,
             plannedRelayCount: 4,
+            initialSyncState: .synchronized,
             hasOlderPageRequest: true,
             hasGapWork: true,
             hasBackwardRequests: true,

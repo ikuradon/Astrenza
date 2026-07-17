@@ -125,6 +125,7 @@ struct HomeStoreStatusCoordinatorTests {
             HomeTimelineActivityContext(
                 connectedRelayCount: 1,
                 plannedRelayCount: 3,
+                initialSyncState: .synchronized,
                 hasOlderPageRequest: true,
                 hasGapWork: true,
                 hasBackwardRequests: true,
@@ -278,6 +279,7 @@ private final class StoreActivityInteractionSpy:
 private final class StoreSyncStatusSourceSpy:
     HomeStoreSyncStatusSourcing {
     var backwardRequestState = HomeTimelineBackwardRequestState.idle
+    var initialSyncState = HomeTimelineInitialSyncState.synchronized
     var relaySnapshot = HomeTimelineRelayStatusSnapshot(
         runtimeStates: [:],
         connectedRelayCount: 0,

@@ -21,24 +21,28 @@ struct HomeTimelineRuntimePacketApplication: Equatable, Sendable {
     let realtimeState: Bool?
     let relayStatusTransition: HomeTimelineRelayStatusTransition?
     let action: HomeTimelineRuntimePacketAction?
+    let requiresPresentationSettlement: Bool
 
     static let ignored = HomeTimelineRuntimePacketApplication(
         wasHandled: false,
         realtimeState: nil,
         relayStatusTransition: nil,
-        action: nil
+        action: nil,
+        requiresPresentationSettlement: false
     )
 
     static func handled(
         realtimeState: Bool? = nil,
         relayStatusTransition: HomeTimelineRelayStatusTransition? = nil,
-        action: HomeTimelineRuntimePacketAction? = nil
+        action: HomeTimelineRuntimePacketAction? = nil,
+        requiresPresentationSettlement: Bool = false
     ) -> HomeTimelineRuntimePacketApplication {
         HomeTimelineRuntimePacketApplication(
             wasHandled: true,
             realtimeState: realtimeState,
             relayStatusTransition: relayStatusTransition,
-            action: action
+            action: action,
+            requiresPresentationSettlement: requiresPresentationSettlement
         )
     }
 }
@@ -133,7 +137,29 @@ final class HomeTimelineRuntimePacketCoordinator {
             return .handled()
         case .requestEnded(let end):
             feedSyncCoordinator.endRequestAttempt(end)
-            return .handled(realtimeState: feedSyncCoordinator.isRealtime)
+            let relayStatusTransition: HomeTimelineRelayStatusTransition?
+            if end.reason == .installFailed,
+               let accountID = context.accountID {
+                relayStatusTransition = relayStatusCoordinator.record(
+                    accountID: accountID,
+                    resolvedRelays: context.resolvedRelays,
+                    relayURL: end.relayURL,
+                    kind: .partialFailure,
+                    subscriptionID: end.subscriptionID,
+                    message: end.message ?? "forward REQ installation failed"
+                )
+            } else {
+                relayStatusTransition = nil
+            }
+            return .handled(
+                realtimeState: feedSyncCoordinator.isRealtime,
+                relayStatusTransition: relayStatusTransition,
+                requiresPresentationSettlement:
+                    end.reason == .installFailed &&
+                    HomeTimelineSyncPlanner.isHomeForwardSubscription(
+                        end.subscriptionID
+                    )
+            )
         default:
             return .ignored
         }
@@ -227,7 +253,11 @@ final class HomeTimelineRuntimePacketCoordinator {
         }
         return .handled(
             realtimeState: transition.isRealtime,
-            relayStatusTransition: relayStatusTransition
+            relayStatusTransition: relayStatusTransition,
+            requiresPresentationSettlement:
+                HomeTimelineSyncPlanner.isHomeForwardSubscription(
+                    subscriptionID
+                )
         )
     }
 

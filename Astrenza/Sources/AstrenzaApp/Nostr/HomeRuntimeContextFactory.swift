@@ -9,6 +9,8 @@ struct HomeRuntimeContextEnvironment: Sendable {
 
     let snapshot: SnapshotProvider
     let isCurrentFeedContext: FeedContextValidity
+    let waitForPendingPresentation:
+        HomeTimelineRuntimePacketHandlers.PresentationSettlement
     let runtimeApplication: HomeTimelineRuntimeApplicationEffects
     let applications: HomeTimelineStoreApplicationEffects
 }
@@ -54,7 +56,9 @@ struct HomeRuntimeContextFactory {
             },
             perform: { application in
                 await router.perform(application)
-            }
+            },
+            waitForPendingPresentation:
+                environment.waitForPendingPresentation
         )
         eventEffects = HomeTimelineRuntimeEventStoreEffects(
             environment: HomeTimelineRuntimeEventEnvironment(
