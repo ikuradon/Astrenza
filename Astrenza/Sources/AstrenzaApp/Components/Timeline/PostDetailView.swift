@@ -2,8 +2,8 @@ import SwiftUI
 
 struct PostDetailView: View {
     let post: TimelinePost
-    let replyAncestors: [TimelinePost]?
-    let replies: [TimelinePost]?
+    let replyAncestors: [TimelinePost]
+    let replies: [TimelinePost]
     let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
@@ -92,7 +92,7 @@ struct PostDetailView: View {
     }
 
     private var replyAncestorPosts: [TimelinePost] {
-        replyAncestors ?? MockTimelineData.replyAncestors(for: post)
+        replyAncestors
     }
 
     private var showsReplyParentIndicator: Bool {
@@ -250,7 +250,7 @@ struct PostDetailView: View {
 
     private var detailReplies: some View {
         VStack(spacing: 0) {
-            ForEach(replies ?? MockTimelineData.detailReplies(for: post)) { reply in
+            ForEach(replies) { reply in
                 detailThreadRow(reply)
             }
         }

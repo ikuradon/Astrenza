@@ -7,7 +7,7 @@ struct RelaySettingsView: View {
     let onSyncPolicyChange: (NostrSyncPolicy) -> Void
     @State private var selectedSection: RelaySettingsSection = .nip65
     @State private var draftRelayURL = "wss://"
-    @State private var isPublishingNIP65 = true
+    @State private var isPublishingNIP65: Bool
     @State private var syncPolicy: NostrSyncPolicy
     @State private var mediaResolverSettings: NostrMediaResolverServiceSettings
     private let syncPolicyStore: NostrSyncPolicySettingsStore
@@ -41,6 +41,7 @@ struct RelaySettingsView: View {
         } else {
             liveNIP65Relays = nil
         }
+        _isPublishingNIP65 = State(initialValue: accountID == nil)
         _syncPolicy = State(initialValue: syncPolicyStore.policy(accountID: accountID))
         _mediaResolverSettings = State(initialValue: mediaResolverSettingsStore.settings())
     }
@@ -48,7 +49,10 @@ struct RelaySettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
-                RelaySettingsHeader(isPublishingNIP65: $isPublishingNIP65)
+                RelaySettingsHeader(
+                    isPublishingNIP65: $isPublishingNIP65,
+                    hasLiveAccount: accountID != nil
+                )
 
                 RelaySyncPolicyCard(policy: $syncPolicy)
 
@@ -82,6 +86,10 @@ struct RelaySettingsView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Publish") {}
                     .fontWeight(.bold)
+                    .disabled(true)
+                    .accessibilityHint(
+                        "Publishing a kind 10002 relay list is not available yet"
+                    )
             }
         }
     }
@@ -180,6 +188,7 @@ private enum RelaySettingsSection: String, CaseIterable, Identifiable {
 
 private struct RelaySettingsHeader: View {
     @Binding var isPublishingNIP65: Bool
+    let hasLiveAccount: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -204,15 +213,23 @@ private struct RelaySettingsHeader: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Publish NIP-65 relay list")
                         .font(.system(size: 16, weight: .black, design: .rounded))
-                    Text("Mock: this would sign and broadcast kind:10002.")
+                    Text(publishingDetail)
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
             .tint(Color.astrenzaAccent)
+            .disabled(true)
         }
         .padding(18)
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 24))
+    }
+
+    private var publishingDetail: String {
+        if hasLiveAccount {
+            return "Publishing kind:10002 is not available yet."
+        }
+        return "Preview: this would sign and broadcast kind:10002."
     }
 }
 

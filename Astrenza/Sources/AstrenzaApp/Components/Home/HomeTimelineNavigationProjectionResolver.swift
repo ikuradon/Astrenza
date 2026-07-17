@@ -46,8 +46,10 @@ struct HomeTimelineNavigationProjectionResolver {
         guard hasLiveAccount else {
             return HomeTimelinePostDetailProjection(
                 post: fallbackPost,
-                replyAncestors: nil,
-                replies: nil
+                replyAncestors: MockTimelineData.replyAncestors(
+                    for: fallbackPost
+                ),
+                replies: MockTimelineData.detailReplies(for: fallbackPost)
             )
         }
 
@@ -72,6 +74,6 @@ struct HomeTimelineNavigationProjectionResolver {
 
 struct HomeTimelinePostDetailProjection {
     let post: TimelinePost
-    let replyAncestors: [TimelinePost]?
-    let replies: [TimelinePost]?
+    let replyAncestors: [TimelinePost]
+    let replies: [TimelinePost]
 }

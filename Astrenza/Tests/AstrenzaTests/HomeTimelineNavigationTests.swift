@@ -86,8 +86,8 @@ struct HomeTimelineNavigationTests {
         )
 
         #expect(projection.post.id == resolved.id)
-        #expect(projection.replyAncestors?.map(\.id) == [ancestor.id])
-        #expect(projection.replies?.map(\.id) == [reply.id])
+        #expect(projection.replyAncestors.map(\.id) == [ancestor.id])
+        #expect(projection.replies.map(\.id) == [reply.id])
         #expect(calls == [
             "post:\(fallback.id)",
             "ancestors:\(resolved.id)",
@@ -127,8 +127,14 @@ struct HomeTimelineNavigationTests {
         )
 
         #expect(projection.post.id == fallback.id)
-        #expect(projection.replyAncestors == nil)
-        #expect(projection.replies == nil)
+        #expect(
+            projection.replyAncestors.map(\.id) ==
+                MockTimelineData.replyAncestors(for: fallback).map(\.id)
+        )
+        #expect(
+            projection.replies.map(\.id) ==
+                MockTimelineData.detailReplies(for: fallback).map(\.id)
+        )
         #expect(liveQueryCount == 0)
     }
 
