@@ -65,7 +65,6 @@ let package = Package(
             dependencies: [
                 "NostrProtocol",
                 "NostrCryptoAPI",
-                "NostrCryptoSecp256k1",
                 "NostrStoreAPI"
             ]
         ),
@@ -74,9 +73,7 @@ let package = Package(
             dependencies: [
                 "NostrProtocol",
                 "NostrCryptoAPI",
-                "NostrCryptoSecp256k1",
                 "NostrReconciliationAPI",
-                "NostrReconciliationNegentropy",
                 "NostrStoreAPI",
                 "NostrRelay"
             ]

@@ -1,7 +1,7 @@
 import Foundation
 import NostrCryptoAPI
-import NostrCryptoSecp256k1
 import NostrProtocol
+import NostrReconciliationAPI
 import NostrRelay
 
 public protocol NostrRelayFetching: Sendable {
@@ -18,15 +18,18 @@ public struct NostrRelayClient: Sendable {
     public var urlSession: URLSession
     public var timeoutNanoseconds: UInt64
     public var eventValidator: any NostrEventValidating
+    public var reconciliationFactory: any NostrReconciliationSessionCreating
 
     public init(
+        eventValidator: any NostrEventValidating,
+        reconciliationFactory: any NostrReconciliationSessionCreating,
         urlSession: URLSession = .shared,
-        timeoutNanoseconds: UInt64 = 7_000_000_000,
-        eventValidator: any NostrEventValidating = NostrEventValidator()
+        timeoutNanoseconds: UInt64 = 7_000_000_000
     ) {
         self.urlSession = urlSession
         self.timeoutNanoseconds = timeoutNanoseconds
         self.eventValidator = eventValidator
+        self.reconciliationFactory = reconciliationFactory
     }
 
     public func fetch(relayURL: String, request: NostrRelayRequest) async throws -> [NostrEvent] {
@@ -75,13 +78,15 @@ public struct NostrRelayClient: Sendable {
         }
 
         let timeoutNanoseconds = timeoutNanoseconds
+        let reconciliationFactory = reconciliationFactory
         return try await withThrowingTaskGroup(of: [String].self) { group in
             group.addTask {
                 try await Self.receiveMissingEventIDs(
                     task: task,
                     filter: filter,
                     localEvents: localEvents,
-                    subscriptionID: subscriptionID
+                    subscriptionID: subscriptionID,
+                    reconciliationFactory: reconciliationFactory
                 )
             }
             group.addTask {
@@ -137,9 +142,13 @@ public struct NostrRelayClient: Sendable {
         task: URLSessionWebSocketTask,
         filter: NostrRelayFilter,
         localEvents: [NostrEvent],
-        subscriptionID: String
+        subscriptionID: String,
+        reconciliationFactory: any NostrReconciliationSessionCreating
     ) async throws -> [String] {
-        let session = try NIP77SyncSession(localEvents: localEvents)
+        let session = try NIP77SyncSession(
+            localEvents: localEvents,
+            reconciliationFactory: reconciliationFactory
+        )
         let openMessage = try session.openMessage(subscriptionID: subscriptionID, filter: filter)
         try await task.send(.string(openMessage.textFrame()))
 

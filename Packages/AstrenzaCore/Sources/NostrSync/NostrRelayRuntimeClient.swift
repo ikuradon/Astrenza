@@ -20,7 +20,7 @@ public actor NostrRelayRuntimeClient: NostrRelayFetching, NostrRelayBootstrapSco
 
     public init(
         runtime: NostrRelayRuntime,
-        fallback: any NostrRelayFetching = NostrRelayClient()
+        fallback: any NostrRelayFetching
     ) {
         self.runtime = runtime
         self.fallback = fallback

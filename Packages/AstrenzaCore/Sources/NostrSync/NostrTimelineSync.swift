@@ -2,7 +2,6 @@ import Foundation
 import NostrProtocol
 import NostrRelay
 import NostrReconciliationAPI
-import NostrReconciliationNegentropy
 
 public struct NostrHomeFetchPlanner: Sendable {
     public let authors: [String]
@@ -139,7 +138,7 @@ public final class NIP77SyncSession {
     public init(
         localEvents: [NostrEvent],
         frameSizeLimit: Int = 60_000,
-        reconciliationFactory: any NostrReconciliationSessionCreating = NegentropySwiftReconciliationSessionFactory()
+        reconciliationFactory: any NostrReconciliationSessionCreating
     ) throws {
         let records = localEvents.compactMap { event -> NostrReconciliationRecord? in
             guard NostrHex.isLowercaseHex(event.id, byteCount: 32),

@@ -12,20 +12,22 @@ public enum NostrHomeTimelineLoadStage: Equatable, Sendable {
 }
 
 public struct NostrHomeTimelineLoader: Sendable {
+    public static let defaultBootstrapRelays = [
+        "wss://nos.lol",
+        "wss://purplepag.es",
+        "wss://directory.yabu.me",
+        "wss://relay.damus.io"
+    ]
+
     public let relayClient: any NostrRelayFetching
     public let nip05Resolver: any NostrNIP05Resolving
     public let bootstrapRelays: [String]
     public let pageLimit: Int
 
     public init(
-        relayClient: any NostrRelayFetching = NostrRelayClient(),
+        relayClient: any NostrRelayFetching,
         nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver(),
-        bootstrapRelays: [String] = [
-            "wss://nos.lol",
-            "wss://purplepag.es",
-            "wss://directory.yabu.me",
-            "wss://relay.damus.io"
-        ],
+        bootstrapRelays: [String] = NostrHomeTimelineLoader.defaultBootstrapRelays,
         pageLimit: Int = 100
     ) {
         self.relayClient = relayClient

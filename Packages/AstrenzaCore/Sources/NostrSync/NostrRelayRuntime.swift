@@ -1,6 +1,5 @@
 import Foundation
 import NostrCryptoAPI
-import NostrCryptoSecp256k1
 import NostrProtocol
 import NostrRelay
 import NostrStoreAPI
@@ -46,7 +45,7 @@ public actor NostrRelayRuntime {
 
     public init(
         transportFactory: @escaping TransportFactory,
-        eventValidator: any NostrEventValidating = NostrEventValidator(),
+        eventValidator: any NostrEventValidating,
         autoReceive: Bool = true,
         retryPolicy: NostrRelayRuntimeRetryPolicy = NostrRelayRuntimeRetryPolicy(),
         retryJitterSource: @escaping RetryJitterSource = {

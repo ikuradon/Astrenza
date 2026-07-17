@@ -1,6 +1,5 @@
 import Foundation
 import NostrCryptoAPI
-import NostrCryptoSecp256k1
 import NostrProtocol
 import NostrStoreAPI
 
@@ -59,7 +58,7 @@ public actor NostrRelaySession {
     public init(
         relayURL: String,
         transport: any NostrRelayTransport,
-        eventValidator: any NostrEventValidating = NostrEventValidator()
+        eventValidator: any NostrEventValidating
     ) {
         self.relayURL = relayURL
         self.transport = transport
