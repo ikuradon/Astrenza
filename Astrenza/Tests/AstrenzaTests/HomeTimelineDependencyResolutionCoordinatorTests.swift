@@ -39,6 +39,55 @@ struct HomeTimelineDependencyResolutionCoordinatorTests {
         #expect(!coordinator.hasPendingWork)
     }
 
+    @Test("A partial source completion retries only unresolved events after backoff")
+    @MainActor
+    func partialSourceCompletionRetainsRetryState() throws {
+        let resolvedEventID = String(repeating: "b", count: 64)
+        let unresolvedEventID = String(repeating: "c", count: 64)
+        let coordinator = makeCoordinator()
+        let dependencies = NostrEventDependencies(
+            sourceEventIDs: [resolvedEventID, unresolvedEventID]
+        )
+        #expect(coordinator.enqueueSourceDependencies(
+            dependencies,
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 100
+        ))
+        let packet = try #require(
+            coordinator
+                .drainSourcePacketPlan(requestID: "partial-source")
+                .sourcePackets.first
+        )
+        coordinator.finishSourceEvent(eventID: resolvedEventID)
+
+        #expect(coordinator.completeSourceRequest(
+            NostrBackwardREQCompletion(
+                groupID: packet.groupID,
+                relayURLs: packet.relayURLs,
+                subscriptionIDs: [packet.subscriptionID],
+                eventCount: 1,
+                eoseCount: 1,
+                closedCount: 1,
+                timeoutCount: 0
+            ),
+            now: 100
+        ))
+        #expect(!coordinator.hasPendingWork)
+        #expect(!coordinator.enqueueSourceDependencies(
+            NostrEventDependencies(sourceEventIDs: [unresolvedEventID]),
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 999
+        ))
+        #expect(coordinator.enqueueSourceDependencies(
+            NostrEventDependencies(sourceEventIDs: [unresolvedEventID]),
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 1_000
+        ))
+    }
+
     @Test("NIP-05 resolution state is published only after the resolver completes")
     @MainActor
     func nip05ResolutionOwnership() async {

@@ -95,10 +95,6 @@ final class HomeTimelineLoadApplicationCoordinator {
                 for: context.lifecycle
             )
         }
-        if case .older = context.operation, !state.hasMoreOlder {
-            return
-        }
-
         handlers.perform(.materializeEntries)
         await handlers.persistDatabase(context.account)
         guard isActive(context) else { return }

@@ -50,8 +50,8 @@ struct HomeTimelineLoadApplicationTests {
         #expect(system.lifecycle.hasCompletedRuntimeBootstrap)
     }
 
-    @Test("An exhausted older page only replaces state")
-    func exhaustedOlderPageStopsBeforePersistence() async {
+    @Test("An exhausted older page still completes presentation and persistence")
+    func exhaustedOlderPageCompletesApplication() async {
         let system = RemoteLoadApplicationTestSystem(hasMoreOlder: false)
 
         await system.application.apply(
@@ -61,7 +61,11 @@ struct HomeTimelineLoadApplicationTests {
         )
 
         #expect(system.probe.steps == [
-            .command(.replaceState(system.state, replacement: .complete))
+            .command(.replaceState(system.state, replacement: .complete)),
+            .command(.materializeEntries),
+            .persist(system.account.pubkey),
+            .configure(system.account.pubkey),
+            .command(.setPhase(.loaded))
         ])
     }
 

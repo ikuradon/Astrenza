@@ -336,14 +336,30 @@ final class HomeTimelineDependencyResolutionCoordinator {
     }
 
     @discardableResult
-    func completeSourceRequest(_ completion: NostrBackwardREQCompletion) -> Bool {
+    func completeSourceRequest(
+        _ completion: NostrBackwardREQCompletion,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) -> Bool {
         guard let eventIDs = sourceEventIDsByGroupID.removeValue(forKey: completion.groupID) else {
             return false
         }
-        sourceQueue.finish(
-            sourceEventIDs: eventIDs,
-            succeeded: completion.status == .completed || completion.status == .partial
-        )
+        switch completion.status {
+        case .completed:
+            sourceQueue.finish(
+                sourceEventIDs: eventIDs,
+                succeeded: true,
+                now: now
+            )
+        case .partial, .closed, .timedOut:
+            let unresolvedEventIDs = eventIDs.filter(
+                sourceQueue.pendingSourceEventIDs.contains
+            )
+            sourceQueue.finish(
+                sourceEventIDs: unresolvedEventIDs,
+                succeeded: false,
+                now: now
+            )
+        }
         return true
     }
 
