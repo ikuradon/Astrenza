@@ -132,6 +132,44 @@ struct HomeTimelineRelayDiagnosticsLedgerTests {
         #expect(empty.planned == 1)
     }
 
+    @Test("Reachability index follows replacements and newly recorded evidence")
+    @MainActor
+    func reachabilityIndexTracksLedgerMutations() {
+        let accountID = String(repeating: "a", count: 64)
+        let relayURL = "wss://relay.example"
+        let ledger = HomeTimelineRelayDiagnosticsLedger(eventStore: nil)
+
+        ledger.replaceEvents([
+            event(relayURL: relayURL, kind: .eose, occurredAt: 100)
+        ])
+        #expect(ledger.statusCounts(
+            resolvedRelays: [relayURL],
+            runtimeStates: [:],
+            now: 200
+        ).connected == 1)
+
+        ledger.replaceEvents([])
+        #expect(ledger.statusCounts(
+            resolvedRelays: [relayURL],
+            runtimeStates: [:],
+            now: 200
+        ).connected == 0)
+
+        ledger.record(
+            accountID: accountID,
+            relayURL: relayURL,
+            kind: .connected,
+            occurredAt: 210,
+            subscriptionID: nil,
+            message: "connected"
+        )
+        #expect(ledger.statusCounts(
+            resolvedRelays: [relayURL],
+            runtimeStates: [:],
+            now: 220
+        ).connected == 1)
+    }
+
     @Test("Fetched diagnostics retain cursors only for timeline subscriptions")
     @MainActor
     func fetchedDiagnosticsNormalizeCursors() async throws {

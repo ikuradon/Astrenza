@@ -13,6 +13,7 @@ final class HomeTimelineRelayDiagnosticsLedger {
     private let relayTrafficWriter: RelayTrafficWriter?
 
     private(set) var events: [NostrRelaySyncEventRecord] = []
+    private var latestReachableAtByRelay: [String: Int] = [:]
     private var pendingRelayTrafficDeltas: [NostrRelayTrafficDelta] = []
     private var lastRelayTrafficFlushAt = 0
     private var diagnosticPersistenceTask: Task<Void, Never>?
@@ -47,11 +48,13 @@ final class HomeTimelineRelayDiagnosticsLedger {
 
     func reset() {
         events.removeAll(keepingCapacity: true)
+        latestReachableAtByRelay.removeAll(keepingCapacity: true)
         pendingRelayTrafficDeltas.removeAll(keepingCapacity: true)
     }
 
     func replaceEvents(_ events: [NostrRelaySyncEventRecord]) {
         self.events = Array(events.suffix(eventLimit))
+        rebuildReachabilityIndex()
     }
 
     @discardableResult
@@ -80,6 +83,7 @@ final class HomeTimelineRelayDiagnosticsLedger {
             message: message
         )
         events.append(event)
+        indexReachability(event)
         trimEventsIfNeeded()
         persistRecordedEvent(event)
         return event
@@ -136,23 +140,14 @@ final class HomeTimelineRelayDiagnosticsLedger {
         let planned = resolvedRelays.count
         guard planned > 0 else { return (connected: 0, planned: 1) }
 
-        let recentlyReachableRelayURLs = Set(
-            events.lazy
-                .filter { event in
-                    event.timelineKey == "home" &&
-                        Self.isRecentlyReachable(
-                            event,
-                            now: now,
-                            freshnessWindowSeconds: freshnessWindowSeconds
-                        )
-                }
-                .map(\.relayURL)
-        )
+        let oldestReachableAt = now - freshnessWindowSeconds
         let connected = resolvedRelays.count { relayURL in
             if let runtimeState = runtimeStates[relayURL] {
                 return runtimeState == .connected
             }
-            return recentlyReachableRelayURLs.contains(relayURL)
+            return latestReachableAtByRelay[relayURL].map {
+                $0 >= oldestReachableAt
+            } ?? false
         }
         return (connected: connected, planned: planned)
     }
@@ -160,6 +155,23 @@ final class HomeTimelineRelayDiagnosticsLedger {
     private func trimEventsIfNeeded() {
         guard events.count > eventLimit else { return }
         events.removeFirst(events.count - eventLimit)
+    }
+
+    private func rebuildReachabilityIndex() {
+        latestReachableAtByRelay.removeAll(keepingCapacity: true)
+        for event in events {
+            indexReachability(event)
+        }
+    }
+
+    private func indexReachability(_ event: NostrRelaySyncEventRecord) {
+        guard event.timelineKey == "home",
+              Self.isReachableEvidence(event.kind)
+        else { return }
+        latestReachableAtByRelay[event.relayURL] = max(
+            latestReachableAtByRelay[event.relayURL] ?? .min,
+            event.occurredAt
+        )
     }
 
     private func persistRecordedEvent(_ event: NostrRelaySyncEventRecord) {
@@ -201,13 +213,10 @@ final class HomeTimelineRelayDiagnosticsLedger {
             subscriptionID.hasPrefix("astrenza-gap-events")
     }
 
-    private static func isRecentlyReachable(
-        _ event: NostrRelaySyncEventRecord,
-        now: Int,
-        freshnessWindowSeconds: Int
+    private static func isReachableEvidence(
+        _ kind: NostrRelaySyncEventKind
     ) -> Bool {
-        guard now - event.occurredAt <= freshnessWindowSeconds else { return false }
-        switch event.kind {
+        switch kind {
         case .connected, .eose, .authRequired, .paymentRequired:
             return true
         case .closed, .reconnect, .timeout, .partialFailure, .rejected, .suspended, .negentropy:
