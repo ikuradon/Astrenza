@@ -114,6 +114,9 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
             if let host = hosts[activeTab] {
                 host.rootView = rootView(for: activeTab)
             }
+            if activeTab != .profile, let profileHost = hosts[.profile] {
+                profileHost.rootView = rootView(for: .profile)
+            }
         }
 
         func updateHomeTabPresentation() {
@@ -273,7 +276,11 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
             case .notifications:
                 AnyView(PlaceholderTabView(tab: .notifications))
             case .profile:
-                AnyView(parent.profileView)
+                if activeTab == .profile {
+                    AnyView(parent.profileView)
+                } else {
+                    AnyView(Color.astrenzaBackground.ignoresSafeArea())
+                }
             case .explore:
                 AnyView(PlaceholderTabView(tab: .explore))
             case .compose:
@@ -283,6 +290,10 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
 
         private func timelineTab(for tab: UITab) -> TimelineTab? {
             tabs.first { $0.value === tab }?.key
+        }
+
+        private var activeTab: TimelineTab {
+            parent.selectedTab == .compose ? parent.previousTab : parent.selectedTab
         }
     }
 }
