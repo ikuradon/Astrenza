@@ -1,4 +1,6 @@
 import Foundation
+import NostrCryptoAPI
+import NostrCryptoSecp256k1
 import NostrProtocol
 
 public enum NostrRelayRuntimePacket: Equatable, Sendable {
@@ -40,7 +42,7 @@ public actor NostrRelaySession {
     public let relayURL: String
 
     private let transport: any NostrRelayTransport
-    private let eventValidator: NostrEventValidator
+    private let eventValidator: any NostrEventValidating
     private var connection: (any NostrRelayTransportConnection)?
     private var connectionGeneration: UInt64 = 0
     private var connectionAttemptID: UUID?
@@ -56,7 +58,7 @@ public actor NostrRelaySession {
     public init(
         relayURL: String,
         transport: any NostrRelayTransport,
-        eventValidator: NostrEventValidator = NostrEventValidator()
+        eventValidator: any NostrEventValidating = NostrEventValidator()
     ) {
         self.relayURL = relayURL
         self.transport = transport

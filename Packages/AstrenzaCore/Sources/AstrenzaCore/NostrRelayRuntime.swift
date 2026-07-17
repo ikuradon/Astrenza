@@ -1,4 +1,6 @@
 import Foundation
+import NostrCryptoAPI
+import NostrCryptoSecp256k1
 import NostrProtocol
 
 public actor NostrRelayRuntime {
@@ -6,7 +8,7 @@ public actor NostrRelayRuntime {
     public typealias RetryJitterSource = @Sendable () -> Double
 
     private let transportFactory: TransportFactory
-    private let eventValidator: NostrEventValidator
+    private let eventValidator: any NostrEventValidating
     private let autoReceive: Bool
     private let retryPolicy: NostrRelayRuntimeRetryPolicy
     private let retryJitterSource: RetryJitterSource
@@ -42,7 +44,7 @@ public actor NostrRelayRuntime {
 
     public init(
         transportFactory: @escaping TransportFactory,
-        eventValidator: NostrEventValidator = NostrEventValidator(),
+        eventValidator: any NostrEventValidating = NostrEventValidator(),
         autoReceive: Bool = true,
         retryPolicy: NostrRelayRuntimeRetryPolicy = NostrRelayRuntimeRetryPolicy(),
         retryJitterSource: @escaping RetryJitterSource = {

@@ -1,8 +1,8 @@
-import Foundation
+import NostrCryptoAPI
 import NostrProtocol
 import secp256k1
 
-public struct NostrEventValidator: Sendable {
+public struct NostrEventValidator: NostrEventValidating, Sendable {
     public init() {}
 
     public func isValid(_ event: NostrEvent) -> Bool {

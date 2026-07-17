@@ -10,7 +10,9 @@ let package = Package(
     ],
     products: [
         .library(name: "AstrenzaCore", targets: ["AstrenzaCore"]),
-        .library(name: "NostrProtocol", targets: ["NostrProtocol"])
+        .library(name: "NostrProtocol", targets: ["NostrProtocol"]),
+        .library(name: "NostrCryptoAPI", targets: ["NostrCryptoAPI"]),
+        .library(name: "NostrCryptoSecp256k1", targets: ["NostrCryptoSecp256k1"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
@@ -20,11 +22,24 @@ let package = Package(
     targets: [
         .target(name: "NostrProtocol"),
         .target(
+            name: "NostrCryptoAPI",
+            dependencies: ["NostrProtocol"]
+        ),
+        .target(
+            name: "NostrCryptoSecp256k1",
+            dependencies: [
+                "NostrProtocol",
+                "NostrCryptoAPI",
+                .product(name: "secp256k1", package: "secp256k1.swift")
+            ]
+        ),
+        .target(
             name: "AstrenzaCore",
             dependencies: [
                 "NostrProtocol",
+                "NostrCryptoAPI",
+                "NostrCryptoSecp256k1",
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "secp256k1", package: "secp256k1.swift"),
                 .product(name: "Negentropy", package: "negentropy-swift")
             ]
         ),
@@ -38,6 +53,14 @@ let package = Package(
         .testTarget(
             name: "NostrProtocolTests",
             dependencies: ["NostrProtocol"]
+        ),
+        .testTarget(
+            name: "NostrCryptoSecp256k1Tests",
+            dependencies: [
+                "NostrProtocol",
+                "NostrCryptoAPI",
+                "NostrCryptoSecp256k1"
+            ]
         )
     ]
 )

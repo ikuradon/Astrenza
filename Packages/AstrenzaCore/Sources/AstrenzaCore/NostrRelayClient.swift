@@ -1,4 +1,6 @@
 import Foundation
+import NostrCryptoAPI
+import NostrCryptoSecp256k1
 import NostrProtocol
 
 public enum NostrRelayClientError: Error {
@@ -81,12 +83,12 @@ public protocol NostrRelayFetching: Sendable {
 public struct NostrRelayClient: Sendable {
     public var urlSession: URLSession
     public var timeoutNanoseconds: UInt64
-    public var eventValidator: NostrEventValidator
+    public var eventValidator: any NostrEventValidating
 
     public init(
         urlSession: URLSession = .shared,
         timeoutNanoseconds: UInt64 = 7_000_000_000,
-        eventValidator: NostrEventValidator = NostrEventValidator()
+        eventValidator: any NostrEventValidating = NostrEventValidator()
     ) {
         self.urlSession = urlSession
         self.timeoutNanoseconds = timeoutNanoseconds
@@ -163,7 +165,7 @@ public struct NostrRelayClient: Sendable {
     private static func receiveEvents(
         task: URLSessionWebSocketTask,
         request: NostrRelayRequest,
-        eventValidator: NostrEventValidator
+        eventValidator: any NostrEventValidating
     ) async throws -> [NostrEvent] {
         try await task.send(.string(request.textFrame()))
         let collector = NostrRelayEventCollector()
