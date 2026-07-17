@@ -11,6 +11,7 @@ protocol HomeViewportApplicationEffectTarget: AnyObject {
         onTransition: HomeTimelineMaterializationCoordinating
             .TransitionHandler?
     )
+    func waitForPendingPresentation() async -> Bool
     func applyRestoreProjectionAnchorIfPossible(account: NostrAccount)
     func applyPresentationTransition(
         _ transition: HomeTimelinePresentationTransition
@@ -43,6 +44,7 @@ enum HomeViewportApplicationEffectsFactory {
             reloadNewestProjectionWindow:
                 bindings.reloadNewestProjectionWindow,
             materializeEntries: bindings.materializeEntries,
+            waitForPendingPresentation: bindings.waitForPendingPresentation,
             applyRestoreProjectionAnchor:
                 bindings.applyRestoreProjectionAnchor,
             applyPresentationTransition:
@@ -85,6 +87,14 @@ private struct Bindings {
                 allowsRealtimeFollow: allowsRealtimeFollow,
                 onTransition: nil
             )
+        }
+    }
+
+    var waitForPendingPresentation:
+        HomeTimelineViewportApplicationEffects.PresentationWaiter {
+        { [weak target] in
+            guard let target else { return false }
+            return await target.waitForPendingPresentation()
         }
     }
 

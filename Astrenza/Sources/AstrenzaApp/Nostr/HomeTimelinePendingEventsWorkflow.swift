@@ -14,12 +14,14 @@ struct HomeTimelinePendingEventsEffects: Sendable {
         _ publication: HomeTimelinePendingEventCountPublication
     ) -> Void
     typealias VoidEffect = @MainActor @Sendable () -> Void
+    typealias PresentationWaiter = @MainActor @Sendable () async -> Bool
 
     let applyProjectionViewportTransition: ProjectionViewportTransitionEffect
     let reloadNewestProjection: AccountEffect
     let applyPendingEventCountPublication: PendingEventCountEffect
     let clearPendingProjectionReload: VoidEffect
     let materializeEntries: VoidEffect
+    let waitForPendingPresentation: PresentationWaiter
     let scheduleLinkPreviewResolution: VoidEffect
 }
 
@@ -39,16 +41,19 @@ final class HomeTimelinePendingEventsWorkflow {
     func apply(
         _ state: HomeTimelinePendingEventsState,
         effects: HomeTimelinePendingEventsEffects
-    ) -> Bool {
+    ) async -> Bool {
         guard let account = state.account else { return false }
         let hadPendingEvents = buffer.hasEvents ||
             state.hasPendingProjectionReload
 
         effects.applyProjectionViewportTransition(.resetToNewest)
         effects.reloadNewestProjection(account)
+        effects.materializeEntries()
+        guard await effects.waitForPendingPresentation(), !Task.isCancelled else {
+            return false
+        }
         clear(effects: effects)
         effects.clearPendingProjectionReload()
-        effects.materializeEntries()
         effects.scheduleLinkPreviewResolution()
         return hadPendingEvents
     }

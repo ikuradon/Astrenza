@@ -204,6 +204,10 @@ extension HomeStoreApplicationCoordinator {
         )
     }
 
+    func waitForPendingPresentation() async -> Bool {
+        await collaborators.presentation.waitForPendingPresentation()
+    }
+
     func scheduleMaterializeEntries(
         delayNanoseconds: UInt64?,
         allowsRealtimeFollow: Bool?

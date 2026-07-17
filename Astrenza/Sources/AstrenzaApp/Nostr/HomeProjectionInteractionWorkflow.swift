@@ -67,7 +67,7 @@ protocol HomeTimelineMaterializationCoordinating: AnyObject {
         onTransition: @escaping TransitionHandler
     )
 
-    func waitForPendingPresentation() async
+    func waitForPendingPresentation() async -> Bool
 
     func cancel()
 }
@@ -174,7 +174,7 @@ final class HomeProjectionInteractionWorkflow {
         materialization.cancel()
     }
 
-    func waitForPendingPresentation() async {
+    func waitForPendingPresentation() async -> Bool {
         await materialization.waitForPendingPresentation()
     }
 

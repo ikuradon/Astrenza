@@ -9,13 +9,13 @@ struct HomeTimelinePendingEventsWorkflowTests {
         "Every pending source preserves newest-window application order",
         arguments: PendingEventsScenario.allCases
     )
-    func appliesPendingSourcesInOrder(_ scenario: PendingEventsScenario) {
+    func appliesPendingSourcesInOrder(_ scenario: PendingEventsScenario) async {
         let account = pendingEventsAccount()
         let probe = PendingEventsProbe()
         let buffer = pendingEventBuffer(eventIDs: scenario.eventIDs)
         let workflow = HomeTimelinePendingEventsWorkflow(buffer: buffer)
 
-        let didApplyPendingEvents = workflow.apply(
+        let didApplyPendingEvents = await workflow.apply(
             HomeTimelinePendingEventsState(
                 account: account,
                 hasPendingProjectionReload: scenario.hasPendingProjectionReload
@@ -26,14 +26,15 @@ struct HomeTimelinePendingEventsWorkflowTests {
         #expect(didApplyPendingEvents == scenario.expectedResult)
         var expectedEvents: [PendingEventsProbe.Event] = [
             .applyProjectionViewportTransition(.resetToNewest),
-            .reloadNewestProjection(account)
+            .reloadNewestProjection(account),
+            .materializeEntries,
+            .waitForPendingPresentation
         ]
         if scenario.hasBufferedEvents {
             expectedEvents.append(.applyPendingEventCountPublication(0))
         }
         expectedEvents += [
             .clearPendingProjectionReload,
-            .materializeEntries,
             .scheduleLinkPreviewResolution
         ]
         #expect(probe.events == expectedEvents)
@@ -41,13 +42,13 @@ struct HomeTimelinePendingEventsWorkflowTests {
     }
 
     @Test("A missing account prevents every state mutation and side effect")
-    func missingAccountStopsApplication() {
+    func missingAccountStopsApplication() async {
         let probe = PendingEventsProbe()
         let workflow = HomeTimelinePendingEventsWorkflow(
             buffer: pendingEventBuffer(eventIDs: ["event"])
         )
 
-        let didApplyPendingEvents = workflow.apply(
+        let didApplyPendingEvents = await workflow.apply(
             HomeTimelinePendingEventsState(
                 account: nil,
                 hasPendingProjectionReload: true
@@ -58,6 +59,32 @@ struct HomeTimelinePendingEventsWorkflowTests {
         #expect(!didApplyPendingEvents)
         #expect(probe.events.isEmpty)
         #expect(workflow.hasBufferedEvents)
+    }
+
+    @Test("A failed presentation retains every pending source for retry")
+    func failedPresentationRetainsPendingSources() async {
+        let account = pendingEventsAccount()
+        let probe = PendingEventsProbe(presentationResult: false)
+        let workflow = HomeTimelinePendingEventsWorkflow(
+            buffer: pendingEventBuffer(eventIDs: ["event"])
+        )
+
+        let didApply = await workflow.apply(
+            HomeTimelinePendingEventsState(
+                account: account,
+                hasPendingProjectionReload: true
+            ),
+            effects: probe.effects
+        )
+
+        #expect(!didApply)
+        #expect(workflow.hasBufferedEvents)
+        #expect(probe.events == [
+            .applyProjectionViewportTransition(.resetToNewest),
+            .reloadNewestProjection(account),
+            .materializeEntries,
+            .waitForPendingPresentation
+        ])
     }
 
     @Test("Explicit clearing owns buffered state and count publication")
@@ -123,10 +150,16 @@ private final class PendingEventsProbe {
         case applyPendingEventCountPublication(Int)
         case clearPendingProjectionReload
         case materializeEntries
+        case waitForPendingPresentation
         case scheduleLinkPreviewResolution
     }
 
     private(set) var events: [Event] = []
+    private let presentationResult: Bool
+
+    init(presentationResult: Bool = true) {
+        self.presentationResult = presentationResult
+    }
 
     var effects: HomeTimelinePendingEventsEffects {
         HomeTimelinePendingEventsEffects(
@@ -146,6 +179,10 @@ private final class PendingEventsProbe {
             },
             materializeEntries: { [self] in
                 events.append(.materializeEntries)
+            },
+            waitForPendingPresentation: { [self] in
+                events.append(.waitForPendingPresentation)
+                return presentationResult
             },
             scheduleLinkPreviewResolution: { [self] in
                 events.append(.scheduleLinkPreviewResolution)

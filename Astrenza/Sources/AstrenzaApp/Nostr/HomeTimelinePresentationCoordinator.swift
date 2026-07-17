@@ -144,6 +144,13 @@ final class HomeTimelinePresentationCoordinator {
         _ materialized: HomeTimelineMaterializedSnapshot,
         pass: HomeTimelineMaterializationPass
     ) -> HomeTimelinePresentationTransition? {
+        applyWithReceipt(materialized, pass: pass)?.transition
+    }
+
+    func applyWithReceipt(
+        _ materialized: HomeTimelineMaterializedSnapshot,
+        pass: HomeTimelineMaterializationPass
+    ) -> HomeTimelinePresentationReceipt? {
         guard scheduler.completeMaterialization(pass) else { return nil }
         var changes: HomeTimelinePresentationChanges = []
         var didChangePublishedContent = false
@@ -175,7 +182,9 @@ final class HomeTimelinePresentationCoordinator {
                 changes.insert(.realtimeFollowSourceRevision)
             }
         }
-        return transition(changes: changes)
+        return HomeTimelinePresentationReceipt(
+            transition: transition(changes: changes)
+        )
     }
 
     func dismissUnreadBadge() -> HomeTimelinePresentationTransition {

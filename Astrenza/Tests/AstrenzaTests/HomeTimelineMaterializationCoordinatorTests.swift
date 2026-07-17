@@ -84,6 +84,20 @@ struct HomeTimelineMaterializationCoordinatorTests {
         #expect(!system.presentation.hasPendingNewestProjectionReload)
     }
 
+    @Test("A failed projection reload is not reported as completed presentation")
+    func reportsFailedProjectionReload() async {
+        let account = account()
+        let note = event(idCharacter: "4", pubkey: account.pubkey, createdAt: 400)
+        let system = makeSystem(eventStore: nil)
+        installContent([note], account: account, in: system)
+        system.coordinator.reloadNewestProjection(account: account)
+
+        _ = await materialize(request(account: account), in: system)
+        let didComplete = await system.coordinator.waitForPendingPresentation()
+
+        #expect(!didComplete)
+    }
+
     @Test("Anchored projection reload replaces content with the bounded window")
     func anchoredReloadReplacesContentWindow() async throws {
         let eventStore = try NostrEventStore.inMemory()

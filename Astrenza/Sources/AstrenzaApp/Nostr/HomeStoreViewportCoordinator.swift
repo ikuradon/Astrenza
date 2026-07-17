@@ -30,7 +30,7 @@ protocol HomeStoreViewportInteracting: AnyObject {
     )
     func applyPendingNewEvents(
         _ context: HomeTimelineViewportInteractionContext
-    ) -> Bool
+    ) async -> Bool
     func clearPendingEvents(
         _ context: HomeTimelineViewportInteractionContext
     ) -> Bool
@@ -169,8 +169,8 @@ final class HomeStoreViewportCoordinator {
     }
 
     @discardableResult
-    func applyPendingNewEvents() -> Bool {
-        interaction.applyPendingNewEvents(contexts.viewportContext())
+    func applyPendingNewEvents() async -> Bool {
+        await interaction.applyPendingNewEvents(contexts.viewportContext())
     }
 
     func loadOlder() {

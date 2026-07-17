@@ -149,6 +149,7 @@ private struct ViewportApplicationDispatcherFixture {
                     allowsRealtimeFollow: allowsRealtimeFollow
                 ))
             },
+            waitForPendingPresentation: { true },
             applyRestoreProjectionAnchor: { [probe] account in
                 probe.events.append(.applyRestoreProjectionAnchor(
                     account.pubkey

@@ -85,7 +85,7 @@ final class StoreViewportInteractionSpy: HomeStoreViewportInteracting {
 
     func applyPendingNewEvents(
         _ context: HomeTimelineViewportInteractionContext
-    ) -> Bool {
+    ) async -> Bool {
         calls.append(.applyPendingEvents(accountID(context)))
         return applyPendingEventsResult
     }

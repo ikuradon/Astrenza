@@ -54,6 +54,9 @@ struct HomeViewportContextFactory {
                     load,
                     effects: environment.applications
                 )
+            },
+            waitForPendingPresentation: {
+                await environment.applications.waitForPendingPresentation()
             }
         )
         presentationEffects = Self.presentationEffects(
@@ -141,6 +144,9 @@ struct HomeViewportContextFactory {
             },
             materializeEntries: {
                 effects.apply(.materializeEntries(allowsRealtimeFollow: false))
+            },
+            waitForPendingPresentation: {
+                await effects.waitForPendingPresentation()
             },
             scheduleLinkPreviewResolution: {
                 effects.apply(.scheduleLinkPreviewResolution)

@@ -63,7 +63,7 @@ extension NostrHomeTimelineStore {
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        composition.viewport.applyPendingNewEvents()
+        await composition.viewport.applyPendingNewEvents()
     }
 
     func loadOlder() {

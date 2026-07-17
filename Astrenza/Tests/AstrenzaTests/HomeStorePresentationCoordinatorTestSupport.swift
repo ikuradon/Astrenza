@@ -54,6 +54,7 @@ final class StorePresentationSourceSpy: HomeStorePresentationSourcing {
 @MainActor
 final class StoreProjectionMaterializingSpy:
     HomeStoreProjectionMaterializing {
+    var pendingPresentationResult = true
     private(set) var requests: [HomeTimelineMaterializationRequest] = []
     private var handlers: [HomeTimelineMaterializationCoordinating
         .TransitionHandler] = []
@@ -65,6 +66,10 @@ final class StoreProjectionMaterializingSpy:
     ) {
         requests.append(request)
         handlers.append(onTransition)
+    }
+
+    func waitForPendingPresentation() async -> Bool {
+        pendingPresentationResult
     }
 
     func completeLast(with transition: HomeTimelinePresentationTransition) {

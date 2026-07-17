@@ -44,21 +44,22 @@ struct HomeTimelineViewportWorkflowTests {
     }
 
     @Test("Pending events preserve application order across the typed boundary")
-    func pendingEventsPreserveApplicationOrder() {
+    func pendingEventsPreserveApplicationOrder() async {
         let fixture = ViewportInteractionFixture(
             hasBufferedEvents: true,
             hasPendingProjectionReload: true
         )
 
-        let didApply = fixture.workflow.applyPendingNewEvents(fixture.context)
+        let didApply = await fixture.workflow.applyPendingNewEvents(fixture.context)
 
         #expect(didApply)
         #expect(fixture.applicationProbe.events == [
             .applyProjectionViewportTransition(.resetToNewest),
             .reloadNewestProjectionWindow(fixture.account),
+            .materializeEntries(false),
+            .waitForPendingPresentation,
             .applyPendingEventCountPublication(0),
             .clearPendingProjectionReload,
-            .materializeEntries(false),
             .scheduleLinkPreviewResolution
         ])
         #expect(!fixture.workflow.hasBufferedEvents)
@@ -172,6 +173,7 @@ private final class ViewportInteractionApplicationProbe {
         case applyPendingEventCountPublication(Int)
         case clearPendingProjectionReload
         case scheduleLinkPreviewResolution
+        case waitForPendingPresentation
     }
 
     private(set) var events: [Event] = []
@@ -187,6 +189,10 @@ private final class ViewportInteractionApplicationProbe {
             },
             materializeEntries: { [self] allowsRealtimeFollow in
                 events.append(.materializeEntries(allowsRealtimeFollow))
+            },
+            waitForPendingPresentation: { [self] in
+                events.append(.waitForPendingPresentation)
+                return true
             },
             applyRestoreProjectionAnchor: { [self] account in
                 events.append(.applyRestoreProjectionAnchor(account))

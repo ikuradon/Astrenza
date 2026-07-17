@@ -85,6 +85,7 @@ protocol HomeStoreProjectionMaterializing: AnyObject {
         onTransition: @escaping HomeTimelineMaterializationCoordinating
             .TransitionHandler
     )
+    func waitForPendingPresentation() async -> Bool
 }
 
 extension HomeProjectionInteractionWorkflow:
@@ -229,6 +230,10 @@ final class HomeStorePresentationCoordinator {
             applyPresentationTransition(transition)
             onTransition?(transition)
         }
+    }
+
+    func waitForPendingPresentation() async -> Bool {
+        await projection.waitForPendingPresentation()
     }
 
     func scheduleMaterialization(

@@ -125,6 +125,7 @@ private final class ViewportContextFactoryProbe {
                 materializeEntries: { [self] allowsRealtimeFollow in
                     events.append(.materialize(allowsRealtimeFollow))
                 },
+                waitForPendingPresentation: { true },
                 applyRestoreProjectionAnchor: { [self] account in
                     events.append(.applyRestoreAnchor(account))
                 },

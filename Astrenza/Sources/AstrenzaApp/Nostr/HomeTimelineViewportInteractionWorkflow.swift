@@ -34,9 +34,11 @@ struct HomeTimelineViewportInteractionEffects: Sendable {
     typealias LoadEffect = @MainActor @Sendable (
         _ load: HomeTimelineViewportInteractionLoad
     ) async -> Void
+    typealias PresentationWaiter = @MainActor @Sendable () async -> Bool
 
     let apply: ApplicationEffect
     let load: LoadEffect
+    let waitForPendingPresentation: PresentationWaiter
 }
 
 struct HomeTimelineViewportInteractionContext: Sendable {
@@ -143,8 +145,8 @@ final class HomeTimelineViewportInteractionWorkflow {
     @discardableResult
     func applyPendingNewEvents(
         _ context: HomeTimelineViewportInteractionContext
-    ) -> Bool {
-        pendingEvents.apply(
+    ) async -> Bool {
+        await pendingEvents.apply(
             context.state.pendingEvents,
             effects: context.pendingEventsEffects
         )

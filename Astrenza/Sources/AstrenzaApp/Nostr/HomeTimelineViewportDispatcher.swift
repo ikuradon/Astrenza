@@ -21,10 +21,12 @@ struct HomeTimelineViewportApplicationEffects: Sendable {
         _ account: NostrAccount,
         _ lifecycle: HomeTimelineLifecycleToken
     ) async -> Void
+    typealias PresentationWaiter = @MainActor @Sendable () async -> Bool
 
     let applyProjectionViewportTransition: ProjectionViewportTransition
     let reloadNewestProjectionWindow: Account
     let materializeEntries: RealtimeFollowPermission
+    let waitForPendingPresentation: PresentationWaiter
     let applyRestoreProjectionAnchor: Account
     let applyPresentationTransition: PresentationTransition
     let scheduleReadStateSave: Action

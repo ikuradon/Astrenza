@@ -1,5 +1,9 @@
 import AstrenzaCore
 
+struct HomeTimelinePresentationReceipt: Sendable {
+    let transition: HomeTimelinePresentationTransition?
+}
+
 @MainActor
 protocol HomeTimelinePresentationCoordinating: AnyObject {
     typealias MaterializeHandler = @MainActor @Sendable (

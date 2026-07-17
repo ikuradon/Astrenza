@@ -20,7 +20,7 @@ struct HomeStoreViewportCoordinatorTests {
             visiblePostIDs: ["visible"]
         )
         fixture.coordinator.markNewestMaterializedWindowRead()
-        let didApplyPending = fixture.coordinator.applyPendingNewEvents()
+        let didApplyPending = await fixture.coordinator.applyPendingNewEvents()
         fixture.coordinator.loadOlder()
         let didClearPending = fixture.coordinator.clearPendingNewEvents()
 

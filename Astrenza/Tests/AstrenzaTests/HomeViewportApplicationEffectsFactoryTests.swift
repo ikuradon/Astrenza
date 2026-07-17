@@ -63,6 +63,7 @@ private func applyViewportLoadEffects(
     _ effects: HomeTimelineViewportApplicationEffects,
     fixture: ViewportEffectFixture
 ) async {
+    _ = await effects.waitForPendingPresentation()
     await effects.refreshLatest(fixture.account, fixture.lifecycle)
     await effects.loadOlder(fixture.account, fixture.lifecycle)
 }
@@ -85,6 +86,7 @@ private func expectedViewportEvents(
         .pendingEventCountPublication(3),
         .clearPendingProjectionReload,
         .scheduleLinkPreviewResolution,
+        .waitForPendingPresentation,
         .refreshLatest(
             accountID: fixture.account.pubkey,
             lifecycle: fixture.lifecycle
@@ -147,6 +149,7 @@ private final class ViewportEffectTargetSpy:
         case pendingEventCountPublication(Int)
         case clearPendingProjectionReload
         case scheduleLinkPreviewResolution
+        case waitForPendingPresentation
         case refreshLatest(
             accountID: String,
             lifecycle: HomeTimelineLifecycleToken
@@ -185,6 +188,11 @@ private final class ViewportEffectTargetSpy:
 
     func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
         events.append(.applyRestoreProjectionAnchor(account.pubkey))
+    }
+
+    func waitForPendingPresentation() async -> Bool {
+        events.append(.waitForPendingPresentation)
+        return true
     }
 
     func applyPresentationTransition(

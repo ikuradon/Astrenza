@@ -292,7 +292,7 @@ private final class MaterializationInteractionSpy:
         materializationAccountID = request.account?.pubkey
         allowsRealtimeFollow = request.allowsRealtimeFollow
     }
-    func waitForPendingPresentation() async {}
+    func waitForPendingPresentation() async -> Bool { true }
     func cancel() {
         cancelCount += 1
     }

@@ -24,7 +24,7 @@ final class HomeTimelineMaterializationCoordinator {
     private let projectionController: HomeFeedProjectionController
     private let worker: any HomeTimelineMaterializationWorking
 
-    private var materializationTask: Task<Void, Never>?
+    private var materializationTask: Task<Bool, Never>?
     private var materializationGeneration: UInt64 = 0
     private var projectionTask: Task<Bool, Never>?
     private var projectionGeneration: UInt64 = 0
@@ -105,13 +105,15 @@ final class HomeTimelineMaterializationCoordinator {
         presentationCoordinator.cancelMaterialization()
     }
 
-    func waitForPendingPresentation() async {
+    func waitForPendingPresentation() async -> Bool {
+        var didComplete = true
         if let projectionTask {
-            _ = await projectionTask.value
+            didComplete = await projectionTask.value
         }
         if let materializationTask {
-            await materializationTask.value
+            didComplete = await materializationTask.value && didComplete
         }
+        return didComplete && !Task.isCancelled
     }
 
     private func startMaterialization(
@@ -123,25 +125,28 @@ final class HomeTimelineMaterializationCoordinator {
         let generation = materializationGeneration
         let worker = worker
         let pendingProjectionTask = projectionTask
+        projectionTask = nil
         materializationTask = Task { [weak self] in
+            var didReloadProjection = true
             if let pendingProjectionTask {
-                _ = await pendingProjectionTask.value
+                didReloadProjection = await pendingProjectionTask.value
             }
             guard !Task.isCancelled,
                   let self,
                   generation == materializationGeneration
-            else { return }
+            else { return false }
             let input = materializationInput(for: request)
             guard let materialized = await worker.materialize(input),
                   !Task.isCancelled,
                   generation == materializationGeneration
-            else { return }
-            finishMaterialization(
+            else { return false }
+            let didPublish = finishMaterialization(
                 materialized,
                 pass: pass,
                 generation: generation,
                 onTransition: onTransition
             )
+            return didReloadProjection && didPublish
         }
     }
 
@@ -184,7 +189,6 @@ final class HomeTimelineMaterializationCoordinator {
             if let window {
                 contentCoordinator.replaceProjectionEvents(window.events)
             }
-            projectionTask = nil
             onCompletion?(didReload)
             return didReload
         }
@@ -195,14 +199,16 @@ final class HomeTimelineMaterializationCoordinator {
         pass: HomeTimelineMaterializationPass,
         generation: UInt64,
         onTransition: TransitionHandler
-    ) {
-        guard generation == materializationGeneration else { return }
-        materializationTask = nil
-        guard let transition = presentationCoordinator.apply(
+    ) -> Bool {
+        guard generation == materializationGeneration else { return false }
+        guard let receipt = presentationCoordinator.applyWithReceipt(
             materialized,
             pass: pass
-        ) else { return }
-        onTransition(transition)
+        ) else { return false }
+        if let transition = receipt.transition {
+            onTransition(transition)
+        }
+        return true
     }
 
     private func cancelTask() {

@@ -228,7 +228,7 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
     }
 
     func waitForCachedPresentation() async {
-        await projectionInteraction.waitForPendingPresentation()
+        _ = await projectionInteraction.waitForPendingPresentation()
     }
 
     func restoreCachedReadState(account: NostrAccount) async {
