@@ -132,7 +132,7 @@ final class HomeTimelineAccountStartCoordinator {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
-            completeCachedStartup(
+            let phaseAfterCachedPresentation = completeCachedStartup(
                 request,
                 lifecycle: lifecycle,
                 didRestore: didRestore,
@@ -142,6 +142,9 @@ final class HomeTimelineAccountStartCoordinator {
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
+            if let phaseAfterCachedPresentation {
+                handlers.perform(.setPhase(phaseAfterCachedPresentation))
+            }
             await handlers.restoreCachedReadState(request.account)
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
@@ -157,11 +160,11 @@ final class HomeTimelineAccountStartCoordinator {
         lifecycle: HomeTimelineLifecycleToken,
         didRestore: Bool,
         handlers: HomeTimelineAccountStartHandlers
-    ) {
+    ) -> NostrHomeTimelinePhase? {
         guard lifecycleCoordinator.setRuntimeBootstrapCompleted(
             didRestore,
             for: lifecycle
-        ) else { return }
+        ) else { return nil }
         handlers.perform(.prepareHomeFeedDefinition(request.account))
         restoreViewportIfNeeded(
             accountID: request.account.pubkey,
@@ -173,8 +176,12 @@ final class HomeTimelineAccountStartCoordinator {
             hasRelayRuntime: request.hasRelayRuntime,
             state: handlers.state()
         ) {
+            if case .loaded = phase {
+                return phase
+            }
             handlers.perform(.setPhase(phase))
         }
+        return nil
     }
 
     private func restoreViewportIfNeeded(

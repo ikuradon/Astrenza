@@ -105,8 +105,8 @@ struct HomeTimelineAccountStartCoordinatorTests {
             .command(.applyRestoredViewport(viewport)),
             .command(.applyRestoreProjectionAnchor(account)),
             .command(.installProvisionalRuntimeBootstrap(account)),
-            .command(.setPhase(.loaded)),
             .waitForCachedPresentation,
+            .command(.setPhase(.loaded)),
             .restoreCachedReadState(account),
             .command(.startRuntimeSession)
         ])
