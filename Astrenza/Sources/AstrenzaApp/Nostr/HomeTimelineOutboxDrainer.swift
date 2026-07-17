@@ -6,13 +6,48 @@ struct HomeTimelineOutboxDrainResult: Sendable {
     let didRecordRelayResults: Bool
 }
 
-actor HomeTimelineOutboxDrainer: HomeTimelineOutboxDraining {
-    private let eventStore: NostrEventStore?
-    private let publisher: NostrOutboxRelayPublisher
+protocol HomeTimelineOutboxStoring: Sendable {
+    func outboxEvents(
+        accountID: String,
+        limit: Int
+    ) throws -> [NostrOutboxEventRecord]
 
-    init(eventStore: NostrEventStore?, publisher: NostrOutboxRelayPublisher) {
+    func outboxRelays(localID: String) throws -> [NostrOutboxRelayRecord]
+
+    func recordOutboxRelayResult(
+        localID: String,
+        relayURL: String,
+        accepted: Bool,
+        message: String?,
+        retryable: Bool,
+        attemptedAt: Int
+    ) throws
+}
+
+extension NostrEventStore: HomeTimelineOutboxStoring {}
+
+protocol HomeTimelineOutboxPublishing: Sendable {
+    func publish(
+        event: NostrEvent,
+        relayURLs: [String]
+    ) async -> [NostrOutboxRelayPublishResult]
+}
+
+extension NostrOutboxRelayPublisher: HomeTimelineOutboxPublishing {}
+
+actor HomeTimelineOutboxDrainer: HomeTimelineOutboxDraining {
+    private let eventStore: (any HomeTimelineOutboxStoring)?
+    private let publisher: any HomeTimelineOutboxPublishing
+    private let storageFailureRetrySeconds: Int
+
+    init(
+        eventStore: (any HomeTimelineOutboxStoring)?,
+        publisher: any HomeTimelineOutboxPublishing,
+        storageFailureRetrySeconds: Int = 5
+    ) {
         self.eventStore = eventStore
         self.publisher = publisher
+        self.storageFailureRetrySeconds = max(1, storageFailureRetrySeconds)
     }
 
     func drain(accountID: String, now: Int = Int(Date().timeIntervalSince1970)) async
@@ -24,12 +59,19 @@ actor HomeTimelineOutboxDrainer: HomeTimelineOutboxDraining {
                 didRecordRelayResults: false
             )
         }
-        let candidates = ((try? eventStore.outboxEvents(accountID: accountID, limit: 500)) ?? [])
+        let storedEvents: [NostrOutboxEventRecord]
+        do {
+            storedEvents = try eventStore.outboxEvents(accountID: accountID, limit: 500)
+        } catch {
+            return storageFailureResult(now: now)
+        }
+        let candidates = storedEvents
             .filter { record in
                 let isRetryReady = record.nextRetryAt.map { $0 <= now } ?? true
                 return !Self.isTerminal(record.status) && isRetryReady
             }
         var didRecordRelayResults = false
+        var didEncounterStorageFailure = false
 
         for record in candidates {
             guard !Task.isCancelled else {
@@ -38,11 +80,20 @@ actor HomeTimelineOutboxDrainer: HomeTimelineOutboxDraining {
                     didRecordRelayResults: didRecordRelayResults
                 )
             }
-            let relayRecords = (try? eventStore.outboxRelays(localID: record.localID)) ?? []
+            let relayRecords: [NostrOutboxRelayRecord]
+            do {
+                relayRecords = try eventStore.outboxRelays(localID: record.localID)
+            } catch {
+                didEncounterStorageFailure = true
+                continue
+            }
             let relayURLs = relayRecords
                 .filter { !Self.isTerminal($0.status) }
                 .map(\.relayURL)
-            guard !relayURLs.isEmpty else { continue }
+            guard !relayURLs.isEmpty else {
+                didEncounterStorageFailure = true
+                continue
+            }
 
             let results = await publisher.publish(event: record.event, relayURLs: relayURLs)
             guard !Task.isCancelled else {
@@ -53,24 +104,48 @@ actor HomeTimelineOutboxDrainer: HomeTimelineOutboxDraining {
             }
             for result in results {
                 let accepted = result.accepted || Self.isDuplicateAcknowledgment(result.message)
-                try? eventStore.recordOutboxRelayResult(
-                    localID: record.localID,
-                    relayURL: result.relayURL,
-                    accepted: accepted,
-                    message: result.message,
-                    retryable: accepted || !Self.isTerminalRejection(result.message)
-                )
-                didRecordRelayResults = true
+                do {
+                    try eventStore.recordOutboxRelayResult(
+                        localID: record.localID,
+                        relayURL: result.relayURL,
+                        accepted: accepted,
+                        message: result.message,
+                        retryable: accepted || !Self.isTerminalRejection(result.message),
+                        attemptedAt: now
+                    )
+                    didRecordRelayResults = true
+                } catch {
+                    didEncounterStorageFailure = true
+                }
             }
         }
 
-        let nextRetryAt = ((try? eventStore.outboxEvents(accountID: accountID, limit: 500)) ?? [])
-            .filter { !Self.isTerminal($0.status) }
-            .compactMap(\.nextRetryAt)
-            .min()
+        let nextRetryAt: Int?
+        do {
+            let storedRetryAt = try eventStore
+                .outboxEvents(accountID: accountID, limit: 500)
+                .filter { !Self.isTerminal($0.status) }
+                .compactMap(\.nextRetryAt)
+                .min()
+            nextRetryAt = didEncounterStorageFailure
+                ? min(storedRetryAt ?? .max, now + storageFailureRetrySeconds)
+                : storedRetryAt
+        } catch {
+            return HomeTimelineOutboxDrainResult(
+                nextRetryAt: now + storageFailureRetrySeconds,
+                didRecordRelayResults: didRecordRelayResults
+            )
+        }
         return HomeTimelineOutboxDrainResult(
             nextRetryAt: nextRetryAt,
             didRecordRelayResults: didRecordRelayResults
+        )
+    }
+
+    private func storageFailureResult(now: Int) -> HomeTimelineOutboxDrainResult {
+        HomeTimelineOutboxDrainResult(
+            nextRetryAt: now + storageFailureRetrySeconds,
+            didRecordRelayResults: false
         )
     }
 
