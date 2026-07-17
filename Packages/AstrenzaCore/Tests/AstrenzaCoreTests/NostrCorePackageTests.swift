@@ -4388,6 +4388,51 @@ struct NostrCorePackageTests {
         await runtime.terminate()
     }
 
+    @Test("Relay runtime bounds initial forward wait even when REQ cannot be installed")
+    func relayRuntimeBoundsInitialForwardWaitBeforeInstallation() async throws {
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in FailingRelayRuntimeTransport() },
+            autoReceive: true,
+            retryPolicy: NostrRelayRuntimeRetryPolicy(
+                maxAttempts: 0,
+                initialDelayMilliseconds: 0,
+                delayStepMilliseconds: 0
+            ),
+            heartbeatPolicy: .disabled,
+            forwardPolicy: NostrRelayRuntimeForwardPolicy(
+                initialEOSETimeoutMilliseconds: 20
+            ),
+            backwardPolicy: .disabled
+        )
+        let collector = RelayRuntimePacketCollector()
+        let collectTask = Task {
+            for await packet in await runtime.events() {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1])]]
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installForward(packet)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        let packets = await collector.packets()
+        #expect(packets.contains(.timeout(
+            relayURL: "wss://relay.example",
+            subscriptionID: "home-forward",
+            message: "forward initial EOSE timeout"
+        )))
+        #expect(packets.contains { packet in
+            if case .requestInstalled = packet { return true }
+            return false
+        } == false)
+        await runtime.terminate()
+    }
+
     @Test("Relay session ignores signed events that do not match subscription filters")
     func relaySessionIgnoresFilterMismatchedEvents() async throws {
         let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "41", count: 32))
@@ -5235,6 +5280,12 @@ private actor FakeRelayRuntimeTransport: NostrRelayTransport {
 
     func connectCallCount() -> Int {
         callCount
+    }
+}
+
+private struct FailingRelayRuntimeTransport: NostrRelayTransport {
+    func connect(relayURL: String) async throws -> any NostrRelayTransportConnection {
+        throw NostrRelayRuntimeError.connectionUnavailable(relayURL: relayURL)
     }
 }
 

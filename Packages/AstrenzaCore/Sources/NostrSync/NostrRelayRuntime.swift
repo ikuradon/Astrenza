@@ -375,6 +375,14 @@ public actor NostrRelayRuntime {
         activeForwardPackets = activeForwardPackets.filter { !shouldReplace($0.value) }
         for packet in installPackets {
             activeForwardPackets[packet.subscriptionID] = packet
+            for relayURL in forwardRelayURLs(for: packet) {
+                // 初回同期の期限はREQ送信後ではなく、forward planを採用した時点から数える。
+                // 接続・work scheduler待ちでinstallまで到達しないrelayも有限時間で報告する。
+                scheduleForwardInitialEOSETimeout(
+                    relayURL: relayURL,
+                    subscriptionID: packet.subscriptionID
+                )
+            }
         }
 
         for packet in previousPackets {
@@ -985,7 +993,8 @@ public actor NostrRelayRuntime {
             relayURL: relayURL,
             subscriptionID: subscriptionID
         )
-        forwardInitialEOSETimeoutTasks[key]?.cancel()
+        // plan採用時に開始した期限をrequestInstalledやreconnectで延長しない。
+        guard forwardInitialEOSETimeoutTasks[key] == nil else { return }
         let timeoutNanoseconds = forwardPolicy.initialEOSETimeoutNanoseconds
         forwardInitialEOSETimeoutTasks[key] = Task {
             do {
