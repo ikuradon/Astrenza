@@ -7,3 +7,4 @@
 @_exported import NostrStoreGRDB
 @_exported import NostrRelay
 @_exported import NostrSync
+@_exported import NostrHomeFeature

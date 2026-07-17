@@ -1,4 +1,5 @@
 import Foundation
+import NostrHomeFeature
 import NostrProtocol
 
 public enum NostrLoginError: Error, Equatable {

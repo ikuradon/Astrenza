@@ -18,7 +18,8 @@ let package = Package(
         .library(name: "NostrStoreAPI", targets: ["NostrStoreAPI"]),
         .library(name: "NostrStoreGRDB", targets: ["NostrStoreGRDB"]),
         .library(name: "NostrRelay", targets: ["NostrRelay"]),
-        .library(name: "NostrSync", targets: ["NostrSync"])
+        .library(name: "NostrSync", targets: ["NostrSync"]),
+        .library(name: "NostrHomeFeature", targets: ["NostrHomeFeature"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
@@ -81,6 +82,15 @@ let package = Package(
             ]
         ),
         .target(
+            name: "NostrHomeFeature",
+            dependencies: [
+                "NostrProtocol",
+                "NostrStoreAPI",
+                "NostrRelay",
+                "NostrSync"
+            ]
+        ),
+        .target(
             name: "AstrenzaCore",
             dependencies: [
                 "NostrProtocol",
@@ -91,7 +101,8 @@ let package = Package(
                 "NostrStoreAPI",
                 "NostrStoreGRDB",
                 "NostrRelay",
-                "NostrSync"
+                "NostrSync",
+                "NostrHomeFeature"
             ]
         ),
         .testTarget(
@@ -140,6 +151,14 @@ let package = Package(
                 "NostrReconciliationAPI",
                 "NostrRelay",
                 "NostrSync"
+            ]
+        ),
+        .testTarget(
+            name: "NostrHomeFeatureTests",
+            dependencies: [
+                "NostrProtocol",
+                "NostrRelay",
+                "NostrHomeFeature"
             ]
         )
     ]

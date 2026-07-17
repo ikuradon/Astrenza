@@ -6216,7 +6216,13 @@ struct TimelineModelTests {
             post.replyMention == nil && post.body == "runtime mention profile"
         }
         #expect(post.body == "runtime mention profile")
-        #expect(try eventStore.latestReplaceableEvent(pubkey: mentionedSigner.pubkey, kind: 0)?.id == mentionedMetadata.id)
+        let storedMetadata = try await waitForLatestReplaceableEvent(
+            in: eventStore,
+            pubkey: mentionedSigner.pubkey,
+            kind: 0,
+            id: mentionedMetadata.id
+        )
+        #expect(storedMetadata.id == mentionedMetadata.id)
         let resolution = try await waitForNIP05Resolution(
             in: eventStore,
             accountID: authorSigner.pubkey,
@@ -8912,6 +8918,25 @@ private func waitForNIP05Resolution(
     }
 
     return try #require(try store.homeFeedState(accountID: accountID)?.nip05Resolutions[pubkey])
+}
+
+@MainActor
+private func waitForLatestReplaceableEvent(
+    in store: NostrEventStore,
+    pubkey: String,
+    kind: Int,
+    id: String,
+    attempts: Int = 100
+) async throws -> NostrEvent {
+    for _ in 0..<attempts {
+        if let event = try store.latestReplaceableEvent(pubkey: pubkey, kind: kind),
+           event.id == id {
+            return event
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    return try #require(try store.latestReplaceableEvent(pubkey: pubkey, kind: kind))
 }
 
 @MainActor
