@@ -118,14 +118,14 @@ struct HomeUnreadPillPlacementTests {
         "old-1": 3,
     ]
 
-    @Test("pill stays pinned while its anchor has not moved past the reading line")
+    @Test("pill stays pinned at the bottom edge of the top chrome")
     func pillStaysPinnedAtAnchor() {
         let placement = HomeUnreadPillPlacementPolicy.resolve(
             anchorPostID: "anchor",
-            anchorMinY: 116,
+            anchorMinY: 72,
             postOrderByID: postOrder,
             readablePostIDs: ["anchor"],
-            anchorLineY: 96
+            pinLineY: 72
         )
 
         #expect(placement == .visible(offsetY: 0))
@@ -138,10 +138,10 @@ struct HomeUnreadPillPlacementTests {
             anchorMinY: 44,
             postOrderByID: postOrder,
             readablePostIDs: ["anchor"],
-            anchorLineY: 96
+            pinLineY: 72
         )
 
-        #expect(placement == .visible(offsetY: -52))
+        #expect(placement == .visible(offsetY: -28))
     }
 
     @Test("pill remains offscreen while the viewport is older than its anchor")
@@ -151,7 +151,7 @@ struct HomeUnreadPillPlacementTests {
             anchorMinY: nil,
             postOrderByID: postOrder,
             readablePostIDs: ["old-1"],
-            anchorLineY: 96
+            pinLineY: 72
         )
 
         #expect(placement == .hidden)
@@ -164,7 +164,7 @@ struct HomeUnreadPillPlacementTests {
             anchorMinY: nil,
             postOrderByID: postOrder,
             readablePostIDs: ["anchor"],
-            anchorLineY: 96
+            pinLineY: 72
         )
 
         #expect(placement == .visible(offsetY: 0))

@@ -117,14 +117,14 @@ enum HomeUnreadPillPlacementPolicy {
         anchorMinY: CGFloat?,
         postOrderByID: [TimelinePost.ID: Int],
         readablePostIDs: [TimelinePost.ID],
-        anchorLineY: CGFloat
+        pinLineY: CGFloat
     ) -> HomeUnreadPillPlacement {
         guard let anchorPostID,
               let anchorIndex = postOrderByID[anchorPostID]
         else { return .hidden }
 
         if let anchorMinY {
-            return .visible(offsetY: min(0, anchorMinY - anchorLineY))
+            return .visible(offsetY: min(0, anchorMinY - pinLineY))
         }
 
         let readableIndexes = readablePostIDs.compactMap { postOrderByID[$0] }

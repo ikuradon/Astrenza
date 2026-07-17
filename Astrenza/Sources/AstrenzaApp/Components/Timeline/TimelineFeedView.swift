@@ -437,9 +437,12 @@ private extension TimelineFeedView {
     ) -> some View {
         Color.clear
             .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.frame(in: .named("timelineFeedViewport")).minY
+                proxy.frame(in: .named("homeTimelineChrome")).minY
             } action: { _, minY in
                 updateUnreadCountAnchorMinY(minY, postID: postID)
+            }
+            .onDisappear {
+                clearUnreadCountAnchorMinY(postID: postID)
             }
     }
 
@@ -454,6 +457,11 @@ private extension TimelineFeedView {
         guard scrollRuntime.unreadCountAnchorMinY != minY else { return }
         scrollRuntime.unreadCountAnchorMinY = minY
         publishUnreadPillPlacement()
+    }
+
+    func clearUnreadCountAnchorMinY(postID: TimelinePost.ID) {
+        guard postID == scrollRuntime.unreadCountAnchorPostID else { return }
+        scrollRuntime.unreadCountAnchorMinY = nil
     }
 
     func syncUnreadCountAnchor(
@@ -473,7 +481,7 @@ private extension TimelineFeedView {
             anchorMinY: scrollRuntime.unreadCountAnchorMinY,
             postOrderByID: scrollRuntime.postOrderByID,
             readablePostIDs: scrollRuntime.lastReadablePostIDs,
-            anchorLineY: topContentPadding + 24
+            pinLineY: rowAnchorLineY
         )
         guard force || placement != scrollRuntime.lastUnreadPillPlacement else {
             return
