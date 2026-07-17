@@ -77,6 +77,39 @@ struct HomeTimelineReadStateCoordinatorTests {
         #expect(fallbackBoundary == "z-middle")
     }
 
+    @Test("A failed boundary write stays pending and retries until it is durable")
+    @MainActor
+    func failedBoundaryWriteRetries() async throws {
+        let persistence = FlakyReadStatePersistence(failuresBeforeSuccess: 1)
+        let coordinator = HomeTimelineReadStateCoordinator(
+            persistenceWorker: persistence,
+            readBoundaryDelayNanoseconds: 0,
+            persistenceRetryDelayNanoseconds: 100_000_000
+        )
+        let boundary = NostrTimelineEntryCursor(
+            sortTimestamp: 400,
+            eventID: "durable"
+        )
+        let write = HomeTimelineReadBoundaryWrite(
+            scopeID: "account",
+            feedID: "feed",
+            boundary: boundary,
+            updatedAt: 401
+        )
+
+        #expect(coordinator.scheduleReadBoundarySave(write))
+        try await waitUntil {
+            await persistence.attemptCount() == 1
+        }
+        #expect(coordinator.hasPendingReadBoundaryWrite)
+
+        try await waitUntil {
+            await persistence.savedBoundaries() == [boundary]
+        }
+        #expect(!coordinator.hasPendingReadBoundaryWrite)
+        #expect(await persistence.attemptCount() == 2)
+    }
+
     @MainActor
     private func fixture(
         delayNanoseconds: UInt64
@@ -121,10 +154,10 @@ struct HomeTimelineReadStateCoordinatorTests {
 
     @MainActor
     private func waitUntil(
-        _ predicate: @escaping @MainActor () -> Bool
+        _ predicate: @escaping @MainActor () async -> Bool
     ) async throws {
         for _ in 0..<100 {
-            if predicate() { return }
+            if await predicate() { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         throw ReadStateCoordinatorTestError.timeout
@@ -266,4 +299,43 @@ private struct ReadStateFixture {
 
 private enum ReadStateCoordinatorTestError: Error {
     case timeout
+}
+
+private actor FlakyReadStatePersistence: HomeTimelineReadStatePersisting {
+    private var remainingFailures: Int
+    private var attempts = 0
+    private var boundaries: [NostrTimelineEntryCursor?] = []
+
+    init(failuresBeforeSuccess: Int) {
+        remainingFailures = failuresBeforeSuccess
+    }
+
+    func restoredReadState(feedID _: String) throws -> NostrFeedReadStateRecord? {
+        nil
+    }
+
+    func saveReadBoundary(
+        feedID _: String,
+        boundary: NostrTimelineEntryCursor?,
+        updatedAt _: Int
+    ) throws {
+        attempts += 1
+        if remainingFailures > 0 {
+            remainingFailures -= 1
+            throw FlakyReadStatePersistenceError.failed
+        }
+        boundaries.append(boundary)
+    }
+
+    func attemptCount() -> Int {
+        attempts
+    }
+
+    func savedBoundaries() -> [NostrTimelineEntryCursor?] {
+        boundaries
+    }
+}
+
+private enum FlakyReadStatePersistenceError: Error {
+    case failed
 }

@@ -29,6 +29,7 @@ extension HomeTimelinePersistenceWorker: HomeTimelineReadStatePersisting {}
 final class HomeTimelineReadStateCoordinator {
     private let persistenceWorker: (any HomeTimelineReadStatePersisting)?
     private let readBoundaryDelayNanoseconds: UInt64
+    private let persistenceRetryDelayNanoseconds: UInt64
 
     private var readBoundaryTask: Task<Void, Never>?
     private var pendingReadBoundaryWrite: HomeTimelineReadBoundaryWrite?
@@ -42,10 +43,12 @@ final class HomeTimelineReadStateCoordinator {
 
     init(
         persistenceWorker: (any HomeTimelineReadStatePersisting)?,
-        readBoundaryDelayNanoseconds: UInt64 = 500_000_000
+        readBoundaryDelayNanoseconds: UInt64 = 500_000_000,
+        persistenceRetryDelayNanoseconds: UInt64 = 1_000_000_000
     ) {
         self.persistenceWorker = persistenceWorker
         self.readBoundaryDelayNanoseconds = readBoundaryDelayNanoseconds
+        self.persistenceRetryDelayNanoseconds = persistenceRetryDelayNanoseconds
     }
 
     func restoredReadBoundaryPostID(
@@ -76,18 +79,11 @@ final class HomeTimelineReadStateCoordinator {
         readBoundarySequence &+= 1
         let expectedSequence = readBoundarySequence
         let expectedGeneration = scopeGeneration
-        readBoundaryTask?.cancel()
-        readBoundaryTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: self?.readBoundaryDelayNanoseconds ?? 0)
-            } catch {
-                return
-            }
-            await self?.persistPendingReadBoundaryWrite(
-                expectedScopeGeneration: expectedGeneration,
-                expectedSequence: expectedSequence
-            )
-        }
+        schedulePersistence(
+            delayNanoseconds: readBoundaryDelayNanoseconds,
+            expectedScopeGeneration: expectedGeneration,
+            expectedSequence: expectedSequence
+        )
         return true
     }
 
@@ -99,7 +95,9 @@ final class HomeTimelineReadStateCoordinator {
 
     private func activateScope(_ nextScopeID: String) {
         guard scopeID != nextScopeID else { return }
+        let previousWrite = pendingReadBoundaryWrite
         discardPendingWrites()
+        persistDetached(previousWrite)
         scopeID = nextScopeID
     }
 
@@ -123,24 +121,68 @@ final class HomeTimelineReadStateCoordinator {
               let persistenceWorker
         else { return }
         readBoundaryTask = nil
+        do {
+            try await persistenceWorker.saveReadBoundary(
+                feedID: write.feedID,
+                boundary: write.boundary,
+                updatedAt: write.updatedAt
+            )
+        } catch {
+            guard scopeGeneration == expectedScopeGeneration,
+                  readBoundarySequence == expectedSequence,
+                  pendingReadBoundaryWrite != nil
+            else { return }
+            schedulePersistence(
+                delayNanoseconds: persistenceRetryDelayNanoseconds,
+                expectedScopeGeneration: expectedScopeGeneration,
+                expectedSequence: expectedSequence
+            )
+            return
+        }
+        guard scopeGeneration == expectedScopeGeneration,
+              readBoundarySequence == expectedSequence
+        else { return }
         pendingReadBoundaryWrite = nil
-        try? await persistenceWorker.saveReadBoundary(
-            feedID: write.feedID,
-            boundary: write.boundary,
-            updatedAt: write.updatedAt
-        )
+    }
+
+    private func schedulePersistence(
+        delayNanoseconds: UInt64,
+        expectedScopeGeneration: UInt64,
+        expectedSequence: UInt64
+    ) {
+        readBoundaryTask?.cancel()
+        readBoundaryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+            await self?.persistPendingReadBoundaryWrite(
+                expectedScopeGeneration: expectedScopeGeneration,
+                expectedSequence: expectedSequence
+            )
+        }
     }
 
     private func persistDetached(
         _ readBoundaryWrite: HomeTimelineReadBoundaryWrite?
     ) {
         guard let persistenceWorker, let readBoundaryWrite else { return }
-        Task {
-            try? await persistenceWorker.saveReadBoundary(
-                feedID: readBoundaryWrite.feedID,
-                boundary: readBoundaryWrite.boundary,
-                updatedAt: readBoundaryWrite.updatedAt
-            )
+        let retryDelayNanoseconds = persistenceRetryDelayNanoseconds
+        Task.detached(priority: .utility) {
+            for attempt in 0..<3 {
+                do {
+                    try await persistenceWorker.saveReadBoundary(
+                        feedID: readBoundaryWrite.feedID,
+                        boundary: readBoundaryWrite.boundary,
+                        updatedAt: readBoundaryWrite.updatedAt
+                    )
+                    return
+                } catch {
+                    guard attempt < 2 else { return }
+                    try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                }
+            }
         }
     }
 }
