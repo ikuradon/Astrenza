@@ -182,7 +182,6 @@ struct HomeTimelineView: View {
             actions: HomeTimelinePresentationActions(
                 onSelectAccount: selectAccountFromSwitcher,
                 onRemoveAccount: removeAccountFromSettings,
-                onAddAccount: presentSettings,
                 onComposeSubmit: composeSubmitHandler
             )
         )

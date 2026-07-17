@@ -50,6 +50,11 @@ final class NostrSessionStore: ObservableObject {
         }
     }
 
+    func prepareForLogin() {
+        loginInput = ""
+        errorMessage = nil
+    }
+
     func logout() {
         account = nil
         accounts = []

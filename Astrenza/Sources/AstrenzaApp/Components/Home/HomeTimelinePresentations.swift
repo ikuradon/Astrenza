@@ -4,7 +4,6 @@ import SwiftUI
 struct HomeTimelinePresentationActions {
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
-    let onAddAccount: () -> Void
     let onComposeSubmit: ((ComposeSubmitRequest) async -> Bool)?
 }
 
@@ -88,10 +87,10 @@ struct HomeTimelinePresentationModifier: ViewModifier {
             swipeSettings: $swipeSettings,
             accountID: accountID,
             eventStore: eventStore,
+            sessionStore: sessionStore,
             accountSummaries: accountSummaries,
             onSelectAccount: actions.onSelectAccount,
             onRemoveAccount: actions.onRemoveAccount,
-            onAddAccount: actions.onAddAccount,
             onSyncPolicyChange: { accountID, policy in
                 timelineStore.applySyncPolicy(policy, accountID: accountID)
             }

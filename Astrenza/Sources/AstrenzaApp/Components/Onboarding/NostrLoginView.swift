@@ -18,7 +18,7 @@ struct NostrLoginView: View {
                     .font(.system(size: 42, weight: .black, design: .rounded))
                     .foregroundStyle(Color.astrenzaText)
 
-                Text("Read-only Nostr login for resolving NIP-65 relays, kind:3 follows, and your Home timeline.")
+                Text("Nostr login for resolving NIP-65 relays, kind:3 follows, and your Home timeline.")
                     .font(.system(size: 17, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -32,7 +32,7 @@ struct NostrLoginView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
 
-                TextField("npub1... or name@example.com", text: $sessionStore.loginInput)
+                TextField("npub1..., nsec1..., or name@example.com", text: $sessionStore.loginInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)

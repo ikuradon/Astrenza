@@ -63,6 +63,27 @@ struct TimelineModelTests {
         #expect(store.account == nil)
     }
 
+    @Test("Preparing account login clears only transient input")
+    @MainActor
+    func sessionStorePreparesAdditionalLogin() async throws {
+        let suiteName = "AstrenzaTests.session.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let pubkey = String(repeating: "f", count: 64)
+        let store = NostrSessionStore(defaults: defaults, restoreAccount: false)
+        store.loginInput = pubkey
+        await store.login()
+        store.loginInput = "stale input"
+
+        store.prepareForLogin()
+
+        #expect(store.loginInput.isEmpty)
+        #expect(store.account?.pubkey == pubkey)
+        #expect(store.accounts.map(\.pubkey) == [pubkey])
+    }
+
     @Test("Session account summaries prefer cached kind 0 profile metadata")
     @MainActor
     func sessionAccountSummariesPreferCachedProfileMetadata() async throws {

@@ -12,10 +12,10 @@ struct SettingsView: View {
     let onClose: () -> Void
     let accountID: String?
     let eventStore: NostrEventStore?
+    let sessionStore: NostrSessionStore?
     let accountSummaries: [NostrAccountSummary]
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
-    let onAddAccount: () -> Void
     let onSyncPolicyChange: (String?, NostrSyncPolicy) -> Void
     @Binding var swipeSettings: TimelineSwipeSettings
     @State private var isSoundsEnabled = true
@@ -41,20 +41,20 @@ struct SettingsView: View {
         swipeSettings: Binding<TimelineSwipeSettings>,
         accountID: String? = nil,
         eventStore: NostrEventStore? = nil,
+        sessionStore: NostrSessionStore? = nil,
         accountSummaries: [NostrAccountSummary] = [],
         onSelectAccount: @escaping (String) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in },
-        onAddAccount: @escaping () -> Void = {},
         onSyncPolicyChange: @escaping (String?, NostrSyncPolicy) -> Void = { _, _ in }
     ) {
         self.onClose = onClose
         _swipeSettings = swipeSettings
         self.accountID = accountID
         self.eventStore = eventStore
+        self.sessionStore = sessionStore
         self.accountSummaries = accountSummaries
         self.onSelectAccount = onSelectAccount
         self.onRemoveAccount = onRemoveAccount
-        self.onAddAccount = onAddAccount
         self.onSyncPolicyChange = onSyncPolicyChange
     }
 
@@ -72,7 +72,7 @@ struct SettingsView: View {
                         )
                     }
                     SettingsNavigationRow(title: "Add Account", icon: "plus", tint: .green) {
-                        OnboardingView()
+                        addAccountDestination
                     }
                 }
 
@@ -157,6 +157,40 @@ struct SettingsView: View {
             .toolbarBackground(Color.astrenzaSettingsBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
+    }
+
+    @ViewBuilder
+    private var addAccountDestination: some View {
+        if let sessionStore {
+            NostrAccountLoginDestination(sessionStore: sessionStore)
+        } else {
+            EmptySettingsDestination(title: "Add Account")
+        }
+    }
+}
+
+private struct NostrAccountLoginDestination: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var sessionStore: NostrSessionStore
+    @State private var initialAccountID: String?
+
+    init(sessionStore: NostrSessionStore) {
+        self.sessionStore = sessionStore
+        _initialAccountID = State(initialValue: sessionStore.account?.pubkey)
+    }
+
+    var body: some View {
+        NostrLoginView(sessionStore: sessionStore)
+            .navigationTitle("Add Account")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                initialAccountID = sessionStore.account?.pubkey
+                sessionStore.prepareForLogin()
+            }
+            .onChange(of: sessionStore.account?.pubkey) { _, accountID in
+                guard let accountID, accountID != initialAccountID else { return }
+                dismiss()
+            }
     }
 }
 
