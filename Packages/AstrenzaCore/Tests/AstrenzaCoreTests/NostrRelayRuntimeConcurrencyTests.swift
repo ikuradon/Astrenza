@@ -1005,11 +1005,15 @@ struct NostrRelayRuntimeConcurrencyTests {
         try await runtime.setDefaultRelays(["wss://relay.example"])
         try await runtime.installForward(packet)
         try await runtime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 50_000_000)
 
-        var requestFrames = await connection.sentFrames().filter { $0.contains(#""REQ""#) }
+        var requestFrames = try await connection.waitForSentFrames(
+            containing: #""REQ""#,
+            count: 2
+        )
         #expect(requestFrames.count == 2)
-        #expect(requestFrames[0] == requestFrames[1])
+        let firstRequest = try #require(requestFrames.first)
+        let retriedRequest = try #require(requestFrames.dropFirst().first)
+        #expect(firstRequest == retriedRequest)
         #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://relay.example") == ["home-forward"])
         #expect(await collector.packets().contains { packet in
             guard case .notice(_, let message) = packet else { return false }
@@ -1020,9 +1024,11 @@ struct NostrRelayRuntimeConcurrencyTests {
             #"["CLOSED","home-forward","error: still unavailable"]"#
         )
         try await runtime.receiveNext(relayURL: "wss://relay.example")
-        try await Task.sleep(nanoseconds: 50_000_000)
 
-        requestFrames = await connection.sentFrames().filter { $0.contains(#""REQ""#) }
+        requestFrames = try await connection.waitForSentFrames(
+            containing: #""REQ""#,
+            count: 3
+        )
         #expect(requestFrames.count == 3)
         #expect(await collector.packets().contains { packet in
             guard case .notice(_, let message) = packet else { return false }
@@ -1076,7 +1082,7 @@ struct NostrRelayRuntimeConcurrencyTests {
         )
 
         try await runtime.setDefaultRelays(["wss://relay.example"])
-        try await Task.sleep(nanoseconds: 50_000_000)
+        try await transport.waitForConnectCallCount(2)
 
         #expect(await transport.connectCallCount() >= 2)
         #expect(await runtime.connectionState(relayURL: "wss://relay.example") == .connected)
@@ -1408,6 +1414,13 @@ private actor RelayFailFirstConnectTransport: NostrRelayTransport {
     func connectCallCount() -> Int {
         callCount
     }
+
+    func waitForConnectCallCount(_ expectedCount: Int) async throws {
+        for _ in 0..<100 {
+            guard callCount < expectedCount else { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
 }
 
 private actor RelayGatedConnectTransport: NostrRelayTransport {
@@ -1580,6 +1593,18 @@ private actor RelayConcurrencyTestConnection: NostrRelayTransportConnection {
 
     func sentFrames() -> [String] {
         outboundFrames
+    }
+
+    func waitForSentFrames(
+        containing pattern: String,
+        count expectedCount: Int
+    ) async throws -> [String] {
+        for _ in 0..<100 {
+            let matchingFrames = outboundFrames.filter { $0.contains(pattern) }
+            guard matchingFrames.count < expectedCount else { return matchingFrames }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return outboundFrames.filter { $0.contains(pattern) }
     }
 
     func closeCallCount() -> Int {
