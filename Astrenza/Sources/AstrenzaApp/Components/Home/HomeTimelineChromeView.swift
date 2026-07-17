@@ -7,6 +7,7 @@ struct HomeTimelineChromeView: View {
     let collapseProgress: CGFloat
     let unreadPillPlacement: HomeUnreadPillPlacement
     let onDismissFloatingMenus: () -> Void
+    let onDismissUnreadBadge: () -> Void
     let onRelayStatusTap: () -> Void
     let onSettingsTap: () -> Void
     let onSelectAccount: (String) -> Void
@@ -57,8 +58,8 @@ struct HomeTimelineChromeView: View {
             if isVisible,
                selectedTimeline == .home,
                timelineStore.visibleUnreadBadgeCount > 0,
-               let unreadPillOffsetY = unreadPillPlacement.offsetY {
-                unreadBadge(offsetY: unreadPillOffsetY)
+               unreadPillPlacement.isPinned {
+                unreadBadge
             }
 
             if isVisible, timelineStore.filterStatus.isVisible {
@@ -94,19 +95,18 @@ struct HomeTimelineChromeView: View {
         }
     }
 
-    private func unreadBadge(offsetY: CGFloat) -> some View {
+    private var unreadBadge: some View {
         HomeUnreadBadge(
             count: timelineStore.visibleUnreadBadgeCount,
-            onTap: dismissUnreadBadge
+            onTap: onDismissUnreadBadge
         )
-        .offset(y: offsetY)
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,
             alignment: .topTrailing
         )
-        .padding(.top, 88)
-        .padding(.trailing, 22)
+        .padding(.top, HomeUnreadPillLayout.chromeTopInset)
+        .padding(.trailing, HomeUnreadPillLayout.trailingInset)
     }
 
     private var filterIndicator: some View {
@@ -128,10 +128,5 @@ struct HomeTimelineChromeView: View {
                 .combined(with: .opacity)
         )
         .zIndex(32)
-    }
-
-    private func dismissUnreadBadge() {
-        timelineStore.dismissUnreadBadge()
-        onDismissFloatingMenus()
     }
 }

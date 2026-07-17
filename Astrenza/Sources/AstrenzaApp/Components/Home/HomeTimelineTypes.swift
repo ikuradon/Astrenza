@@ -99,19 +99,28 @@ struct UnreadBadgeFramePreferenceKey: PreferenceKey {
 
 enum HomeUnreadPillPlacement: Equatable {
     case hidden
-    case visible(offsetY: CGFloat)
+    case pinned
+    case attachedToAnchor
 
-    var offsetY: CGFloat? {
-        switch self {
-        case .hidden:
-            nil
-        case .visible(let offsetY):
-            offsetY
-        }
+    var isPinned: Bool {
+        self == .pinned
+    }
+
+    var isAttachedToAnchor: Bool {
+        self == .attachedToAnchor
     }
 }
 
+enum HomeUnreadPillLayout {
+    static let pinLineY: CGFloat = 72
+    static let chromeTopInset: CGFloat = 88
+    static let trailingInset: CGFloat = 22
+    static let rowTopInset = chromeTopInset - pinLineY
+}
+
 enum HomeUnreadPillPlacementPolicy {
+    private static let pinLineTolerance: CGFloat = 0.5
+
     static func resolve(
         anchorPostID: TimelinePost.ID?,
         anchorMinY: CGFloat?,
@@ -124,7 +133,9 @@ enum HomeUnreadPillPlacementPolicy {
         else { return .hidden }
 
         if let anchorMinY {
-            return .visible(offsetY: min(0, anchorMinY - pinLineY))
+            return anchorMinY < pinLineY - pinLineTolerance
+                ? .attachedToAnchor
+                : .pinned
         }
 
         let readableIndexes = readablePostIDs.compactMap { postOrderByID[$0] }
@@ -134,6 +145,6 @@ enum HomeUnreadPillPlacementPolicy {
 
         return newestReadableIndex > anchorIndex
             ? .hidden
-            : .visible(offsetY: 0)
+            : .pinned
     }
 }

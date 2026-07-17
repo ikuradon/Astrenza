@@ -30,6 +30,8 @@ struct HomeTimelineFeedContentView: View {
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onPostsCrossedReadLineTowardNewer: ([TimelinePost.ID]) -> Void
+    let unreadPillPlacement: HomeUnreadPillPlacement
+    let onUnreadPillTap: () -> Void
     let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
 
@@ -65,6 +67,9 @@ struct HomeTimelineFeedContentView: View {
             onPostsCrossedReadLineTowardNewer:
                 onPostsCrossedReadLineTowardNewer,
             unreadCountAnchorPostID: unreadCountAnchorPostID,
+            unreadPillCount: store.visibleUnreadBadgeCount,
+            unreadPillPlacement: unreadPillPlacement,
+            onUnreadPillTap: onUnreadPillTap,
             onUnreadPillPlacementChanged: onUnreadPillPlacementChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
         )

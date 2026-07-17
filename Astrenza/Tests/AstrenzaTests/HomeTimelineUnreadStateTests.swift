@@ -128,7 +128,20 @@ struct HomeUnreadPillPlacementTests {
             pinLineY: 72
         )
 
-        #expect(placement == .visible(offsetY: 0))
+        #expect(placement == .pinned)
+    }
+
+    @Test("subpixel rounding at the pin line keeps the pill pinned")
+    func subpixelRoundingKeepsPillPinned() {
+        let placement = HomeUnreadPillPlacementPolicy.resolve(
+            anchorPostID: "anchor",
+            anchorMinY: 71.999,
+            postOrderByID: postOrder,
+            readablePostIDs: ["anchor"],
+            pinLineY: 72
+        )
+
+        #expect(placement == .pinned)
     }
 
     @Test("pill follows its anchor toward the top")
@@ -141,7 +154,7 @@ struct HomeUnreadPillPlacementTests {
             pinLineY: 72
         )
 
-        #expect(placement == .visible(offsetY: -28))
+        #expect(placement == .attachedToAnchor)
     }
 
     @Test("pill remains offscreen while the viewport is older than its anchor")
@@ -167,7 +180,7 @@ struct HomeUnreadPillPlacementTests {
             pinLineY: 72
         )
 
-        #expect(placement == .visible(offsetY: 0))
+        #expect(placement == .pinned)
     }
 }
 
