@@ -2,6 +2,7 @@ import Foundation
 import NostrCryptoAPI
 import NostrCryptoSecp256k1
 import NostrProtocol
+import NostrRelay
 import NostrStoreAPI
 
 public actor NostrRelayRuntime {

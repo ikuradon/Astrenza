@@ -1,5 +1,6 @@
 import Foundation
 import NostrProtocol
+import NostrRelay
 import NostrReconciliationAPI
 import NostrReconciliationNegentropy
 

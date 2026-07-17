@@ -1,4 +1,5 @@
 import Foundation
+import NostrRelay
 
 public struct NostrDependencyFetchPolicy: Equatable, Sendable {
     public let profileStaleAfterSeconds: Int

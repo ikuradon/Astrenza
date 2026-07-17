@@ -16,7 +16,9 @@ let package = Package(
         .library(name: "NostrReconciliationAPI", targets: ["NostrReconciliationAPI"]),
         .library(name: "NostrReconciliationNegentropy", targets: ["NostrReconciliationNegentropy"]),
         .library(name: "NostrStoreAPI", targets: ["NostrStoreAPI"]),
-        .library(name: "NostrStoreGRDB", targets: ["NostrStoreGRDB"])
+        .library(name: "NostrStoreGRDB", targets: ["NostrStoreGRDB"]),
+        .library(name: "NostrRelay", targets: ["NostrRelay"]),
+        .library(name: "NostrSync", targets: ["NostrSync"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
@@ -58,6 +60,27 @@ let package = Package(
             ]
         ),
         .target(
+            name: "NostrRelay",
+            dependencies: [
+                "NostrProtocol",
+                "NostrCryptoAPI",
+                "NostrCryptoSecp256k1",
+                "NostrStoreAPI"
+            ]
+        ),
+        .target(
+            name: "NostrSync",
+            dependencies: [
+                "NostrProtocol",
+                "NostrCryptoAPI",
+                "NostrCryptoSecp256k1",
+                "NostrReconciliationAPI",
+                "NostrReconciliationNegentropy",
+                "NostrStoreAPI",
+                "NostrRelay"
+            ]
+        ),
+        .target(
             name: "AstrenzaCore",
             dependencies: [
                 "NostrProtocol",
@@ -66,13 +89,16 @@ let package = Package(
                 "NostrReconciliationAPI",
                 "NostrReconciliationNegentropy",
                 "NostrStoreAPI",
-                "NostrStoreGRDB"
+                "NostrStoreGRDB",
+                "NostrRelay",
+                "NostrSync"
             ]
         ),
         .testTarget(
             name: "AstrenzaCoreTests",
             dependencies: [
                 "AstrenzaCore",
+                "NostrSync",
                 .product(name: "secp256k1", package: "secp256k1.swift")
             ]
         ),
@@ -101,6 +127,19 @@ let package = Package(
                 "NostrProtocol",
                 "NostrStoreAPI",
                 "NostrStoreGRDB"
+            ]
+        ),
+        .testTarget(
+            name: "NostrRelayTests",
+            dependencies: ["NostrRelay"]
+        ),
+        .testTarget(
+            name: "NostrSyncTests",
+            dependencies: [
+                "NostrProtocol",
+                "NostrReconciliationAPI",
+                "NostrRelay",
+                "NostrSync"
             ]
         )
     ]

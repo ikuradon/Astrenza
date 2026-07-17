@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AstrenzaCore
+@testable import NostrSync
 
 private struct RelayConcurrencyInformationFetcher: NostrRelayInformationFetching {
     let informationDocument: NostrRelayInformationDocument

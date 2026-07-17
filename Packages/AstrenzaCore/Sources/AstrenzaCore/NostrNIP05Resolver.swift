@@ -1,8 +1,6 @@
 import Foundation
 import NostrProtocol
 
-public typealias NostrHTTPDataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
-
 public struct NostrNIP05CachePolicy: Equatable, Sendable {
     public let verifiedTTLSeconds: TimeInterval
     public let failureTTLSeconds: TimeInterval

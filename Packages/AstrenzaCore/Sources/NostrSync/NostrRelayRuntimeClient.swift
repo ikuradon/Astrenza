@@ -1,7 +1,8 @@
 import Foundation
 import NostrProtocol
+import NostrRelay
 
-protocol NostrRelayBootstrapScoping: Sendable {
+package protocol NostrRelayBootstrapScoping: Sendable {
     func beginBootstrapScope() async -> UUID
     func finishBootstrapScope(
         _ scopeID: UUID,
@@ -67,13 +68,13 @@ public actor NostrRelayRuntimeClient: NostrRelayFetching, NostrRelayBootstrapSco
         )
     }
 
-    func beginBootstrapScope() -> UUID {
+    package func beginBootstrapScope() -> UUID {
         let scopeID = UUID()
         relayURLsByBootstrapScopeID[scopeID] = []
         return scopeID
     }
 
-    func finishBootstrapScope(
+    package func finishBootstrapScope(
         _ scopeID: UUID,
         retainUntilDefaultRelayHandoff: Bool
     ) async {

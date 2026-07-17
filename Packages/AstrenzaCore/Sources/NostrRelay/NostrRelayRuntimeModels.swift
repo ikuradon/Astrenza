@@ -344,7 +344,7 @@ public enum NostrREQScheduler {
         scheduledBatches(packets, mergeField: mergeField).map(\.packet)
     }
 
-    static func scheduledBatches(
+    package static func scheduledBatches(
         _ packets: [NostrREQPacket],
         mergeField: NostrREQMergeField
     ) -> [NostrREQScheduledBatch] {
@@ -437,9 +437,9 @@ public enum NostrREQScheduler {
     }
 }
 
-struct NostrREQScheduledBatch: Equatable, Sendable {
-    let packet: NostrREQPacket
-    let logicalPackets: [NostrREQPacket]
+package struct NostrREQScheduledBatch: Equatable, Sendable {
+    package let packet: NostrREQPacket
+    package let logicalPackets: [NostrREQPacket]
 }
 
 public enum NostrHomeForwardREQBuilder {

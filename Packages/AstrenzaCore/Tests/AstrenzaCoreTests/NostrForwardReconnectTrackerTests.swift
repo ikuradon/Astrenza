@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AstrenzaCore
+@testable import NostrSync
 
 @Suite("Nostr forward reconnect tracker")
 struct NostrForwardReconnectTrackerTests {

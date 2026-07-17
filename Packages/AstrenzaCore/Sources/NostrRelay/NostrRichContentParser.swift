@@ -1,5 +1,6 @@
 import Foundation
 import NostrProtocol
+import NostrStoreAPI
 
 public struct NostrRichContent: Equatable, Sendable {
     public let displayText: String

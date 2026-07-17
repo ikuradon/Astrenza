@@ -5,3 +5,5 @@
 @_exported import NostrReconciliationNegentropy
 @_exported import NostrStoreAPI
 @_exported import NostrStoreGRDB
+@_exported import NostrRelay
+@_exported import NostrSync
