@@ -938,32 +938,33 @@ enum TimelineMedia {
 enum TimelineMediaLayoutMetrics {
     static let galleryAspectRatio: CGFloat = 1.9
     static let singleFallbackAspectRatio: CGFloat = 1.35
-    static let singleMinimumAspectRatio: CGFloat = 0.62
-    static let singleMaximumAspectRatio: CGFloat = 2.2
-    static let singleMinimumHeight: CGFloat = 154
     static let singleMaximumHeight: CGFloat = 300
-    static let singleLandscapeWidthFraction: CGFloat = 0.92
 
     static func singleMediaSize(
         aspectRatio rawAspectRatio: CGFloat?,
         availableWidth: CGFloat
     ) -> CGSize {
         let boundedWidth = max(availableWidth, 1)
-        let aspectRatio = min(
-            max(rawAspectRatio ?? singleFallbackAspectRatio, singleMinimumAspectRatio),
-            singleMaximumAspectRatio
-        )
-        let maxWidth = aspectRatio > galleryAspectRatio ? boundedWidth * singleLandscapeWidthFraction : boundedWidth
-        let idealHeight = maxWidth / aspectRatio
-        let height = min(max(idealHeight, singleMinimumHeight), singleMaximumHeight)
-        let width = min(maxWidth, height * aspectRatio)
+        let aspectRatio = singleAspectRatio(rawAspectRatio)
+        let height = min(boundedWidth / aspectRatio, singleMaximumHeight)
+        let width = min(boundedWidth, height * aspectRatio)
         return CGSize(width: width, height: height)
+    }
+
+    static func singleAspectRatio(_ rawAspectRatio: CGFloat?) -> CGFloat {
+        guard let rawAspectRatio,
+              rawAspectRatio.isFinite,
+              rawAspectRatio > 0
+        else {
+            return singleFallbackAspectRatio
+        }
+        return rawAspectRatio
     }
 
     static func galleryAspectRatio(for tiles: [MediaTile]) -> CGFloat {
         switch tiles.count {
         case 1:
-            return min(max(tiles.first?.aspectRatio ?? singleFallbackAspectRatio, singleMinimumAspectRatio), singleMaximumAspectRatio)
+            return singleAspectRatio(tiles.first?.aspectRatio)
         default:
             return galleryAspectRatio
         }

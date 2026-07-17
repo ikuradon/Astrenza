@@ -7735,6 +7735,39 @@ struct TimelineModelTests {
         #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: 287) == 287)
     }
 
+    @Test("Single media preserves its source aspect ratio up to the height cap")
+    func singleMediaLayoutPreservesAspectRatio() {
+        let portrait = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: 0.5,
+            availableWidth: 320
+        )
+        #expect(portrait == CGSize(width: 150, height: 300))
+        #expect(portrait.width / portrait.height == 0.5)
+
+        let landscape = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: 4,
+            availableWidth: 320
+        )
+        #expect(landscape == CGSize(width: 320, height: 80))
+        #expect(landscape.width / landscape.height == 4)
+    }
+
+    @Test("Single media uses a stable fallback only when its aspect ratio is unavailable")
+    func singleMediaLayoutUsesFallbackForInvalidAspectRatio() {
+        let missing = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: nil,
+            availableWidth: 320
+        )
+        let invalid = TimelineMediaLayoutMetrics.singleMediaSize(
+            aspectRatio: 0,
+            availableWidth: 320
+        )
+
+        #expect(missing == invalid)
+        #expect(abs(missing.width / missing.height - 1.35) < 0.0001)
+        #expect(missing.height <= TimelineMediaLayoutMetrics.singleMaximumHeight)
+    }
+
     @Test("Home viewport restore protection does not treat the temporary top as newest")
     func homeViewportRestoreProtectionBlocksTemporaryTopFollowing() {
         #expect(!HomeTimelineViewportRestorePolicy.isAtNewestWindow(
