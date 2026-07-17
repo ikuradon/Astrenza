@@ -182,6 +182,8 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
 
     final class ActionButtonControl: UIControl {
         let imageView = UIImageView()
+        private var configuredSystemName: String?
+        private var configuredIsActive: Bool?
 
         override func layoutSubviews() {
             super.layoutSubviews()
@@ -189,6 +191,12 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         }
 
         func update(systemName: String, isActive: Bool) {
+            guard configuredSystemName != systemName || configuredIsActive != isActive else {
+                return
+            }
+            configuredSystemName = systemName
+            configuredIsActive = isActive
+
             let configuration = UIImage.SymbolConfiguration(
                 pointSize: AstrenzaTimelineMetrics.actionIconSize,
                 weight: isActive ? .bold : .semibold
