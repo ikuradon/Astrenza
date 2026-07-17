@@ -1,5 +1,6 @@
 import Foundation
 import NostrProtocol
+import NostrStoreAPI
 
 public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
     public let id: String

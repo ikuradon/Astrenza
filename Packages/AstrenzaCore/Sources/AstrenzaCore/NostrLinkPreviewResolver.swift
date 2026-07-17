@@ -1,4 +1,5 @@
 import Foundation
+import NostrStoreAPI
 
 public struct NostrLinkPreviewResolver: Sendable {
     public let dataLoader: NostrHTTPDataLoader

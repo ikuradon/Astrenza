@@ -41,38 +41,3 @@ public enum NostrRelayFilterMatcher {
         return true
     }
 }
-
-public extension AnySendableJSON {
-    var stringArrayValue: [String] {
-        switch self {
-        case .string(let value):
-            [value]
-        case .strings(let values):
-            values
-        case .int, .ints:
-            []
-        }
-    }
-
-    var intArrayValue: [Int] {
-        switch self {
-        case .int(let value):
-            [value]
-        case .ints(let values):
-            values
-        case .string, .strings:
-            []
-        }
-    }
-
-    var intValue: Int? {
-        switch self {
-        case .int(let value):
-            value
-        case .string(let value):
-            Int(value)
-        case .ints, .strings:
-            nil
-        }
-    }
-}

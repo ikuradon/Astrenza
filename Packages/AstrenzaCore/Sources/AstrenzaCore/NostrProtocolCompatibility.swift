@@ -3,3 +3,5 @@
 @_exported import NostrCryptoSecp256k1
 @_exported import NostrReconciliationAPI
 @_exported import NostrReconciliationNegentropy
+@_exported import NostrStoreAPI
+@_exported import NostrStoreGRDB

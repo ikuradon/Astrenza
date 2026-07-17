@@ -14,7 +14,9 @@ let package = Package(
         .library(name: "NostrCryptoAPI", targets: ["NostrCryptoAPI"]),
         .library(name: "NostrCryptoSecp256k1", targets: ["NostrCryptoSecp256k1"]),
         .library(name: "NostrReconciliationAPI", targets: ["NostrReconciliationAPI"]),
-        .library(name: "NostrReconciliationNegentropy", targets: ["NostrReconciliationNegentropy"])
+        .library(name: "NostrReconciliationNegentropy", targets: ["NostrReconciliationNegentropy"]),
+        .library(name: "NostrStoreAPI", targets: ["NostrStoreAPI"]),
+        .library(name: "NostrStoreGRDB", targets: ["NostrStoreGRDB"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
@@ -44,6 +46,18 @@ let package = Package(
             ]
         ),
         .target(
+            name: "NostrStoreAPI",
+            dependencies: ["NostrProtocol"]
+        ),
+        .target(
+            name: "NostrStoreGRDB",
+            dependencies: [
+                "NostrProtocol",
+                "NostrStoreAPI",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ]
+        ),
+        .target(
             name: "AstrenzaCore",
             dependencies: [
                 "NostrProtocol",
@@ -51,7 +65,8 @@ let package = Package(
                 "NostrCryptoSecp256k1",
                 "NostrReconciliationAPI",
                 "NostrReconciliationNegentropy",
-                .product(name: "GRDB", package: "GRDB.swift")
+                "NostrStoreAPI",
+                "NostrStoreGRDB"
             ]
         ),
         .testTarget(
@@ -78,6 +93,14 @@ let package = Package(
             dependencies: [
                 "NostrReconciliationAPI",
                 "NostrReconciliationNegentropy"
+            ]
+        ),
+        .testTarget(
+            name: "NostrStoreGRDBTests",
+            dependencies: [
+                "NostrProtocol",
+                "NostrStoreAPI",
+                "NostrStoreGRDB"
             ]
         )
     ]

@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrRelayRequest: Equatable, Sendable {
     public let subscriptionID: String
@@ -16,25 +17,5 @@ public struct NostrRelayRequest: Equatable, Sendable {
         })
         let data = try JSONSerialization.data(withJSONObject: frame, options: [.sortedKeys])
         return String(data: data, encoding: .utf8) ?? "[]"
-    }
-}
-
-public enum AnySendableJSON: Equatable, Sendable {
-    case int(Int)
-    case string(String)
-    case strings([String])
-    case ints([Int])
-
-    public var jsonValue: Any {
-        switch self {
-        case .int(let value):
-            value
-        case .string(let value):
-            value
-        case .strings(let value):
-            value
-        case .ints(let value):
-            value
-        }
     }
 }

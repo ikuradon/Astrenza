@@ -1,5 +1,7 @@
 import Foundation
 import NostrProtocol
+import NostrStoreAPI
+import NostrStoreGRDB
 
 public enum NostrProfileRequestPriority: Equatable, Sendable {
     case foreground

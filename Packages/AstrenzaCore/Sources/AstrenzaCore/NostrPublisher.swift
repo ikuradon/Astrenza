@@ -1,6 +1,8 @@
 import Foundation
 import NostrCryptoAPI
 import NostrProtocol
+import NostrStoreAPI
+import NostrStoreGRDB
 
 public struct NostrPublisher {
     private let store: NostrEventStore

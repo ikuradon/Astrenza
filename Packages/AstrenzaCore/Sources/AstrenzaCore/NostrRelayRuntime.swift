@@ -2,6 +2,7 @@ import Foundation
 import NostrCryptoAPI
 import NostrCryptoSecp256k1
 import NostrProtocol
+import NostrStoreAPI
 
 public actor NostrRelayRuntime {
     public typealias TransportFactory = @Sendable (String) -> any NostrRelayTransport

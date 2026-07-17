@@ -2,6 +2,7 @@ import Foundation
 import NostrCryptoAPI
 import NostrCryptoSecp256k1
 import NostrProtocol
+import NostrStoreAPI
 
 public enum NostrRelayRuntimePacket: Equatable, Sendable {
     case stateChanged(relayURL: String, state: NostrRelayConnectionState)

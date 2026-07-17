@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import NostrProtocol
+import NostrStoreAPI
 
 public struct NostrStoredEventTag: Codable, Equatable, Sendable {
     public let eventID: String

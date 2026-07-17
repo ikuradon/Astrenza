@@ -13,6 +13,32 @@ public struct NostrListSummary: Codable, Equatable, Sendable {
     public let privateContent: String?
     public let createdAt: Int
     public let updatedAt: Int
+
+    public init(
+        listID: String,
+        accountID: String,
+        kind: Int,
+        pubkey: String,
+        dTag: String,
+        eventID: String,
+        title: String?,
+        visibility: String,
+        privateContent: String?,
+        createdAt: Int,
+        updatedAt: Int
+    ) {
+        self.listID = listID
+        self.accountID = accountID
+        self.kind = kind
+        self.pubkey = pubkey
+        self.dTag = dTag
+        self.eventID = eventID
+        self.title = title
+        self.visibility = visibility
+        self.privateContent = privateContent
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 public struct NostrListItemRecord: Codable, Equatable, Sendable {
