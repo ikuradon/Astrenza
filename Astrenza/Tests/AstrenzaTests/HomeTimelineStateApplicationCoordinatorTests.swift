@@ -13,12 +13,12 @@ struct HomeTimelineStateApplicationTests {
             dependencies: probe.dependencies()
         )
 
-        let didRestore = await coordinator.restoreCachedState(
+        let outcome = await coordinator.restoreCachedState(
             accountID: "account",
             handlers: probe.handlers()
         )
 
-        #expect(didRestore)
+        #expect(outcome == .restored(state))
         #expect(probe.events == [
             .restoreState("account"),
             .replaceContent("account"),
@@ -45,12 +45,12 @@ struct HomeTimelineStateApplicationTests {
             dependencies: probe.dependencies()
         )
 
-        let didRestore = await coordinator.restoreCachedState(
+        let outcome = await coordinator.restoreCachedState(
             accountID: "account",
             handlers: probe.handlers()
         )
 
-        #expect(!didRestore)
+        #expect(outcome == .missing)
         #expect(probe.events == [
             .restoreState("account"),
             .resetPresentation,
@@ -101,7 +101,7 @@ struct HomeTimelineStateApplicationTests {
         let coordinator = HomeTimelineStateApplicationCoordinator(
             dependencies: probe.dependencies(restoredState: { _ in
                 await gate.suspend()
-                return state
+                return .restored(state)
             })
         )
 
@@ -115,7 +115,25 @@ struct HomeTimelineStateApplicationTests {
         restoreTask.cancel()
         await gate.resume()
 
-        #expect(await restoreTask.value == false)
+        #expect(await restoreTask.value == .cancelled)
+        #expect(probe.events.isEmpty)
+    }
+
+    @Test("A failed cache read preserves the current presentation")
+    func failedCacheReadPreservesCurrentPresentation() async {
+        let probe = Probe(cachedState: nil)
+        let coordinator = HomeTimelineStateApplicationCoordinator(
+            dependencies: probe.dependencies(restoredState: { _ in
+                .failed("Database restore failed: corrupt")
+            })
+        )
+
+        let outcome = await coordinator.restoreCachedState(
+            accountID: "account",
+            handlers: probe.handlers()
+        )
+
+        #expect(outcome == .failed("Database restore failed: corrupt"))
         #expect(probe.events.isEmpty)
     }
 
@@ -170,7 +188,9 @@ private final class Probe {
     ) -> HomeTimelineStateApplicationDependencies {
         let restore = restoredState ?? { [self] accountID in
             events.append(.restoreState(accountID))
-            return cachedState
+            return cachedState.map {
+                HomeTimelineCachedStateRestoreOutcome.restored($0)
+            } ?? .missing
         }
         return HomeTimelineStateApplicationDependencies(
             restoredState: restore,

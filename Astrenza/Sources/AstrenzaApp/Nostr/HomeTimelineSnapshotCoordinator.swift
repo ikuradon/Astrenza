@@ -42,8 +42,10 @@ final class HomeTimelineSnapshotCoordinator {
         self.projectionController = projectionController
     }
 
-    func restoredState(accountID: String) async -> NostrHomeTimelineState? {
-        guard let persistenceWorker else { return nil }
+    func restoredState(
+        accountID: String
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
+        guard let persistenceWorker else { return .missing }
         return await persistenceWorker.restoredState(accountID: accountID)
     }
 

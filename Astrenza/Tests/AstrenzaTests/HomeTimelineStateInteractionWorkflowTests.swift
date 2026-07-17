@@ -9,7 +9,7 @@ struct HomeTimelineStateInteractionTests {
     func routesStateOperations() async {
         let fixture = StateInteractionFixture()
 
-        let didRestore = await fixture.workflow.restoreCachedState(
+        let outcome = await fixture.workflow.restoreCachedState(
             accountID: fixture.account.pubkey,
             context: fixture.context
         )
@@ -23,7 +23,7 @@ struct HomeTimelineStateInteractionTests {
             context: fixture.context
         )
 
-        #expect(didRestore)
+        #expect(outcome == .restored(stateInteractionEmptyState()))
         #expect(!didPersist)
         #expect(fixture.router.restoredAccountID == fixture.account.pubkey)
         #expect(fixture.router.replacementAccountID == "replacement")
@@ -118,6 +118,15 @@ struct HomeTimelineStateInteractionTests {
     }
 }
 
+private func stateInteractionEmptyState() -> NostrHomeTimelineState {
+    NostrHomeTimelineState(
+        relays: [],
+        followedPubkeys: [],
+        noteEvents: [],
+        metadataEvents: []
+    )
+}
+
 @MainActor
 private final class StateInteractionRouterSpy: HomeTimelineStateRouting {
     let applicationAccount = NostrAccount(
@@ -142,7 +151,7 @@ private final class StateInteractionRouterSpy: HomeTimelineStateRouting {
     func restoreCachedState(
         accountID: String,
         effects: HomeTimelineStateWorkflowEffects
-    ) async -> Bool {
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
         restoredAccountID = accountID
         if readsEnvironment {
             persistenceState = effects.persistenceState()
@@ -151,7 +160,7 @@ private final class StateInteractionRouterSpy: HomeTimelineStateRouting {
         if appliesEffects {
             applyStateEffects(effects)
         }
-        return true
+        return .restored(stateInteractionEmptyState())
     }
 
     func replace(

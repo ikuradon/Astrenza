@@ -142,7 +142,9 @@ struct HomeStoreContextCoordinatorTests {
             boundary: nil,
             updatedAt: 100
         )
-        fixture.source.restoreCachedSnapshotResult = true
+        fixture.source.restoreCachedSnapshotResult = .restored(
+            fixture.timelineState
+        )
         fixture.source.restoredViewportValue = HomeTimelineRestoredViewport(
             anchorEventID: "restored"
         )
@@ -152,9 +154,11 @@ struct HomeStoreContextCoordinatorTests {
         _ fixture: StoreContextCoordinatorFixture
     ) async {
         let start = fixture.coordinator.accountStartContext()
-        #expect(await start.effects.environment.restoreCachedSnapshot(
-            fixture.account
-        ))
+        #expect(
+            await start.effects.environment.restoreCachedSnapshot(
+                fixture.account
+            ) == .restored(fixture.timelineState)
+        )
         #expect(start.effects.environment.restoredViewport(
             fixture.account.pubkey
         )?.anchorEventID == "restored")

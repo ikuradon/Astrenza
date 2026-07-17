@@ -66,9 +66,11 @@ struct HomeAccountContextFactoryTests {
         let reset = fixture.factory.resetContext()
         let request = fixture.loadRequest
 
-        #expect(await start.effects.environment.restoreCachedSnapshot(
-            fixture.account
-        ))
+        #expect(
+            await start.effects.environment.restoreCachedSnapshot(
+                fixture.account
+            ) == .restored(accountContextFactoryEmptyState())
+        )
         #expect(
             start.effects.environment.restoredViewport(
                 fixture.account.pubkey
@@ -142,7 +144,7 @@ private final class AccountContextFactoryProbe {
             },
             restoreCachedSnapshot: { [self] account in
                 dependencies.append(.restoreCachedSnapshot(account))
-                return true
+                return .restored(accountContextFactoryEmptyState())
             },
             restoredViewport: { [self] accountID in
                 dependencies.append(.restoreViewport(accountID))
@@ -193,6 +195,15 @@ private final class AccountContextFactoryProbe {
             configureRuntime: { _, _ in }
         )
     }
+}
+
+private func accountContextFactoryEmptyState() -> NostrHomeTimelineState {
+    NostrHomeTimelineState(
+        relays: [],
+        followedPubkeys: [],
+        noteEvents: [],
+        metadataEvents: []
+    )
 }
 
 @MainActor

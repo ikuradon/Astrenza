@@ -22,9 +22,13 @@ struct HomeTimelineSnapshotCoordinatorTests {
         )
         let (coordinator, _) = makeCoordinator(eventStore: eventStore)
 
-        let legacy = try #require(await coordinator.restoredState(
+        let legacyOutcome = await coordinator.restoredState(
             accountID: accountID
-        ))
+        )
+        guard case let .restored(legacy) = legacyOutcome else {
+            Issue.record("Expected the legacy snapshot to be restored")
+            return
+        }
 
         #expect(legacy.relays == ["wss://legacy.example"])
         #expect(legacy.noteEvents == [legacyNote])
@@ -56,9 +60,13 @@ struct HomeTimelineSnapshotCoordinatorTests {
             savedAt: genericSavedAt
         )
 
-        let generic = try #require(await coordinator.restoredState(
+        let genericOutcome = await coordinator.restoredState(
             accountID: accountID
-        ))
+        )
+        guard case let .restored(generic) = genericOutcome else {
+            Issue.record("Expected the Generic Feed snapshot to be restored")
+            return
+        }
 
         #expect(generic.relays == ["wss://generic.example"])
         #expect(generic.noteEvents == [genericNote])

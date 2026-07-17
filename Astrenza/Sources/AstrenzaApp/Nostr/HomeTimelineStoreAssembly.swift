@@ -3,6 +3,7 @@ import AstrenzaCore
 struct HomeTimelineStoreAssemblyInput {
     let timelineLoader: NostrHomeTimelineLoader
     let eventStore: NostrEventStore?
+    let startupFailureMessage: String?
     let relayRuntime: NostrRelayRuntime?
     let linkPreviewResolver: NostrLinkPreviewResolver?
     let viewportStateRestorer: any HomeTimelineViewportStateRestoring

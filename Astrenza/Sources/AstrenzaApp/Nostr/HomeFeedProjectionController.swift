@@ -161,7 +161,7 @@ extension HomeFeedProjectionController {
         ) else { return nil }
         guard let definition else { return nil }
         let loadGeneration = beginWindowLoad()
-        guard let loaded = await windowLoader.load(
+        guard let loaded = try? await windowLoader.load(
             HomeFeedWindowLoadRequest(
                 definition: definition,
                 selection: .newest(limit: windowLimit),
@@ -204,7 +204,7 @@ extension HomeFeedProjectionController {
             currentWindow = nil
         }
         let loadGeneration = beginWindowLoad()
-        guard let loaded = await windowLoader.load(
+        guard let loaded = try? await windowLoader.load(
             HomeFeedWindowLoadRequest(
                 definition: definition,
                 selection: selection,
@@ -236,13 +236,13 @@ extension HomeFeedProjectionController {
     ) async {
         cancelDefinitionPreparation()
         let activationGeneration = beginWindowLoad()
-        let storedWindow = await windowLoader.load(
+        guard let storedWindow = try? await windowLoader.load(
             HomeFeedWindowLoadRequest(
                 definition: definition,
                 selection: .newest(limit: windowLimit),
                 currentWindow: nil
             )
-        )
+        ) else { return }
         guard !Task.isCancelled,
               generation == activationGeneration
         else { return }

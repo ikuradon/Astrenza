@@ -37,6 +37,13 @@ struct HomeTimelineFeedPersistenceSnapshot: Sendable {
     let windowLimit: Int
 }
 
+enum HomeTimelineCachedStateRestoreOutcome: Equatable, Sendable {
+    case restored(NostrHomeTimelineState)
+    case missing
+    case failed(String)
+    case cancelled
+}
+
 actor HomeTimelinePersistenceWorker {
     private let eventStore: NostrEventStore
 
@@ -44,15 +51,23 @@ actor HomeTimelinePersistenceWorker {
         self.eventStore = eventStore
     }
 
-    func restoredState(accountID: String) -> NostrHomeTimelineState? {
-        if let state = try? eventStore.homeFeedState(accountID: accountID) {
-            return state
+    func restoredState(
+        accountID: String
+    ) -> HomeTimelineCachedStateRestoreOutcome {
+        do {
+            if let state = try eventStore.homeFeedState(accountID: accountID) {
+                return .restored(state)
+            }
+            // V4以前の開発用DBだけをGeneric Feedへ移行するcompatibility pathです。
+            if let legacy = try eventStore.legacyHomeTimelineStateForMigration(
+                accountID: accountID
+            ) {
+                return .restored(legacy)
+            }
+            return .missing
+        } catch {
+            return .failed("Database restore failed: \(error.localizedDescription)")
         }
-
-        // V4以前の開発用DBだけをGeneric Feedへ移行するcompatibility pathです。
-        return try? eventStore.legacyHomeTimelineStateForMigration(
-            accountID: accountID
-        )
     }
 
     func restoredReadState(feedID: String) throws -> NostrFeedReadStateRecord? {

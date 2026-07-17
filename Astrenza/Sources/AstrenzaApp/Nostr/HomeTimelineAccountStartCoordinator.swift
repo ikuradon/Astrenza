@@ -62,7 +62,7 @@ struct HomeTimelineAccountStartHandlers: Sendable {
     ) -> Void
     typealias CachedSnapshotRestorer = @MainActor @Sendable (
         _ account: NostrAccount
-    ) async -> Bool
+    ) async -> HomeTimelineCachedStateRestoreOutcome
     typealias ViewportRestorer = @MainActor @Sendable (
         _ accountID: String
     ) -> HomeTimelineRestoredViewport?
@@ -92,13 +92,16 @@ final class HomeTimelineAccountStartCoordinator {
     ) -> NostrSyncPolicy
 
     private let lifecycleCoordinator: any HomeTimelineAccountLifecycleCoordinating
+    private let startupFailureMessage: String?
     private let resolveSyncPolicy: SyncPolicyResolver
 
     init(
         lifecycleCoordinator: any HomeTimelineAccountLifecycleCoordinating,
+        startupFailureMessage: String? = nil,
         resolveSyncPolicy: @escaping SyncPolicyResolver
     ) {
         self.lifecycleCoordinator = lifecycleCoordinator
+        self.startupFailureMessage = startupFailureMessage
         self.resolveSyncPolicy = resolveSyncPolicy
     }
 
@@ -107,6 +110,15 @@ final class HomeTimelineAccountStartCoordinator {
         handlers: HomeTimelineAccountStartHandlers
     ) {
         let initialState = handlers.state()
+        if let startupFailureMessage {
+            failStartup(
+                request.account,
+                message: startupFailureMessage,
+                initialState: initialState,
+                handlers: handlers
+            )
+            return
+        }
         if initialState.accountID == request.account.pubkey {
             handlers.perform(.startRuntimeSession)
             handlers.perform(.activateOutbox(accountID: request.account.pubkey))
@@ -126,12 +138,24 @@ final class HomeTimelineAccountStartCoordinator {
         let load = handlers.load
         lifecycleCoordinator.startLoad(for: lifecycle) { [weak self] in
             guard let self else { return }
-            let didRestore = await handlers.restoreCachedSnapshot(
+            let restoreOutcome = await handlers.restoreCachedSnapshot(
                 request.account
             )
             guard !Task.isCancelled,
                   lifecycleCoordinator.isCurrent(lifecycle)
             else { return }
+            let didRestore: Bool
+            switch restoreOutcome {
+            case .restored:
+                didRestore = true
+            case .missing:
+                didRestore = false
+            case .failed(let message):
+                handlers.perform(.setPhase(.failed(message)))
+                return
+            case .cancelled:
+                return
+            }
             let phaseAfterCachedPresentation = completeCachedStartup(
                 request,
                 lifecycle: lifecycle,
@@ -153,6 +177,26 @@ final class HomeTimelineAccountStartCoordinator {
             await load(request.account, lifecycle)
         }
         handlers.perform(.activateOutbox(accountID: request.account.pubkey))
+    }
+
+    private func failStartup(
+        _ account: NostrAccount,
+        message: String,
+        initialState: HomeTimelineAccountStartState,
+        handlers: HomeTimelineAccountStartHandlers
+    ) {
+        if initialState.accountID != account.pubkey {
+            if initialState.accountID != nil {
+                handlers.perform(.cancelCurrentAccount)
+            }
+            _ = lifecycleCoordinator.begin(accountID: account.pubkey)
+            let syncPolicy = resolveSyncPolicy(
+                account.pubkey,
+                handlers.state().syncPolicy
+            )
+            handlers.perform(.setAccount(account, syncPolicy: syncPolicy))
+        }
+        handlers.perform(.setPhase(.failed(message)))
     }
 
     private func completeCachedStartup(

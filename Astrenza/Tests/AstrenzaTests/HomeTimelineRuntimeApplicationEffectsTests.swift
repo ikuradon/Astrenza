@@ -130,10 +130,10 @@ private final class RuntimeApplicationStateApplyingStub: HomeTimelineStateApplyi
     func restoreCachedState(
         accountID: String,
         handlers: HomeTimelineStateApplicationHandlers
-    ) async -> Bool {
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
         _ = accountID
         _ = handlers
-        return false
+        return .missing
     }
 
     func replace(

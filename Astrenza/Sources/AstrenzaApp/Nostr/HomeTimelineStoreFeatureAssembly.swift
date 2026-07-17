@@ -165,6 +165,7 @@ extension HomeTimelineStoreAssembly {
         HomeTimelineAccountStartWorkflow(
             coordinator: HomeTimelineAccountStartCoordinator(
                 lifecycleCoordinator: lifecycle,
+                startupFailureMessage: input.startupFailureMessage,
                 resolveSyncPolicy: { accountID, fallback in
                     input.syncPolicySettingsStore.policy(
                         accountID: accountID,

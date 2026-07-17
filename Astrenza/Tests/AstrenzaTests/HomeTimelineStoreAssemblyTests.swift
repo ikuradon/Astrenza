@@ -147,6 +147,7 @@ private func assembledHomeTimelineComponents(
         HomeTimelineStoreAssemblyInput(
             timelineLoader: NostrHomeTimelineLoader(),
             eventStore: eventStore,
+            startupFailureMessage: nil,
             relayRuntime: nil,
             linkPreviewResolver: nil,
             viewportStateRestorer: TimelineRestoreStore(),

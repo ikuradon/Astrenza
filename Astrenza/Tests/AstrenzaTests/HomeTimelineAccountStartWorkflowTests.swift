@@ -35,7 +35,10 @@ struct HomeTimelineAccountStartWorkflowTests {
         )])
         let handlers = try #require(coordinator.handlers)
         #expect(handlers.state() == probe.state)
-        #expect(await handlers.restoreCachedSnapshot(account))
+        #expect(
+            await handlers.restoreCachedSnapshot(account) ==
+                .restored(accountStartWorkflowEmptyState())
+        )
         #expect(handlers.restoredViewport(account.pubkey) == viewport)
         await handlers.waitForCachedPresentation()
         await handlers.restoreCachedReadState(account)
@@ -147,7 +150,7 @@ private final class AccountStartWorkflowEffectProbe {
             application: applicationEffects,
             restoreCachedSnapshot: { [self] account in
                 dependencies.append(.restoreCachedSnapshot(account))
-                return true
+                return .restored(accountStartWorkflowEmptyState())
             },
             restoredViewport: { [self] accountID in
                 dependencies.append(.restoreViewport(accountID))
@@ -276,5 +279,14 @@ private func accountStartWorkflowAccount() -> NostrAccount {
         pubkey: String(repeating: "a", count: 64),
         displayIdentifier: "workflow",
         readOnly: true
+    )
+}
+
+private func accountStartWorkflowEmptyState() -> NostrHomeTimelineState {
+    NostrHomeTimelineState(
+        relays: [],
+        followedPubkeys: [],
+        noteEvents: [],
+        metadataEvents: []
     )
 }

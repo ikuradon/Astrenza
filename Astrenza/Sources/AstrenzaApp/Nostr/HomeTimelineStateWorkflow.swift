@@ -6,7 +6,7 @@ protocol HomeTimelineStateApplying: AnyObject {
     func restoreCachedState(
         accountID: String,
         handlers: HomeTimelineStateApplicationHandlers
-    ) async -> Bool
+    ) async -> HomeTimelineCachedStateRestoreOutcome
 
     func replace(
         _ state: NostrHomeTimelineState,
@@ -118,7 +118,7 @@ final class HomeTimelineStateWorkflow {
     func restoreCachedState(
         accountID: String,
         effects: HomeTimelineStateWorkflowEffects
-    ) async -> Bool {
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
         await stateApplication.restoreCachedState(
             accountID: accountID,
             handlers: applicationHandlers(effects: effects)

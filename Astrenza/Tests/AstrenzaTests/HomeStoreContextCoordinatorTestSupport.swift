@@ -42,7 +42,7 @@ final class StoreContextSourceSpy: HomeStoreContextSourcing {
     var currentFeedResult = false
     var backwardResolutionResult = false
     var readBoundaryWriteValue: HomeTimelineReadBoundaryWrite?
-    var restoreCachedSnapshotResult = false
+    var restoreCachedSnapshotResult: HomeTimelineCachedStateRestoreOutcome = .missing
     var restoredViewportValue: HomeTimelineRestoredViewport?
     private(set) var snapshotReads: [SnapshotRead] = []
     private(set) var dependencyCalls: [DependencyCall] = []
@@ -132,7 +132,7 @@ final class StoreContextSourceSpy: HomeStoreContextSourcing {
     func restoreCachedSnapshot(
         account: NostrAccount,
         context _: HomeTimelineStateInteractionContext
-    ) async -> Bool {
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
         dependencyCalls.append(.restoreCachedSnapshot(account.pubkey))
         return restoreCachedSnapshotResult
     }
@@ -311,6 +311,7 @@ private func makeStoreContextApplicationTarget() -> HomeStoreApplicationCoordina
         HomeTimelineStoreAssemblyInput(
             timelineLoader: NostrHomeTimelineLoader(),
             eventStore: nil,
+            startupFailureMessage: nil,
             relayRuntime: nil,
             linkPreviewResolver: nil,
             viewportStateRestorer: TimelineRestoreStore(),

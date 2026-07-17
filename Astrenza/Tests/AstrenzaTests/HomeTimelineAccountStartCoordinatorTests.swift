@@ -169,6 +169,29 @@ struct HomeTimelineAccountStartCoordinatorTests {
         #expect(!probe.commands.contains(.startRuntimeSession))
         #expect(probe.loadedAccount == nil)
     }
+
+    @Test("A database startup failure publishes a terminal phase without network work")
+    func databaseFailureStopsStartup() {
+        let account = HomeTimelineAccountStartProbe.account()
+        let message = "Database unavailable: disk I/O error"
+        let probe = HomeTimelineAccountStartProbe(
+            startupFailureMessage: message
+        )
+
+        probe.start(account: account, hasRelayRuntime: true)
+
+        #expect(probe.events == [
+            .beginLifecycle(account.pubkey),
+            .resolveSyncPolicy(account.pubkey, fallback: probe.fallbackSyncPolicy),
+            .command(.setAccount(account, syncPolicy: probe.resolvedSyncPolicy)),
+            .command(.setPhase(.failed(message)))
+        ])
+        #expect(probe.lifecycle.scheduledLoadCount == 0)
+        #expect(!probe.commands.contains(.startRuntimeSession))
+        #expect(!probe.commands.contains(
+            .activateOutbox(accountID: account.pubkey)
+        ))
+    }
 }
 
 @MainActor
@@ -207,6 +230,7 @@ private final class HomeTimelineAccountStartProbe {
     private let restoredSnapshotHasRelays: Bool
     private let viewport: HomeTimelineRestoredViewport?
     private let invalidateDuringReadStateRestore: Bool
+    private let startupFailureMessage: String?
 
     init(
         currentAccountID: String? = nil,
@@ -214,7 +238,8 @@ private final class HomeTimelineAccountStartProbe {
         restoredSnapshotHasEntries: Bool = false,
         restoredSnapshotHasRelays: Bool = false,
         restoredViewport: HomeTimelineRestoredViewport? = nil,
-        invalidateDuringReadStateRestore: Bool = false
+        invalidateDuringReadStateRestore: Bool = false,
+        startupFailureMessage: String? = nil
     ) {
         accountID = currentAccountID
         syncPolicy = fallbackSyncPolicy
@@ -226,6 +251,7 @@ private final class HomeTimelineAccountStartProbe {
         self.restoredSnapshotHasRelays = restoredSnapshotHasRelays
         viewport = restoredViewport
         self.invalidateDuringReadStateRestore = invalidateDuringReadStateRestore
+        self.startupFailureMessage = startupFailureMessage
         lifecycle = HomeTimelineAccountStartLifecycleProbe()
         lifecycle.record = { [weak self] event in
             self?.events.append(event)
@@ -243,6 +269,7 @@ private final class HomeTimelineAccountStartProbe {
         if coordinator == nil {
             coordinator = HomeTimelineAccountStartCoordinator(
                 lifecycleCoordinator: lifecycle,
+                startupFailureMessage: startupFailureMessage,
                 resolveSyncPolicy: { [weak self] accountID, fallback in
                     guard let self else { return fallback }
                     events.append(.resolveSyncPolicy(accountID, fallback: fallback))
@@ -266,11 +293,18 @@ private final class HomeTimelineAccountStartProbe {
                 self?.apply(command)
             },
             restoreCachedSnapshot: { [weak self] account in
-                guard let self else { return false }
+                guard let self else { return .cancelled }
                 events.append(.restoreCachedSnapshot(account))
                 hasEntries = restoredSnapshotHasEntries
                 hasResolvedRelays = restoredSnapshotHasRelays
                 return cachedSnapshotFound
+                    ? .restored(NostrHomeTimelineState(
+                        relays: [],
+                        followedPubkeys: [],
+                        noteEvents: [],
+                        metadataEvents: []
+                    ))
+                    : .missing
             },
             restoredViewport: { [weak self] accountID in
                 guard let self else { return nil }

@@ -290,6 +290,58 @@ extension HomeFeedProjectionTests {
         #expect(controller.generation == 2)
     }
 
+    @Test("A failed window read preserves the active projection and rejects stored activation")
+    @MainActor
+    func failedWindowReadIsFailClosed() async throws {
+        let plan = try projectionPlan(
+            accountID: String(repeating: "a", count: 64)
+        )
+        let loader = SuspendedHomeFeedWindowLoader()
+        let controller = HomeFeedProjectionController(
+            eventStore: nil,
+            windowLoader: loader
+        )
+        let activeWindow = window(
+            definition: plan.definition,
+            event: event(
+                id: String(repeating: "6", count: 64),
+                kind: 1,
+                tags: []
+            )
+        )
+        controller.activate(
+            definition: plan.definition,
+            window: activeWindow,
+            sourceAuthors: plan.sourceAuthors
+        )
+        let reload = Task {
+            await controller.reloadNewest(
+                accountID: plan.definition.accountID,
+                followedPubkeys: plan.sourceAuthors,
+                liveEvents: []
+            )
+        }
+        try #require(await waitForRequestCount(1, loader: loader))
+        #expect(loader.failRequest(at: 0))
+
+        #expect(await reload.value == nil)
+        #expect(controller.window == activeWindow)
+
+        controller.reset()
+        let activation = Task {
+            await controller.activateStoredProjection(
+                definition: plan.definition,
+                sourceAuthors: plan.sourceAuthors
+            )
+        }
+        try #require(await waitForRequestCount(2, loader: loader))
+        #expect(loader.failRequest(at: 1))
+        await activation.value
+
+        #expect(controller.definition == nil)
+        #expect(controller.window == nil)
+    }
+
     @MainActor
     private func waitForRequestCount(
         _ count: Int,
@@ -349,17 +401,17 @@ extension HomeFeedProjectionTests {
 private final class SuspendedHomeFeedWindowLoader: HomeFeedWindowLoading {
     private(set) var requests: [HomeFeedWindowLoadRequest] = []
     private var continuations: [
-        Int: CheckedContinuation<NostrFeedWindow?, Never>
+        Int: CheckedContinuation<NostrFeedWindow?, any Error>
     ] = [:]
 
     var requestCount: Int { requests.count }
 
     func load(
         _ request: HomeFeedWindowLoadRequest
-    ) async -> sending NostrFeedWindow? {
+    ) async throws -> sending NostrFeedWindow? {
         let index = requests.count
         requests.append(request)
-        return await withCheckedContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             continuations[index] = continuation
         }
     }
@@ -374,4 +426,16 @@ private final class SuspendedHomeFeedWindowLoader: HomeFeedWindowLoading {
         continuation.resume(returning: window)
         return true
     }
+
+    @discardableResult
+    func failRequest(at index: Int) -> Bool {
+        guard let continuation = continuations.removeValue(forKey: index)
+        else { return false }
+        continuation.resume(throwing: HomeFeedWindowLoaderTestError.readFailed)
+        return true
+    }
+}
+
+private enum HomeFeedWindowLoaderTestError: Error {
+    case readFailed
 }

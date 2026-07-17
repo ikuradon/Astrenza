@@ -30,7 +30,7 @@ protocol HomeStoreContextSourcing: AnyObject {
     func restoreCachedSnapshot(
         account: NostrAccount,
         context: HomeTimelineStateInteractionContext
-    ) async -> Bool
+    ) async -> HomeTimelineCachedStateRestoreOutcome
     func restoredViewport(accountID: String) -> HomeTimelineRestoredViewport?
     func waitForCachedPresentation() async
     func restoreCachedReadState(account: NostrAccount) async
@@ -211,7 +211,7 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
     func restoreCachedSnapshot(
         account: NostrAccount,
         context: HomeTimelineStateInteractionContext
-    ) async -> Bool {
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
         await stateInteraction.restoreCachedState(
             accountID: account.pubkey,
             context: context

@@ -19,7 +19,7 @@ struct HomeFeedWindowLoadRequest: Sendable {
 protocol HomeFeedWindowLoading: Sendable {
     func load(
         _ request: HomeFeedWindowLoadRequest
-    ) async -> sending NostrFeedWindow?
+    ) async throws -> sending NostrFeedWindow?
 }
 
 nonisolated struct HomeFeedWindowLoader: HomeFeedWindowLoading {
@@ -32,12 +32,12 @@ nonisolated struct HomeFeedWindowLoader: HomeFeedWindowLoading {
     @concurrent
     func load(
         _ request: HomeFeedWindowLoadRequest
-    ) async -> sending NostrFeedWindow? {
+    ) async throws -> sending NostrFeedWindow? {
         guard !Task.isCancelled, let eventStore else { return nil }
 
         switch request.selection {
         case .newest(let limit):
-            let loaded = try? eventStore.feedWindow(
+            let loaded = try eventStore.feedWindow(
                 feedID: request.definition.feedID,
                 revision: request.definition.revision,
                 limit: limit
@@ -50,7 +50,7 @@ nonisolated struct HomeFeedWindowLoader: HomeFeedWindowLoading {
             let trailingLimit,
             let retainedLimit
         ):
-            guard let loaded = try? eventStore.feedWindow(
+            guard let loaded = try eventStore.feedWindow(
                 feedID: request.definition.feedID,
                 revision: request.definition.revision,
                 aroundEventID: eventID,

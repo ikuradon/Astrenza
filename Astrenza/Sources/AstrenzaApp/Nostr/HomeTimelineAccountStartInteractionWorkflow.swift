@@ -56,7 +56,7 @@ struct HomeTimelineAccountStartEnvironment: Sendable {
     ) -> HomeTimelineAccountStartStoreState
     typealias CachedSnapshotRestorer = @MainActor @Sendable (
         _ account: NostrAccount
-    ) async -> Bool
+    ) async -> HomeTimelineCachedStateRestoreOutcome
     typealias ViewportRestorer = @MainActor @Sendable (
         _ accountID: String
     ) -> HomeTimelineRestoredViewport?

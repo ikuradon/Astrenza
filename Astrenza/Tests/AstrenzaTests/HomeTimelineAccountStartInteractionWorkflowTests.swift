@@ -23,7 +23,10 @@ struct HomeTimelineAccountStartInteractionTests {
 
         fixture.probe.state = fixture.replacementState
         #expect(effects.state() == fixture.expectedReplacementState)
-        #expect(await effects.restoreCachedSnapshot(fixture.account))
+        #expect(
+            await effects.restoreCachedSnapshot(fixture.account) ==
+                .restored(accountStartInteractionEmptyState())
+        )
         #expect(
             effects.restoredViewport(fixture.account.pubkey)
                 == fixture.restoredViewport
@@ -127,7 +130,7 @@ private final class AccountStartInteractionProbe {
                 state: { [self] in state },
                 restoreCachedSnapshot: { [self] account in
                     dependencies.append(.restoreCachedSnapshot(account))
-                    return true
+                    return .restored(accountStartInteractionEmptyState())
                 },
                 restoredViewport: { [self] accountID in
                     dependencies.append(.restoreViewport(accountID))
@@ -239,5 +242,14 @@ private func accountStartInteractionAccount() -> NostrAccount {
         pubkey: String(repeating: "c", count: 64),
         displayIdentifier: "interaction",
         readOnly: true
+    )
+}
+
+private func accountStartInteractionEmptyState() -> NostrHomeTimelineState {
+    NostrHomeTimelineState(
+        relays: [],
+        followedPubkeys: [],
+        noteEvents: [],
+        metadataEvents: []
     )
 }

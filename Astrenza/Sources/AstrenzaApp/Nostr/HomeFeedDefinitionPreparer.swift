@@ -54,7 +54,7 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
         _ request: HomeFeedDefinitionPlanRequest
     ) async -> HomeFeedDefinitionPlan? {
         guard let eventStore else { return nil }
-        return definitionPlan(
+        return try? definitionPlan(
             accountID: request.accountID,
             followedPubkeys: request.followedPubkeys,
             now: request.now,
@@ -70,20 +70,30 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
         guard accept(sequence: request.sequence, feedID: feedID) else { return .superseded }
         guard !Task.isCancelled else { return .superseded }
 
-        guard let plan = definitionPlan(
-            accountID: request.accountID,
-            followedPubkeys: request.followedPubkeys,
-            now: request.now,
-            eventStore: eventStore
-        ) else { return .unavailable }
+        let plan: HomeFeedDefinitionPlan
+        do {
+            guard let preparedPlan = try definitionPlan(
+                accountID: request.accountID,
+                followedPubkeys: request.followedPubkeys,
+                now: request.now,
+                eventStore: eventStore
+            ) else { return .unavailable }
+            plan = preparedPlan
+        } catch {
+            return .failed
+        }
 
         if !plan.requiresProjectionReplacement {
-            repairProjectionIfNeeded(
-                plan: plan,
-                liveEvents: request.liveEvents,
-                insertedAt: request.now,
-                eventStore: eventStore
-            )
+            do {
+                try repairProjectionIfNeeded(
+                    plan: plan,
+                    liveEvents: request.liveEvents,
+                    insertedAt: request.now,
+                    eventStore: eventStore
+                )
+            } catch {
+                return .failed
+            }
             return .prepared(HomeFeedDefinitionPreparation(
                 plan: plan,
                 windowUpdate: .preserve
@@ -92,7 +102,7 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
 
         guard !Task.isCancelled else { return .superseded }
         do {
-            let events = projectionEvents(
+            let events = try projectionEvents(
                 allowedAuthors: Set(plan.authors),
                 liveEvents: request.liveEvents,
                 eventStore: eventStore
@@ -105,7 +115,7 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
                 insertedAt: request.now,
                 eventStore: eventStore
             )
-            let window = try? eventStore.feedWindow(
+            let window = try eventStore.feedWindow(
                 feedID: plan.definition.feedID,
                 revision: plan.definition.revision,
                 limit: request.windowLimit
@@ -130,12 +140,12 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
         followedPubkeys: [String],
         now: Int,
         eventStore: NostrEventStore
-    ) -> HomeFeedDefinitionPlan? {
+    ) throws -> HomeFeedDefinitionPlan? {
         let feedID = HomeFeedProjectionBuilder.feedID(accountID: accountID)
         return HomeFeedProjectionBuilder.definitionPlan(
             accountID: accountID,
             followedPubkeys: followedPubkeys,
-            existingDefinition: try? eventStore.feedDefinition(feedID: feedID),
+            existingDefinition: try eventStore.feedDefinition(feedID: feedID),
             now: now
         )
     }
@@ -145,20 +155,20 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
         liveEvents: [NostrEvent],
         insertedAt: Int,
         eventStore: NostrEventStore
-    ) {
-        let memberships = (try? eventStore.feedMemberships(
+    ) throws {
+        let memberships = try eventStore.feedMemberships(
             feedID: plan.definition.feedID,
             revision: plan.definition.revision,
             limit: 1
-        )) ?? []
+        )
         guard memberships.isEmpty, !Task.isCancelled else { return }
-        let events = projectionEvents(
+        let events = try projectionEvents(
             allowedAuthors: Set(plan.authors),
             liveEvents: liveEvents,
             eventStore: eventStore
         )
         guard !events.isEmpty, !Task.isCancelled else { return }
-        try? replaceProjection(
+        try replaceProjection(
             plan: plan,
             events: events,
             reason: "projection-repair",
@@ -197,19 +207,19 @@ actor HomeFeedDefinitionPreparer: HomeFeedDefinitionPreparing {
         allowedAuthors: Set<String>,
         liveEvents: [NostrEvent],
         eventStore: NostrEventStore
-    ) -> [NostrEvent] {
+    ) throws -> [NostrEvent] {
         guard !allowedAuthors.isEmpty else { return [] }
         let authors = Array(allowedAuthors)
-        let storedNotes = (try? eventStore.events(
+        let storedNotes = try eventStore.events(
             kind: 1,
             authors: authors,
             limit: 10_000
-        )) ?? []
-        let storedReposts = (try? eventStore.events(
+        )
+        let storedReposts = try eventStore.events(
             kind: 6,
             authors: authors,
             limit: 10_000
-        )) ?? []
+        )
         var eventsByID: [String: NostrEvent] = [:]
         for event in liveEvents + storedNotes + storedReposts
         where (event.kind == 1 || event.kind == 6) &&

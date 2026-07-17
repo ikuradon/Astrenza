@@ -9,7 +9,7 @@ struct HomeTimelineStateWorkflowTests {
     func stateApplicationRoutesEffects() async {
         let fixture = StateWorkflowFixture()
 
-        let didRestore = await fixture.workflow.restoreCachedState(
+        let outcome = await fixture.workflow.restoreCachedState(
             accountID: "account",
             effects: fixture.effects
         )
@@ -19,7 +19,7 @@ struct HomeTimelineStateWorkflowTests {
             effects: fixture.effects
         )
 
-        #expect(didRestore)
+        #expect(outcome == fixture.stateApplication.restoreResult)
         #expect(fixture.stateApplication.restoredAccountID == "account")
         #expect(fixture.stateApplication.replacementAccountID == "replacement-account")
         #expect(fixture.stateApplication.replacementRelays == fixture.timelineState.relays)
@@ -73,12 +73,19 @@ private final class StateApplicationSpy: HomeTimelineStateApplying {
     var restoredAccountID: String?
     var replacementAccountID: String?
     var replacementRelays: [String] = []
-    var restoreResult = true
+    var restoreResult: HomeTimelineCachedStateRestoreOutcome = .restored(
+        NostrHomeTimelineState(
+            relays: [],
+            followedPubkeys: [],
+            noteEvents: [],
+            metadataEvents: []
+        )
+    )
 
     func restoreCachedState(
         accountID: String,
         handlers: HomeTimelineStateApplicationHandlers
-    ) async -> Bool {
+    ) async -> HomeTimelineCachedStateRestoreOutcome {
         restoredAccountID = accountID
         handlers.applyPresentationTransition(presentationTransition)
         handlers.applyContentSnapshot(contentSnapshot)

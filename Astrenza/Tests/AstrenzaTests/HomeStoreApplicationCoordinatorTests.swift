@@ -72,6 +72,7 @@ private struct StoreApplicationCoordinatorFixture {
             HomeTimelineStoreAssemblyInput(
                 timelineLoader: NostrHomeTimelineLoader(),
                 eventStore: nil,
+                startupFailureMessage: nil,
                 relayRuntime: nil,
                 linkPreviewResolver: nil,
                 viewportStateRestorer: TimelineRestoreStore(),
