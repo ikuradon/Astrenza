@@ -5,6 +5,7 @@ struct HomeTimelineChromeView: View {
     let visibleTab: TimelineTab
     let isPostDetailPresented: Bool
     let collapseProgress: CGFloat
+    let unreadPillPlacement: HomeUnreadPillPlacement
     let onDismissFloatingMenus: () -> Void
     let onRelayStatusTap: () -> Void
     let onSettingsTap: () -> Void
@@ -53,8 +54,11 @@ struct HomeTimelineChromeView: View {
                 topBar
             }
 
-            if isVisible, timelineStore.visibleUnreadBadgeCount > 0 {
-                unreadBadge
+            if isVisible,
+               selectedTimeline == .home,
+               timelineStore.visibleUnreadBadgeCount > 0,
+               let unreadPillOffsetY = unreadPillPlacement.offsetY {
+                unreadBadge(offsetY: unreadPillOffsetY)
             }
 
             if isVisible, timelineStore.filterStatus.isVisible {
@@ -90,11 +94,12 @@ struct HomeTimelineChromeView: View {
         }
     }
 
-    private var unreadBadge: some View {
+    private func unreadBadge(offsetY: CGFloat) -> some View {
         HomeUnreadBadge(
             count: timelineStore.visibleUnreadBadgeCount,
             onTap: dismissUnreadBadge
         )
+        .offset(y: offsetY)
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,

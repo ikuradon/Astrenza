@@ -249,6 +249,10 @@ extension NostrHomeTimelineStore {
         composition.presentation.visibleUnreadBadgeCount
     }
 
+    var unreadCountAnchorPostID: TimelinePost.ID? {
+        composition.presentation.currentReadBoundaryPostID
+    }
+
     var resolvedContentRevision: Int {
         composition.presentation.resolvedContentRevision
     }

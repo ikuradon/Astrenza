@@ -20,6 +20,7 @@ struct HomeTimelineView: View {
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
     @State private var navigation = HomeTimelineNavigationState()
     @State private var unreadBadgeFrame: CGRect = .zero
+    @State private var unreadPillPlacement: HomeUnreadPillPlacement = .hidden
     @State private var swipeSettings = TimelineSwipeSettings()
     @State private var viewportPersistence: HomeViewportPersistenceCoordinator
 
@@ -135,6 +136,7 @@ struct HomeTimelineView: View {
                 visibleTab: visibleTab,
                 isPostDetailPresented: isPostDetailPresented,
                 collapseProgress: topChromeCollapseProgress,
+                unreadPillPlacement: unreadPillPlacement,
                 onDismissFloatingMenus: dismissFloatingMenus,
                 onRelayStatusTap: presentRelayStatus,
                 onSettingsTap: presentSettings,
@@ -164,10 +166,12 @@ struct HomeTimelineView: View {
             handleTabSelection(newValue)
         }
         .onChange(of: selectedTimeline) { _, _ in
+            unreadPillPlacement = .hidden
             clearHomeReturnAnchor()
             loadTimelineRestoreState()
         }
         .onChange(of: sessionStore.account?.pubkey) { _, _ in
+            unreadPillPlacement = .hidden
             clearHomeReturnAnchor()
             loadTimelineRestoreState()
         }
@@ -238,6 +242,7 @@ private extension HomeTimelineView {
                 onViewportRestoreCompleted: handleTimelineViewportRestoreCompleted,
                 onViewportStateChanged: saveTimelineViewportState,
                 onReadablePostIDsChanged: handleReadablePostIDsChanged,
+                onUnreadPillPlacementChanged: handleUnreadPillPlacementChanged,
                 onLayoutCacheChanged: saveTimelineLayoutCache
             )
             .id("\(accountID)/\(selectedTimeline.id)")
@@ -320,6 +325,12 @@ private extension HomeTimelineView {
             visiblePostIDs: ids,
             context: timelineInteractionContext
         )
+    }
+
+    func handleUnreadPillPlacementChanged(
+        _ placement: HomeUnreadPillPlacement
+    ) {
+        unreadPillPlacement = placement
     }
 
     func handleTimelineViewportRestoreCompleted(_ restoredOffset: CGFloat) {

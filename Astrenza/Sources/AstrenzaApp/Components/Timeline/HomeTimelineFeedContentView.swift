@@ -30,6 +30,7 @@ struct HomeTimelineFeedContentView: View {
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onReadablePostIDsChanged: ([TimelinePost.ID]) -> Void
+    let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
 
     var body: some View {
@@ -62,6 +63,8 @@ struct HomeTimelineFeedContentView: View {
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
             onReadablePostIDsChanged: onReadablePostIDsChanged,
+            unreadCountAnchorPostID: unreadCountAnchorPostID,
+            onUnreadPillPlacementChanged: onUnreadPillPlacementChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
         )
     }
@@ -97,6 +100,13 @@ struct HomeTimelineFeedContentView: View {
             isRestoreProtected: viewportRestoreProtectionActive,
             isDetachedFromLiveEdge: isTimelineDetachedFromLiveEdge
         )
+    }
+
+    private var unreadCountAnchorPostID: TimelinePost.ID? {
+        guard selectedTimeline == .home,
+              store.visibleUnreadBadgeCount > 0
+        else { return nil }
+        return store.unreadCountAnchorPostID
     }
 
     private var emptyStateContext: HomeTimelineEmptyStateContext {

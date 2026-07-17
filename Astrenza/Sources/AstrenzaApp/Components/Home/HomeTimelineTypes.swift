@@ -96,3 +96,44 @@ struct UnreadBadgeFramePreferenceKey: PreferenceKey {
         value = nextValue()
     }
 }
+
+enum HomeUnreadPillPlacement: Equatable {
+    case hidden
+    case visible(offsetY: CGFloat)
+
+    var offsetY: CGFloat? {
+        switch self {
+        case .hidden:
+            nil
+        case .visible(let offsetY):
+            offsetY
+        }
+    }
+}
+
+enum HomeUnreadPillPlacementPolicy {
+    static func resolve(
+        anchorPostID: TimelinePost.ID?,
+        anchorMinY: CGFloat?,
+        postOrderByID: [TimelinePost.ID: Int],
+        readablePostIDs: [TimelinePost.ID],
+        anchorLineY: CGFloat
+    ) -> HomeUnreadPillPlacement {
+        guard let anchorPostID,
+              let anchorIndex = postOrderByID[anchorPostID]
+        else { return .hidden }
+
+        if let anchorMinY {
+            return .visible(offsetY: min(0, anchorMinY - anchorLineY))
+        }
+
+        let readableIndexes = readablePostIDs.compactMap { postOrderByID[$0] }
+        guard let newestReadableIndex = readableIndexes.min() else {
+            return .hidden
+        }
+
+        return newestReadableIndex > anchorIndex
+            ? .hidden
+            : .visible(offsetY: 0)
+    }
+}

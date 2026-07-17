@@ -60,6 +60,23 @@ struct HomeTimelineUnreadStateTests {
         #expect(store.materializedUnreadCount == 0)
     }
 
+    @Test("read boundary advances with the last counted post")
+    func readBoundaryAdvancesWithCountedPost() {
+        var state = HomeTimelineUnreadState()
+
+        state.replaceMaterializedPostIDs(
+            ["new-1", "new-2", "old-1"],
+            marksInitialWindowRead: false
+        )
+        state.setReadBoundary(postID: "old-1")
+        #expect(state.materializedUnreadCount == 2)
+        #expect(state.readBoundaryPostID == "old-1")
+
+        state.markVisiblePostsRead(["new-2"])
+        #expect(state.materializedUnreadCount == 1)
+        #expect(state.readBoundaryPostID == "new-2")
+    }
+
     @Test("marking newest materialized window read clears the badge")
     func markNewestMaterializedWindowReadClearsBadge() {
         let store = HomeTimelineStoreFactory.make(eventStore: nil)
@@ -74,8 +91,8 @@ struct HomeTimelineUnreadStateTests {
         #expect(store.visibleUnreadBadgeCount == 0)
     }
 
-    @Test("badge hides when the viewport moves older than the unread range")
-    func badgeHidesPastUnreadRange() {
+    @Test("unread count is retained when the viewport moves older than its anchor")
+    func unreadCountIsRetainedPastAnchor() {
         let store = HomeTimelineStoreFactory.make(eventStore: nil)
 
         store.testingSetMaterializedPostIDs(["new-1", "new-2", "old-1", "old-2"])
@@ -83,9 +100,73 @@ struct HomeTimelineUnreadStateTests {
 
         store.markMaterializedPostsRead(visiblePostIDs: ["old-2"])
         #expect(store.materializedUnreadCount == 2)
-        #expect(store.visibleUnreadBadgeCount == 0)
+        #expect(store.visibleUnreadBadgeCount == 2)
+        #expect(store.unreadCountAnchorPostID == "old-1")
 
         store.markMaterializedPostsRead(visiblePostIDs: ["new-1"])
         #expect(store.visibleUnreadBadgeCount == 1)
+    }
+}
+
+@MainActor
+@Suite("Home unread pill placement")
+struct HomeUnreadPillPlacementTests {
+    private let postOrder = [
+        "new-1": 0,
+        "new-2": 1,
+        "anchor": 2,
+        "old-1": 3,
+    ]
+
+    @Test("pill stays pinned while its anchor has not moved past the reading line")
+    func pillStaysPinnedAtAnchor() {
+        let placement = HomeUnreadPillPlacementPolicy.resolve(
+            anchorPostID: "anchor",
+            anchorMinY: 116,
+            postOrderByID: postOrder,
+            readablePostIDs: ["anchor"],
+            anchorLineY: 96
+        )
+
+        #expect(placement == .visible(offsetY: 0))
+    }
+
+    @Test("pill follows its anchor toward the top")
+    func pillFollowsAnchorTowardTop() {
+        let placement = HomeUnreadPillPlacementPolicy.resolve(
+            anchorPostID: "anchor",
+            anchorMinY: 44,
+            postOrderByID: postOrder,
+            readablePostIDs: ["anchor"],
+            anchorLineY: 96
+        )
+
+        #expect(placement == .visible(offsetY: -52))
+    }
+
+    @Test("pill remains offscreen while the viewport is older than its anchor")
+    func pillIsHiddenPastAnchor() {
+        let placement = HomeUnreadPillPlacementPolicy.resolve(
+            anchorPostID: "anchor",
+            anchorMinY: nil,
+            postOrderByID: postOrder,
+            readablePostIDs: ["old-1"],
+            anchorLineY: 96
+        )
+
+        #expect(placement == .hidden)
+    }
+
+    @Test("pill resumes when the viewport returns to its anchor")
+    func pillResumesAtAnchor() {
+        let placement = HomeUnreadPillPlacementPolicy.resolve(
+            anchorPostID: "anchor",
+            anchorMinY: nil,
+            postOrderByID: postOrder,
+            readablePostIDs: ["anchor"],
+            anchorLineY: 96
+        )
+
+        #expect(placement == .visible(offsetY: 0))
     }
 }

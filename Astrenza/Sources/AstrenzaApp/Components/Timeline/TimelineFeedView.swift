@@ -29,6 +29,8 @@ struct TimelineFeedView: View {
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onReadablePostIDsChanged: ([TimelinePost.ID]) -> Void
+    let unreadCountAnchorPostID: TimelinePost.ID?
+    let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     @State private var menuState = TimelinePostMenuState()
     @State private var didRestoreViewport = false
@@ -88,6 +90,8 @@ struct TimelineFeedView: View {
         onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
+        unreadCountAnchorPostID: TimelinePost.ID? = nil,
+        onUnreadPillPlacementChanged: @escaping (HomeUnreadPillPlacement) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
         self.init(
@@ -118,6 +122,8 @@ struct TimelineFeedView: View {
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
             onReadablePostIDsChanged: onReadablePostIDsChanged,
+            unreadCountAnchorPostID: unreadCountAnchorPostID,
+            onUnreadPillPlacementChanged: onUnreadPillPlacementChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
         )
     }
@@ -150,6 +156,8 @@ struct TimelineFeedView: View {
         onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
+        unreadCountAnchorPostID: TimelinePost.ID? = nil,
+        onUnreadPillPlacementChanged: @escaping (HomeUnreadPillPlacement) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
         self.entries = entries
@@ -179,10 +187,13 @@ struct TimelineFeedView: View {
         self.onViewportRestoreCompleted = onViewportRestoreCompleted
         self.onViewportStateChanged = onViewportStateChanged
         self.onReadablePostIDsChanged = onReadablePostIDsChanged
+        self.unreadCountAnchorPostID = unreadCountAnchorPostID
+        self.onUnreadPillPlacementChanged = onUnreadPillPlacementChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
         _displayedEntries = State(initialValue: entries)
         let initialScrollRuntime = TimelineFeedScrollRuntime()
         initialScrollRuntime.rebuildPostIndex(entries: entries)
+        initialScrollRuntime.unreadCountAnchorPostID = unreadCountAnchorPostID
         initialScrollRuntime.layoutSnapshot = TimelineLayoutSnapshot(
             entries: entries,
             layoutCache: layoutCache,
@@ -242,6 +253,11 @@ struct TimelineFeedView: View {
                                 )
                                 .id(scrollRuntime.measurementGenerationByPostID[post.id] ?? 0)
                             )
+                            .background {
+                                if unreadCountAnchorPostID == post.id {
+                                    unreadCountAnchorFrameReader(postID: post.id)
+                                }
+                            }
                             .onAppear {
                                 handlePostAppear(post)
                             }
@@ -277,6 +293,7 @@ struct TimelineFeedView: View {
             scrollRuntime.latestSourceChangeToken = sourceChangeToken
             refreshPostOrderAndPruneRuntimeState()
             updateLayoutSnapshot()
+            syncUnreadCountAnchor(unreadCountAnchorPostID, forcePublish: true)
             restoreViewportIfNeeded()
         }
         .onPreferenceChange(TimelineGapFramePreferenceKey.self) { frames in
@@ -287,6 +304,9 @@ struct TimelineFeedView: View {
         }
         .onChange(of: sourceChangeToken) { _, newToken in
             syncDisplayedEntriesFromSource(forceContentUpdate: true, sourceToken: newToken)
+        }
+        .onChange(of: unreadCountAnchorPostID) { _, newAnchorPostID in
+            syncUnreadCountAnchor(newAnchorPostID, forcePublish: true)
         }
         .onChange(of: viewportState) { _, _ in
             if viewportRestoreProtectionActive, viewportState != nil {
@@ -410,6 +430,56 @@ private extension TimelineFeedView {
                     geometryState: geometryState
                 )
             }
+    }
+
+    func unreadCountAnchorFrameReader(
+        postID: TimelinePost.ID
+    ) -> some View {
+        Color.clear
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .named("timelineFeedViewport")).minY
+            } action: { _, minY in
+                updateUnreadCountAnchorMinY(minY, postID: postID)
+            }
+    }
+
+    func updateUnreadCountAnchorMinY(
+        _ minY: CGFloat,
+        postID: TimelinePost.ID
+    ) {
+        guard postID == unreadCountAnchorPostID else { return }
+        if scrollRuntime.unreadCountAnchorPostID != postID {
+            syncUnreadCountAnchor(postID)
+        }
+        guard scrollRuntime.unreadCountAnchorMinY != minY else { return }
+        scrollRuntime.unreadCountAnchorMinY = minY
+        publishUnreadPillPlacement()
+    }
+
+    func syncUnreadCountAnchor(
+        _ postID: TimelinePost.ID?,
+        forcePublish: Bool = false
+    ) {
+        if scrollRuntime.unreadCountAnchorPostID != postID {
+            scrollRuntime.unreadCountAnchorPostID = postID
+            scrollRuntime.unreadCountAnchorMinY = nil
+        }
+        publishUnreadPillPlacement(force: forcePublish)
+    }
+
+    func publishUnreadPillPlacement(force: Bool = false) {
+        let placement = HomeUnreadPillPlacementPolicy.resolve(
+            anchorPostID: scrollRuntime.unreadCountAnchorPostID,
+            anchorMinY: scrollRuntime.unreadCountAnchorMinY,
+            postOrderByID: scrollRuntime.postOrderByID,
+            readablePostIDs: scrollRuntime.lastReadablePostIDs,
+            anchorLineY: topContentPadding + 24
+        )
+        guard force || placement != scrollRuntime.lastUnreadPillPlacement else {
+            return
+        }
+        scrollRuntime.lastUnreadPillPlacement = placement
+        onUnreadPillPlacementChanged(placement)
     }
 
     func updateMeasuredPostGeometry(
@@ -568,6 +638,7 @@ private extension TimelineFeedView {
         }
         guard readableIDs != scrollRuntime.lastReadablePostIDs else { return }
         scrollRuntime.lastReadablePostIDs = readableIDs
+        publishUnreadPillPlacement()
         DispatchQueue.main.async {
             onReadablePostIDsChanged(readableIDs)
         }
@@ -928,6 +999,7 @@ private extension TimelineFeedView {
 
         scrollRuntime.readablePostIDs.formIntersection(validPostIDs)
         notifyReadablePostIDs()
+        publishUnreadPillPlacement()
 
         scrollRuntime.measurementGenerationByPostID = scrollRuntime.measurementGenerationByPostID.filter {
             validPostIDs.contains($0.key)
@@ -1537,6 +1609,9 @@ private final class TimelineFeedScrollRuntime {
     var measuredLayoutCache = TimelineLayoutCache()
     var postOrderByID: [TimelinePost.ID: Int] = [:]
     var readablePostIDs = Set<TimelinePost.ID>()
+    var unreadCountAnchorPostID: TimelinePost.ID?
+    var unreadCountAnchorMinY: CGFloat?
+    var lastUnreadPillPlacement = HomeUnreadPillPlacement.hidden
     var gapFrames: [TimelineGap.ID: CGRect] = [:]
     var lastReadablePostIDs: [TimelinePost.ID] = []
     var viewportSize: CGSize = .zero

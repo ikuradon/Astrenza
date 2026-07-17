@@ -7,7 +7,6 @@ struct HomeTimelineUnreadState: Equatable {
     private(set) var visibleUnreadBadgeCount = 0
 
     private var dismissedGeneration: String?
-    private var viewportHiddenGeneration: String?
 
     var canMarkNewestWindowRead: Bool {
         !materializedPostIDs.isEmpty &&
@@ -45,7 +44,6 @@ struct HomeTimelineUnreadState: Equatable {
         let knownPostIDs = Set(materializedPostIDs)
         let readableIDs = visiblePostIDs.filter { knownPostIDs.contains($0) }
         guard !readableIDs.isEmpty else { return }
-        updateViewportVisibility(readablePostIDs: readableIDs)
         readPostIDs.formUnion(readableIDs)
         recompute()
     }
@@ -66,7 +64,6 @@ struct HomeTimelineUnreadState: Equatable {
         materializedPostIDs = []
         readPostIDs.removeAll()
         dismissedGeneration = nil
-        viewportHiddenGeneration = nil
         materializedUnreadCount = 0
         visibleUnreadBadgeCount = 0
     }
@@ -78,33 +75,11 @@ struct HomeTimelineUnreadState: Equatable {
         let generation = unreadGeneration(from: unreadIDs)
         if generation == nil {
             dismissedGeneration = nil
-            viewportHiddenGeneration = nil
             visibleUnreadBadgeCount = 0
         } else if dismissedGeneration == generation {
             visibleUnreadBadgeCount = 0
-        } else if viewportHiddenGeneration == generation {
-            visibleUnreadBadgeCount = 0
         } else {
             visibleUnreadBadgeCount = unreadIDs.count
-        }
-    }
-
-    private mutating func updateViewportVisibility(readablePostIDs: [TimelinePost.ID]) {
-        let unreadIDs = materializedPostIDs.filter { !readPostIDs.contains($0) }
-        guard let generation = unreadGeneration(from: unreadIDs),
-              let lastUnreadIndex = materializedPostIDs.lastIndex(where: { unreadIDs.contains($0) })
-        else {
-            viewportHiddenGeneration = nil
-            return
-        }
-
-        let readableIndexes = readablePostIDs.compactMap { materializedPostIDs.firstIndex(of: $0) }
-        guard let newestReadableIndex = readableIndexes.min() else { return }
-        let isPastUnreadRange = newestReadableIndex > lastUnreadIndex
-        if isPastUnreadRange {
-            viewportHiddenGeneration = generation
-        } else if viewportHiddenGeneration == generation {
-            viewportHiddenGeneration = nil
         }
     }
 
