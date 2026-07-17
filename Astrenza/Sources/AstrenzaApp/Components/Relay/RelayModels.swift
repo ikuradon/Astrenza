@@ -265,6 +265,40 @@ struct RelayDescriptor: Identifiable, Equatable {
             lastMessage: "NIP-11 request in flight"
         )
     }
+
+    static func liveConfiguration(
+        url: String,
+        isEnabled: Bool,
+        canRead: Bool,
+        canWrite: Bool
+    ) -> RelayDescriptor {
+        var usage: [RelayUsage] = []
+        if canRead {
+            usage.append(.read)
+        }
+        if canWrite {
+            usage.append(.write)
+        }
+        return RelayDescriptor(
+            url: url,
+            displayName: URL(string: url)?.host ?? url,
+            status: isEnabled ? .connecting : .offline,
+            usage: usage,
+            source: .nip65,
+            pingMilliseconds: nil,
+            receivedBytes: "cached",
+            sentBytes: "cached",
+            eventCount: "cached",
+            errorCount: 0,
+            supportedNIPs: [],
+            software: "Cached",
+            version: nil,
+            description: "Relay configuration restored from the cached kind:10002 event.",
+            limitation: isEnabled ? "Enabled locally" : "Disabled locally",
+            contact: nil,
+            lastMessage: "Open Relay Status for live connection details"
+        )
+    }
 }
 
 struct RelayLifecycleCounts: Equatable {

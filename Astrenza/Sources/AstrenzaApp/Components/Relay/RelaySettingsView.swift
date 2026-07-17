@@ -12,6 +12,7 @@ struct RelaySettingsView: View {
     @State private var mediaResolverSettings: NostrMediaResolverServiceSettings
     private let syncPolicyStore: NostrSyncPolicySettingsStore
     private let mediaResolverSettingsStore: NostrMediaResolverSettingsStore
+    private let liveNIP65Relays: [RelayDescriptor]?
 
     init(
         accountID: String? = nil,
@@ -25,6 +26,21 @@ struct RelaySettingsView: View {
         self.syncPolicyStore = syncPolicyStore
         self.mediaResolverSettingsStore = mediaResolverSettingsStore
         self.onSyncPolicyChange = onSyncPolicyChange
+        if let accountID {
+            let relayListEvent = try? eventStore?.latestReplaceableEvent(
+                pubkey: accountID,
+                kind: 10_002
+            )
+            let preferences = (try? eventStore?.relayPreferences(
+                accountID: accountID
+            )) ?? []
+            liveNIP65Relays = RelaySettingsLiveProjection.nip65Relays(
+                event: relayListEvent ?? nil,
+                preferences: preferences
+            )
+        } else {
+            liveNIP65Relays = nil
+        }
         _syncPolicy = State(initialValue: syncPolicyStore.policy(accountID: accountID))
         _mediaResolverSettings = State(initialValue: mediaResolverSettingsStore.settings())
     }
@@ -77,7 +93,9 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "NIP-65 Home Relays",
                 subtitle: "Read/write relays published as kind:10002.",
-                relays: RelayMockStore.relays.filter { $0.source == .nip65 || $0.source == .manual },
+                relays: liveNIP65Relays ?? RelayMockStore.relays.filter {
+                    $0.source == .nip65 || $0.source == .manual
+                },
                 showsUsageControls: true,
                 accountID: accountID,
                 eventStore: eventStore
@@ -86,7 +104,9 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "DM Inbox Relays",
                 subtitle: "Used for gift wraps and private message discovery.",
-                relays: RelayMockStore.relays.filter { $0.usage.contains(.dm) || $0.source == .nip17 },
+                relays: liveNIP65Relays == nil ? RelayMockStore.relays.filter {
+                    $0.usage.contains(.dm) || $0.source == .nip17
+                } : [],
                 showsUsageControls: false,
                 accountID: accountID,
                 eventStore: eventStore
@@ -95,7 +115,9 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "Search / Discovery",
                 subtitle: "Indexers, search relays, and recommended bootstrap relays.",
-                relays: RelayMockStore.relays.filter { $0.usage.contains(.search) } + RelayMockStore.recommended,
+                relays: liveNIP65Relays == nil ?
+                    RelayMockStore.relays.filter { $0.usage.contains(.search) } +
+                    RelayMockStore.recommended : [],
                 showsUsageControls: false,
                 accountID: accountID,
                 eventStore: eventStore
@@ -103,11 +125,36 @@ struct RelaySettingsView: View {
         case .blocked:
             RelaySettingsListCard(
                 title: "Blocked / Trusted",
-                subtitle: "Local policy relays. This mock keeps the moderation decisions visible.",
-                relays: RelayMockStore.relays.filter { $0.source == .blocked },
+                subtitle: "Local relay policy and trust decisions.",
+                relays: liveNIP65Relays == nil ? RelayMockStore.relays.filter {
+                    $0.source == .blocked
+                } : [],
                 showsUsageControls: false,
                 accountID: accountID,
                 eventStore: eventStore
+            )
+        }
+    }
+}
+
+enum RelaySettingsLiveProjection {
+    static func nip65Relays(
+        event: NostrEvent?,
+        preferences: [NostrRelayPreferenceRecord]
+    ) -> [RelayDescriptor] {
+        let preferencesByURL = Dictionary(
+            preferences.map { ($0.relayURL, $0) },
+            uniquingKeysWith: { current, latest in
+                current.updatedAt >= latest.updatedAt ? current : latest
+            }
+        )
+        return NostrRelayList.parse(from: event).items.map { item in
+            let preference = preferencesByURL[item.url]
+            return RelayDescriptor.liveConfiguration(
+                url: item.url,
+                isEnabled: preference?.isEnabled ?? true,
+                canRead: preference?.readEnabled ?? item.canRead,
+                canWrite: preference?.writeEnabled ?? item.canWrite
             )
         }
     }

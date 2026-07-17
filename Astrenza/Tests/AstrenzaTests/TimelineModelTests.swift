@@ -7482,6 +7482,43 @@ struct TimelineModelTests {
         #expect(candidate.id == pubkey)
     }
 
+    @Test("Live relay settings project cached NIP-65 without mock relays")
+    func liveRelaySettingsProjectCachedNIP65() throws {
+        let accountID = String(repeating: "a", count: 64)
+        let relayList = NostrEvent(
+            id: String(repeating: "1", count: 64),
+            pubkey: accountID,
+            createdAt: 100,
+            kind: 10_002,
+            tags: [
+                ["r", "wss://read.example", "read"],
+                ["r", "wss://both.example"]
+            ],
+            content: "",
+            sig: String(repeating: "0", count: 128)
+        )
+        let relays = RelaySettingsLiveProjection.nip65Relays(
+            event: relayList,
+            preferences: [NostrRelayPreferenceRecord(
+                accountID: accountID,
+                relayURL: "wss://both.example",
+                isEnabled: false,
+                readEnabled: false,
+                writeEnabled: true,
+                updatedAt: 101
+            )]
+        )
+
+        #expect(relays.map(\.url) == [
+            "wss://read.example",
+            "wss://both.example"
+        ])
+        #expect(relays[0].usage == [.read])
+        #expect(relays[1].usage == [.write])
+        #expect(relays[1].status == .offline)
+        #expect(!relays.contains { $0.url.contains("mock") })
+    }
+
     @Test("Unresolved authors display a valid npub-like abbreviated pubkey")
     func unresolvedAuthorDisplay() {
         let author = TimelineAuthor.unresolved(pubkey: TimelineAuthor.mockPubkey(for: "unresolved"))
