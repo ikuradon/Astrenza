@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrLoginError: Error, Equatable {
     case emptyInput

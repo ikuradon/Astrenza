@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrProfileRequestPriority: Equatable, Sendable {
     case foreground

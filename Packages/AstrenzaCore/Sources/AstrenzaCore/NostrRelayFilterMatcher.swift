@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrRelayFilterMatcher {
     public static func matches(event: NostrEvent, filters: [[String: AnySendableJSON]]) -> Bool {

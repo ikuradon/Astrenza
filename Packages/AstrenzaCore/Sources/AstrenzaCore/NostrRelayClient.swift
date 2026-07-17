@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrRelayClientError: Error {
     case invalidRelayURL(String)

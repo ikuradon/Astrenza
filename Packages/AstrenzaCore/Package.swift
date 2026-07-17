@@ -9,7 +9,8 @@ let package = Package(
         .macOS("15.0")
     ],
     products: [
-        .library(name: "AstrenzaCore", targets: ["AstrenzaCore"])
+        .library(name: "AstrenzaCore", targets: ["AstrenzaCore"]),
+        .library(name: "NostrProtocol", targets: ["NostrProtocol"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
@@ -17,9 +18,11 @@ let package = Package(
         .package(url: "https://github.com/damus-io/negentropy-swift", from: "0.1.0")
     ],
     targets: [
+        .target(name: "NostrProtocol"),
         .target(
             name: "AstrenzaCore",
             dependencies: [
+                "NostrProtocol",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "secp256k1", package: "secp256k1.swift"),
                 .product(name: "Negentropy", package: "negentropy-swift")
@@ -31,6 +34,10 @@ let package = Package(
                 "AstrenzaCore",
                 .product(name: "secp256k1", package: "secp256k1.swift")
             ]
+        ),
+        .testTarget(
+            name: "NostrProtocolTests",
+            dependencies: ["NostrProtocol"]
         )
     ]
 )

@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 @preconcurrency import secp256k1
 
 public struct NostrUnsignedEvent: Equatable, Sendable {

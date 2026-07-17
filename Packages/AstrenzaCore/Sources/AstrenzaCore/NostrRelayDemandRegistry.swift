@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 enum NostrRelayDemand: Hashable, Sendable {
     case persistentDefault

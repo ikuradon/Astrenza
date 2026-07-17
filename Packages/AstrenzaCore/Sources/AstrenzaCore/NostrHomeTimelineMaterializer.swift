@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrHomeTimelineItem: Equatable, Identifiable, Sendable {
     public let id: String

@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrHomeTimelineLoadStage: Equatable, Sendable {
     case resolvingRelayList

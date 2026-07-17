@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrOutboxRelayPublishResult: Equatable, Sendable {
     public let relayURL: String

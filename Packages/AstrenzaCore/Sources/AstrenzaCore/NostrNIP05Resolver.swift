@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public typealias NostrHTTPDataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 

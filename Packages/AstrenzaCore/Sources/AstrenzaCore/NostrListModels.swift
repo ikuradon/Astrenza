@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrListSummary: Codable, Equatable, Sendable {
     public let listID: String

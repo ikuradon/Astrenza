@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrURLAttachmentKind: String, Codable, Sendable {
     case media

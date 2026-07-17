@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrRelayRuntimeError: Error, Equatable, Sendable {
     case connectionUnavailable(relayURL: String)

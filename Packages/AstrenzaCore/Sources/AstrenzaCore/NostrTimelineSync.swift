@@ -1,5 +1,6 @@
 import Foundation
 import Negentropy
+import NostrProtocol
 
 public struct NostrHomeFetchPlanner: Sendable {
     public let authors: [String]

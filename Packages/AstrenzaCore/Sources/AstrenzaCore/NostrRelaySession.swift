@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrRelayRuntimePacket: Equatable, Sendable {
     case stateChanged(relayURL: String, state: NostrRelayConnectionState)

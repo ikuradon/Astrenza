@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public actor NostrRelayRuntime {
     public typealias TransportFactory = @Sendable (String) -> any NostrRelayTransport

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import NostrProtocol
 
 /// `sortTimestamp DESC, eventID ASC` で並ぶevent列上の安定した位置です。
 public struct NostrTimelineEntryCursor: Codable, Equatable, Sendable {

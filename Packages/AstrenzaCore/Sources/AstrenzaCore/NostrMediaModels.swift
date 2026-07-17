@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrMediaAssetRecord: Codable, Equatable, Sendable {
     public let assetID: String

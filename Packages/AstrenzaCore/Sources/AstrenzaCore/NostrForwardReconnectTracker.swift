@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 /// relay/filterごとにEOSEまで到達したcursorだけを保持し、再接続REQを安全に狭めます。
 /// EOSE前の部分受信は確定しないため、途中切断でも未受信eventを飛ばしません。

@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrRelayWorkPriority: Int, Codable, Comparable, Sendable {
     case maintenance = 0

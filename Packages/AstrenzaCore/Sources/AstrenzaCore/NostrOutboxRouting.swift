@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrOutboxRelayRouting: Sendable {
     public init() {}

@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 import secp256k1
 
 public struct NostrEventValidator: Sendable {

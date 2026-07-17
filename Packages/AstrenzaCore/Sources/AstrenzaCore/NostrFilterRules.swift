@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public enum NostrFilterRuleKind: String, Codable, Equatable, Sendable {
     case mutedPubkey

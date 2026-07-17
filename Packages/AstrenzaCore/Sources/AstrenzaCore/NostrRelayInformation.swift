@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrRelayInformationDocument: Codable, Equatable, Sendable {
     public let name: String?

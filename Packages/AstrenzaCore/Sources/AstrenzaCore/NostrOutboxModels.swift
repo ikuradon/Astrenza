@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 public struct NostrOutboxEventRecord: Codable, Equatable, Sendable {
     public let localID: String

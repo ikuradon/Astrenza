@@ -1,4 +1,5 @@
 import Foundation
+import NostrProtocol
 
 protocol NostrRelayBootstrapScoping: Sendable {
     func beginBootstrapScope() async -> UUID
