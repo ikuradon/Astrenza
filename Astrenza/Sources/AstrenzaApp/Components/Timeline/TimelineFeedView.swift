@@ -28,7 +28,7 @@ struct TimelineFeedView: View {
     let onScrollActivityChanged: (Bool) -> Void
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
-    let onReadablePostIDsChanged: ([TimelinePost.ID]) -> Void
+    let onPostsCrossedReadLineTowardNewer: ([TimelinePost.ID]) -> Void
     let unreadCountAnchorPostID: TimelinePost.ID?
     let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
@@ -89,7 +89,7 @@ struct TimelineFeedView: View {
         onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
         onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
-        onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
+        onPostsCrossedReadLineTowardNewer: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         unreadCountAnchorPostID: TimelinePost.ID? = nil,
         onUnreadPillPlacementChanged: @escaping (HomeUnreadPillPlacement) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
@@ -121,7 +121,8 @@ struct TimelineFeedView: View {
             onScrollActivityChanged: onScrollActivityChanged,
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
-            onReadablePostIDsChanged: onReadablePostIDsChanged,
+            onPostsCrossedReadLineTowardNewer:
+                onPostsCrossedReadLineTowardNewer,
             unreadCountAnchorPostID: unreadCountAnchorPostID,
             onUnreadPillPlacementChanged: onUnreadPillPlacementChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
@@ -155,7 +156,7 @@ struct TimelineFeedView: View {
         onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
         onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
-        onReadablePostIDsChanged: @escaping ([TimelinePost.ID]) -> Void = { _ in },
+        onPostsCrossedReadLineTowardNewer: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         unreadCountAnchorPostID: TimelinePost.ID? = nil,
         onUnreadPillPlacementChanged: @escaping (HomeUnreadPillPlacement) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
@@ -186,7 +187,8 @@ struct TimelineFeedView: View {
         self.onScrollActivityChanged = onScrollActivityChanged
         self.onViewportRestoreCompleted = onViewportRestoreCompleted
         self.onViewportStateChanged = onViewportStateChanged
-        self.onReadablePostIDsChanged = onReadablePostIDsChanged
+        self.onPostsCrossedReadLineTowardNewer =
+            onPostsCrossedReadLineTowardNewer
         self.unreadCountAnchorPostID = unreadCountAnchorPostID
         self.onUnreadPillPlacementChanged = onUnreadPillPlacementChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
@@ -419,9 +421,14 @@ private extension TimelineFeedView {
         Color.clear
             .onGeometryChange(for: TimelinePostGeometryState.self) { proxy in
                 let frame = proxy.frame(in: .named("timelineFeedViewport"))
+                let isAtOrAboveReadLine =
+                    frame.minY <= topContentPadding + 24
                 return TimelinePostGeometryState(
                     height: frame.height,
-                    isReadable: frame.minY <= topContentPadding + 24 && frame.maxY > 0
+                    isReadable: isAtOrAboveReadLine && frame.maxY > 0,
+                    readLinePosition: isAtOrAboveReadLine
+                        ? .aboveOrAt
+                        : .below
                 )
             } action: { _, geometryState in
                 updateMeasuredPostGeometry(
@@ -496,6 +503,10 @@ private extension TimelineFeedView {
         geometryState: TimelinePostGeometryState
     ) {
         guard scrollRuntime.postOrderByID[postID] != nil else { return }
+        updateReadLinePosition(
+            geometryState.readLinePosition,
+            postID: postID
+        )
         let expectedMeasurementGeneration = scrollRuntime.measurementGenerationByPostID[postID] ?? 0
         if measurementGeneration == expectedMeasurementGeneration,
            scrollRuntime.measuredLayoutCache.recordMeasuredHeight(geometryState.height, for: postID) {
@@ -517,6 +528,51 @@ private extension TimelineFeedView {
         }
         if membershipChanged {
             notifyReadablePostIDs()
+        }
+    }
+
+    func updateReadLinePosition(
+        _ position: TimelinePostReadLinePosition,
+        postID: TimelinePost.ID
+    ) {
+        let previousPosition =
+            scrollRuntime.readLinePositionByPostID.updateValue(
+                position,
+                forKey: postID
+            )
+        guard TimelineReadLineCrossingPolicy.advancesReadBoundary(
+            previous: previousPosition,
+            current: position,
+            isUserScrollActive: scrollRuntime.isUserScrollActive
+        ) else { return }
+        enqueuePostCrossedReadLineTowardNewer(postID)
+    }
+
+    func enqueuePostCrossedReadLineTowardNewer(
+        _ postID: TimelinePost.ID
+    ) {
+        scrollRuntime.pendingTowardNewerReadPostIDs.insert(postID)
+        guard !scrollRuntime.isTowardNewerReadPublicationScheduled else {
+            return
+        }
+        scrollRuntime.isTowardNewerReadPublicationScheduled = true
+
+        let runtime = scrollRuntime
+        let callback = onPostsCrossedReadLineTowardNewer
+        DispatchQueue.main.async {
+            runtime.isTowardNewerReadPublicationScheduled = false
+            let postIDs = runtime.pendingTowardNewerReadPostIDs
+                .filter { runtime.postOrderByID[$0] != nil }
+                .sorted { lhs, rhs in
+                    let lhsOrder = runtime.postOrderByID[lhs] ?? .max
+                    let rhsOrder = runtime.postOrderByID[rhs] ?? .max
+                    return lhsOrder == rhsOrder
+                        ? lhs < rhs
+                        : lhsOrder < rhsOrder
+                }
+            runtime.pendingTowardNewerReadPostIDs.removeAll()
+            guard !postIDs.isEmpty else { return }
+            callback(postIDs)
         }
     }
 
@@ -639,6 +695,7 @@ private extension TimelineFeedView {
     }
 
     func notifyReadablePostIDs() {
+        // この集合はピル配置専用。既読境界は方向付きのreading-line通過だけで更新する。
         let readableIDs = scrollRuntime.readablePostIDs.sorted { lhs, rhs in
             let lhsOrder = scrollRuntime.postOrderByID[lhs] ?? .max
             let rhsOrder = scrollRuntime.postOrderByID[rhs] ?? .max
@@ -647,9 +704,6 @@ private extension TimelineFeedView {
         guard readableIDs != scrollRuntime.lastReadablePostIDs else { return }
         scrollRuntime.lastReadablePostIDs = readableIDs
         publishUnreadPillPlacement()
-        DispatchQueue.main.async {
-            onReadablePostIDsChanged(readableIDs)
-        }
     }
 
     func handleScrollCommand() {
@@ -1012,6 +1066,13 @@ private extension TimelineFeedView {
         scrollRuntime.measurementGenerationByPostID = scrollRuntime.measurementGenerationByPostID.filter {
             validPostIDs.contains($0.key)
         }
+        scrollRuntime.readLinePositionByPostID =
+            scrollRuntime.readLinePositionByPostID.filter {
+                validPostIDs.contains($0.key)
+            }
+        scrollRuntime.pendingTowardNewerReadPostIDs.formIntersection(
+            validPostIDs
+        )
 
         let retainedInsertionDirections = insertedPostDirections.filter { validPostIDs.contains($0.key) }
         if retainedInsertionDirections.count != insertedPostDirections.count {
@@ -1610,6 +1671,23 @@ enum TimelineFeedViewportRestorePolicy {
     }
 }
 
+enum TimelinePostReadLinePosition: Equatable {
+    case aboveOrAt
+    case below
+}
+
+enum TimelineReadLineCrossingPolicy {
+    static func advancesReadBoundary(
+        previous: TimelinePostReadLinePosition?,
+        current: TimelinePostReadLinePosition,
+        isUserScrollActive: Bool
+    ) -> Bool {
+        isUserScrollActive &&
+            previous == .aboveOrAt &&
+            current == .below
+    }
+}
+
 private final class TimelineFeedScrollRuntime {
     var currentContentOffset: CGFloat = 0
     var currentViewportAnchor: TimelineViewportAnchor?
@@ -1617,6 +1695,10 @@ private final class TimelineFeedScrollRuntime {
     var measuredLayoutCache = TimelineLayoutCache()
     var postOrderByID: [TimelinePost.ID: Int] = [:]
     var readablePostIDs = Set<TimelinePost.ID>()
+    var readLinePositionByPostID:
+        [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
+    var pendingTowardNewerReadPostIDs = Set<TimelinePost.ID>()
+    var isTowardNewerReadPublicationScheduled = false
     var unreadCountAnchorPostID: TimelinePost.ID?
     var unreadCountAnchorMinY: CGFloat?
     var lastUnreadPillPlacement = HomeUnreadPillPlacement.hidden
@@ -1670,6 +1752,7 @@ private struct TimelinePendingContentHeightAnchorCorrection {
 private struct TimelinePostGeometryState: Equatable {
     let height: CGFloat
     let isReadable: Bool
+    let readLinePosition: TimelinePostReadLinePosition
 }
 
 private struct TimelineFeedSourceChangeToken: Equatable {

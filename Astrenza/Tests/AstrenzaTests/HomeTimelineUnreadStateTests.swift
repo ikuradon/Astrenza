@@ -170,3 +170,43 @@ struct HomeUnreadPillPlacementTests {
         #expect(placement == .visible(offsetY: 0))
     }
 }
+
+@MainActor
+@Suite("Timeline read-line crossing")
+struct TimelineReadLineCrossingTests {
+    @Test("scrolling toward older posts never advances the read boundary")
+    func olderCrossingDoesNotAdvanceReadBoundary() {
+        #expect(!TimelineReadLineCrossingPolicy.advancesReadBoundary(
+            previous: .below,
+            current: .aboveOrAt,
+            isUserScrollActive: true
+        ))
+    }
+
+    @Test("scrolling toward newer posts advances the read boundary")
+    func newerCrossingAdvancesReadBoundary() {
+        #expect(TimelineReadLineCrossingPolicy.advancesReadBoundary(
+            previous: .aboveOrAt,
+            current: .below,
+            isUserScrollActive: true
+        ))
+    }
+
+    @Test("initial geometry does not advance the read boundary")
+    func initialGeometryDoesNotAdvanceReadBoundary() {
+        #expect(!TimelineReadLineCrossingPolicy.advancesReadBoundary(
+            previous: nil,
+            current: .below,
+            isUserScrollActive: true
+        ))
+    }
+
+    @Test("programmatic layout movement does not advance the read boundary")
+    func programmaticMovementDoesNotAdvanceReadBoundary() {
+        #expect(!TimelineReadLineCrossingPolicy.advancesReadBoundary(
+            previous: .aboveOrAt,
+            current: .below,
+            isUserScrollActive: false
+        ))
+    }
+}

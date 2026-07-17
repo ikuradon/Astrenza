@@ -29,7 +29,7 @@ struct HomeTimelineFeedContentView: View {
     let onScrollActivityChanged: (Bool) -> Void
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
-    let onReadablePostIDsChanged: ([TimelinePost.ID]) -> Void
+    let onPostsCrossedReadLineTowardNewer: ([TimelinePost.ID]) -> Void
     let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
 
@@ -62,7 +62,8 @@ struct HomeTimelineFeedContentView: View {
             onScrollActivityChanged: onScrollActivityChanged,
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
-            onReadablePostIDsChanged: onReadablePostIDsChanged,
+            onPostsCrossedReadLineTowardNewer:
+                onPostsCrossedReadLineTowardNewer,
             unreadCountAnchorPostID: unreadCountAnchorPostID,
             onUnreadPillPlacementChanged: onUnreadPillPlacementChanged,
             onLayoutCacheChanged: onLayoutCacheChanged

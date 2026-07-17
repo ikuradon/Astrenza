@@ -241,7 +241,8 @@ private extension HomeTimelineView {
                 onScrollActivityChanged: handleTimelineScrollActivityChanged,
                 onViewportRestoreCompleted: handleTimelineViewportRestoreCompleted,
                 onViewportStateChanged: saveTimelineViewportState,
-                onReadablePostIDsChanged: handleReadablePostIDsChanged,
+                onPostsCrossedReadLineTowardNewer:
+                    handlePostsCrossedReadLineTowardNewer,
                 onUnreadPillPlacementChanged: handleUnreadPillPlacementChanged,
                 onLayoutCacheChanged: saveTimelineLayoutCache
             )
@@ -320,9 +321,11 @@ private extension HomeTimelineView {
         )
     }
 
-    func handleReadablePostIDsChanged(_ ids: [TimelinePost.ID]) {
+    func handlePostsCrossedReadLineTowardNewer(
+        _ postIDs: [TimelinePost.ID]
+    ) {
         feedActions.markMaterializedPostsRead(
-            visiblePostIDs: ids,
+            visiblePostIDs: postIDs,
             context: timelineInteractionContext
         )
     }
