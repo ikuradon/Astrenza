@@ -132,7 +132,7 @@ final class OlderPageFixture {
             updatedAt: 100
         )
         let probe = OlderPageProbe(
-            runtimeOutcome: runtimeOutcome ?? .installed(definition),
+            runtimeOutcome: runtimeOutcome ?? .completed(definition),
             remoteOutcome: remoteOutcome,
             remoteInput: hasRemoteInput ? remoteInput : nil
         )

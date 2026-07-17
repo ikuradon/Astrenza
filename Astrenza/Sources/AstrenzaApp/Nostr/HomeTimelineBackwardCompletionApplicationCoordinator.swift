@@ -63,7 +63,7 @@ final class HomeTimelineBackwardCompletionApplicationCoordinator {
         _ completion: NostrBackwardREQCompletion,
         accountID: String?
     ) -> [HomeTimelineBackwardCompletionCommand] {
-        guard let request = backwardRequestRegistry.remove(groupID: completion.groupID) else {
+        guard let request = backwardRequestRegistry.complete(completion) else {
             return dependencyCoordinator.completeSourceRequest(completion)
                 ? [.incrementRelayStatusRevision]
                 : []

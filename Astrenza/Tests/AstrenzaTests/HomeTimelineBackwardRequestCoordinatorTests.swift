@@ -11,13 +11,17 @@ struct BackwardRequestCoordinatorTests {
         let installer = BackwardRequestPacketInstallerSpy()
         let system = try BackwardRequestTestSystem(installer: installer)
 
-        let outcome = await system.application.requestOlder(account: system.account)
-
-        #expect(outcome == .installed(system.activeDefinition))
-        let installation = try #require(installer.installations.first)
-        let packet = try #require(installation.packets.first)
-        let filter = try #require(packet.filters.first)
+        let task = Task {
+            await system.application.requestOlder(account: system.account)
+        }
+        let packet = try await installedPacket(from: installer)
         let request = try #require(system.registry.request(for: packet.groupID))
+        system.registry.complete(completion(groupID: packet.groupID))
+        let outcome = await task.value
+
+        #expect(outcome == .completed(system.activeDefinition))
+        let installation = try #require(installer.installations.first)
+        let filter = try #require(packet.filters.first)
         #expect(installer.installations.count == 1)
         #expect(installation.mergeField == .authors)
         #expect(packet.strategy == .backward)
@@ -36,17 +40,21 @@ struct BackwardRequestCoordinatorTests {
         let installer = BackwardRequestPacketInstallerSpy()
         let system = try BackwardRequestTestSystem(installer: installer)
 
-        let outcome = await system.application.requestGap(
-            account: system.account,
-            gap: system.gap,
-            direction: .newer
-        )
-
-        #expect(outcome == .installed(system.activeDefinition))
-        let installation = try #require(installer.installations.first)
-        let packet = try #require(installation.packets.first)
-        let filter = try #require(packet.filters.first)
+        let task = Task {
+            await system.application.requestGap(
+                account: system.account,
+                gap: system.gap,
+                direction: .newer
+            )
+        }
+        let packet = try await installedPacket(from: installer)
         let request = try #require(system.registry.request(for: packet.groupID))
+        system.registry.complete(completion(groupID: packet.groupID))
+        let outcome = await task.value
+
+        #expect(outcome == .completed(system.activeDefinition))
+        let installation = try #require(installer.installations.first)
+        let filter = try #require(packet.filters.first)
         #expect(installation.mergeField == .authors)
         #expect(filter["since"] == .int(system.olderEvent.createdAt + 1))
         #expect(filter["until"] == .int(system.newerEvent.createdAt - 1))
@@ -58,6 +66,52 @@ struct BackwardRequestCoordinatorTests {
             direction: .newer
         ))
         #expect(!request.isOlderPage)
+    }
+
+    @Test("An active older page request rejects duplicate installation")
+    @MainActor
+    func rejectsDuplicateOlderPageRequest() async throws {
+        let installer = BackwardRequestPacketInstallerSpy()
+        let system = try BackwardRequestTestSystem(installer: installer)
+        let first = Task {
+            await system.application.requestOlder(account: system.account)
+        }
+        let packet = try await installedPacket(from: installer)
+
+        let duplicate = await system.application.requestOlder(account: system.account)
+
+        #expect(duplicate == .unavailable)
+        #expect(installer.installations.count == 1)
+        system.registry.complete(completion(groupID: packet.groupID))
+        let firstOutcome = await first.value
+        #expect(firstOutcome == .completed(system.activeDefinition))
+    }
+
+    @Test("An active gap request rejects the same boundary pair")
+    @MainActor
+    func rejectsDuplicateGapRequest() async throws {
+        let installer = BackwardRequestPacketInstallerSpy()
+        let system = try BackwardRequestTestSystem(installer: installer)
+        let first = Task {
+            await system.application.requestGap(
+                account: system.account,
+                gap: system.gap,
+                direction: .older
+            )
+        }
+        let packet = try await installedPacket(from: installer)
+
+        let duplicate = await system.application.requestGap(
+            account: system.account,
+            gap: system.gap,
+            direction: .newer
+        )
+
+        #expect(duplicate == .unavailable)
+        #expect(installer.installations.count == 1)
+        system.registry.complete(completion(groupID: packet.groupID))
+        let firstOutcome = await first.value
+        #expect(firstOutcome == .completed(system.activeDefinition))
     }
 
     @Test("An unavailable installer performs no projection or registry work")
@@ -165,6 +219,28 @@ struct BackwardRequestCoordinatorTests {
         #expect(outcome == .unavailable)
         #expect(installer.installations.count == 1)
         #expect(system.registry.requestCount == 0)
+    }
+
+    @MainActor
+    private func installedPacket(
+        from installer: BackwardRequestPacketInstallerSpy
+    ) async throws -> NostrREQPacket {
+        for _ in 0..<20 where installer.installations.isEmpty {
+            await Task.yield()
+        }
+        return try #require(installer.installations.first?.packets.first)
+    }
+
+    private func completion(groupID: String) -> NostrBackwardREQCompletion {
+        NostrBackwardREQCompletion(
+            groupID: groupID,
+            relayURLs: ["wss://relay.example"],
+            subscriptionIDs: ["\(groupID)-relay"],
+            eventCount: 0,
+            eoseCount: 1,
+            closedCount: 0,
+            timeoutCount: 0
+        )
     }
 }
 

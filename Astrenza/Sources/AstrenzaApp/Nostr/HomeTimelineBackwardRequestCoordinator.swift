@@ -8,7 +8,7 @@ struct HomeTimelineBackwardRequestDiagnostic: Equatable, Sendable {
 
 enum HomeTimelineBackwardRequestOutcome: Equatable, Sendable {
     case unavailable
-    case installed(NostrFeedDefinitionRecord)
+    case completed(NostrFeedDefinitionRecord)
     case failed(HomeTimelineBackwardRequestDiagnostic)
 }
 
@@ -46,7 +46,9 @@ final class HomeTimelineBackwardRequestCoordinator {
         account: NostrAccount,
         policy: NostrSyncPolicy = .default()
     ) async -> HomeTimelineBackwardRequestOutcome {
-        guard packetInstaller != nil else { return .unavailable }
+        guard packetInstaller != nil,
+              !backwardRequestRegistry.hasOlderPageRequest
+        else { return .unavailable }
         let definitionContent = contentCoordinator.snapshot
         guard let feed = await currentFeed(
             account: account,
@@ -90,7 +92,12 @@ final class HomeTimelineBackwardRequestCoordinator {
         direction: TimelineGapFillDirection,
         policy: NostrSyncPolicy = .default()
     ) async -> HomeTimelineBackwardRequestOutcome {
-        guard packetInstaller != nil else { return .unavailable }
+        guard packetInstaller != nil,
+              !backwardRequestRegistry.containsGap(
+                newerEventID: gap.newerPostID,
+                olderEventID: gap.olderPostID
+              )
+        else { return .unavailable }
         let definitionContent = contentCoordinator.snapshot
         guard let feed = await currentFeed(
             account: account,
@@ -185,7 +192,16 @@ final class HomeTimelineBackwardRequestCoordinator {
             backwardRequestRegistry.remove(groupID: packet.groupID)
             return .unavailable
         }
-        return .installed(feed.definition)
+        guard await backwardRequestRegistry.waitForCompletion(
+            groupID: packet.groupID
+        ) != nil,
+              !Task.isCancelled,
+              projectionController.isCurrent(
+                feed.context,
+                accountID: feed.definition.accountID
+              )
+        else { return .unavailable }
+        return .completed(feed.definition)
     }
 
     private func timelineEvent(

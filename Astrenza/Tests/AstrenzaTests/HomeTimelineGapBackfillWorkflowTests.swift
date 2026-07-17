@@ -181,7 +181,7 @@ private struct GapBackfillFixture {
             updatedAt: 100
         )
         probe = GapBackfillProbe(
-            outcome: outcome ?? .installed(definition),
+            outcome: outcome ?? .completed(definition),
             markError: markError
         )
         workflow = HomeTimelineGapBackfillWorkflow(

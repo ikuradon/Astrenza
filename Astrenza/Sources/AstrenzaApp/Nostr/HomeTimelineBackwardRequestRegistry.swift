@@ -1,3 +1,5 @@
+import AstrenzaCore
+
 struct HomeTimelineBackwardRequestState: Equatable, Sendable {
     let requestCount: Int
     let hasOlderPageRequest: Bool
@@ -15,6 +17,10 @@ struct HomeTimelineBackwardRequestState: Equatable, Sendable {
 @MainActor
 final class HomeTimelineBackwardRequestRegistry {
     private var requestsByGroupID: [String: PendingBackwardRequest] = [:]
+    private var completionsByGroupID: [String: NostrBackwardREQCompletion] = [:]
+    private var completionWaiters: [
+        String: CheckedContinuation<NostrBackwardREQCompletion?, Never>
+    ] = [:]
     private var activeGapReconciliationIDs = Set<String>()
 
     var requestCount: Int {
@@ -49,6 +55,12 @@ final class HomeTimelineBackwardRequestRegistry {
 
     func reset() {
         requestsByGroupID.removeAll()
+        completionsByGroupID.removeAll()
+        let waiters = completionWaiters.values
+        completionWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: nil)
+        }
         activeGapReconciliationIDs.removeAll()
     }
 
@@ -85,6 +97,13 @@ final class HomeTimelineBackwardRequestRegistry {
         requestsByGroupID[key]
     }
 
+    func containsGap(newerEventID: String, olderEventID: String) -> Bool {
+        requestsByGroupID.values.contains { request in
+            request.gap?.newerPostID == newerEventID &&
+                request.gap?.olderPostID == olderEventID
+        }
+    }
+
     func key(for subscriptionID: String) -> String? {
         if let exactOrPrefixed = requestsByGroupID.first(where: { entry in
             subscriptionID == entry.key || subscriptionID.hasPrefix(entry.key + "-")
@@ -102,7 +121,42 @@ final class HomeTimelineBackwardRequestRegistry {
 
     @discardableResult
     func remove(groupID: String) -> PendingBackwardRequest? {
-        requestsByGroupID.removeValue(forKey: groupID)
+        completionsByGroupID.removeValue(forKey: groupID)
+        completionWaiters.removeValue(forKey: groupID)?.resume(returning: nil)
+        return requestsByGroupID.removeValue(forKey: groupID)
+    }
+
+    @discardableResult
+    func complete(
+        _ completion: NostrBackwardREQCompletion
+    ) -> PendingBackwardRequest? {
+        guard let request = requestsByGroupID.removeValue(
+            forKey: completion.groupID
+        ) else { return nil }
+        if let waiter = completionWaiters.removeValue(
+            forKey: completion.groupID
+        ) {
+            waiter.resume(returning: completion)
+        } else {
+            completionsByGroupID[completion.groupID] = completion
+        }
+        return request
+    }
+
+    func waitForCompletion(
+        groupID: String
+    ) async -> NostrBackwardREQCompletion? {
+        if let completion = completionsByGroupID.removeValue(forKey: groupID) {
+            return completion
+        }
+        guard requestsByGroupID[groupID] != nil else { return nil }
+        return await withCheckedContinuation { continuation in
+            precondition(
+                completionWaiters[groupID] == nil,
+                "A backward request may only have one completion waiter"
+            )
+            completionWaiters[groupID] = continuation
+        }
     }
 
     func appendSourceRequestID(_ requestID: String, for key: String) {

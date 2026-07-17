@@ -99,6 +99,78 @@ struct HomeTimelineBackwardRequestRegistryTests {
         #expect(registry.requestState == .idle)
     }
 
+    @Test("Completion resumes a terminal waiter and preserves early completion")
+    @MainActor
+    func deliversTerminalCompletion() async throws {
+        let registry = HomeTimelineBackwardRequestRegistry()
+        let context = try feedContext()
+        registry.registerOlderPage(
+            groupID: "waiting",
+            context: context,
+            anchorEventID: "anchor"
+        )
+        let waiter = Task {
+            await registry.waitForCompletion(groupID: "waiting")
+        }
+        await Task.yield()
+        let waitingCompletion = completion(groupID: "waiting")
+
+        let request = registry.complete(waitingCompletion)
+        let received = await waiter.value
+
+        #expect(request?.isOlderPage == true)
+        #expect(received == waitingCompletion)
+
+        registry.registerGap(
+            groupID: "early",
+            context: context,
+            newerEventID: "newer",
+            olderEventID: "older",
+            direction: .newer
+        )
+        let earlyCompletion = completion(groupID: "early", timeoutCount: 1)
+        registry.complete(earlyCompletion)
+        let receivedEarly = await registry.waitForCompletion(groupID: "early")
+
+        #expect(receivedEarly == earlyCompletion)
+    }
+
+    @Test("Reset releases a terminal waiter without a false completion")
+    @MainActor
+    func resetReleasesWaiter() async throws {
+        let registry = HomeTimelineBackwardRequestRegistry()
+        registry.registerOlderPage(
+            groupID: "waiting",
+            context: try feedContext(),
+            anchorEventID: nil
+        )
+        let waiter = Task {
+            await registry.waitForCompletion(groupID: "waiting")
+        }
+        await Task.yield()
+
+        registry.reset()
+        let received = await waiter.value
+
+        #expect(received == nil)
+        #expect(registry.requestState == .idle)
+    }
+
+    private func completion(
+        groupID: String,
+        timeoutCount: Int = 0
+    ) -> NostrBackwardREQCompletion {
+        NostrBackwardREQCompletion(
+            groupID: groupID,
+            relayURLs: ["wss://relay.example"],
+            subscriptionIDs: ["\(groupID)-relay"],
+            eventCount: 0,
+            eoseCount: timeoutCount == 0 ? 1 : 0,
+            closedCount: 0,
+            timeoutCount: timeoutCount
+        )
+    }
+
     private func feedContext() throws -> HomeFeedRuntimeContext {
         let specification = try JSONEncoder().encode(
             HomeFeedSpecification(authors: [String(repeating: "a", count: 64)], kinds: [1, 6])

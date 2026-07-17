@@ -97,7 +97,7 @@ final class HomeTimelineGapBackfillWorkflow {
         case .failed(let diagnostic):
             effects.recordDiagnostic(diagnostic)
             return false
-        case .installed(let definition):
+        case .completed(let definition):
             try? persistence.markGapRequested(
                 newerEventID: request.gap.newerPostID,
                 olderEventID: request.gap.olderPostID,
