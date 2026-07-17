@@ -4312,6 +4312,82 @@ struct NostrCorePackageTests {
         #expect(await connection.sentFrames().count == 1)
     }
 
+    @Test("Relay runtime bounds initial forward EOSE wait without closing the live subscription")
+    func relayRuntimeBoundsInitialForwardEOSEWaitWithoutClosingSubscription() async throws {
+        let event = try signedEvent(
+            kind: 1,
+            createdAt: 200,
+            tags: [],
+            content: "arrived after initial timeout"
+        )
+        let connection = FakeRelayRuntimeConnection()
+        let transport = FakeRelayRuntimeTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            autoReceive: false,
+            heartbeatPolicy: .disabled,
+            forwardPolicy: NostrRelayRuntimeForwardPolicy(
+                initialEOSETimeoutMilliseconds: 20
+            ),
+            backwardPolicy: .disabled
+        )
+        let collector = RelayRuntimePacketCollector()
+        let collectTask = Task {
+            for await packet in await runtime.events() {
+                await collector.append(packet)
+            }
+        }
+        defer { collectTask.cancel() }
+        let packet = NostrREQPacket.forward(
+            subscriptionID: "home-forward",
+            filters: [["kinds": .ints([1]), "authors": .strings([event.pubkey])]]
+        )
+
+        try await runtime.setDefaultRelays(["wss://relay.example"])
+        try await runtime.installForward(packet)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        var packets = await collector.packets()
+        #expect(packets.filter { packet in
+            if case .timeout(
+                "wss://relay.example",
+                "home-forward",
+                "forward initial EOSE timeout"
+            ) = packet {
+                return true
+            }
+            return false
+        }.count == 1)
+        #expect(await connection.sentFrames().count == 1)
+        #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://relay.example") == [
+            "home-forward"
+        ])
+
+        await connection.appendInboundFrames([
+            try relayRuntimeEventFrame(subscriptionID: packet.subscriptionID, event: event),
+            #"["EOSE","home-forward"]"#
+        ])
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await runtime.receiveNext(relayURL: "wss://relay.example")
+        try await Task.sleep(nanoseconds: 40_000_000)
+
+        packets = await collector.packets()
+        #expect(packets.contains(.event(
+            relayURL: "wss://relay.example",
+            subscriptionID: "home-forward",
+            event: event
+        )))
+        #expect(packets.contains(.eose(
+            relayURL: "wss://relay.example",
+            subscriptionID: "home-forward"
+        )))
+        #expect(await runtime.activeSubscriptionIDs(relayURL: "wss://relay.example") == [
+            "home-forward"
+        ])
+        #expect(await connection.sentFrames().count == 1)
+        await runtime.terminate()
+    }
+
     @Test("Relay session ignores signed events that do not match subscription filters")
     func relaySessionIgnoresFilterMismatchedEvents() async throws {
         let signer = try NostrPrivateKeySigner(privateKeyHex: String(repeating: "41", count: 32))

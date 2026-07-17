@@ -15,6 +15,7 @@ public actor NostrRelayRuntime {
     private let retryJitterSource: RetryJitterSource
     private let reconnectOverlapSeconds: Int
     private let heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy
+    private let forwardPolicy: NostrRelayRuntimeForwardPolicy
     private let backwardPolicy: NostrRelayRuntimeBackwardPolicy
     private let relayInformationFetcher: (any NostrRelayInformationFetching)?
     private let workScheduler: NostrRelayWorkScheduler
@@ -29,6 +30,7 @@ public actor NostrRelayRuntime {
     private var forwardClosedRetryAttempts: [String: Int] = [:]
     private var forwardWorkTickets: [String: NostrRelayWorkTicket] = [:]
     private var forwardActivationTasks: [String: Task<Void, Never>] = [:]
+    private var forwardInitialEOSETimeoutTasks: [String: Task<Void, Never>] = [:]
     private var backwardTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var backwardProgressBySubscriptionKey: [String: BackwardSubscriptionProgress] = [:]
     private var backwardSubscriptionKeysByGroupID: [String: Set<String>] = [:]
@@ -53,6 +55,7 @@ public actor NostrRelayRuntime {
         },
         reconnectOverlapSeconds: Int = 10,
         heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy = NostrRelayRuntimeHeartbeatPolicy(),
+        forwardPolicy: NostrRelayRuntimeForwardPolicy = NostrRelayRuntimeForwardPolicy(),
         backwardPolicy: NostrRelayRuntimeBackwardPolicy = NostrRelayRuntimeBackwardPolicy(),
         relayInformationFetcher: (any NostrRelayInformationFetching)? = nil,
         workSchedulerPolicy: NostrRelayWorkSchedulerPolicy = NostrRelayWorkSchedulerPolicy()
@@ -64,6 +67,7 @@ public actor NostrRelayRuntime {
         self.retryJitterSource = retryJitterSource
         self.reconnectOverlapSeconds = max(0, reconnectOverlapSeconds)
         self.heartbeatPolicy = heartbeatPolicy
+        self.forwardPolicy = forwardPolicy
         self.backwardPolicy = backwardPolicy
         self.relayInformationFetcher = relayInformationFetcher
         workScheduler = NostrRelayWorkScheduler(policy: workSchedulerPolicy)
@@ -245,6 +249,7 @@ public actor NostrRelayRuntime {
             heartbeatLoopTasks[relayURL] = nil
             heartbeatMissCounts[relayURL] = nil
             cancelForwardClosedRetries(relayURL: relayURL)
+            cancelForwardInitialEOSETimeouts(relayURL: relayURL)
 
             let forwardSubscriptionIDs = activeForwardPackets.values
                 .filter { $0.relayURLs.isEmpty || canonicalRelayURLs($0.relayURLs).contains(relayURL) }
@@ -348,6 +353,14 @@ public actor NostrRelayRuntime {
         replacing shouldReplace: (NostrREQPacket) -> Bool
     ) async throws {
         let previousPackets = activeForwardPackets.values.filter(shouldReplace)
+        for packet in previousPackets {
+            for relayURL in forwardRelayURLs(for: packet) {
+                cancelForwardInitialEOSETimeout(
+                    relayURL: relayURL,
+                    subscriptionID: packet.subscriptionID
+                )
+            }
+        }
         forwardReconnectTracker.reset(subscriptionIDs: Set(
             previousPackets.map(\.subscriptionID)
         ))
@@ -623,6 +636,9 @@ public actor NostrRelayRuntime {
         for task in forwardActivationTasks.values {
             task.cancel()
         }
+        for task in forwardInitialEOSETimeoutTasks.values {
+            task.cancel()
+        }
         for task in relayInformationTasks.values {
             task.cancel()
         }
@@ -637,6 +653,7 @@ public actor NostrRelayRuntime {
         forwardClosedRetryAttempts = [:]
         forwardWorkTickets = [:]
         forwardActivationTasks = [:]
+        forwardInitialEOSETimeoutTasks = [:]
         relayInformationTasks = [:]
         backwardTimeoutTasks = [:]
         backwardProgressBySubscriptionKey = [:]
@@ -692,6 +709,10 @@ public actor NostrRelayRuntime {
             }
         case .eose(let relayURL, let subscriptionID):
             if activeForwardPackets[subscriptionID] != nil {
+                cancelForwardInitialEOSETimeout(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
                 forwardReconnectTracker.reachedEOSE(
                     relayURL: relayURL,
                     subscriptionID: subscriptionID
@@ -717,6 +738,10 @@ public actor NostrRelayRuntime {
             cancelBackwardTimeout(relayURL: relayURL, subscriptionID: subscriptionID)
             await completeBackwardSubscription(relayURL: relayURL, subscriptionID: subscriptionID, terminal: .closed)
             if !wasBackwardSubscription {
+                cancelForwardInitialEOSETimeout(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
                 await releaseForwardWorkTicket(
                     relayURL: relayURL,
                     subscriptionID: subscriptionID
@@ -726,6 +751,12 @@ public actor NostrRelayRuntime {
                 }
             }
         case .timeout(let relayURL, let subscriptionID, _):
+            if activeForwardPackets[subscriptionID] != nil {
+                cancelForwardInitialEOSETimeout(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
+            }
             failPendingFetch(
                 relayURL: relayURL,
                 subscriptionID: subscriptionID,
@@ -738,8 +769,17 @@ public actor NostrRelayRuntime {
                 relayURL: relayURL,
                 error: NostrRelayClientError.authRequired(challenge: challenge)
             )
-        case .stateChanged, .traffic, .requestStarted, .requestInstalled, .requestEnded,
-             .notice, .backwardCompleted:
+        case .requestInstalled(_, let relayURL, let subscriptionID, _):
+            if let forwardPacket = activeForwardPackets[subscriptionID],
+               forwardPacket.relayURLs.isEmpty ||
+                canonicalRelayURLs(forwardPacket.relayURLs).contains(relayURL) {
+                scheduleForwardInitialEOSETimeout(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
+            }
+        case .stateChanged, .traffic, .requestStarted, .requestEnded, .notice,
+             .backwardCompleted:
             break
         }
 
@@ -934,6 +974,70 @@ public actor NostrRelayRuntime {
 
     private func forwardClosedRetryKey(relayURL: String, subscriptionID: String) -> String {
         relayURL + "\n" + subscriptionID
+    }
+
+    private func scheduleForwardInitialEOSETimeout(
+        relayURL: String,
+        subscriptionID: String
+    ) {
+        guard forwardPolicy.isEnabled else { return }
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+        forwardInitialEOSETimeoutTasks[key]?.cancel()
+        let timeoutNanoseconds = forwardPolicy.initialEOSETimeoutNanoseconds
+        forwardInitialEOSETimeoutTasks[key] = Task {
+            do {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self.reportForwardInitialEOSETimeout(
+                relayURL: relayURL,
+                subscriptionID: subscriptionID
+            )
+        }
+    }
+
+    private func reportForwardInitialEOSETimeout(
+        relayURL: String,
+        subscriptionID: String
+    ) {
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+        forwardInitialEOSETimeoutTasks[key] = nil
+        guard let packet = activeForwardPackets[subscriptionID],
+              packet.relayURLs.isEmpty || canonicalRelayURLs(packet.relayURLs).contains(relayURL),
+              sessions[relayURL] != nil
+        else { return }
+        emit(.timeout(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID,
+            message: "forward initial EOSE timeout"
+        ))
+    }
+
+    private func cancelForwardInitialEOSETimeout(
+        relayURL: String,
+        subscriptionID: String
+    ) {
+        let key = forwardClosedRetryKey(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        )
+        forwardInitialEOSETimeoutTasks.removeValue(forKey: key)?.cancel()
+    }
+
+    private func cancelForwardInitialEOSETimeouts(relayURL: String) {
+        let prefix = relayURL + "\n"
+        let keys = forwardInitialEOSETimeoutTasks.keys.filter { $0.hasPrefix(prefix) }
+        for key in keys {
+            forwardInitialEOSETimeoutTasks.removeValue(forKey: key)?.cancel()
+        }
     }
 
     private func scheduleBackwardIdleTimeout(relayURL: String, subscriptionID: String) {
@@ -1585,6 +1689,7 @@ public actor NostrRelayRuntime {
         heartbeatMissCounts[relayURL] = nil
         forwardReconnectTracker.removeRelay(relayURL)
         cancelForwardClosedRetries(relayURL: relayURL)
+        cancelForwardInitialEOSETimeouts(relayURL: relayURL)
         await releaseForwardWorkTickets(relayURL: relayURL)
         cancelBackwardTimeouts(relayURL: relayURL)
         let sessionPumpTask = sessionPumpTasks.removeValue(forKey: relayURL)

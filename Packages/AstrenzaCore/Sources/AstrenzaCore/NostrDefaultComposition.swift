@@ -29,6 +29,7 @@ public extension NostrRelayRuntime {
         },
         reconnectOverlapSeconds: Int = 10,
         heartbeatPolicy: NostrRelayRuntimeHeartbeatPolicy = NostrRelayRuntimeHeartbeatPolicy(),
+        forwardPolicy: NostrRelayRuntimeForwardPolicy = NostrRelayRuntimeForwardPolicy(),
         backwardPolicy: NostrRelayRuntimeBackwardPolicy = NostrRelayRuntimeBackwardPolicy(),
         relayInformationFetcher: (any NostrRelayInformationFetching)? = nil,
         workSchedulerPolicy: NostrRelayWorkSchedulerPolicy = NostrRelayWorkSchedulerPolicy()
@@ -41,6 +42,7 @@ public extension NostrRelayRuntime {
             retryJitterSource: retryJitterSource,
             reconnectOverlapSeconds: reconnectOverlapSeconds,
             heartbeatPolicy: heartbeatPolicy,
+            forwardPolicy: forwardPolicy,
             backwardPolicy: backwardPolicy,
             relayInformationFetcher: relayInformationFetcher,
             workSchedulerPolicy: workSchedulerPolicy

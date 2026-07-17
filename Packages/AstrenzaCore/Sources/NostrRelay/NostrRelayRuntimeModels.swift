@@ -205,6 +205,26 @@ public struct NostrRelayRuntimeHeartbeatPolicy: Equatable, Sendable {
     }
 }
 
+public struct NostrRelayRuntimeForwardPolicy: Equatable, Sendable {
+    public let initialEOSETimeoutMilliseconds: Int
+
+    public init(initialEOSETimeoutMilliseconds: Int = 12_000) {
+        self.initialEOSETimeoutMilliseconds = max(0, initialEOSETimeoutMilliseconds)
+    }
+
+    public static let disabled = NostrRelayRuntimeForwardPolicy(
+        initialEOSETimeoutMilliseconds: 0
+    )
+
+    public var isEnabled: Bool {
+        initialEOSETimeoutMilliseconds > 0
+    }
+
+    public var initialEOSETimeoutNanoseconds: UInt64 {
+        UInt64(initialEOSETimeoutMilliseconds) * 1_000_000
+    }
+}
+
 public struct NostrRelayRuntimeBackwardPolicy: Equatable, Sendable {
     public let idleTimeoutMilliseconds: Int
 
