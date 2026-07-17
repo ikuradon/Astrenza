@@ -11,6 +11,7 @@ protocol HomeLoadApplicationEffectTarget: AnyObject {
     func replaceTimelineState(_ state: NostrHomeTimelineState)
     func replaceRuntimeBootstrapState(_ state: NostrHomeTimelineState)
     func replaceFollowedPubkeys(_ pubkeys: [String])
+    func applyRestoreProjectionAnchorIfPossible(account: NostrAccount)
     func materializeEntries(
         allowsRealtimeFollow: Bool,
         onTransition: HomeTimelineMaterializationCoordinating
@@ -40,6 +41,8 @@ enum HomeLoadApplicationEffectsFactory {
             replaceRuntimeBootstrapState:
                 bindings.replaceRuntimeBootstrapState,
             replaceFollowedPubkeys: bindings.replaceFollowedPubkeys,
+            applyRestoreProjectionAnchor:
+                bindings.applyRestoreProjectionAnchor,
             materializeEntries: bindings.materializeEntries,
             setPhase: bindings.setPhase,
             configureRuntime: bindings.configureRuntime,
@@ -108,6 +111,13 @@ private struct Bindings {
                 allowsRealtimeFollow: false,
                 onTransition: nil
             )
+        }
+    }
+
+    var applyRestoreProjectionAnchor:
+        HomeTimelineLoadApplicationEffects.Account {
+        { [weak target] account in
+            target?.applyRestoreProjectionAnchorIfPossible(account: account)
         }
     }
 

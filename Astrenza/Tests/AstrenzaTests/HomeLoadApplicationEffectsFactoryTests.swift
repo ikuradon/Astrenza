@@ -51,6 +51,7 @@ private func applyLoadEffects(
     effects.replaceTimelineState(fixture.timelineState)
     effects.replaceRuntimeBootstrapState(fixture.timelineState)
     effects.replaceFollowedPubkeys(fixture.followedPubkeys)
+    effects.applyRestoreProjectionAnchor(fixture.account)
     effects.materializeEntries()
     effects.setPhase(.loaded)
 }
@@ -76,6 +77,7 @@ private func expectedLoadEvents(
         .replaceTimelineState(fixture.timelineState),
         .replaceRuntimeBootstrapState(fixture.timelineState),
         .replaceFollowedPubkeys(fixture.followedPubkeys),
+        .applyRestoreProjectionAnchor(fixture.account.pubkey),
         .materializeEntries,
         .setPhase(.loaded),
         .configureRuntime(fixture.account.pubkey),
@@ -144,6 +146,7 @@ private final class LoadEffectTargetSpy: HomeLoadApplicationEffectTarget {
         case replaceTimelineState(NostrHomeTimelineState)
         case replaceRuntimeBootstrapState(NostrHomeTimelineState)
         case replaceFollowedPubkeys([String])
+        case applyRestoreProjectionAnchor(String)
         case materializeEntries
         case setPhase(NostrHomeTimelinePhase)
         case setRealtime(Bool)
@@ -186,6 +189,10 @@ private final class LoadEffectTargetSpy: HomeLoadApplicationEffectTarget {
 
     func replaceFollowedPubkeys(_ pubkeys: [String]) {
         events.append(.replaceFollowedPubkeys(pubkeys))
+    }
+
+    func applyRestoreProjectionAnchorIfPossible(account: NostrAccount) {
+        events.append(.applyRestoreProjectionAnchor(account.pubkey))
     }
 
     func materializeEntries(

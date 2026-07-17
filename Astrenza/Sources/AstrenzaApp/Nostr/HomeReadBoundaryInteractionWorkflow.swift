@@ -3,10 +3,10 @@ import Foundation
 
 @MainActor
 protocol HomeTimelineReadStateCoordinating: AnyObject {
-    func restoredReadBoundaryPostID(
+    func restoredReadBoundary(
         feedID: String,
         positions: [HomeTimelineReadPosition]
-    ) async -> String?
+    ) async -> HomeTimelineReadBoundaryRestoreOutcome
 
     @discardableResult
     func scheduleReadBoundarySave(
@@ -36,14 +36,14 @@ final class HomeReadBoundaryInteractionWorkflow {
         self.timestamp = timestamp
     }
 
-    func restoredReadBoundaryPostID(
+    func restoredReadBoundary(
         accountID: String,
         positions: [HomeTimelineReadPosition]
-    ) async -> String? {
+    ) async -> HomeTimelineReadBoundaryRestoreOutcome {
         guard let feedID = feedIdentity.feedID(accountID: accountID) else {
-            return nil
+            return .missing
         }
-        return await readState.restoredReadBoundaryPostID(
+        return await readState.restoredReadBoundary(
             feedID: feedID,
             positions: positions
         )

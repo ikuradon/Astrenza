@@ -157,6 +157,7 @@ private final class LoadContextFactoryProbe {
             replaceFollowedPubkeys: { [self] pubkeys in
                 applicationEvents.append(.replaceFollowedPubkeys(pubkeys))
             },
+            applyRestoreProjectionAnchor: { _ in },
             materializeEntries: { [self] in
                 applicationEvents.append(.materializeEntries)
             },

@@ -138,7 +138,6 @@ struct HomeTimelineView: View {
                 collapseProgress: topChromeCollapseProgress,
                 unreadPillPlacement: unreadPillPlacement,
                 onDismissFloatingMenus: dismissFloatingMenus,
-                onDismissUnreadBadge: dismissUnreadBadge,
                 onRelayStatusTap: presentRelayStatus,
                 onSettingsTap: presentSettings,
                 onSelectAccount: selectAccountFromSwitcher,
@@ -244,8 +243,6 @@ private extension HomeTimelineView {
                 onViewportStateChanged: saveTimelineViewportState,
                 onPostsCrossedReadLineTowardNewer:
                     handlePostsCrossedReadLineTowardNewer,
-                unreadPillPlacement: unreadPillPlacement,
-                onUnreadPillTap: dismissUnreadBadge,
                 onUnreadPillPlacementChanged: handleUnreadPillPlacementChanged,
                 onLayoutCacheChanged: saveTimelineLayoutCache
             )
@@ -337,11 +334,6 @@ private extension HomeTimelineView {
         _ placement: HomeUnreadPillPlacement
     ) {
         unreadPillPlacement = placement
-    }
-
-    func dismissUnreadBadge() {
-        liveTimelineStore.dismissUnreadBadge()
-        dismissFloatingMenus()
     }
 
     func handleTimelineViewportRestoreCompleted(_ restoredOffset: CGFloat) {

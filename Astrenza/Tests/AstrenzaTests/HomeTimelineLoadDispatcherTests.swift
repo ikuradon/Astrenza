@@ -16,6 +16,7 @@ struct HomeTimelineLoadDispatcherTests {
             .replaceTimelineState(fixture.timelineState),
             .replaceRuntimeBootstrapState(fixture.timelineState),
             .replaceFollowedPubkeys(fixture.followedPubkeys),
+            .applyRestoreProjectionAnchor(fixture.account),
             .materializeEntries,
             .setPhase(.loaded)
         ]
@@ -32,6 +33,7 @@ struct HomeTimelineLoadDispatcherTests {
             .replaceTimelineState(fixture.timelineState),
             .replaceRuntimeBootstrapState(fixture.timelineState),
             .replaceFollowedPubkeys(fixture.followedPubkeys),
+            .applyRestoreProjectionAnchor(fixture.account.pubkey),
             .materializeEntries,
             .setPhase(.loaded)
         ])
@@ -67,6 +69,7 @@ private final class LoadApplicationDispatchProbe {
         case replaceTimelineState(NostrHomeTimelineState)
         case replaceRuntimeBootstrapState(NostrHomeTimelineState)
         case replaceFollowedPubkeys([String])
+        case applyRestoreProjectionAnchor(String)
         case materializeEntries
         case setPhase(NostrHomeTimelinePhase)
         case configureRuntime(String)
@@ -150,6 +153,11 @@ private struct LoadApplicationDispatcherFixture {
             },
             replaceFollowedPubkeys: { [probe] pubkeys in
                 probe.events.append(.replaceFollowedPubkeys(pubkeys))
+            },
+            applyRestoreProjectionAnchor: { [probe] account in
+                probe.events.append(.applyRestoreProjectionAnchor(
+                    account.pubkey
+                ))
             },
             materializeEntries: { [probe] in
                 probe.events.append(.materializeEntries)

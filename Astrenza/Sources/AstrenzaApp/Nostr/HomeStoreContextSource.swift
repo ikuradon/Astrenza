@@ -85,7 +85,8 @@ final class HomeStoreContextSource: HomeStoreContextSourcing {
         self.query = query
         readBoundary = HomeStoreReadBoundaryCoordinator.live(
             components: components,
-            query: query
+            query: query,
+            projectionViewport: projectionViewport
         )
         self.projectionViewport = projectionViewport
         self.hasRelayRuntime = hasRelayRuntime

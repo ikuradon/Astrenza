@@ -209,7 +209,11 @@ final class HomeStoreContextCoordinator {
                             current: current
                         )
                     },
-                    resolvedRelays: { source.resolvedRelays() }
+                    resolvedRelays: { source.resolvedRelays() },
+                    restoreProjectionAnchorEventID: {
+                        source.accountSnapshot()?
+                            .restoreProjectionAnchorEventID
+                    }
                 ),
                 applications: applications
             )

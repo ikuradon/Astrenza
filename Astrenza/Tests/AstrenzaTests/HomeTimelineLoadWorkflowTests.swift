@@ -18,6 +18,7 @@ struct HomeTimelineLoadWorkflowTests {
         fixture.initialLoad.operation = .runtimeBootstrap(
             hadCachedBootstrap: true
         )
+        fixture.probe.restoreProjectionAnchorEventID = "restore-anchor"
         let request = HomeTimelineInitialLoadRequest(
             account: fixture.account,
             lifecycle: fixture.lifecycle,
@@ -37,6 +38,7 @@ struct HomeTimelineLoadWorkflowTests {
         #expect(context.lifecycle == fixture.lifecycle)
         #expect(context.operation == .runtimeBootstrap(hadCachedBootstrap: true))
         #expect(context.resolvedRelays == fixture.resolvedRelays)
+        #expect(context.restoreProjectionAnchorEventID == "restore-anchor")
     }
 
     @Test("Refresh loading prepares current state and routes refresh commands")
@@ -241,6 +243,7 @@ private final class LoadWorkflowProbe {
     var timelineStates: [NostrHomeTimelineState] = []
     var runtimeBootstrapStates: [NostrHomeTimelineState] = []
     var followedPubkeySets: [[String]] = []
+    var restoreProjectionAnchorEventID: String?
     var materializationCount = 0
     var persistedAccounts: [NostrAccount] = []
     var loadDiagnostics: [HomeTimelineLoadDiagnostic] = []
@@ -315,7 +318,10 @@ private struct LoadWorkflowFixture {
                     probe.backfillRequests.append(account.pubkey)
                     return []
                 },
-                resolvedRelays: { [resolvedRelays] in resolvedRelays }
+                resolvedRelays: { [resolvedRelays] in resolvedRelays },
+                restoreProjectionAnchorEventID: { [probe] in
+                    probe.restoreProjectionAnchorEventID
+                }
             ),
             application: HomeTimelineLoadAppEffects(
                 applyActivityTransition: { [probe] transition in
@@ -342,6 +348,7 @@ private struct LoadWorkflowFixture {
                 replaceFollowedPubkeys: { [probe] pubkeys in
                     probe.followedPubkeySets.append(pubkeys)
                 },
+                applyRestoreProjectionAnchor: { _ in },
                 materializeEntries: { [probe] in
                     probe.materializationCount += 1
                 },

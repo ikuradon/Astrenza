@@ -49,11 +49,29 @@ struct HomeTimelineLoadStateProviders: Sendable {
         _ current: NostrHomeTimelineState
     ) -> [NostrEvent]?
     typealias RelayProvider = @MainActor @Sendable () -> [String]
+    typealias OptionalStringProvider = @MainActor @Sendable () -> String?
 
     let hasResolvedRelays: BooleanProvider
     let currentState: StateProvider
     let localBackfillEvents: BackfillProvider
     let resolvedRelays: RelayProvider
+    let restoreProjectionAnchorEventID: OptionalStringProvider
+
+    init(
+        hasResolvedRelays: @escaping BooleanProvider,
+        currentState: @escaping StateProvider,
+        localBackfillEvents: @escaping BackfillProvider,
+        resolvedRelays: @escaping RelayProvider,
+        restoreProjectionAnchorEventID:
+            @escaping OptionalStringProvider = { nil }
+    ) {
+        self.hasResolvedRelays = hasResolvedRelays
+        self.currentState = currentState
+        self.localBackfillEvents = localBackfillEvents
+        self.resolvedRelays = resolvedRelays
+        self.restoreProjectionAnchorEventID =
+            restoreProjectionAnchorEventID
+    }
 }
 
 struct HomeTimelineLoadAppEffects: Sendable {
@@ -87,6 +105,7 @@ struct HomeTimelineLoadAppEffects: Sendable {
     let replaceTimelineState: StateEffect
     let replaceRuntimeBootstrapState: StateEffect
     let replaceFollowedPubkeys: PubkeysEffect
+    let applyRestoreProjectionAnchor: AccountEffect
     let materializeEntries: Action
     let persistDatabase: AsyncAccountEffect
     let recordLoadDiagnostic: LoadDiagnosticEffect
@@ -233,7 +252,9 @@ final class HomeTimelineLoadWorkflow {
                 account: account,
                 lifecycle: lifecycle,
                 operation: operation,
-                resolvedRelays: effects.state.resolvedRelays()
+                resolvedRelays: effects.state.resolvedRelays(),
+                restoreProjectionAnchorEventID:
+                    effects.state.restoreProjectionAnchorEventID()
             ),
             handlers: applicationHandlers(effects: effects.application)
         )
@@ -296,6 +317,8 @@ final class HomeTimelineLoadWorkflow {
             apply(state, replacement: replacement, effects: effects)
         case .replaceFollowedPubkeys(let pubkeys):
             effects.replaceFollowedPubkeys(pubkeys)
+        case .applyRestoreProjectionAnchor(let account):
+            effects.applyRestoreProjectionAnchor(account)
         case .materializeEntries:
             effects.materializeEntries()
         case .recordDiagnostic(let diagnostic):

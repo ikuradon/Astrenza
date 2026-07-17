@@ -38,6 +38,7 @@ struct HomeTimelineLoadInteractionState: Equatable, Sendable {
 
 struct HomeTimelineLoadEnvironment: Sendable {
     typealias BooleanProvider = @MainActor @Sendable () -> Bool
+    typealias OptionalStringProvider = @MainActor @Sendable () -> String?
     typealias StateProvider = @MainActor @Sendable () -> NostrHomeTimelineState?
     typealias BackfillProvider = @MainActor @Sendable (
         _ account: NostrAccount,
@@ -49,6 +50,23 @@ struct HomeTimelineLoadEnvironment: Sendable {
     let currentState: StateProvider
     let localBackfillEvents: BackfillProvider
     let resolvedRelays: RelayProvider
+    let restoreProjectionAnchorEventID: OptionalStringProvider
+
+    init(
+        hasResolvedRelays: @escaping BooleanProvider,
+        currentState: @escaping StateProvider,
+        localBackfillEvents: @escaping BackfillProvider,
+        resolvedRelays: @escaping RelayProvider,
+        restoreProjectionAnchorEventID:
+            @escaping OptionalStringProvider = { nil }
+    ) {
+        self.hasResolvedRelays = hasResolvedRelays
+        self.currentState = currentState
+        self.localBackfillEvents = localBackfillEvents
+        self.resolvedRelays = resolvedRelays
+        self.restoreProjectionAnchorEventID =
+            restoreProjectionAnchorEventID
+    }
 }
 
 enum HomeTimelineLoadApplication: Equatable, Sendable {
@@ -59,6 +77,7 @@ enum HomeTimelineLoadApplication: Equatable, Sendable {
     case replaceTimelineState(NostrHomeTimelineState)
     case replaceRuntimeBootstrapState(NostrHomeTimelineState)
     case replaceFollowedPubkeys([String])
+    case applyRestoreProjectionAnchor(NostrAccount)
     case materializeEntries
     case setPhase(NostrHomeTimelinePhase)
 }
@@ -157,7 +176,9 @@ final class HomeTimelineLoadInteractionWorkflow {
                 hasResolvedRelays: effects.environment.hasResolvedRelays,
                 currentState: effects.environment.currentState,
                 localBackfillEvents: effects.environment.localBackfillEvents,
-                resolvedRelays: effects.environment.resolvedRelays
+                resolvedRelays: effects.environment.resolvedRelays,
+                restoreProjectionAnchorEventID:
+                    effects.environment.restoreProjectionAnchorEventID
             ),
             application: applicationEffects(
                 accountID: account.pubkey,
@@ -198,6 +219,9 @@ final class HomeTimelineLoadInteractionWorkflow {
             },
             replaceFollowedPubkeys: { pubkeys in
                 effects.apply(.replaceFollowedPubkeys(pubkeys))
+            },
+            applyRestoreProjectionAnchor: { account in
+                effects.apply(.applyRestoreProjectionAnchor(account))
             },
             materializeEntries: {
                 effects.apply(.materializeEntries)

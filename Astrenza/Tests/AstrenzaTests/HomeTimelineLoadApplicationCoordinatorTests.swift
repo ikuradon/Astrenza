@@ -50,6 +50,32 @@ struct HomeTimelineLoadApplicationTests {
         #expect(system.lifecycle.hasCompletedRuntimeBootstrap)
     }
 
+    @Test("A loaded state rebuilds the restored projection instead of newest")
+    func loadedStateReappliesRestoredProjection() async {
+        let system = RemoteLoadApplicationTestSystem()
+
+        await system.application.apply(
+            .loaded(system.state),
+            context: system.context(
+                operation: .runtimeBootstrap(hadCachedBootstrap: true),
+                restoreProjectionAnchorEventID: "restored-anchor"
+            ),
+            handlers: system.handlers()
+        )
+
+        #expect(system.probe.steps == [
+            .command(.replaceState(
+                system.state,
+                replacement: .runtimeBootstrap
+            )),
+            .command(.applyRestoreProjectionAnchor(system.account)),
+            .persist(system.account.pubkey),
+            .configure(system.account.pubkey),
+            .command(.setPhase(.loaded))
+        ])
+        #expect(system.lifecycle.hasCompletedRuntimeBootstrap)
+    }
+
     @Test("An exhausted older page still completes presentation and persistence")
     func exhaustedOlderPageCompletesApplication() async {
         let system = RemoteLoadApplicationTestSystem(hasMoreOlder: false)
@@ -331,13 +357,16 @@ private struct RemoteLoadApplicationTestSystem {
     }
 
     func context(
-        operation: HomeTimelineLoadOperation
+        operation: HomeTimelineLoadOperation,
+        restoreProjectionAnchorEventID: String? = nil
     ) -> HomeTimelineLoadApplicationContext {
         HomeTimelineLoadApplicationContext(
             account: account,
             lifecycle: lifecycleToken,
             operation: operation,
-            resolvedRelays: resolvedRelays
+            resolvedRelays: resolvedRelays,
+            restoreProjectionAnchorEventID:
+                restoreProjectionAnchorEventID
         )
     }
 

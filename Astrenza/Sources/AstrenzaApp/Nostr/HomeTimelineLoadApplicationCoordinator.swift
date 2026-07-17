@@ -17,6 +17,22 @@ struct HomeTimelineLoadApplicationContext: Equatable, Sendable {
     let lifecycle: HomeTimelineLifecycleToken
     let operation: HomeTimelineLoadOperation
     let resolvedRelays: [String]
+    let restoreProjectionAnchorEventID: String?
+
+    init(
+        account: NostrAccount,
+        lifecycle: HomeTimelineLifecycleToken,
+        operation: HomeTimelineLoadOperation,
+        resolvedRelays: [String],
+        restoreProjectionAnchorEventID: String? = nil
+    ) {
+        self.account = account
+        self.lifecycle = lifecycle
+        self.operation = operation
+        self.resolvedRelays = resolvedRelays
+        self.restoreProjectionAnchorEventID =
+            restoreProjectionAnchorEventID
+    }
 }
 
 struct HomeTimelineLoadDiagnostic: Equatable, Sendable {
@@ -32,6 +48,7 @@ enum HomeTimelineLoadApplicationCommand: Equatable, Sendable {
         replacement: HomeTimelineLoadStateReplacement
     )
     case replaceFollowedPubkeys([String])
+    case applyRestoreProjectionAnchor(NostrAccount)
     case materializeEntries
     case recordDiagnostic(HomeTimelineLoadDiagnostic)
     case setPhase(NostrHomeTimelinePhase)
@@ -95,7 +112,11 @@ final class HomeTimelineLoadApplicationCoordinator {
                 for: context.lifecycle
             )
         }
-        handlers.perform(.materializeEntries)
+        if context.restoreProjectionAnchorEventID == nil {
+            handlers.perform(.materializeEntries)
+        } else {
+            handlers.perform(.applyRestoreProjectionAnchor(context.account))
+        }
         await handlers.persistDatabase(context.account)
         guard isActive(context) else { return }
 

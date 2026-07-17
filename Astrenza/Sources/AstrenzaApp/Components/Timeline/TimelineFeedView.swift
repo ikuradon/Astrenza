@@ -30,9 +30,6 @@ struct TimelineFeedView: View {
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onPostsCrossedReadLineTowardNewer: ([TimelinePost.ID]) -> Void
     let unreadCountAnchorPostID: TimelinePost.ID?
-    let unreadPillCount: Int
-    let unreadPillPlacement: HomeUnreadPillPlacement
-    let onUnreadPillTap: () -> Void
     let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     @State private var menuState = TimelinePostMenuState()
@@ -50,9 +47,7 @@ struct TimelineFeedView: View {
     @State private var isUserPullingToRefresh = false
     private let actionMenuGap: CGFloat = 12
     private let bottomChromeClearance: CGFloat = 116
-    private let rowAnchorLineY = HomeUnreadPillLayout.pinLineY
-    private let unreadPillRowTopInset = HomeUnreadPillLayout.rowTopInset
-    private let unreadPillTrailingInset = HomeUnreadPillLayout.trailingInset
+    private let rowAnchorLineY: CGFloat = 72
     private let topContentPadding: CGFloat = 72
     private let pullRefreshTriggerOffset: CGFloat = -96
     private let viewportSaveInterval: TimeInterval = 0.25
@@ -96,9 +91,6 @@ struct TimelineFeedView: View {
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onPostsCrossedReadLineTowardNewer: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         unreadCountAnchorPostID: TimelinePost.ID? = nil,
-        unreadPillCount: Int = 0,
-        unreadPillPlacement: HomeUnreadPillPlacement = .hidden,
-        onUnreadPillTap: @escaping () -> Void = {},
         onUnreadPillPlacementChanged: @escaping (HomeUnreadPillPlacement) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
@@ -132,9 +124,6 @@ struct TimelineFeedView: View {
             onPostsCrossedReadLineTowardNewer:
                 onPostsCrossedReadLineTowardNewer,
             unreadCountAnchorPostID: unreadCountAnchorPostID,
-            unreadPillCount: unreadPillCount,
-            unreadPillPlacement: unreadPillPlacement,
-            onUnreadPillTap: onUnreadPillTap,
             onUnreadPillPlacementChanged: onUnreadPillPlacementChanged,
             onLayoutCacheChanged: onLayoutCacheChanged
         )
@@ -169,9 +158,6 @@ struct TimelineFeedView: View {
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
         onPostsCrossedReadLineTowardNewer: @escaping ([TimelinePost.ID]) -> Void = { _ in },
         unreadCountAnchorPostID: TimelinePost.ID? = nil,
-        unreadPillCount: Int = 0,
-        unreadPillPlacement: HomeUnreadPillPlacement = .hidden,
-        onUnreadPillTap: @escaping () -> Void = {},
         onUnreadPillPlacementChanged: @escaping (HomeUnreadPillPlacement) -> Void = { _ in },
         onLayoutCacheChanged: @escaping (TimelineLayoutCache) -> Void
     ) {
@@ -204,9 +190,6 @@ struct TimelineFeedView: View {
         self.onPostsCrossedReadLineTowardNewer =
             onPostsCrossedReadLineTowardNewer
         self.unreadCountAnchorPostID = unreadCountAnchorPostID
-        self.unreadPillCount = unreadPillCount
-        self.unreadPillPlacement = unreadPillPlacement
-        self.onUnreadPillTap = onUnreadPillTap
         self.onUnreadPillPlacementChanged = onUnreadPillPlacementChanged
         self.onLayoutCacheChanged = onLayoutCacheChanged
         _displayedEntries = State(initialValue: entries)
@@ -276,9 +259,6 @@ struct TimelineFeedView: View {
                                 if unreadCountAnchorPostID == post.id {
                                     unreadCountAnchorFrameReader(postID: post.id)
                                 }
-                            }
-                            .overlay(alignment: .topTrailing) {
-                                unreadPillAttachedToAnchor(postID: post.id)
                             }
                             .onAppear {
                                 handlePostAppear(post)
@@ -467,7 +447,7 @@ private extension TimelineFeedView {
     ) -> some View {
         Color.clear
             .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.frame(in: .named("timelineFeedViewport")).minY
+                proxy.frame(in: .named("homeTimelineChrome")).minY
             } action: { _, minY in
                 updateUnreadCountAnchorMinY(minY, postID: postID)
             }
@@ -493,22 +473,6 @@ private extension TimelineFeedView {
         guard postID == scrollRuntime.unreadCountAnchorPostID else { return }
         scrollRuntime.unreadCountAnchorMinY = nil
         publishUnreadPillPlacement()
-    }
-
-    @ViewBuilder
-    func unreadPillAttachedToAnchor(
-        postID: TimelinePost.ID
-    ) -> some View {
-        if postID == unreadCountAnchorPostID,
-           unreadPillCount > 0,
-           unreadPillPlacement.isAttachedToAnchor {
-            HomeUnreadBadge(
-                count: unreadPillCount,
-                onTap: onUnreadPillTap
-            )
-            .padding(.top, unreadPillRowTopInset)
-            .padding(.trailing, unreadPillTrailingInset)
-        }
     }
 
     func syncUnreadCountAnchor(

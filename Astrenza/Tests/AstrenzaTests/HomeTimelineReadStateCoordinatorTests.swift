@@ -66,7 +66,7 @@ struct HomeTimelineReadStateCoordinatorTests {
             updatedAt: 301
         )
 
-        let fallbackBoundary = await fixture.coordinator.restoredReadBoundaryPostID(
+        let fallbackBoundary = await fixture.coordinator.restoredReadBoundary(
             feedID: fixture.feedID,
             positions: [
                 HomeTimelineReadPosition(postID: "newer", createdAt: 300),
@@ -74,7 +74,31 @@ struct HomeTimelineReadStateCoordinatorTests {
                 HomeTimelineReadPosition(postID: "older", createdAt: 200)
             ]
         )
-        #expect(fallbackBoundary == "z-middle")
+        #expect(fallbackBoundary == .resolved(postID: "z-middle"))
+    }
+
+    @Test("A persisted cursor older than the projection remains distinguishable")
+    @MainActor
+    func restorationReportsBoundaryOlderThanProjection() async throws {
+        let fixture = try fixture(delayNanoseconds: 0)
+        try fixture.eventStore.saveFeedReadBoundary(
+            feedID: fixture.feedID,
+            readBoundary: NostrTimelineEntryCursor(
+                sortTimestamp: 100,
+                eventID: "persisted-old"
+            ),
+            updatedAt: 302
+        )
+
+        let outcome = await fixture.coordinator.restoredReadBoundary(
+            feedID: fixture.feedID,
+            positions: [
+                HomeTimelineReadPosition(postID: "new", createdAt: 300),
+                HomeTimelineReadPosition(postID: "middle", createdAt: 200)
+            ]
+        )
+
+        #expect(outcome == .olderThanProjection)
     }
 
     @Test("A failed boundary write stays pending and retries until it is durable")
@@ -175,7 +199,9 @@ struct HomeReadBoundaryInteractionWorkflowTests {
             accountID: accountID,
             feedID: feedID
         )
-        let readState = ReadBoundaryStateSpy(restoredResult: "boundary")
+        let readState = ReadBoundaryStateSpy(
+            restoredResult: .resolved(postID: "boundary")
+        )
         let workflow = HomeReadBoundaryInteractionWorkflow(
             feedIdentity: feedIdentity,
             readState: readState,
@@ -186,10 +212,10 @@ struct HomeReadBoundaryInteractionWorkflowTests {
         ]
         let event = boundaryEvent(accountID: accountID)
 
-        #expect(await workflow.restoredReadBoundaryPostID(
+        #expect(await workflow.restoredReadBoundary(
             accountID: accountID,
             positions: positions
-        ) == "boundary")
+        ) == .resolved(postID: "boundary"))
         #expect(workflow.scheduleReadBoundarySave(
             accountID: accountID,
             boundaryEvent: event
@@ -209,7 +235,9 @@ struct HomeReadBoundaryInteractionWorkflowTests {
 
     @Test("Missing active feed prevents read-state restoration and writes")
     func missingActiveFeedPreventsReadStateOperations() async {
-        let readState = ReadBoundaryStateSpy(restoredResult: "unexpected")
+        let readState = ReadBoundaryStateSpy(
+            restoredResult: .resolved(postID: "unexpected")
+        )
         let workflow = HomeReadBoundaryInteractionWorkflow(
             feedIdentity: ReadBoundaryFeedIdentitySpy(
                 accountID: "active",
@@ -219,10 +247,10 @@ struct HomeReadBoundaryInteractionWorkflowTests {
             timestamp: { 321 }
         )
 
-        #expect(await workflow.restoredReadBoundaryPostID(
+        #expect(await workflow.restoredReadBoundary(
             accountID: "inactive",
             positions: []
-        ) == nil)
+        ) == .missing)
         #expect(!workflow.scheduleReadBoundarySave(
             accountID: "inactive",
             boundaryEvent: nil
@@ -261,20 +289,20 @@ private final class ReadBoundaryFeedIdentitySpy: HomeFeedIdentityResolving {
 
 @MainActor
 private final class ReadBoundaryStateSpy: HomeTimelineReadStateCoordinating {
-    private let restoredResult: String?
+    private let restoredResult: HomeTimelineReadBoundaryRestoreOutcome
     private(set) var restoredFeedID: String?
     private(set) var restoredPositions: [HomeTimelineReadPosition] = []
     private(set) var restoredCallCount = 0
     private(set) var scheduledWrite: HomeTimelineReadBoundaryWrite?
 
-    init(restoredResult: String?) {
+    init(restoredResult: HomeTimelineReadBoundaryRestoreOutcome) {
         self.restoredResult = restoredResult
     }
 
-    func restoredReadBoundaryPostID(
+    func restoredReadBoundary(
         feedID: String,
         positions: [HomeTimelineReadPosition]
-    ) async -> String? {
+    ) async -> HomeTimelineReadBoundaryRestoreOutcome {
         restoredFeedID = feedID
         restoredPositions = positions
         restoredCallCount += 1

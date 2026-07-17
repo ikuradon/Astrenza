@@ -31,6 +31,7 @@ struct HomeTimelineLoadApplicationEffects: Sendable {
     let replaceTimelineState: TimelineState
     let replaceRuntimeBootstrapState: TimelineState
     let replaceFollowedPubkeys: FollowedPubkeys
+    let applyRestoreProjectionAnchor: Account
     let materializeEntries: Action
     let setPhase: Phase
     let configureRuntime: AsyncAccount
@@ -58,6 +59,8 @@ struct HomeTimelineLoadDispatcher {
             effects.replaceRuntimeBootstrapState(state)
         case .replaceFollowedPubkeys(let pubkeys):
             effects.replaceFollowedPubkeys(pubkeys)
+        case .applyRestoreProjectionAnchor(let account):
+            effects.applyRestoreProjectionAnchor(account)
         case .materializeEntries:
             effects.materializeEntries()
         case .setPhase(let phase):

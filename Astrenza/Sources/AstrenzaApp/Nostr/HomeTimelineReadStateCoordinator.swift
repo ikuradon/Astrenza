@@ -6,6 +6,12 @@ struct HomeTimelineReadPosition: Equatable, Sendable {
     let createdAt: Int
 }
 
+enum HomeTimelineReadBoundaryRestoreOutcome: Equatable, Sendable {
+    case missing
+    case resolved(postID: String)
+    case olderThanProjection
+}
+
 struct HomeTimelineReadBoundaryWrite: Sendable {
     let scopeID: String
     let feedID: String
@@ -51,23 +57,26 @@ final class HomeTimelineReadStateCoordinator {
         self.persistenceRetryDelayNanoseconds = persistenceRetryDelayNanoseconds
     }
 
-    func restoredReadBoundaryPostID(
+    func restoredReadBoundary(
         feedID: String,
         positions: [HomeTimelineReadPosition]
-    ) async -> String? {
+    ) async -> HomeTimelineReadBoundaryRestoreOutcome {
         guard let persistenceWorker,
               let state = try? await persistenceWorker.restoredReadState(
                   feedID: feedID
               ),
               let cursor = state.readBoundary
-        else { return nil }
+        else { return .missing }
         if positions.contains(where: { $0.postID == cursor.eventID }) {
-            return cursor.eventID
+            return .resolved(postID: cursor.eventID)
         }
-        return positions.first { position in
+        guard let fallbackPostID = positions.first(where: { position in
             position.createdAt < cursor.sortTimestamp ||
                 (position.createdAt == cursor.sortTimestamp && position.postID >= cursor.eventID)
-        }?.postID
+        })?.postID else {
+            return .olderThanProjection
+        }
+        return .resolved(postID: fallbackPostID)
     }
 
     @discardableResult

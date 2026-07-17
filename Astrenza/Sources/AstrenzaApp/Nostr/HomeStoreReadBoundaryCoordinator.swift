@@ -2,10 +2,10 @@ import AstrenzaCore
 
 @MainActor
 protocol HomeStoreReadBoundaryInteracting: AnyObject {
-    func restoredReadBoundaryPostID(
+    func restoredReadBoundary(
         accountID: String,
         positions: [HomeTimelineReadPosition]
-    ) async -> String?
+    ) async -> HomeTimelineReadBoundaryRestoreOutcome
     func readBoundaryWrite(
         accountID: String,
         boundaryEvent: NostrEvent?
@@ -23,6 +23,52 @@ struct HomeStoreReadBoundarySnapshot {
     let account: NostrAccount?
     let entries: [TimelineFeedEntry]
     let currentBoundaryPostID: TimelinePost.ID?
+    let restoredViewportAnchorPostID: TimelinePost.ID?
+}
+
+enum HomeStoreReadBoundaryRestorePolicy {
+    struct Resolution: Equatable {
+        let postID: TimelinePost.ID
+        let advancesPersistedBoundary: Bool
+    }
+
+    static func resolve(
+        restoredBoundary: HomeTimelineReadBoundaryRestoreOutcome,
+        restoredViewportAnchorPostID: TimelinePost.ID?,
+        orderedPostIDs: [TimelinePost.ID]
+    ) -> Resolution? {
+        switch restoredBoundary {
+        case .missing:
+            return nil
+        case .olderThanProjection:
+            guard let restoredViewportAnchorPostID,
+                  orderedPostIDs.contains(restoredViewportAnchorPostID)
+            else { return nil }
+            return Resolution(
+                postID: restoredViewportAnchorPostID,
+                advancesPersistedBoundary: true
+            )
+        case .resolved(let persistedBoundaryPostID):
+            guard let restoredViewportAnchorPostID,
+                  let persistedBoundaryIndex = orderedPostIDs.firstIndex(
+                    of: persistedBoundaryPostID
+                  ),
+                  let viewportAnchorIndex = orderedPostIDs.firstIndex(
+                    of: restoredViewportAnchorPostID
+                  ),
+                  viewportAnchorIndex < persistedBoundaryIndex
+            else {
+                return Resolution(
+                    postID: persistedBoundaryPostID,
+                    advancesPersistedBoundary: false
+                )
+            }
+            return Resolution(
+                postID: restoredViewportAnchorPostID,
+                advancesPersistedBoundary: true
+            )
+        }
+    }
 }
 
 @MainActor
@@ -54,7 +100,8 @@ final class HomeStoreReadBoundarySource: HomeStoreReadBoundarySourcing {
 
     static func live(
         components: HomeTimelineStoreComponents,
-        query: HomeStoreQueryCoordinator
+        query: HomeStoreQueryCoordinator,
+        projectionViewport: HomeProjectionViewportCoordinator
     ) -> HomeStoreReadBoundarySource {
         let publishedState = components.publishedStateCoordinator
         let presentation = components.presentationWorkflow
@@ -64,7 +111,9 @@ final class HomeStoreReadBoundarySource: HomeStoreReadBoundarySourcing {
                     account: publishedState.accountContext.account,
                     entries: publishedState.presentation.entries,
                     currentBoundaryPostID:
-                        presentation.interactionState.readBoundaryPostID
+                        presentation.interactionState.readBoundaryPostID,
+                    restoredViewportAnchorPostID:
+                        projectionViewport.restoreAnchorEventID
                 )
             },
             event: { eventID in
@@ -106,34 +155,52 @@ final class HomeStoreReadBoundaryCoordinator {
 
     static func live(
         components: HomeTimelineStoreComponents,
-        query: HomeStoreQueryCoordinator
+        query: HomeStoreQueryCoordinator,
+        projectionViewport: HomeProjectionViewportCoordinator
     ) -> HomeStoreReadBoundaryCoordinator {
         HomeStoreReadBoundaryCoordinator(
             interaction: components.readBoundaryInteractionWorkflow,
             source: HomeStoreReadBoundarySource.live(
                 components: components,
-                query: query
+                query: query,
+                projectionViewport: projectionViewport
             )
         )
     }
 
     @discardableResult
     func restore(account: NostrAccount) async -> Bool {
-        let positions = source.snapshot().entries.compactMap(\.post).map { post in
+        let restoreSnapshot = source.snapshot()
+        let positions = restoreSnapshot.entries.compactMap(\.post).map { post in
             HomeTimelineReadPosition(
                 postID: post.id,
                 createdAt: post.createdAt
             )
         }
-        let boundaryID = await interaction.restoredReadBoundaryPostID(
+        let restoredBoundary = await interaction.restoredReadBoundary(
             accountID: account.pubkey,
             positions: positions
         )
+        let currentSnapshot = source.snapshot()
         guard !Task.isCancelled,
-              source.snapshot().account?.pubkey == account.pubkey,
-              let boundaryID
+              currentSnapshot.account?.pubkey == account.pubkey,
+              currentSnapshot.restoredViewportAnchorPostID ==
+                restoreSnapshot.restoredViewportAnchorPostID,
+              let resolution = HomeStoreReadBoundaryRestorePolicy.resolve(
+                restoredBoundary: restoredBoundary,
+                restoredViewportAnchorPostID:
+                    restoreSnapshot.restoredViewportAnchorPostID,
+                orderedPostIDs: positions.map(\.postID)
+              )
         else { return false }
-        source.applyRestoredReadBoundary(postID: boundaryID)
+        source.applyRestoredReadBoundary(postID: resolution.postID)
+        if resolution.advancesPersistedBoundary,
+           let boundaryEvent = source.timelineEvent(id: resolution.postID) {
+            _ = interaction.scheduleReadBoundarySave(
+                accountID: account.pubkey,
+                boundaryEvent: boundaryEvent
+            )
+        }
         return true
     }
 

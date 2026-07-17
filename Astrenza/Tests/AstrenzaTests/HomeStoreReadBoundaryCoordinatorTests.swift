@@ -30,6 +30,101 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         #expect(fixture.source.appliedBoundaryIDs == [posts[1].id])
     }
 
+    @Test("A newer restored viewport advances a stale persisted boundary")
+    func advancesBoundaryToNewerRestoredViewport() async {
+        let fixture = StoreReadBoundaryFixture()
+        let posts = Array(MockTimelineData.posts.prefix(3))
+        let boundaryEvent = StoreReadBoundaryFixture.makeEvent(
+            eventID: posts[0].id,
+            pubkey: fixture.account.pubkey,
+            createdAt: posts[0].createdAt
+        )
+        fixture.source.entries = posts.map(TimelineFeedEntry.post)
+        fixture.source.restoredViewportAnchorPostID = posts[0].id
+        fixture.source.timelineEvents[posts[0].id] = boundaryEvent
+        fixture.interaction.restoredBoundaryID = posts[2].id
+        fixture.interaction.scheduleResult = true
+
+        let didRestore = await fixture.coordinator.restore(
+            account: fixture.account
+        )
+
+        #expect(didRestore)
+        #expect(fixture.source.appliedBoundaryIDs == [posts[0].id])
+        #expect(fixture.interaction.events == [
+            .restore(
+                fixture.account.pubkey,
+                posts.map {
+                    HomeTimelineReadPosition(
+                        postID: $0.id,
+                        createdAt: $0.createdAt
+                    )
+                }
+            ),
+            .schedule(fixture.account.pubkey, boundaryEvent.id)
+        ])
+    }
+
+    @Test("A persisted boundary older than the projection advances to viewport")
+    func advancesBoundaryOlderThanProjectionToViewport() async {
+        let fixture = StoreReadBoundaryFixture()
+        let posts = Array(MockTimelineData.posts.prefix(2))
+        let boundaryEvent = StoreReadBoundaryFixture.makeEvent(
+            eventID: posts[0].id,
+            pubkey: fixture.account.pubkey,
+            createdAt: posts[0].createdAt
+        )
+        fixture.source.entries = posts.map(TimelineFeedEntry.post)
+        fixture.source.restoredViewportAnchorPostID = posts[0].id
+        fixture.source.timelineEvents[posts[0].id] = boundaryEvent
+        fixture.interaction.restoredBoundaryOutcome = .olderThanProjection
+
+        let didRestore = await fixture.coordinator.restore(
+            account: fixture.account
+        )
+
+        #expect(didRestore)
+        #expect(fixture.source.appliedBoundaryIDs == [posts[0].id])
+        #expect(fixture.interaction.events.last == .schedule(
+            fixture.account.pubkey,
+            boundaryEvent.id
+        ))
+    }
+
+    @Test("An older restored viewport preserves the newer read boundary")
+    func preservesBoundaryWhenRestoredViewportIsOlder() async {
+        let fixture = StoreReadBoundaryFixture()
+        let posts = Array(MockTimelineData.posts.prefix(3))
+        fixture.source.entries = posts.map(TimelineFeedEntry.post)
+        fixture.source.restoredViewportAnchorPostID = posts[2].id
+        fixture.interaction.restoredBoundaryID = posts[0].id
+
+        let didRestore = await fixture.coordinator.restore(
+            account: fixture.account
+        )
+
+        #expect(didRestore)
+        #expect(fixture.source.appliedBoundaryIDs == [posts[0].id])
+        #expect(fixture.interaction.events.count == 1)
+    }
+
+    @Test("An unavailable viewport anchor cannot move the read boundary")
+    func ignoresViewportAnchorOutsideProjection() async {
+        let fixture = StoreReadBoundaryFixture()
+        let post = MockTimelineData.posts[0]
+        fixture.source.entries = [.post(post)]
+        fixture.source.restoredViewportAnchorPostID = "outside-projection"
+        fixture.interaction.restoredBoundaryID = post.id
+
+        let didRestore = await fixture.coordinator.restore(
+            account: fixture.account
+        )
+
+        #expect(didRestore)
+        #expect(fixture.source.appliedBoundaryIDs == [post.id])
+        #expect(fixture.interaction.events.count == 1)
+    }
+
     @Test("A missing restored boundary leaves presentation unchanged")
     func ignoresMissingBoundary() async {
         let fixture = StoreReadBoundaryFixture()
@@ -51,6 +146,25 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         fixture.interaction.restoredBoundaryID = "boundary"
         fixture.interaction.onRestore = {
             fixture.source.account = fixture.replacementAccount
+        }
+
+        let didRestore = await fixture.coordinator.restore(
+            account: fixture.account
+        )
+
+        #expect(!didRestore)
+        #expect(fixture.source.appliedBoundaryIDs.isEmpty)
+    }
+
+    @Test("A viewport mode change during restore rejects the stale boundary")
+    func rejectsStaleViewportAnchor() async {
+        let fixture = StoreReadBoundaryFixture()
+        let posts = Array(MockTimelineData.posts.prefix(2))
+        fixture.source.entries = posts.map(TimelineFeedEntry.post)
+        fixture.source.restoredViewportAnchorPostID = posts[0].id
+        fixture.interaction.restoredBoundaryID = posts[1].id
+        fixture.interaction.onRestore = {
+            fixture.source.restoredViewportAnchorPostID = nil
         }
 
         let didRestore = await fixture.coordinator.restore(
@@ -165,7 +279,8 @@ struct HomeStoreReadBoundaryCoordinatorTests {
         state.snapshot = HomeStoreReadBoundarySnapshot(
             account: account,
             entries: [.post(MockTimelineData.posts[0])],
-            currentBoundaryPostID: event.id
+            currentBoundaryPostID: event.id,
+            restoredViewportAnchorPostID: nil
         )
 
         #expect(source.snapshot().account == account)
@@ -208,11 +323,27 @@ private struct StoreReadBoundaryFixture {
         )
     }
 
-    static func makeEvent(id: Character, pubkey: String) -> NostrEvent {
-        NostrEvent(
-            id: String(repeating: id, count: 64),
+    static func makeEvent(
+        id: Character,
+        pubkey: String,
+        createdAt: Int = 100
+    ) -> NostrEvent {
+        makeEvent(
+            eventID: String(repeating: id, count: 64),
             pubkey: pubkey,
-            createdAt: 100,
+            createdAt: createdAt
+        )
+    }
+
+    static func makeEvent(
+        eventID: String,
+        pubkey: String,
+        createdAt: Int = 100
+    ) -> NostrEvent {
+        NostrEvent(
+            id: eventID,
+            pubkey: pubkey,
+            createdAt: createdAt,
             kind: 1,
             tags: [],
             content: "boundary",
@@ -231,16 +362,17 @@ private final class StoreReadBoundaryInteractionSpy:
     }
 
     var restoredBoundaryID: String?
+    var restoredBoundaryOutcome: HomeTimelineReadBoundaryRestoreOutcome?
     var scheduleResult = false
     var boundaryWriteResult: HomeTimelineReadBoundaryWrite?
     var cancelRestoreTask = false
     var onRestore: (@MainActor () -> Void)?
     private(set) var events: [Event] = []
 
-    func restoredReadBoundaryPostID(
+    func restoredReadBoundary(
         accountID: String,
         positions: [HomeTimelineReadPosition]
-    ) async -> String? {
+    ) async -> HomeTimelineReadBoundaryRestoreOutcome {
         events.append(.restore(accountID, positions))
         onRestore?()
         if cancelRestoreTask {
@@ -248,7 +380,12 @@ private final class StoreReadBoundaryInteractionSpy:
                 task?.cancel()
             }
         }
-        return restoredBoundaryID
+        if let restoredBoundaryOutcome {
+            return restoredBoundaryOutcome
+        }
+        return restoredBoundaryID.map {
+            .resolved(postID: $0)
+        } ?? .missing
     }
 
     func readBoundaryWrite(
@@ -274,6 +411,7 @@ private final class StoreReadBoundarySourceSpy:
     var account: NostrAccount?
     var entries: [TimelineFeedEntry] = []
     var currentReadBoundaryPostID: String?
+    var restoredViewportAnchorPostID: String?
     var timelineEvents: [String: NostrEvent] = [:]
     private(set) var lookedUpEventIDs: [String] = []
     private(set) var appliedBoundaryIDs: [String] = []
@@ -286,7 +424,8 @@ private final class StoreReadBoundarySourceSpy:
         HomeStoreReadBoundarySnapshot(
             account: account,
             entries: entries,
-            currentBoundaryPostID: currentReadBoundaryPostID
+            currentBoundaryPostID: currentReadBoundaryPostID,
+            restoredViewportAnchorPostID: restoredViewportAnchorPostID
         )
     }
 
@@ -305,7 +444,8 @@ private final class StoreReadBoundarySourceClosureState {
     var snapshot = HomeStoreReadBoundarySnapshot(
         account: nil,
         entries: [],
-        currentBoundaryPostID: nil
+        currentBoundaryPostID: nil,
+        restoredViewportAnchorPostID: nil
     )
     var requestedEventIDs: [String] = []
     var appliedBoundaryIDs: [String] = []
