@@ -17,6 +17,25 @@ enum HomeTimelineInitialSyncState: Equatable, Sendable {
     }
 }
 
+struct HomeTimelineInitialSyncProgress: Equatable, Sendable {
+    let expectedRelayCount: Int
+    let completedRelayCount: Int
+    let successfulRelayCount: Int
+    let failedRelayCount: Int
+
+    var state: HomeTimelineInitialSyncState {
+        guard expectedRelayCount > 0,
+              completedRelayCount == expectedRelayCount
+        else {
+            return .awaitingRelayResponses
+        }
+        if successfulRelayCount == expectedRelayCount {
+            return .synchronized
+        }
+        return successfulRelayCount > 0 ? .degraded : .unavailable
+    }
+}
+
 struct HomeFeedRuntimeContext: Equatable, Sendable {
     let feedID: String
     let accountID: String
@@ -107,21 +126,28 @@ struct HomeTimelineRuntimeSyncState {
     }
 
     var initialSyncState: HomeTimelineInitialSyncState {
-        guard !expectedForwardSubscriptions.isEmpty,
-              expectedForwardSubscriptions.allSatisfy({ initialForwardResults[$0] != nil })
-        else {
-            return .awaitingRelayResponses
-        }
+        initialSyncProgress.state
+    }
 
-        let eoseCount = expectedForwardSubscriptions.reduce(into: 0) { count, key in
+    var initialSyncProgress: HomeTimelineInitialSyncProgress {
+        let successfulRelayCount = expectedForwardSubscriptions.reduce(into: 0) {
+            count, key in
             if initialForwardResults[key] == .eose {
                 count += 1
             }
         }
-        if eoseCount == expectedForwardSubscriptions.count {
-            return .synchronized
+        let failedRelayCount = expectedForwardSubscriptions.reduce(into: 0) {
+            count, key in
+            if initialForwardResults[key] == .failed {
+                count += 1
+            }
         }
-        return eoseCount > 0 ? .degraded : .unavailable
+        return HomeTimelineInitialSyncProgress(
+            expectedRelayCount: expectedForwardSubscriptions.count,
+            completedRelayCount: successfulRelayCount + failedRelayCount,
+            successfulRelayCount: successfulRelayCount,
+            failedRelayCount: failedRelayCount
+        )
     }
 
     var activeRequestCount: Int {

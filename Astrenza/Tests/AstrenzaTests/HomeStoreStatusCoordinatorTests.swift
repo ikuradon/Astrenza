@@ -126,10 +126,13 @@ struct HomeStoreStatusCoordinatorTests {
                 connectedRelayCount: 1,
                 plannedRelayCount: 3,
                 initialSyncState: .synchronized,
+                initialSyncCompletedRelayCount: 1,
+                initialSyncExpectedRelayCount: 1,
                 hasOlderPageRequest: true,
                 hasGapWork: true,
-                hasBackwardRequests: true,
-                hasPendingDependencyWork: true
+                backwardRequestCount: 2,
+                hasPendingDependencyWork: true,
+                pendingDependencyRequestCount: 3
             )
         ])
     }
@@ -280,6 +283,12 @@ private final class StoreSyncStatusSourceSpy:
     HomeStoreSyncStatusSourcing {
     var backwardRequestState = HomeTimelineBackwardRequestState.idle
     var initialSyncState = HomeTimelineInitialSyncState.synchronized
+    var initialSyncProgress = HomeTimelineInitialSyncProgress(
+        expectedRelayCount: 1,
+        completedRelayCount: 1,
+        successfulRelayCount: 1,
+        failedRelayCount: 0
+    )
     var relaySnapshot = HomeTimelineRelayStatusSnapshot(
         runtimeStates: [:],
         connectedRelayCount: 0,

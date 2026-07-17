@@ -20,10 +20,17 @@ struct HomeTimelineRuntimeSyncStateTests {
         state.prepareForwardSubscriptions([first, second])
         #expect(!state.isRealtime)
         #expect(state.initialSyncState == .awaitingRelayResponses)
+        #expect(state.initialSyncProgress == HomeTimelineInitialSyncProgress(
+            expectedRelayCount: 2,
+            completedRelayCount: 0,
+            successfulRelayCount: 0,
+            failedRelayCount: 0
+        ))
 
         state.markForwardEOSE(first)
         #expect(!state.isRealtime)
         #expect(state.initialSyncState == .awaitingRelayResponses)
+        #expect(state.initialSyncProgress.completedRelayCount == 1)
 
         state.markForwardEOSE(second)
         #expect(state.isRealtime)
@@ -50,11 +57,13 @@ struct HomeTimelineRuntimeSyncStateTests {
         state.markForwardFailure(first)
         state.markForwardFailure(second)
         #expect(state.initialSyncState == .unavailable)
+        #expect(state.initialSyncProgress.failedRelayCount == 2)
 
         state.beginForwardAttempt(first)
         #expect(state.initialSyncState == .awaitingRelayResponses)
         state.markForwardEOSE(first)
         #expect(state.initialSyncState == .degraded)
+        #expect(state.initialSyncProgress.successfulRelayCount == 1)
 
         state.beginForwardAttempt(second)
         state.markForwardEOSE(second)

@@ -36,10 +36,13 @@ struct HomeTimelineActivityContext: Equatable, Sendable {
     let connectedRelayCount: Int
     let plannedRelayCount: Int
     let initialSyncState: HomeTimelineInitialSyncState
+    let initialSyncCompletedRelayCount: Int
+    let initialSyncExpectedRelayCount: Int
     let hasOlderPageRequest: Bool
     let hasGapWork: Bool
-    let hasBackwardRequests: Bool
+    let backwardRequestCount: Int
     let hasPendingDependencyWork: Bool
+    let pendingDependencyRequestCount: Int
 }
 
 struct HomeTimelineActivitySnapshot: Equatable, Sendable {
@@ -161,7 +164,7 @@ final class HomeTimelineActivityCoordinator {
         if isRefreshing {
             return NostrTimelineActivityStatus(
                 title: "Updating Home timeline",
-                detail: "Fetching newer events from Home relays",
+                detail: "Applying events already received from Home relays",
                 compactLabel: "Updating"
             )
         }
@@ -183,18 +186,41 @@ final class HomeTimelineActivityCoordinator {
            context.initialSyncState == .awaitingRelayResponses {
             return NostrTimelineActivityStatus(
                 title: "Synchronizing Home timeline",
-                detail: "\(context.connectedRelayCount) of \(context.plannedRelayCount) relays connected; waiting for initial EOSE",
+                detail: initialSyncDetail(context: context),
                 compactLabel: "Syncing"
             )
         }
-        if context.hasBackwardRequests || context.hasPendingDependencyWork {
+        if context.pendingDependencyRequestCount > 0 {
             return NostrTimelineActivityStatus(
                 title: "Resolving referenced posts",
-                detail: "Fetching events referenced by visible posts",
+                detail: "Waiting for \(context.pendingDependencyRequestCount) referenced event requests",
+                compactLabel: "Resolving"
+            )
+        }
+        if context.hasPendingDependencyWork {
+            return NostrTimelineActivityStatus(
+                title: "Resolving referenced posts",
+                detail: "Preparing referenced event requests",
+                compactLabel: "Resolving"
+            )
+        }
+        if context.backwardRequestCount > 0 {
+            return NostrTimelineActivityStatus(
+                title: "Waiting for relay responses",
+                detail: "\(context.backwardRequestCount) backward requests remain active",
                 compactLabel: "Resolving"
             )
         }
         return nil
+    }
+
+    private func initialSyncDetail(
+        context: HomeTimelineActivityContext
+    ) -> String {
+        guard context.initialSyncExpectedRelayCount > 0 else {
+            return "Waiting for initial Home relay requests to start"
+        }
+        return "\(context.initialSyncCompletedRelayCount) of \(context.initialSyncExpectedRelayCount) relays completed initial sync; \(context.connectedRelayCount) connected"
     }
 
     private func transition(

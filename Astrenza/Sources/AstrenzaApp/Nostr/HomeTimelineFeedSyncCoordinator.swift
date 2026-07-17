@@ -63,6 +63,10 @@ final class HomeTimelineFeedSyncCoordinator {
         state.initialSyncState
     }
 
+    var initialSyncProgress: HomeTimelineInitialSyncProgress {
+        state.initialSyncProgress
+    }
+
     var activeRequestCount: Int {
         state.activeRequestCount
     }

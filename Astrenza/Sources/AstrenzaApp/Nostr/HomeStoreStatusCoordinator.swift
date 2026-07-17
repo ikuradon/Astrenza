@@ -39,6 +39,7 @@ extension HomeTimelineActivityInteractionWorkflow:
 protocol HomeStoreSyncStatusSourcing: AnyObject {
     var backwardRequestState: HomeTimelineBackwardRequestState { get }
     var initialSyncState: HomeTimelineInitialSyncState { get }
+    var initialSyncProgress: HomeTimelineInitialSyncProgress { get }
 
     func relayStatusSnapshot(
         resolvedRelays: [String]
@@ -144,16 +145,24 @@ final class HomeStoreStatusCoordinator {
         _ = relayStatusRevision
         let backward = sync.backwardRequestState
         let relay = relayStatusSnapshot
+        let dependencyWork = dependencies.dependencyWorkState
+        let initialSync = sync.initialSyncProgress
         return activity.status(
             context: HomeTimelineActivityContext(
                 connectedRelayCount: relay.connectedRelayCount,
                 plannedRelayCount: relay.plannedRelayCount,
                 initialSyncState: sync.initialSyncState,
+                initialSyncCompletedRelayCount:
+                    initialSync.completedRelayCount,
+                initialSyncExpectedRelayCount:
+                    initialSync.expectedRelayCount,
                 hasOlderPageRequest: backward.hasOlderPageRequest,
                 hasGapWork: backward.hasGapWork,
-                hasBackwardRequests: backward.hasRequests,
+                backwardRequestCount: backward.requestCount,
                 hasPendingDependencyWork:
-                    dependencies.dependencyWorkState.hasPendingWork
+                    dependencyWork.hasPendingWork,
+                pendingDependencyRequestCount:
+                    dependencyWork.pendingSourceRequestCount
             )
         )
     }

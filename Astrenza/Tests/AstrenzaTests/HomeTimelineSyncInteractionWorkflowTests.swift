@@ -174,6 +174,12 @@ private final class FeedSyncInteractionTrackerSpy:
     }
 
     let initialSyncState = HomeTimelineInitialSyncState.synchronized
+    let initialSyncProgress = HomeTimelineInitialSyncProgress(
+        expectedRelayCount: 1,
+        completedRelayCount: 1,
+        successfulRelayCount: 1,
+        failedRelayCount: 0
+    )
 
     func prepareForwardSubscriptions(
         _ subscriptions: Set<RuntimeSubscriptionKey>

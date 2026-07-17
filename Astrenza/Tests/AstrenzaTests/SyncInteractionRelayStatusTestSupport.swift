@@ -90,6 +90,12 @@ final class RelayStatusRecordingSpy: HomeTimelineRelayStatusRecording {
 final class RelayStatusFeedSyncStub: HomeTimelineFeedSyncTracking {
     let isRealtime = false
     let initialSyncState = HomeTimelineInitialSyncState.awaitingRelayResponses
+    let initialSyncProgress = HomeTimelineInitialSyncProgress(
+        expectedRelayCount: 0,
+        completedRelayCount: 0,
+        successfulRelayCount: 0,
+        failedRelayCount: 0
+    )
     let activeRequestCount = 0
     let activeContextCount = 0
 

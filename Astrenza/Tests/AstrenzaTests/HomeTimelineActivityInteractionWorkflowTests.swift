@@ -55,10 +55,13 @@ struct HomeTimelineActivityInteractionTests {
             connectedRelayCount: 2,
             plannedRelayCount: 4,
             initialSyncState: .synchronized,
+            initialSyncCompletedRelayCount: 4,
+            initialSyncExpectedRelayCount: 4,
             hasOlderPageRequest: true,
             hasGapWork: true,
-            hasBackwardRequests: true,
-            hasPendingDependencyWork: true
+            backwardRequestCount: 2,
+            hasPendingDependencyWork: true,
+            pendingDependencyRequestCount: 3
         )
 
         let status = workflow.status(context: context)
