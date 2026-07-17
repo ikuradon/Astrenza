@@ -1,22 +1,22 @@
+import AstrenzaCore
 import SwiftUI
 
 struct ComposeCompletion: Equatable {
     let trigger: Character
-    let values: [String]
+    let mentionCandidates: [ComposeMentionCandidate]
+    let hashtagCandidates: [ComposeHashtagCandidate]
+    let customEmojiCandidates: [ComposeCustomEmojiCandidate]
 
-    var mentionCandidates: [ComposeMentionCandidate] {
-        guard trigger == "@" else { return [] }
-        return ComposeMentionCandidate.mockValues.filter { values.contains($0.insertionText) }
-    }
-
-    var hashtagCandidates: [ComposeHashtagCandidate] {
-        guard trigger == "#" else { return [] }
-        return ComposeHashtagCandidate.recentValues.filter { values.contains($0.tag) }
-    }
-
-    var customEmojiCandidates: [ComposeCustomEmojiCandidate] {
-        guard trigger == ":" else { return [] }
-        return ComposeCustomEmojiCandidate.mockValues.filter { values.contains($0.shortcode) }
+    init(
+        trigger: Character,
+        mentionCandidates: [ComposeMentionCandidate] = [],
+        hashtagCandidates: [ComposeHashtagCandidate] = [],
+        customEmojiCandidates: [ComposeCustomEmojiCandidate] = []
+    ) {
+        self.trigger = trigger
+        self.mentionCandidates = mentionCandidates
+        self.hashtagCandidates = hashtagCandidates
+        self.customEmojiCandidates = customEmojiCandidates
     }
 }
 
@@ -68,20 +68,6 @@ struct ComposeCompletionBar: View {
                             .buttonStyle(.plain)
                         }
                     }
-                } else {
-                    ForEach(completion.values.prefix(6), id: \.self) { value in
-                        Button {
-                            onSelect(value)
-                        } label: {
-                            Text(value)
-                                .font(.system(size: 14, weight: .heavy, design: .rounded))
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal, 12)
-                                .frame(height: 36)
-                                .background(.ultraThinMaterial, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
                 }
             }
             .padding(.horizontal, 4)
@@ -98,9 +84,20 @@ struct ComposeMentionCandidate: Identifiable, Equatable {
     let displayName: String
     let handle: String
     let avatar: AvatarStyle
+    let insertionText: String
 
-    var insertionText: String {
-        "@\(id)"
+    init(
+        id: String,
+        displayName: String,
+        handle: String,
+        avatar: AvatarStyle,
+        insertionText: String? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.handle = handle
+        self.avatar = avatar
+        self.insertionText = insertionText ?? "@\(id)"
     }
 
     var searchText: String {
@@ -175,6 +172,163 @@ struct ComposeHashtagCandidate: Identifiable, Equatable {
         ComposeHashtagCandidate(tag: "#timeline", recency: "Used last week", isPinned: false),
         ComposeHashtagCandidate(tag: "#relay", recency: "Used last week", isPinned: false)
     ]
+}
+
+struct ComposeSuggestionSnapshot: Equatable {
+    let mentions: [ComposeMentionCandidate]
+    let hashtags: [ComposeHashtagCandidate]
+    let completionEmojis: [ComposeCustomEmojiCandidate]
+    let pickerEmojis: [ComposeCustomEmojiCandidate]
+
+    static let empty = ComposeSuggestionSnapshot(
+        mentions: [],
+        hashtags: [],
+        completionEmojis: [],
+        pickerEmojis: []
+    )
+
+    static let preview = ComposeSuggestionSnapshot(
+        mentions: ComposeMentionCandidate.mockValues,
+        hashtags: ComposeHashtagCandidate.recentValues,
+        completionEmojis: ComposeCustomEmojiCandidate.mockValues,
+        pickerEmojis: ComposeCustomEmojiCandidate.customPickerValues +
+            ComposeCustomEmojiCandidate.partyParrotValues
+    )
+
+    static func load(
+        accountID: String?,
+        eventStore: NostrEventStore?
+    ) -> ComposeSuggestionSnapshot {
+        guard accountID != nil else { return .preview }
+        guard let eventStore else { return .empty }
+        let source = source(eventStore: eventStore)
+        return project(
+            profiles: source.profiles,
+            recentNotes: source.recentNotes
+        )
+    }
+
+    static func source(
+        eventStore: NostrEventStore
+    ) -> ComposeSuggestionSource {
+        let profiles = (try? eventStore.profileSearchCandidates(
+            query: "",
+            limit: 100
+        )) ?? []
+        let recentNotes = (try? eventStore.events(kind: 1, limit: 300)) ?? []
+        return ComposeSuggestionSource(
+            profiles: profiles,
+            recentNotes: recentNotes
+        )
+    }
+
+    static func project(
+        profiles: [NostrProfileSearchResult],
+        recentNotes: [NostrEvent]
+    ) -> ComposeSuggestionSnapshot {
+        let mentions = profiles.map(mentionCandidate)
+        let hashtags = hashtagCandidates(from: recentNotes)
+        let emojis = customEmojiCandidates(from: recentNotes)
+        return ComposeSuggestionSnapshot(
+            mentions: mentions,
+            hashtags: hashtags,
+            completionEmojis: emojis,
+            pickerEmojis: emojis
+        )
+    }
+
+    private static func mentionCandidate(
+        _ profile: NostrProfileSearchResult
+    ) -> ComposeMentionCandidate {
+        let npub = (try? NostrNIP19.publicKey(profile.pubkey)) ?? profile.pubkey
+        let displayName = profile.displayName ?? abbreviated(profile.pubkey)
+        let handle = profile.nip05.map { "@\($0)" } ?? abbreviated(npub)
+        return ComposeMentionCandidate(
+            id: profile.pubkey,
+            displayName: displayName,
+            handle: handle,
+            avatar: AvatarStyle(
+                primary: .purple,
+                secondary: .blue,
+                symbolName: "person.crop.circle.fill",
+                pictureState: profile.pictureURL == nil ? .missing : .resolved,
+                placeholderSeed: profile.pubkey,
+                imageURL: profile.pictureURL
+            ),
+            insertionText: "nostr:\(npub)"
+        )
+    }
+
+    private static func hashtagCandidates(
+        from events: [NostrEvent]
+    ) -> [ComposeHashtagCandidate] {
+        var observations: [String: (tag: String, count: Int, newest: Int)] = [:]
+        for event in events {
+            for tag in event.tags where tag.count >= 2 && tag[0] == "t" {
+                let value = tag[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty else { continue }
+                let key = value.lowercased()
+                let previous = observations[key]
+                observations[key] = (
+                    tag: previous?.tag ?? "#\(value)",
+                    count: (previous?.count ?? 0) + 1,
+                    newest: max(previous?.newest ?? event.createdAt, event.createdAt)
+                )
+            }
+        }
+        return observations.values
+            .sorted {
+                $0.newest == $1.newest
+                    ? $0.tag.localizedCaseInsensitiveCompare($1.tag) == .orderedAscending
+                    : $0.newest > $1.newest
+            }
+            .prefix(40)
+            .map { observation in
+                ComposeHashtagCandidate(
+                    tag: observation.tag,
+                    recency: observation.count == 1
+                        ? "Seen in a cached note"
+                        : "Seen in \(observation.count) cached notes",
+                    isPinned: false
+                )
+            }
+    }
+
+    private static func customEmojiCandidates(
+        from events: [NostrEvent]
+    ) -> [ComposeCustomEmojiCandidate] {
+        var seen = Set<String>()
+        var candidates: [ComposeCustomEmojiCandidate] = []
+        for event in events.sorted(by: { $0.createdAt > $1.createdAt }) {
+            for tag in event.tags where tag.count >= 3 && tag[0] == "emoji" {
+                let name = tag[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty,
+                      seen.insert(name.lowercased()).inserted,
+                      let imageURL = URL(string: tag[2]),
+                      let scheme = imageURL.scheme?.lowercased(),
+                      scheme == "https" || scheme == "http"
+                else { continue }
+                candidates.append(ComposeCustomEmojiCandidate(
+                    shortcode: ":\(name):",
+                    glyph: String(name.prefix(1)).uppercased(),
+                    tint: .astrenzaAccent,
+                    imageURL: imageURL
+                ))
+                if candidates.count == 80 { return candidates }
+            }
+        }
+        return candidates
+    }
+
+    private static func abbreviated(_ value: String) -> String {
+        guard value.count > 18 else { return value }
+        return "\(value.prefix(9))…\(value.suffix(7))"
+    }
+}
+
+struct ComposeSuggestionSource: Sendable {
+    let profiles: [NostrProfileSearchResult]
+    let recentNotes: [NostrEvent]
 }
 
 struct ComposeHashtagCandidateCell: View {

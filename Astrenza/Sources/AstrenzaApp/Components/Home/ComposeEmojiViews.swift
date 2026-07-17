@@ -4,6 +4,19 @@ struct ComposeCustomEmojiCandidate: Identifiable, Equatable {
     let shortcode: String
     let glyph: String
     let tint: Color
+    let imageURL: URL?
+
+    init(
+        shortcode: String,
+        glyph: String,
+        tint: Color,
+        imageURL: URL? = nil
+    ) {
+        self.shortcode = shortcode
+        self.glyph = glyph
+        self.tint = tint
+        self.imageURL = imageURL
+    }
 
     var id: String { shortcode }
 
@@ -58,6 +71,7 @@ struct ComposeCustomEmojiCandidate: Identifiable, Equatable {
 
 struct ComposeCustomEmojiPicker: View {
     let isContinuousInput: Bool
+    let candidates: [ComposeCustomEmojiCandidate]
     let onSelect: (ComposeCustomEmojiCandidate) -> Void
     let onReturn: () -> Void
     private let columns = Array(repeating: GridItem(.flexible(minimum: 30, maximum: 44), spacing: 16), count: 8)
@@ -66,8 +80,7 @@ struct ComposeCustomEmojiPicker: View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    emojiSection("CUSTOM", values: ComposeCustomEmojiCandidate.customPickerValues)
-                    emojiSection("PARTY PARROTS", values: ComposeCustomEmojiCandidate.partyParrotValues)
+                    emojiSection("CUSTOM", values: candidates)
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 22)
@@ -132,11 +145,7 @@ struct ComposeCustomEmojiGridCell: View {
             Circle()
                 .fill(candidate.tint.opacity(candidate.glyph.count > 2 ? 0.12 : 0.18))
 
-            Text(candidate.glyph)
-                .font(.system(size: candidate.glyph.count > 2 ? 12 : 26, weight: .bold, design: .rounded))
-                .foregroundStyle(candidate.tint)
-                .minimumScaleFactor(0.65)
-                .lineLimit(1)
+            ComposeCustomEmojiIcon(candidate: candidate)
         }
         .frame(width: 34, height: 34)
         .accessibilityLabel(candidate.shortcode)
@@ -152,8 +161,7 @@ struct ComposeCustomEmojiCandidateCell: View {
                 Circle()
                     .fill(candidate.tint.opacity(0.18))
 
-                Text(candidate.glyph)
-                    .font(.system(size: 22))
+                ComposeCustomEmojiIcon(candidate: candidate)
             }
             .frame(width: 34, height: 34)
 
@@ -167,5 +175,38 @@ struct ComposeCustomEmojiCandidateCell: View {
         .frame(height: 50)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ComposeCustomEmojiIcon: View {
+    let candidate: ComposeCustomEmojiCandidate
+
+    var body: some View {
+        if let imageURL = candidate.imageURL {
+            AsyncImage(url: imageURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                case .empty, .failure:
+                    fallback
+                @unknown default:
+                    fallback
+                }
+            }
+        } else {
+            fallback
+        }
+    }
+
+    private var fallback: some View {
+        Text(candidate.glyph)
+            .font(.system(
+                size: candidate.glyph.count > 2 ? 12 : 22,
+                weight: .bold,
+                design: .rounded
+            ))
+            .foregroundStyle(candidate.tint)
+            .minimumScaleFactor(0.65)
+            .lineLimit(1)
     }
 }

@@ -11,6 +11,7 @@ struct ComposeSheetView: View {
     let onSubmit: ((ComposeSubmitRequest) async -> Bool)?
     let accountID: String?
     let eventStore: NostrEventStore?
+    @State private var suggestions: ComposeSuggestionSnapshot
     @State private var text = ""
     @State private var sensitiveReason = ""
     @State private var isSensitiveReasonVisible = false
@@ -28,6 +29,7 @@ struct ComposeSheetView: View {
     @State private var isDraftsViewPresented = false
     @State private var savedDatabaseDrafts: [ComposeDraft] = []
     @State private var activeDraftID: String?
+    @State private var selectedCustomEmojis: [ComposeCustomEmojiReference] = []
     @AppStorage("astrenza.mockComposeDraftText") private var savedDraftText = ""
     @AppStorage("astrenza.mockComposeDraftMediaCount") private var savedDraftMediaCount = 0
     private let characterLimit = 500
@@ -45,10 +47,29 @@ struct ComposeSheetView: View {
         self.onSubmit = onSubmit
         self.accountID = accountID
         self.eventStore = eventStore
+        _suggestions = State(
+            initialValue: accountID == nil ? .preview : .empty
+        )
     }
 
     private var remainingCharacters: Int {
         characterLimit - text.count
+    }
+
+    private var suggestionLoadIdentity: String {
+        "\(accountID ?? "preview"):\(eventStore == nil ? "missing" : "available")"
+    }
+
+    private func loadLiveSuggestions() async {
+        guard accountID != nil, let eventStore else { return }
+        let source = await Task.detached(priority: .userInitiated) {
+            ComposeSuggestionSnapshot.source(eventStore: eventStore)
+        }.value
+        guard !Task.isCancelled else { return }
+        suggestions = ComposeSuggestionSnapshot.project(
+            profiles: source.profiles,
+            recentNotes: source.recentNotes
+        )
     }
 
     private var canSubmit: Bool {
@@ -188,6 +209,9 @@ struct ComposeSheetView: View {
                 isEditorFocused = true
             }
         }
+        .task(id: suggestionLoadIdentity) {
+            await loadLiveSuggestions()
+        }
         .onChange(of: text) { _, newValue in
             if newValue.count > characterLimit {
                 text = String(newValue.prefix(characterLimit))
@@ -229,6 +253,7 @@ struct ComposeSheetView: View {
             isContinuousCustomEmojiInput: isContinuousCustomEmojiInput,
             selectedPhotoItems: $selectedPhotoItems,
             activeCompletion: activeCompletion,
+            customEmojiCandidates: suggestions.pickerEmojis,
             accent: accent,
             onEmojiSelected: handleCustomEmojiSelection,
             onEmojiReturn: finishContinuousCustomEmojiInput,
@@ -253,23 +278,20 @@ struct ComposeSheetView: View {
         case "@":
             return ComposeCompletion(
                 trigger: "@",
-                values: ComposeMentionCandidate.mockValues
+                mentionCandidates: suggestions.mentions
                     .filter { !query.isEmpty && $0.searchText.contains(query) }
-                    .map(\.insertionText)
             )
         case "#":
             return ComposeCompletion(
                 trigger: "#",
-                values: ComposeHashtagCandidate.recentValues
+                hashtagCandidates: suggestions.hashtags
                     .filter { query.isEmpty || $0.tag.lowercased().contains(query) }
-                    .map(\.tag)
             )
         case ":":
             return ComposeCompletion(
                 trigger: ":",
-                values: ComposeCustomEmojiCandidate.mockValues
+                customEmojiCandidates: suggestions.completionEmojis
                     .filter { !query.isEmpty && $0.shortcode.lowercased().contains(query) }
-                    .map(\.shortcode)
             )
         default:
             return nil
@@ -285,6 +307,11 @@ struct ComposeSheetView: View {
     }
 
     private func insertCompletion(_ value: String) {
+        if let candidate = suggestions.completionEmojis.first(where: {
+            $0.shortcode == value
+        }) {
+            recordCustomEmoji(candidate)
+        }
         let parts = text.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let last = parts.last, ["@", "#", ":"].contains(last.first ?? " ") else {
             insertTrigger(value)
@@ -312,6 +339,7 @@ struct ComposeSheetView: View {
     }
 
     private func handleCustomEmojiSelection(_ candidate: ComposeCustomEmojiCandidate) {
+        recordCustomEmoji(candidate)
         if isContinuousCustomEmojiInput {
             insertContinuousCustomEmoji(candidate.shortcode)
         } else {
@@ -319,6 +347,19 @@ struct ComposeSheetView: View {
             withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
                 isCustomEmojiPickerPresented = false
             }
+        }
+    }
+
+    private func recordCustomEmoji(_ candidate: ComposeCustomEmojiCandidate) {
+        let shortcode = candidate.shortcode.trimmingCharacters(
+            in: CharacterSet(charactersIn: ":")
+        )
+        if let imageURL = candidate.imageURL,
+           !selectedCustomEmojis.contains(where: { $0.shortcode == shortcode }) {
+            selectedCustomEmojis.append(ComposeCustomEmojiReference(
+                shortcode: shortcode,
+                url: imageURL.absoluteString
+            ))
         }
     }
 
@@ -403,7 +444,10 @@ struct ComposeSheetView: View {
             mode: mode,
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
             isSensitive: isSensitiveReasonVisible,
-            sensitiveReason: sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines)
+            sensitiveReason: sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines),
+            customEmojis: selectedCustomEmojis.filter {
+                text.contains(":\($0.shortcode):")
+            }
         )
         Task {
             let didSubmit = await onSubmit(request)

@@ -59,6 +59,9 @@ final class HomeTimelineUserActionCoordinator {
         if request.isSensitive {
             tags.append(["content-warning", request.sensitiveReason])
         }
+        tags.append(contentsOf: request.customEmojis.map {
+            ["emoji", $0.shortcode, $0.url]
+        })
 
         switch request.mode {
         case .post, .reply:

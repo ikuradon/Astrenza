@@ -29,4 +29,10 @@ struct ComposeSubmitRequest: Equatable {
     let text: String
     let isSensitive: Bool
     let sensitiveReason: String
+    let customEmojis: [ComposeCustomEmojiReference]
+}
+
+struct ComposeCustomEmojiReference: Equatable {
+    let shortcode: String
+    let url: String
 }
