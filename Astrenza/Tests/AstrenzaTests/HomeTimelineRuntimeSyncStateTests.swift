@@ -60,7 +60,7 @@ struct HomeTimelineRuntimeSyncStateTests {
         #expect(state.initialSyncProgress.failedRelayCount == 2)
 
         state.beginForwardAttempt(first)
-        #expect(state.initialSyncState == .awaitingRelayResponses)
+        #expect(state.initialSyncState == .unavailable)
         state.markForwardEOSE(first)
         #expect(state.initialSyncState == .degraded)
         #expect(state.initialSyncProgress.successfulRelayCount == 1)
@@ -68,6 +68,42 @@ struct HomeTimelineRuntimeSyncStateTests {
         state.beginForwardAttempt(second)
         state.markForwardEOSE(second)
         #expect(state.initialSyncState == .synchronized)
+    }
+
+    @Test("Retries and later relay plan changes do not reopen settled initial sync")
+    func settledInitialSyncRemainsTerminalAcrossRuntimeChanges() {
+        let first = RuntimeSubscriptionKey(
+            relayURL: "wss://relay-one.example",
+            subscriptionID: "home-0"
+        )
+        let later = RuntimeSubscriptionKey(
+            relayURL: "wss://relay-later.example",
+            subscriptionID: "home-0"
+        )
+        var state = HomeTimelineRuntimeSyncState()
+
+        state.prepareForwardSubscriptions([first])
+        state.markForwardFailure(first)
+        #expect(state.initialSyncState == .unavailable)
+
+        state.prepareForwardSubscriptions([first, later])
+        state.beginForwardAttempt(first)
+        state.beginForwardAttempt(later)
+        #expect(state.initialSyncState == .unavailable)
+        #expect(state.initialSyncProgress == HomeTimelineInitialSyncProgress(
+            expectedRelayCount: 1,
+            completedRelayCount: 1,
+            successfulRelayCount: 0,
+            failedRelayCount: 1
+        ))
+
+        state.markForwardEOSE(later)
+        #expect(state.initialSyncState == .unavailable)
+        #expect(!state.isRealtime)
+
+        state.markForwardEOSE(first)
+        #expect(state.initialSyncState == .synchronized)
+        #expect(state.isRealtime)
     }
 
     @Test("Request lifecycle keeps provenance context and event window atomic")

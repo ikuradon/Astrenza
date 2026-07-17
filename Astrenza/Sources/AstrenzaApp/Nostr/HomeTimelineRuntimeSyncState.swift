@@ -118,6 +118,7 @@ struct HomeTimelineRuntimeSyncState {
     private var forwardContextsByGroupID: [String: HomeFeedRuntimeContext] = [:]
     private var expectedForwardSubscriptions = Set<RuntimeSubscriptionKey>()
     private var forwardEOSESubscriptions = Set<RuntimeSubscriptionKey>()
+    private var initialForwardSubscriptions = Set<RuntimeSubscriptionKey>()
     private var initialForwardResults: [RuntimeSubscriptionKey: InitialForwardResult] = [:]
 
     var isRealtime: Bool {
@@ -130,20 +131,20 @@ struct HomeTimelineRuntimeSyncState {
     }
 
     var initialSyncProgress: HomeTimelineInitialSyncProgress {
-        let successfulRelayCount = expectedForwardSubscriptions.reduce(into: 0) {
+        let successfulRelayCount = initialForwardSubscriptions.reduce(into: 0) {
             count, key in
             if initialForwardResults[key] == .eose {
                 count += 1
             }
         }
-        let failedRelayCount = expectedForwardSubscriptions.reduce(into: 0) {
+        let failedRelayCount = initialForwardSubscriptions.reduce(into: 0) {
             count, key in
             if initialForwardResults[key] == .failed {
                 count += 1
             }
         }
         return HomeTimelineInitialSyncProgress(
-            expectedRelayCount: expectedForwardSubscriptions.count,
+            expectedRelayCount: initialForwardSubscriptions.count,
             completedRelayCount: successfulRelayCount + failedRelayCount,
             successfulRelayCount: successfulRelayCount,
             failedRelayCount: failedRelayCount
@@ -165,13 +166,16 @@ struct HomeTimelineRuntimeSyncState {
         forwardContextsByGroupID.removeAll()
         expectedForwardSubscriptions.removeAll()
         forwardEOSESubscriptions.removeAll()
+        initialForwardSubscriptions.removeAll()
         initialForwardResults.removeAll()
     }
 
     mutating func prepareForwardSubscriptions(_ subscriptions: Set<RuntimeSubscriptionKey>) {
-        if subscriptions != expectedForwardSubscriptions {
-            initialForwardResults.removeAll(keepingCapacity: true)
-        } else {
+        let initialSyncWasSettled = initialSyncState.isSettled
+        if !initialSyncWasSettled {
+            // 初回表示のcohortだけを更新する。settle後にrelay planが増減しても、
+            // current realtime状態の変化で起動時の完了表示を巻き戻さない。
+            initialForwardSubscriptions = subscriptions
             initialForwardResults = initialForwardResults.filter {
                 subscriptions.contains($0.key)
             }
@@ -182,9 +186,6 @@ struct HomeTimelineRuntimeSyncState {
 
     mutating func beginForwardAttempt(_ key: RuntimeSubscriptionKey) {
         forwardEOSESubscriptions.remove(key)
-        if initialForwardResults[key] == .failed {
-            initialForwardResults.removeValue(forKey: key)
-        }
     }
 
     mutating func invalidateForwardSubscription(_ key: RuntimeSubscriptionKey) {
@@ -198,11 +199,14 @@ struct HomeTimelineRuntimeSyncState {
     mutating func markForwardEOSE(_ key: RuntimeSubscriptionKey) {
         guard expectedForwardSubscriptions.contains(key) else { return }
         forwardEOSESubscriptions.insert(key)
-        initialForwardResults[key] = .eose
+        if initialForwardSubscriptions.contains(key) {
+            initialForwardResults[key] = .eose
+        }
     }
 
     mutating func markForwardFailure(_ key: RuntimeSubscriptionKey) {
         guard expectedForwardSubscriptions.contains(key),
+              initialForwardSubscriptions.contains(key),
               initialForwardResults[key] != .eose
         else { return }
         initialForwardResults[key] = .failed
