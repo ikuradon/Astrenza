@@ -90,13 +90,15 @@ public extension NostrHomeTimelineLoader {
     init(
         nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver(),
         bootstrapRelays: [String] = NostrHomeTimelineLoader.defaultBootstrapRelays,
-        pageLimit: Int = 100
+        pageLimit: Int = 100,
+        discoveryPolicy: NostrHomeTimelineDiscoveryPolicy = NostrHomeTimelineDiscoveryPolicy()
     ) {
         self.init(
             relayClient: NostrRelayClient(),
             nip05Resolver: nip05Resolver,
             bootstrapRelays: bootstrapRelays,
-            pageLimit: pageLimit
+            pageLimit: pageLimit,
+            discoveryPolicy: discoveryPolicy
         )
     }
 }

@@ -16,14 +16,17 @@ package protocol NostrRelayBootstrapScoping: Sendable {
 public actor NostrRelayRuntimeClient: NostrRelayFetching, NostrRelayBootstrapScoping {
     private let runtime: NostrRelayRuntime
     private let fallback: any NostrRelayFetching
+    private let fetchTimeoutNanoseconds: UInt64
     private var relayURLsByBootstrapScopeID: [UUID: Set<String>] = [:]
 
     public init(
         runtime: NostrRelayRuntime,
-        fallback: any NostrRelayFetching
+        fallback: any NostrRelayFetching,
+        fetchTimeoutNanoseconds: UInt64 = 7_000_000_000
     ) {
         self.runtime = runtime
         self.fallback = fallback
+        self.fetchTimeoutNanoseconds = fetchTimeoutNanoseconds
     }
 
     public func fetch(
@@ -48,10 +51,29 @@ public actor NostrRelayRuntimeClient: NostrRelayFetching, NostrRelayBootstrapSco
             }
         }
 
-        return try await runtime.fetch(
-            relayURL: identity.rawValue,
-            request: request
-        )
+        let runtime = runtime
+        let relayURL = identity.rawValue
+        let fetchTimeoutNanoseconds = fetchTimeoutNanoseconds
+        return try await withThrowingTaskGroup(of: [NostrEvent].self) { group in
+            group.addTask {
+                try await runtime.fetch(
+                    relayURL: relayURL,
+                    request: request
+                )
+            }
+            group.addTask {
+                if fetchTimeoutNanoseconds > 0 {
+                    try await Task.sleep(nanoseconds: fetchTimeoutNanoseconds)
+                }
+                throw NostrRelayClientError.timeout
+            }
+
+            defer { group.cancelAll() }
+            guard let events = try await group.next() else {
+                throw NostrRelayClientError.timeout
+            }
+            return events
+        }
     }
 
     public func fetchMissingEventIDs(

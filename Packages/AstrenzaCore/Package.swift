@@ -155,6 +155,7 @@ let package = Package(
             dependencies: [
                 "NostrProtocol",
                 "NostrRelay",
+                "NostrSync",
                 "NostrHomeFeature"
             ]
         )

@@ -133,6 +133,72 @@ struct NostrRelayRuntimeClientTests {
         #expect(await connection.connectionCloseCallCount() == 0)
         await runtime.terminate()
     }
+
+    @Test("Fetch deadline covers a stalled REQ send and releases its temporary relay")
+    func fetchDeadlineCoversStalledREQSend() async throws {
+        let relayURL = "wss://relay.example"
+        let connection = RuntimeFetchTimeoutConnection()
+        let transport = RuntimeFetchTimeoutTransport(connection: connection)
+        let runtime = NostrRelayRuntime(
+            transportFactory: { _ in transport },
+            heartbeatPolicy: .disabled
+        )
+        let client = NostrRelayRuntimeClient(
+            runtime: runtime,
+            fallback: NostrRelayClient(),
+            fetchTimeoutNanoseconds: 20_000_000
+        )
+
+        var didTimeOut = false
+        do {
+            _ = try await client.fetch(
+                relayURL: relayURL,
+                request: NostrRelayRequest(
+                    subscriptionID: "astrenza-kind3",
+                    filters: [["kinds": .ints([3])]]
+                )
+            )
+        } catch NostrRelayClientError.timeout {
+            didTimeOut = true
+        }
+
+        #expect(didTimeOut)
+        #expect(await runtime.temporaryRelayURLs().isEmpty)
+        await runtime.terminate()
+    }
+}
+
+private actor RuntimeFetchTimeoutTransport: NostrRelayTransport {
+    private let connection: RuntimeFetchTimeoutConnection
+
+    init(connection: RuntimeFetchTimeoutConnection) {
+        self.connection = connection
+    }
+
+    func connect(relayURL: String) async throws -> any NostrRelayTransportConnection {
+        connection
+    }
+}
+
+private actor RuntimeFetchTimeoutConnection: NostrRelayTransportConnection {
+    func send(_ textFrame: String) async throws {
+        guard Self.messageType(from: textFrame) == "REQ" else { return }
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+    }
+
+    func receive() async throws -> String {
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+        throw CancellationError()
+    }
+
+    func close() async {}
+
+    private static func messageType(from textFrame: String) -> String? {
+        guard let data = textFrame.data(using: .utf8),
+              let frame = try? JSONSerialization.jsonObject(with: data) as? [Any]
+        else { return nil }
+        return frame.first as? String
+    }
 }
 
 private actor RuntimeFetchTestTransport: NostrRelayTransport {

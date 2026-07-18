@@ -11,6 +11,30 @@ public enum NostrHomeTimelineLoadStage: Equatable, Sendable {
     case loadingTimeline
 }
 
+public struct NostrHomeTimelineDiscoveryPolicy: Equatable, Sendable {
+    public let settlementNanoseconds: UInt64
+    public let absoluteTimeoutNanoseconds: UInt64
+
+    public init(
+        settlementMilliseconds: Int = 150,
+        absoluteTimeoutMilliseconds: Int = 5_000
+    ) {
+        settlementNanoseconds = Self.nanoseconds(
+            milliseconds: settlementMilliseconds,
+            minimum: 0
+        )
+        absoluteTimeoutNanoseconds = Self.nanoseconds(
+            milliseconds: absoluteTimeoutMilliseconds,
+            minimum: 1
+        )
+    }
+
+    private static func nanoseconds(milliseconds: Int, minimum: Int) -> UInt64 {
+        let maximum = Int(UInt64.max / 1_000_000)
+        return UInt64(min(max(minimum, milliseconds), maximum)) * 1_000_000
+    }
+}
+
 public struct NostrHomeTimelineLoader: Sendable {
     public static let defaultBootstrapRelays = [
         "wss://nos.lol",
@@ -23,17 +47,20 @@ public struct NostrHomeTimelineLoader: Sendable {
     public let nip05Resolver: any NostrNIP05Resolving
     public let bootstrapRelays: [String]
     public let pageLimit: Int
+    public let discoveryPolicy: NostrHomeTimelineDiscoveryPolicy
 
     public init(
         relayClient: any NostrRelayFetching,
         nip05Resolver: any NostrNIP05Resolving = NostrNIP05Resolver(),
         bootstrapRelays: [String] = NostrHomeTimelineLoader.defaultBootstrapRelays,
-        pageLimit: Int = 100
+        pageLimit: Int = 100,
+        discoveryPolicy: NostrHomeTimelineDiscoveryPolicy = NostrHomeTimelineDiscoveryPolicy()
     ) {
         self.relayClient = relayClient
         self.nip05Resolver = nip05Resolver
         self.bootstrapRelays = bootstrapRelays
         self.pageLimit = max(1, min(pageLimit, 250))
+        self.discoveryPolicy = discoveryPolicy
     }
 
     public func bootstrapState(
@@ -55,64 +82,10 @@ public struct NostrHomeTimelineLoader: Sendable {
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
-        var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
-        await onStage?(.resolvingRelayList)
-        let relayListResult = try await latestEvent(
-            relays: discoveryRelays,
-            request: NostrRelayRequest(
-                subscriptionID: "astrenza-nip65",
-                filters: [[
-                    "authors": .strings([account.pubkey]),
-                    "kinds": .ints([10002]),
-                    "limit": .int(1)
-                ]]
-            ),
-            accountID: account.pubkey
-        )
-        relaySyncEvents.append(contentsOf: relayListResult.syncEvents)
-        let relayListEvent = relayListResult.event
-
-        let relayList = NostrRelayList.parse(from: relayListEvent)
-        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : relayList.readRelays
-        let contactRelays = (readRelays + discoveryRelays).uniqued()
-
-        await onStage?(.resolvingContactList)
-        let contactResult = try await settledLatestEvent(
-            relays: contactRelays,
-            request: NostrRelayRequest(
-                subscriptionID: "astrenza-kind3",
-                filters: [[
-                    "authors": .strings([account.pubkey]),
-                    "kinds": .ints([3]),
-                    "limit": .int(1)
-                ]]
-            ),
-            accountID: account.pubkey
-        )
-        relaySyncEvents.append(contentsOf: contactResult.syncEvents)
-        let contactEvent = contactResult.event
-        let contacts = NostrContactList.pubkeys(from: contactEvent)
-        let authorRelayListEvents = try await authorRelayListEvents(
-            authors: contacts,
-            relays: contactRelays,
-            accountID: account.pubkey,
+        try await resolvedAccountBootstrapState(
+            account: account,
             policy: policy,
-            onStage: onStage,
-            relaySyncEvents: &relaySyncEvents
-        )
-
-        return NostrHomeTimelineState(
-            relays: readRelays,
-            followedPubkeys: contacts,
-            noteEvents: [],
-            metadataEvents: [],
-            relayListEvent: relayListEvent,
-            contactListEvent: contactEvent,
-            authorRelayListEvents: authorRelayListEvents,
-            nip05Resolutions: [:],
-            hasMoreOlder: true,
-            relaySyncEvents: relaySyncEvents
+            onStage: onStage
         )
     }
 
@@ -135,73 +108,24 @@ public struct NostrHomeTimelineLoader: Sendable {
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
-        var relaySyncEvents: [NostrRelaySyncEventRecord] = []
-        let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
-        await onStage?(.resolvingRelayList)
-        let relayListResult = try await latestEvent(
-            relays: discoveryRelays,
-            request: NostrRelayRequest(
-                subscriptionID: "astrenza-nip65",
-                filters: [[
-                    "authors": .strings([account.pubkey]),
-                    "kinds": .ints([10002]),
-                    "limit": .int(1)
-                ]]
-            ),
-            accountID: account.pubkey
-        )
-        relaySyncEvents.append(contentsOf: relayListResult.syncEvents)
-        let relayListEvent = relayListResult.event
-
-        let relayList = NostrRelayList.parse(from: relayListEvent)
-        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : relayList.readRelays
-        let contactRelays = (readRelays + discoveryRelays).uniqued()
-
-        await onStage?(.resolvingContactList)
-        let contactResult = try await latestEvent(
-            relays: contactRelays,
-            request: NostrRelayRequest(
-                subscriptionID: "astrenza-kind3",
-                filters: [[
-                    "authors": .strings([account.pubkey]),
-                    "kinds": .ints([3]),
-                    "limit": .int(1)
-                ]]
-            ),
-            accountID: account.pubkey
-        )
-        relaySyncEvents.append(contentsOf: contactResult.syncEvents)
-        let contactEvent = contactResult.event
-        let contacts = NostrContactList.pubkeys(from: contactEvent)
-        let authorRelayListEvents = try await authorRelayListEvents(
-            authors: contacts,
-            relays: contactRelays,
-            accountID: account.pubkey,
+        let bootstrapState = try await resolvedAccountBootstrapState(
+            account: account,
             policy: policy,
-            onStage: onStage,
-            relaySyncEvents: &relaySyncEvents
+            onStage: onStage
         )
+        var relaySyncEvents = bootstrapState.relaySyncEvents
+        let readRelays = bootstrapState.relays
+        let contacts = bootstrapState.followedPubkeys
 
         guard !contacts.isEmpty else {
-            return NostrHomeTimelineState(
-                relays: readRelays,
-                followedPubkeys: [],
-                noteEvents: [],
-                metadataEvents: [],
-                relayListEvent: relayListEvent,
-                contactListEvent: contactEvent,
-                authorRelayListEvents: authorRelayListEvents,
-                nip05Resolutions: [:],
-                hasMoreOlder: true,
-                relaySyncEvents: relaySyncEvents
-            )
+            return bootstrapState
         }
 
         await onStage?(.loadingTimeline)
         let homeResult = try await timelineEvents(
             authors: contacts,
-            authorRelayListEvents: authorRelayListEvents,
-            contactListEvent: contactEvent,
+            authorRelayListEvents: bootstrapState.authorRelayListEvents,
+            contactListEvent: bootstrapState.contactListEvent,
             fallbackRelays: readRelays,
             policy: policy,
             accountID: account.pubkey,
@@ -228,10 +152,96 @@ public struct NostrHomeTimelineLoader: Sendable {
             followedPubkeys: contacts,
             noteEvents: sortedUnique(homeEvents),
             metadataEvents: sortedUnique(metadataEvents),
+            relayListEvent: bootstrapState.relayListEvent,
+            contactListEvent: bootstrapState.contactListEvent,
+            authorRelayListEvents: bootstrapState.authorRelayListEvents,
+            nip05Resolutions: nip05Resolutions,
+            hasMoreOlder: true,
+            relaySyncEvents: relaySyncEvents
+        )
+    }
+
+    private func resolvedAccountBootstrapState(
+        account: NostrAccount,
+        policy: NostrSyncPolicy,
+        onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
+    ) async throws -> NostrHomeTimelineState {
+        let discoveryStartedAt = ProcessInfo.processInfo.systemUptime
+        let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
+        let relayListRequest = NostrRelayRequest(
+            subscriptionID: "astrenza-nip65",
+            filters: [[
+                "authors": .strings([account.pubkey]),
+                "kinds": .ints([10_002]),
+                "limit": .int(1)
+            ]]
+        )
+        let contactListRequest = NostrRelayRequest(
+            subscriptionID: "astrenza-kind3",
+            filters: [[
+                "authors": .strings([account.pubkey]),
+                "kinds": .ints([3]),
+                "limit": .int(1)
+            ]]
+        )
+
+        await onStage?(.resolvingRelayList)
+        async let discoveryContactResult = settledLatestEvent(
+            relays: discoveryRelays,
+            request: contactListRequest,
+            accountID: account.pubkey
+        )
+        let resolvedRelayList = try await settledLatestEvent(
+            relays: discoveryRelays,
+            request: relayListRequest,
+            accountID: account.pubkey
+        )
+        await onStage?(.resolvingContactList)
+        let resolvedDiscoveryContact = try await discoveryContactResult
+        var relaySyncEvents = resolvedRelayList.syncEvents + resolvedDiscoveryContact.syncEvents
+        let relayListEvent = resolvedRelayList.event
+        let relayList = NostrRelayList.parse(from: relayListEvent)
+        let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : relayList.readRelays
+        let contactRelays = (readRelays + discoveryRelays).uniqued()
+
+        var contactEvent = resolvedDiscoveryContact.event
+        let additionalContactRelays = readRelays.filter { !discoveryRelays.contains($0) }
+        let discoveryElapsedNanoseconds = UInt64(
+            max(0, ProcessInfo.processInfo.systemUptime - discoveryStartedAt) * 1_000_000_000
+        )
+        if contactEvent == nil,
+           !additionalContactRelays.isEmpty,
+           discoveryElapsedNanoseconds < discoveryPolicy.absoluteTimeoutNanoseconds {
+            let supplementalContactResult = try await settledLatestEvent(
+                relays: additionalContactRelays,
+                request: contactListRequest,
+                accountID: account.pubkey,
+                absoluteTimeoutNanoseconds: discoveryPolicy.absoluteTimeoutNanoseconds
+                    - discoveryElapsedNanoseconds
+            )
+            relaySyncEvents.append(contentsOf: supplementalContactResult.syncEvents)
+            contactEvent = supplementalContactResult.event
+        }
+
+        let contacts = NostrContactList.pubkeys(from: contactEvent)
+        let authorRelayListEvents = try await authorRelayListEvents(
+            authors: contacts,
+            relays: contactRelays,
+            accountID: account.pubkey,
+            policy: policy,
+            onStage: onStage,
+            relaySyncEvents: &relaySyncEvents
+        )
+
+        return NostrHomeTimelineState(
+            relays: readRelays,
+            followedPubkeys: contacts,
+            noteEvents: [],
+            metadataEvents: [],
             relayListEvent: relayListEvent,
             contactListEvent: contactEvent,
             authorRelayListEvents: authorRelayListEvents,
-            nip05Resolutions: nip05Resolutions,
+            nip05Resolutions: [:],
             hasMoreOlder: true,
             relaySyncEvents: relaySyncEvents
         )
@@ -648,29 +658,25 @@ public struct NostrHomeTimelineLoader: Sendable {
         return result.events
     }
 
-    private func latestEvent(
-        relays: [String],
-        request: NostrRelayRequest,
-        accountID: String
-    ) async throws -> (event: NostrEvent?, syncEvents: [NostrRelaySyncEventRecord]) {
-        let result = try await mergedEvents(relays: relays, request: request, accountID: accountID)
-        let event = result.events.max { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt {
-                return lhs.id > rhs.id
-            }
-            return lhs.createdAt < rhs.createdAt
-        }
-        return (event, result.syncEvents)
-    }
-
     private func settledLatestEvent(
         relays: [String],
         request: NostrRelayRequest,
         accountID: String,
-        settlementNanoseconds: UInt64 = 150_000_000
+        settlementNanoseconds: UInt64? = nil,
+        absoluteTimeoutNanoseconds: UInt64? = nil
     ) async throws -> (event: NostrEvent?, syncEvents: [NostrRelaySyncEventRecord]) {
+        let relays = relays.uniqued()
+        guard !relays.isEmpty else { return (nil, []) }
+
         let relayClient = relayClient
-        return await withTaskGroup(of: SettledRelayFetchOutcome.self) { group in
+        let settlementNanoseconds = settlementNanoseconds ?? discoveryPolicy.settlementNanoseconds
+        let absoluteTimeoutNanoseconds = absoluteTimeoutNanoseconds
+            ?? discoveryPolicy.absoluteTimeoutNanoseconds
+        return try await withThrowingTaskGroup(of: SettledRelayFetchOutcome.self) { group in
+            defer { group.cancelAll() }
+            let deadlineStarted = Date()
+            let deadlineStartedAt = Int(deadlineStarted.timeIntervalSince1970)
+            var pendingRelays = Set(relays)
             for relay in relays {
                 group.addTask {
                     let started = Date()
@@ -694,37 +700,63 @@ public struct NostrHomeTimelineLoader: Sendable {
                     }
                 }
             }
+            group.addTask {
+                try await Task.sleep(nanoseconds: absoluteTimeoutNanoseconds)
+                return .absoluteDeadline
+            }
 
             var eventsByID: [String: NostrEvent] = [:]
             var syncEvents: [NostrRelaySyncEventRecord] = []
             var didScheduleSettlement = false
-            fetchLoop: while let outcome = await group.next() {
-                guard case .relay(let relay, let result, let startedAt, let latency) = outcome else {
-                    break fetchLoop
-                }
-                let syncEvent = relaySyncEvent(
-                    relay: relay,
-                    result: result,
-                    startedAt: startedAt,
-                    latency: latency,
-                    request: request,
-                    accountID: accountID
-                )
-                syncEvents.append(syncEvent)
+            fetchLoop: while let outcome = try await group.next() {
+                try Task.checkCancellation()
+                switch outcome {
+                case .relay(let relay, let result, let startedAt, let latency):
+                    pendingRelays.remove(relay)
+                    let syncEvent = relaySyncEvent(
+                        relay: relay,
+                        result: result,
+                        startedAt: startedAt,
+                        latency: latency,
+                        request: request,
+                        accountID: accountID
+                    )
+                    syncEvents.append(syncEvent)
 
-                if case .success(let relayEvents) = result {
-                    relayEvents.forEach { eventsByID[$0.id] = $0 }
-                    if !relayEvents.isEmpty, !didScheduleSettlement {
-                        didScheduleSettlement = true
-                        group.addTask {
-                            try? await Task.sleep(nanoseconds: settlementNanoseconds)
-                            return .settlementDeadline
+                    if case .success(let relayEvents) = result {
+                        relayEvents.forEach { eventsByID[$0.id] = $0 }
+                        if !relayEvents.isEmpty, !didScheduleSettlement {
+                            didScheduleSettlement = true
+                            group.addTask {
+                                try await Task.sleep(nanoseconds: settlementNanoseconds)
+                                return .settlementDeadline
+                            }
                         }
                     }
+                    if pendingRelays.isEmpty {
+                        break fetchLoop
+                    }
+                case .settlementDeadline:
+                    break fetchLoop
+                case .absoluteDeadline:
+                    let latency = Int(Date().timeIntervalSince(deadlineStarted) * 1_000)
+                    for relay in pendingRelays.sorted() {
+                        let timeout: Result<[NostrEvent], any Error> = .failure(
+                            NostrRelayClientError.timeout
+                        )
+                        syncEvents.append(relaySyncEvent(
+                            relay: relay,
+                            result: timeout,
+                            startedAt: deadlineStartedAt,
+                            latency: max(0, latency),
+                            request: request,
+                            accountID: accountID
+                        ))
+                    }
+                    break fetchLoop
                 }
             }
 
-            group.cancelAll()
             let event = eventsByID.values.max { lhs, rhs in
                 if lhs.createdAt == rhs.createdAt {
                     return lhs.id > rhs.id
@@ -884,6 +916,7 @@ public struct NostrHomeTimelineLoader: Sendable {
 private enum SettledRelayFetchOutcome: Sendable {
     case relay(String, Result<[NostrEvent], any Error>, Int, Int)
     case settlementDeadline
+    case absoluteDeadline
 }
 
 private extension Array where Element == String {
