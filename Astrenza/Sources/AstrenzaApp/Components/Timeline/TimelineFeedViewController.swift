@@ -7,12 +7,6 @@ final class TimelineFeedViewController: UIViewController {
         case main
     }
 
-    private enum PostSnapshotPosition {
-        case unchanged
-        case preserve(TimelineFeedVisibleAnchor)
-        case newest
-    }
-
     private let anchorLineY: CGFloat = 72
     private let readLineY: CGFloat = 96
     private let topContentPadding: CGFloat = 72
@@ -31,7 +25,8 @@ final class TimelineFeedViewController: UIViewController {
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
     private let rowHeightCoordinator =
         TimelineFeedRowHeightCoordinator()
-    private var pendingPostSnapshotPosition = PostSnapshotPosition.unchanged
+    private var pendingPostSnapshotPosition =
+        TimelineFeedSnapshotPosition.unchanged
     private var pendingPreservedAnchor: TimelineFeedVisibleAnchor?
     private var pendingRefreshAnchor: TimelineFeedVisibleAnchor?
     private var pullRefreshSourceRevision: Int?
@@ -334,32 +329,22 @@ final class TimelineFeedViewController: UIViewController {
             : []
 
         let visibleAnchor = captureVisibleAnchor()
-        let isPullRefreshProtected = pendingRefreshAnchor != nil ||
-            isPullRefreshing
-        let didPrependNewest = entriesDidPrependNewest(
-            oldIDs: oldIDs,
-            newIDs: newIDs
-        )
-        let shouldFollowNewest = configuration.map {
-            TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
-                isRealtimeEnabled: $0.followsRealtimeEntries,
-                isPullRefreshProtected: isPullRefreshProtected,
-                isRestoreProtected: $0.viewportRestoreProtectionActive,
-                didRestoreViewport: !restoreCoordinator.blocksPersistence,
-                isRestoringViewport: restoreCoordinator.blocksPersistence
+        pendingPostSnapshotPosition = TimelineFeedViewportMutationPlanner
+            .position(
+                for: TimelineFeedViewportMutationInput(
+                    oldIDs: oldIDs,
+                    newIDs: newIDs,
+                    visibleAnchor: visibleAnchor,
+                    refreshAnchor: pendingRefreshAnchor,
+                    isPullRefreshing: isPullRefreshing,
+                    followsRealtimeEntries:
+                        configuration?.followsRealtimeEntries == true,
+                    isRestoreProtected:
+                        configuration?.viewportRestoreProtectionActive == true,
+                    isRestoreBlocked:
+                        restoreCoordinator.blocksPersistence
+                )
             )
-        } == true && didPrependNewest
-
-        if shouldFollowNewest {
-            pendingPostSnapshotPosition = .newest
-        } else if let refreshAnchor = pendingRefreshAnchor,
-                  newIDs.contains(refreshAnchor.postID) {
-            pendingPostSnapshotPosition = .preserve(refreshAnchor)
-        } else if let visibleAnchor, newIDs.contains(visibleAnchor.postID) {
-            pendingPostSnapshotPosition = .preserve(visibleAnchor)
-        } else {
-            pendingPostSnapshotPosition = .unchanged
-        }
 
         entries = newEntries
         entriesByID = Dictionary(
@@ -926,16 +911,6 @@ final class TimelineFeedViewController: UIViewController {
         var snapshot = dataSource.snapshot()
         snapshot.reconfigureItems(validIDs)
         dataSource.apply(snapshot, animatingDifferences: false)
-    }
-
-    private func entriesDidPrependNewest(
-        oldIDs: [TimelineFeedEntry.ID],
-        newIDs: [TimelineFeedEntry.ID]
-    ) -> Bool {
-        guard let firstOldID = oldIDs.first,
-              let firstOldIndex = newIDs.firstIndex(of: firstOldID)
-        else { return false }
-        return firstOldIndex > 0
     }
 
     private func updatePullRefresh(offset: CGFloat) {
