@@ -17,7 +17,7 @@ struct TimelineGapRow: View {
 
                     Text(detailText)
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                 }

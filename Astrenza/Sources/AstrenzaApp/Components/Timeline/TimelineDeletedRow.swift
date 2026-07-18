@@ -12,7 +12,7 @@ struct TimelineDeletedRow: View {
 
             Text("Deleted")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary)
 
             Spacer(minLength: 0)
         }

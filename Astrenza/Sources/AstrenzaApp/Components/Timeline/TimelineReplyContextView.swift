@@ -24,7 +24,7 @@ struct TimelineReplyContextView: View {
                 .font(.system(size: iconSize, weight: .black))
 
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.secondary)
         .padding(.leading, 4)
         .padding(.trailing, 9)
         .padding(.vertical, 3)
@@ -63,7 +63,7 @@ struct TimelineReplyMarker: View {
     var body: some View {
         Image(systemName: "bubble.left.and.bubble.right")
             .font(.system(size: 12, weight: .black))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.secondary)
             .accessibilityLabel("Reply")
     }
 }

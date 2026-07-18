@@ -5,6 +5,7 @@ struct HomeTimelineFeedContentView: View {
     let hasLiveAccount: Bool
     let selectedTimeline: TimelineKind
     let sourceIdentity: String
+    let viewportIdentity: TimelineFeedViewportIdentity
     let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
@@ -27,6 +28,7 @@ struct HomeTimelineFeedContentView: View {
         ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onScrollActivityChanged: (Bool) -> Void
+    let onInitialViewportReady: () -> Void
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onPostsCrossedReadLineTowardNewer: ([TimelinePost.ID]) -> Void
@@ -38,6 +40,7 @@ struct HomeTimelineFeedContentView: View {
             entries: entries,
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
+            viewportIdentity: viewportIdentity,
             actionMenuTopClearance: actionMenuTopClearance,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
@@ -60,6 +63,7 @@ struct HomeTimelineFeedContentView: View {
             onBackfillGap: onBackfillGap,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onScrollActivityChanged: onScrollActivityChanged,
+            onInitialViewportReady: onInitialViewportReady,
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
             onPostsCrossedReadLineTowardNewer:

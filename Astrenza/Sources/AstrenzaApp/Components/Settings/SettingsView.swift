@@ -1,7 +1,7 @@
 import AstrenzaCore
 import SwiftUI
 
-struct TimelineSwipeSettings {
+struct TimelineSwipeSettings: Equatable {
     var longLeftSwipe = "View Detail"
     var longRightSwipe = "Reply"
     var shortLeftSwipe = "No Action"

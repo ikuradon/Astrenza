@@ -5,7 +5,7 @@ struct AstrenzaRootView: View {
     @StateObject private var sessionStore: NostrSessionStore
     @State private var homeTimelineStore: NostrHomeTimelineStore
     @State private var isStartupSplashVisible = true
-    @State private var hasPresentedStartupTimeline = false
+    @State private var preparedStartupAccountID: String?
     @State private var startupSplashStartDate = Date()
     @State private var startupSplashDismissTask: Task<Void, Never>?
     @AppStorage(AstrenzaThemeMode.storageKey) private var selectedThemeMode = AstrenzaThemeMode.system.rawValue
@@ -40,12 +40,16 @@ struct AstrenzaRootView: View {
     var body: some View {
         ZStack {
             if launchMode.usesMockTimeline {
-                HomeTimelineView(onInitialPresentationReady: markStartupTimelinePresented)
+                HomeTimelineView(onInitialViewportReady: {
+                    markStartupViewportReady(for: "mock-account")
+                })
             } else if let account = sessionStore.account {
                 HomeTimelineView(
                     sessionStore: sessionStore,
                     liveTimelineStore: homeTimelineStore,
-                    onInitialPresentationReady: markStartupTimelinePresented
+                    onInitialViewportReady: {
+                        markStartupViewportReady(for: account.pubkey)
+                    }
                 )
                 .task(id: account.pubkey) {
                     homeTimelineStore.start(account: account)
@@ -166,29 +170,38 @@ struct AstrenzaRootView: View {
         startupSplashDismissTask?.cancel()
         startupSplashDismissTask = nil
         startupSplashStartDate = Date()
-        hasPresentedStartupTimeline = false
+        if preparedStartupAccountID != startupAccountID {
+            preparedStartupAccountID = nil
+        }
         isStartupSplashVisible = startupAccountID != nil
         scheduleStartupSplashDismissIfReady()
     }
 
-    private func markStartupTimelinePresented() {
-        hasPresentedStartupTimeline = true
+    private func markStartupViewportReady(for accountID: String) {
+        preparedStartupAccountID = accountID
         scheduleStartupSplashDismissIfReady()
     }
 
     private func scheduleStartupSplashDismissIfReady() {
-        guard isStartupSplashVisible,
-              hasPresentedStartupTimeline,
+        guard let startupAccountID,
+              isStartupSplashVisible,
+              preparedStartupAccountID == startupAccountID,
               isStartupTimelineContentReady
         else { return }
 
         startupSplashDismissTask?.cancel()
         let elapsed = Date().timeIntervalSince(startupSplashStartDate)
         let delay = max(0, startupSplashMinimumDuration - elapsed)
-        startupSplashDismissTask = Task {
-            if delay > 0 {
-                try? await Task.sleep(for: .seconds(delay))
+        guard delay > 0 else {
+            startupSplashDismissTask = nil
+            withAnimation(.easeOut(duration: 0.22)) {
+                isStartupSplashVisible = false
             }
+            return
+        }
+
+        startupSplashDismissTask = Task {
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 withAnimation(.easeOut(duration: 0.22)) {

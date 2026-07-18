@@ -6,6 +6,36 @@ import Testing
 
 @Suite("Timeline models")
 struct TimelineModelTests {
+    @Test("Programmatic tab selection does not consume a user selection intent")
+    func programmaticTabSelectionDoesNotConsumeUserIntent() {
+        var intent = HomeTimelineTabSelectionIntent()
+        let didConsume = intent.consumeUserSelection(.home)
+
+        #expect(!didConsume)
+    }
+
+    @Test("Home retap intent is consumed exactly once")
+    func homeRetapIntentIsConsumedExactlyOnce() {
+        var intent = HomeTimelineTabSelectionIntent()
+        intent.recordUserSelection(.home)
+        let firstConsumption = intent.consumeUserSelection(.home)
+        let secondConsumption = intent.consumeUserSelection(.home)
+
+        #expect(firstConsumption)
+        #expect(!secondConsumption)
+    }
+
+    @Test("A different tab callback cannot consume Home retap intent")
+    func differentTabCannotConsumeHomeRetapIntent() {
+        var intent = HomeTimelineTabSelectionIntent()
+        intent.recordUserSelection(.home)
+        let profileConsumption = intent.consumeUserSelection(.profile)
+        let homeConsumption = intent.consumeUserSelection(.home)
+
+        #expect(!profileConsumption)
+        #expect(homeConsumption)
+    }
+
     @Test("Session store persists multiple accounts and restores the selected account")
     @MainActor
     func sessionStorePersistsMultipleAccounts() async throws {
@@ -7818,19 +7848,24 @@ struct TimelineModelTests {
     @Test("Feed blocks viewport writes while waiting for or applying restore")
     func timelineFeedBlocksViewportWritesUntilRestoreCompletes() {
         #expect(!TimelineFeedViewportRestorePolicy.canSaveViewport(
-            isRestoreProtected: true,
-            didRestoreViewport: false,
-            isRestoringViewport: false
+            hasUserInteraction: false,
+            isRestoreBlocked: false,
+            isProgrammaticScroll: false
         ))
         #expect(!TimelineFeedViewportRestorePolicy.canSaveViewport(
-            isRestoreProtected: true,
-            didRestoreViewport: true,
-            isRestoringViewport: true
+            hasUserInteraction: true,
+            isRestoreBlocked: true,
+            isProgrammaticScroll: false
+        ))
+        #expect(!TimelineFeedViewportRestorePolicy.canSaveViewport(
+            hasUserInteraction: true,
+            isRestoreBlocked: false,
+            isProgrammaticScroll: true
         ))
         #expect(TimelineFeedViewportRestorePolicy.canSaveViewport(
-            isRestoreProtected: true,
-            didRestoreViewport: true,
-            isRestoringViewport: false
+            hasUserInteraction: true,
+            isRestoreBlocked: false,
+            isProgrammaticScroll: false
         ))
         #expect(!TimelineFeedViewportRestorePolicy.canFollowRealtimeEntries(
             isRealtimeEnabled: true,
@@ -7874,6 +7909,124 @@ struct TimelineModelTests {
             didRestoreViewport: false,
             isRestoringViewport: false
         ))
+    }
+
+    @Test("Feed restore completes only after the real content offset matches")
+    func timelineFeedRestoreRequiresMeasuredOffset() {
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: "post-a",
+            anchorOffset: 24,
+            contentOffset: 900,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let request = TimelineFeedViewportRestoreRequest(
+            sourceIdentity: "account-a/home",
+            state: state
+        )
+        var coordinator = TimelineFeedViewportRestoreCoordinator()
+        coordinator.synchronize(
+            sourceIdentity: request.sourceIdentity,
+            state: state,
+            isRestoreProtected: true
+        )
+
+        #expect(coordinator.blocksPersistence)
+        #expect(coordinator.beginPositioning() == request)
+        let prematureCompletion = coordinator.complete(
+            request: request,
+            actualContentOffset: 0,
+            targetContentOffset: 900
+        )
+        #expect(!prematureCompletion)
+        #expect(coordinator.blocksPersistence)
+
+        coordinator.retryPositioning()
+        #expect(coordinator.beginPositioning() == request)
+        let verifiedCompletion = coordinator.complete(
+            request: request,
+            actualContentOffset: 900.4,
+            targetContentOffset: 900
+        )
+        #expect(verifiedCompletion)
+        #expect(!coordinator.blocksPersistence)
+    }
+
+    @Test("Feed restore clamps the measured anchor offset to scroll bounds")
+    func timelineFeedRestoreClampsToScrollBounds() {
+        #expect(TimelineFeedViewportRestorePolicy.targetContentOffset(
+            anchorMinY: 1_200,
+            anchorOffset: 40,
+            anchorLineY: 72,
+            minimumOffset: 0,
+            maximumOffset: 900
+        ) == 900)
+        #expect(TimelineFeedViewportRestorePolicy.targetContentOffset(
+            anchorMinY: 12,
+            anchorOffset: 0,
+            anchorLineY: 72,
+            minimumOffset: 0,
+            maximumOffset: 900
+        ) == 0)
+    }
+
+    @Test("Feed restore falls back only after content cannot supply its anchor")
+    func timelineFeedRestoreMissingAnchorFallbackPolicy() {
+        #expect(!TimelineFeedViewportRestorePolicy
+            .shouldFallbackForMissingAnchor(
+                hasContent: false,
+                attempt: 100
+            ))
+        #expect(!TimelineFeedViewportRestorePolicy
+            .shouldFallbackForMissingAnchor(
+                hasContent: true,
+                attempt: TimelineFeedViewportRestorePolicy
+                    .missingAnchorRetryLimit - 1
+            ))
+        #expect(TimelineFeedViewportRestorePolicy
+            .shouldFallbackForMissingAnchor(
+                hasContent: true,
+                attempt: TimelineFeedViewportRestorePolicy
+                    .missingAnchorRetryLimit
+            ))
+    }
+
+    @Test("Feed fallback completes only the active restore request")
+    func timelineFeedFallbackCompletesActiveRestoreRequest() {
+        let state = TimelineViewportState(
+            accountID: "account-a",
+            timelineKey: "home",
+            anchorPostID: "missing-post",
+            anchorOffset: 12,
+            contentOffset: 320,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let request = TimelineFeedViewportRestoreRequest(
+            sourceIdentity: "account-a/home",
+            state: state
+        )
+        var coordinator = TimelineFeedViewportRestoreCoordinator()
+        coordinator.synchronize(
+            sourceIdentity: request.sourceIdentity,
+            state: state,
+            isRestoreProtected: true
+        )
+
+        let staleRequest = TimelineFeedViewportRestoreRequest(
+            sourceIdentity: "account-b/home",
+            state: state
+        )
+        let didCompleteStaleRequest = coordinator.completeUsingFallback(
+            request: staleRequest
+        )
+        #expect(!didCompleteStaleRequest)
+        #expect(coordinator.blocksPersistence)
+        let didCompleteActiveRequest = coordinator.completeUsingFallback(
+            request: request
+        )
+        #expect(didCompleteActiveRequest)
+        #expect(!coordinator.blocksPersistence)
     }
 
     @Test("Timeline viewport resolver converts anchor offset into content offset")

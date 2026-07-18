@@ -25,7 +25,7 @@ struct TimelineMediaView: View {
                         .font(.system(size: 14, weight: .heavy, design: .rounded))
                     Text("Tap to reveal")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
                 .foregroundStyle(.primary)
             }
@@ -831,7 +831,7 @@ private struct LinkPreviewAttachmentView: View {
         let height: CGFloat = showsRemoteImage ? 252 : 226
 
         VStack(spacing: 0) {
-            LinkPreviewHeroView(preview: preview)
+            LinkPreviewHeroView(preview: preview, containerWidth: width)
                 .frame(height: showsRemoteImage ? 154 : 128)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -848,14 +848,14 @@ private struct LinkPreviewAttachmentView: View {
                         .lineLimit(1)
                 }
 
-                Text(preview.title)
+                Text("\(preview.title)")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
 
                 Text(preview.subtitle)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                     .lineLimit(2)
             }
             .padding(.horizontal, 12)
@@ -896,6 +896,7 @@ private struct LinkPreviewAvailableWidthKey: PreferenceKey {
 
 private struct LinkPreviewHeroView: View {
     let preview: LinkPreview
+    let containerWidth: CGFloat
 
     var body: some View {
         ZStack {
@@ -924,7 +925,7 @@ private struct LinkPreviewHeroView: View {
                     .foregroundStyle(.gray)
 
                 HStack(alignment: .top) {
-                    Text(preview.title)
+                    Text("\(heroTitle)")
                         .font(.system(size: 25, weight: .black, design: .rounded))
                         .foregroundStyle(Color(red: 0.13, green: 0.15, blue: 0.18))
                         .lineLimit(2)
@@ -946,6 +947,32 @@ private struct LinkPreviewHeroView: View {
             }
             .padding(18)
         }
+    }
+
+    private var heroTitle: String {
+        let words = preview.title.split(separator: " ")
+        guard words.count > 1 else { return preview.title }
+
+        let baseFont = UIFont.systemFont(ofSize: 25, weight: .black)
+        let roundedDescriptor = baseFont.fontDescriptor.withDesign(.rounded)
+            ?? baseFont.fontDescriptor
+        let font = UIFont(descriptor: roundedDescriptor, size: 25)
+        let naturalLineWidth = max(0, containerWidth - 112) / 0.82
+        var firstLine = String(words[0])
+        var consumedWords = 1
+
+        for word in words.dropFirst() {
+            let candidate = firstLine + " " + word
+            let width = (candidate as NSString).size(
+                withAttributes: [.font: font]
+            ).width
+            guard width <= naturalLineWidth else { break }
+            firstLine = candidate
+            consumedWords += 1
+        }
+
+        guard consumedWords < words.count else { return preview.title }
+        return firstLine + "\n" + words.dropFirst(consumedWords).joined(separator: " ")
     }
 }
 
@@ -1036,7 +1063,7 @@ private struct UnresolvedLinkAttachmentView: View {
 
                 Text(preview.url)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }

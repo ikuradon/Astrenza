@@ -4,7 +4,7 @@ import SwiftUI
 struct HomeTimelineView: View {
     @ObservedObject var sessionStore: NostrSessionStore
     let liveTimelineStore: NostrHomeTimelineStore
-    let onInitialPresentationReady: () -> Void
+    let onInitialViewportReady: () -> Void
     private let emptyStateActions: HomeTimelineEmptyStateActionCoordinator
     private let feedActions: HomeTimelineFeedActionCoordinator
     private let userActions: HomeTimelineUserActionCoordinator
@@ -83,11 +83,11 @@ struct HomeTimelineView: View {
     init(
         sessionStore: NostrSessionStore = NostrSessionStore(restoreAccount: false),
         liveTimelineStore: NostrHomeTimelineStore = HomeTimelineStoreFactory.make(),
-        onInitialPresentationReady: @escaping () -> Void = {}
+        onInitialViewportReady: @escaping () -> Void = {}
     ) {
         self.sessionStore = sessionStore
         self.liveTimelineStore = liveTimelineStore
-        self.onInitialPresentationReady = onInitialPresentationReady
+        self.onInitialViewportReady = onInitialViewportReady
         self.emptyStateActions = HomeTimelineEmptyStateActionCoordinator(
             actions: liveTimelineStore
         )
@@ -216,6 +216,10 @@ private extension HomeTimelineView {
                 hasLiveAccount: sessionStore.account != nil,
                 selectedTimeline: selectedTimeline,
                 sourceIdentity: "\(accountID)/\(selectedTimeline.id)",
+                viewportIdentity: TimelineFeedViewportIdentity(
+                    accountID: accountID,
+                    timelineKey: selectedTimeline.id
+                ),
                 actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: viewport.viewportState,
@@ -239,6 +243,7 @@ private extension HomeTimelineView {
                 onBackfillGap: backfillVisibleTimelineGap,
                 onScrollOffsetChanged: handleTimelineScrollOffset,
                 onScrollActivityChanged: handleTimelineScrollActivityChanged,
+                onInitialViewportReady: onInitialViewportReady,
                 onViewportRestoreCompleted: handleTimelineViewportRestoreCompleted,
                 onViewportStateChanged: saveTimelineViewportState,
                 onPostsCrossedReadLineTowardNewer:
@@ -297,7 +302,6 @@ private extension HomeTimelineView {
         }
         DispatchQueue.main.async {
             didCompleteInitialAppearance = true
-            onInitialPresentationReady()
         }
     }
 

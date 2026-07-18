@@ -68,7 +68,7 @@ private struct SensitiveTimelineOverlay: View {
 
             Text(contentWarning.displayReason)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
 
@@ -103,7 +103,7 @@ struct RepostAttributionView: View {
                 .foregroundStyle(.tertiary)
                 .fixedSize()
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.secondary)
         .padding(.leading, 4)
         .padding(.trailing, 9)
         .padding(.vertical, 3)
@@ -129,7 +129,7 @@ struct TimelineAuthorHeader: View {
                 if isLocked {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                         .fixedSize()
                 }
             }
@@ -143,7 +143,7 @@ struct TimelineAuthorHeader: View {
 
                 Text(author.secondaryText)
                     .font(.system(size: AstrenzaTimelineMetrics.authorSecondaryFontSize, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .minimumScaleFactor(0.9)
@@ -194,7 +194,7 @@ struct QuotedPostCard: View {
 
                         Text(quotedPost.author.secondaryText)
                             .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -222,7 +222,7 @@ struct QuotedPostCard: View {
                         Text("Quoted note could not be loaded")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                 }
             }
         }

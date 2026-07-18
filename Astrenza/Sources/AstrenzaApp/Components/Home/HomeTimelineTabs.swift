@@ -1,6 +1,20 @@
 import SwiftUI
 import UIKit
 
+struct HomeTimelineTabSelectionIntent: Equatable {
+    private var pendingUserSelection: TimelineTab?
+
+    mutating func recordUserSelection(_ tab: TimelineTab) {
+        pendingUserSelection = tab
+    }
+
+    mutating func consumeUserSelection(_ tab: TimelineTab) -> Bool {
+        guard pendingUserSelection == tab else { return false }
+        pendingUserSelection = nil
+        return true
+    }
+}
+
 struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIViewControllerRepresentable {
     @Binding var selectedTab: TimelineTab
     @Binding var previousTab: TimelineTab
@@ -67,6 +81,7 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
         private weak var directionProbeRecognizer: TabBarDirectionProbeGestureRecognizer?
         private weak var composeTapRecognizer: UITapGestureRecognizer?
         private var lastHomeRetapTime: TimeInterval = 0
+        private var selectionIntent = HomeTimelineTabSelectionIntent()
 
         init(parent: UIKitTimelineTabView) {
             self.parent = parent
@@ -187,36 +202,55 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
         }
 
         func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
-            if timelineTab(for: tab) == .compose {
+            guard let timelineTab = timelineTab(for: tab) else {
+                return true
+            }
+            if timelineTab == .compose {
                 scheduleComposeTap()
                 return false
             }
 
+            selectionIntent.recordUserSelection(timelineTab)
             return true
         }
 
         func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
-            if let tab = viewController.tab, timelineTab(for: tab) == .compose {
+            guard let tab = viewController.tab,
+                  let timelineTab = timelineTab(for: tab)
+            else { return true }
+            if timelineTab == .compose {
                 scheduleComposeTap()
                 return false
             }
 
+            selectionIntent.recordUserSelection(timelineTab)
             return true
         }
 
         func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
             guard let tab = timelineTab(for: selectedTab), tab != .compose else { return }
-            scheduleTimelineTabSelection(tab)
+            scheduleTimelineTabSelection(
+                tab,
+                isUserInitiated: selectionIntent.consumeUserSelection(tab)
+            )
         }
 
         func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
             guard let selectedTab = viewController.tab else { return }
             guard let tab = timelineTab(for: selectedTab), tab != .compose else { return }
-            scheduleTimelineTabSelection(tab)
+            scheduleTimelineTabSelection(
+                tab,
+                isUserInitiated: selectionIntent.consumeUserSelection(tab)
+            )
         }
 
-        private func scheduleTimelineTabSelection(_ tab: TimelineTab) {
-            let shouldNotifyHomeRetap = tab == .home && parent.selectedTab == .home
+        private func scheduleTimelineTabSelection(
+            _ tab: TimelineTab,
+            isUserInitiated: Bool
+        ) {
+            let shouldNotifyHomeRetap = isUserInitiated &&
+                tab == .home &&
+                parent.selectedTab == .home
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if shouldNotifyHomeRetap {

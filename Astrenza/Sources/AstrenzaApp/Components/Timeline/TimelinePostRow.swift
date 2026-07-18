@@ -93,7 +93,7 @@ struct TimelinePostRow: View {
 
             RelativeTimestampText(createdAt: post.createdAt)
                 .font(.system(size: AstrenzaTimelineMetrics.timestampFontSize, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary)
                 .lineLimit(1)
                 .fixedSize()
         }
