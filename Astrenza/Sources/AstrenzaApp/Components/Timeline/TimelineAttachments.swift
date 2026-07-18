@@ -1066,6 +1066,9 @@ private struct UnresolvedLinkAttachmentView: View {
                     .foregroundStyle(Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .transformEffect(
+                        CGAffineTransform(translationX: 0, y: 1 / 3)
+                    )
             }
 
             Spacer(minLength: 0)

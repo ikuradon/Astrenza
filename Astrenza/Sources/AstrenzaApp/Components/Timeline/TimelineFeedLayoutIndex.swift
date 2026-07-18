@@ -98,9 +98,9 @@ struct TimelineFeedLayoutIndex {
         threshold: CGFloat = 0.5
     ) -> CGFloat? {
         guard itemIDs.indices.contains(index), height > 0 else { return nil }
-        let delta = ceil(height) - heights.value(at: index)
+        let delta = height - heights.value(at: index)
         guard abs(delta) > threshold else { return nil }
-        heights.update(to: ceil(height), at: index)
+        heights.update(to: height, at: index)
         return delta
     }
 }

@@ -36,6 +36,17 @@ struct TimelineFeedLayoutIndexTests {
         #expect(index.contentHeight == 362)
     }
 
+    @Test("Fractional measured heights are not rounded between rows")
+    func fractionalHeightsRemainExact() {
+        var index = TimelineFeedLayoutIndex(
+            items: items([100, 100]),
+            topPadding: 72
+        )
+
+        #expect(index.updateHeight(100.75, at: 0) == 0.75)
+        #expect(index.frame(at: 1, width: 390)?.minY == 172.75)
+    }
+
     @Test("Visible lookup excludes rows outside the query rect")
     func visibleLookupUsesRowIntersections() {
         let index = TimelineFeedLayoutIndex(

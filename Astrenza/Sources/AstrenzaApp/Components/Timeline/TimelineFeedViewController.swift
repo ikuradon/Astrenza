@@ -50,36 +50,48 @@ final class TimelineFeedViewController: UIViewController {
     private var restoreRetryGeneration: UInt64 = 0
     private var missingRestoreAnchorAttempts = 0
 
-    private lazy var tableView: UITableView = {
-        let tableView = UITableView(
-            frame: .zero,
-            style: .plain
+    private lazy var collectionLayout: TimelineFeedCollectionLayout = {
+        let layout = TimelineFeedCollectionLayout(
+            anchorLineY: anchorLineY
         )
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.backgroundColor = .clear
-        tableView.separatorStyle = .none
-        tableView.showsVerticalScrollIndicator = true
-        tableView.alwaysBounceVertical = true
-        tableView.contentInsetAdjustmentBehavior = .never
-        tableView.contentInset = UIEdgeInsets(
+        layout.onMeasuredHeight = { [weak self] entryID, height in
+            guard let self,
+                  entriesByID[entryID]?.post != nil
+            else { return }
+            rowHeightCoordinator.recordMeasuredHeight(
+                height,
+                for: entryID
+            )
+        }
+        return layout
+    }()
+
+    private lazy var collectionView: UICollectionView = {
+        let collectionView = UICollectionView(
+            frame: .zero,
+            collectionViewLayout: collectionLayout
+        )
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.backgroundColor = .clear
+        collectionView.showsVerticalScrollIndicator = true
+        collectionView.alwaysBounceVertical = true
+        collectionView.contentInsetAdjustmentBehavior = .never
+        collectionView.contentInset = UIEdgeInsets(
             top: 0,
             left: 0,
             bottom: bottomContentPadding,
             right: 0
         )
-        tableView.scrollIndicatorInsets = tableView.contentInset
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 180
-        tableView.sectionHeaderHeight = 0
-        tableView.sectionFooterHeight = 0
-        tableView.keyboardDismissMode = .interactive
-        tableView.accessibilityIdentifier = "timeline.feed"
-        tableView.register(
-            TimelineFeedHostingCell.self,
-            forCellReuseIdentifier: cellReuseIdentifier
+        collectionView.verticalScrollIndicatorInsets =
+            collectionView.contentInset
+        collectionView.keyboardDismissMode = .interactive
+        collectionView.accessibilityIdentifier = "timeline.feed"
+        collectionView.register(
+            TimelineFeedHostingCollectionCell.self,
+            forCellWithReuseIdentifier: cellReuseIdentifier
         )
-        tableView.delegate = self
-        return tableView
+        collectionView.delegate = self
+        return collectionView
     }()
 
     private lazy var dataSource = makeDataSource()
@@ -91,15 +103,20 @@ final class TimelineFeedViewController: UIViewController {
     override func loadView() {
         let rootView = UIView()
         rootView.backgroundColor = UIColor(Color.astrenzaBackground)
-        rootView.addSubview(tableView)
+        rootView.addSubview(collectionView)
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: rootView.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            collectionView.topAnchor.constraint(equalTo: rootView.topAnchor),
+            collectionView.leadingAnchor.constraint(
+                equalTo: rootView.leadingAnchor
+            ),
+            collectionView.trailingAnchor.constraint(
+                equalTo: rootView.trailingAnchor
+            ),
+            collectionView.bottomAnchor.constraint(
+                equalTo: rootView.bottomAnchor
+            ),
         ])
         view = rootView
-        installTopContentSpacer()
         _ = dataSource
     }
 
@@ -179,20 +196,22 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private func makeDataSource()
-        -> UITableViewDiffableDataSource<Section, TimelineFeedEntry.ID> {
-        UITableViewDiffableDataSource(
-            tableView: tableView
-        ) { [weak self] tableView, indexPath, entryID in
+        -> UICollectionViewDiffableDataSource<
+            Section,
+            TimelineFeedEntry.ID
+        > {
+        UICollectionViewDiffableDataSource(
+            collectionView: collectionView
+        ) { [weak self] collectionView, indexPath, entryID in
             guard let self,
                   let entry = entriesByID[entryID],
                   let configuration
             else { return nil }
 
-            guard let cell = tableView.dequeueReusableCell(
-                withIdentifier: cellReuseIdentifier,
+            guard let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: cellReuseIdentifier,
                 for: indexPath
-            ) as? TimelineFeedHostingCell else { return nil }
-            cell.selectionStyle = .none
+            ) as? TimelineFeedHostingCollectionCell else { return nil }
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
             cell.contentConfiguration = UIHostingConfiguration {
@@ -224,37 +243,8 @@ final class TimelineFeedViewController: UIViewController {
             }
             .margins(.all, 0)
             .background { Color.astrenzaBackground }
-            observeHeight(of: cell, for: entryID)
             return cell
         }
-    }
-
-    private func observeHeight(
-        of cell: TimelineFeedHostingCell,
-        for entryID: TimelineFeedEntry.ID
-    ) {
-        cell.observeHeight(for: entryID) { [weak self] entryID, height in
-            guard let self,
-                  entriesByID[entryID]?.post != nil
-            else { return }
-            rowHeightCoordinator.recordMeasuredHeight(
-                height,
-                for: entryID
-            )
-        }
-    }
-
-    private func installTopContentSpacer() {
-        let spacer = UIView(
-            frame: CGRect(
-                x: 0,
-                y: 0,
-                width: 1,
-                height: topContentPadding
-            )
-        )
-        spacer.backgroundColor = .clear
-        tableView.tableHeaderView = spacer
     }
 
     private func configureMenuCoordinator() {
@@ -267,7 +257,7 @@ final class TimelineFeedViewController: UIViewController {
             onPostActionChoice: configuration.onPostActionChoice,
             onOpenStateChanged: { [weak self] isOpen, affectedPostIDs in
                 guard let self else { return }
-                tableView.isScrollEnabled = !isOpen
+                collectionView.isScrollEnabled = !isOpen
                 reconfigureEntries(Array(affectedPostIDs))
             }
         )
@@ -293,7 +283,7 @@ final class TimelineFeedViewController: UIViewController {
         lastViewportSaveTime = 0
         hasUserInteraction = false
         isProgrammaticScroll = true
-        tableView.setContentOffset(.zero, animated: false)
+        collectionView.setContentOffset(.zero, animated: false)
         isProgrammaticScroll = false
     }
 
@@ -320,7 +310,7 @@ final class TimelineFeedViewController: UIViewController {
         let oldIDSet = Set(oldIDs)
         let newIDSet = Set(newIDs)
         let visibleIDs = Set(
-            (tableView.indexPathsForVisibleRows ?? []).compactMap {
+            collectionView.indexPathsForVisibleItems.compactMap {
                 dataSource.itemIdentifier(for: $0)
             }
         )
@@ -345,10 +335,19 @@ final class TimelineFeedViewController: UIViewController {
                         restoreCoordinator.blocksPersistence
                 )
             )
-
         entries = newEntries
         entriesByID = Dictionary(
             uniqueKeysWithValues: newEntries.map { ($0.id, $0) }
+        )
+        collectionLayout.configure(
+            items: newEntries.map {
+                TimelineFeedLayoutItem(
+                    id: $0.id,
+                    estimatedHeight:
+                        rowHeightCoordinator.estimatedHeight(for: $0)
+                )
+            },
+            topPadding: topContentPadding
         )
         rebuildPostOrder()
         fetchingGapDirections = fetchingGapDirections.filter {
@@ -453,12 +452,16 @@ final class TimelineFeedViewController: UIViewController {
             return
         }
         missingRestoreAnchorAttempts = 0
-        let anchorRect = tableView.rectForRow(at: indexPath)
+        guard let anchorRect = frameForEntry(at: indexPath) else {
+            restoreCoordinator.retryPositioning()
+            scheduleRestoreRetry()
+            return
+        }
         let targetOffset = targetContentOffset(
             anchorMinY: anchorRect.minY,
             anchorOffset: request.state.anchorOffset
         )
-        guard tableView.cellForRow(at: indexPath) != nil else {
+        guard collectionView.cellForItem(at: indexPath) != nil else {
             setContentOffsetWithoutLayout(targetOffset)
             scheduleRestoreRetry()
             return
@@ -466,15 +469,15 @@ final class TimelineFeedViewController: UIViewController {
 
         if restoreCoordinator.complete(
             request: request,
-            actualContentOffset: tableView.contentOffset.y,
+            actualContentOffset: collectionView.contentOffset.y,
             targetContentOffset: targetOffset
         ) {
             restoreRetryGeneration &+= 1
             configuration?.onScrollOffsetChanged(
-                tableView.contentOffset.y
+                collectionView.contentOffset.y
             )
             configuration?.onViewportRestoreCompleted(
-                tableView.contentOffset.y
+                collectionView.contentOffset.y
             )
             publishInitialViewportReadyIfPossible()
             publishUnreadPillPlacement(force: true)
@@ -491,8 +494,9 @@ final class TimelineFeedViewController: UIViewController {
               entriesByID[state.anchorPostID]?.post != nil
         else { return false }
 
-        let estimatedAnchorMinY = topContentPadding +
-            CGFloat(indexPath.row) * tableView.estimatedRowHeight
+        guard let estimatedAnchorMinY = frameForEntry(
+            at: indexPath
+        )?.minY else { return false }
         setContentOffsetWithoutLayout(
             targetContentOffset(
                 anchorMinY: estimatedAnchorMinY,
@@ -523,7 +527,7 @@ final class TimelineFeedViewController: UIViewController {
         else { return }
         restoreRetryGeneration &+= 1
         setContentOffset(request.state.contentOffset)
-        let actualOffset = tableView.contentOffset.y
+        let actualOffset = collectionView.contentOffset.y
         configuration?.onScrollOffsetChanged(actualOffset)
         configuration?.onViewportRestoreCompleted(actualOffset)
         publishInitialViewportReadyIfPossible()
@@ -537,15 +541,18 @@ final class TimelineFeedViewController: UIViewController {
         else { return false }
 
         isProgrammaticScroll = true
+        var didPosition = false
         UIView.performWithoutAnimation {
-            tableView.scrollToRow(
+            collectionView.scrollToItem(
                 at: indexPath,
                 at: .top,
                 animated: false
             )
-            tableView.layoutIfNeeded()
-            let anchorRect = tableView.rectForRow(at: indexPath)
-            tableView.setContentOffset(
+            collectionView.layoutIfNeeded()
+            guard let anchorRect = frameForEntry(at: indexPath) else {
+                return
+            }
+            collectionView.setContentOffset(
                 CGPoint(
                     x: 0,
                     y: targetContentOffset(
@@ -555,10 +562,11 @@ final class TimelineFeedViewController: UIViewController {
                 ),
                 animated: false
             )
-            tableView.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            didPosition = true
         }
         isProgrammaticScroll = false
-        return true
+        return didPosition
     }
 
     private func scheduleRestoreRetry() {
@@ -589,15 +597,21 @@ final class TimelineFeedViewController: UIViewController {
         configuration.onInitialViewportReady()
     }
 
+    private func frameForEntry(at indexPath: IndexPath) -> CGRect? {
+        collectionView.collectionViewLayout
+            .layoutAttributesForItem(at: indexPath)?
+            .frame
+    }
+
     private func captureVisibleAnchor() -> TimelineFeedVisibleAnchor? {
-        let lineInContent = tableView.contentOffset.y + anchorLineY
-        let visibleIndexPaths = (tableView.indexPathsForVisibleRows ?? [])
+        let lineInContent = collectionView.contentOffset.y + anchorLineY
+        let visibleIndexPaths = collectionView.indexPathsForVisibleItems
             .sorted()
         for indexPath in visibleIndexPaths {
             guard let entryID = dataSource.itemIdentifier(for: indexPath),
-                  entriesByID[entryID]?.post != nil
+                  entriesByID[entryID]?.post != nil,
+                  let rect = frameForEntry(at: indexPath)
             else { continue }
-            let rect = tableView.rectForRow(at: indexPath)
             guard rect.maxY > lineInContent else { continue }
             return TimelineFeedVisibleAnchor(
                 postID: entryID,
@@ -611,8 +625,8 @@ final class TimelineFeedViewController: UIViewController {
         guard let indexPath = dataSource.indexPath(for: anchor.postID) else {
             return
         }
-        tableView.layoutIfNeeded()
-        let rect = tableView.rectForRow(at: indexPath)
+        collectionView.layoutIfNeeded()
+        guard let rect = frameForEntry(at: indexPath) else { return }
         setContentOffset(
             targetContentOffset(
                 anchorMinY: rect.minY,
@@ -635,29 +649,29 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private var minimumContentOffset: CGFloat {
-        -tableView.adjustedContentInset.top
+        -collectionView.adjustedContentInset.top
     }
 
     private var maximumContentOffset: CGFloat {
         max(
             minimumContentOffset,
-            tableView.contentSize.height +
-                tableView.adjustedContentInset.bottom -
-                tableView.bounds.height
+            collectionView.contentSize.height +
+                collectionView.adjustedContentInset.bottom -
+                collectionView.bounds.height
         )
     }
 
     private func setContentOffset(_ y: CGFloat) {
         isProgrammaticScroll = true
         UIView.performWithoutAnimation {
-            tableView.setContentOffset(
+            collectionView.setContentOffset(
                 CGPoint(
                     x: 0,
                     y: min(max(y, minimumContentOffset), maximumContentOffset)
                 ),
                 animated: false
             )
-            tableView.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
         }
         isProgrammaticScroll = false
     }
@@ -665,7 +679,7 @@ final class TimelineFeedViewController: UIViewController {
     private func setContentOffsetWithoutLayout(_ y: CGFloat) {
         isProgrammaticScroll = true
         UIView.performWithoutAnimation {
-            tableView.setContentOffset(
+            collectionView.setContentOffset(
                 CGPoint(
                     x: 0,
                     y: min(
@@ -690,7 +704,7 @@ final class TimelineFeedViewController: UIViewController {
         else { return }
 
         let now = ProcessInfo.processInfo.systemUptime
-        let offset = tableView.contentOffset.y
+        let offset = collectionView.contentOffset.y
         if !force,
            now - lastViewportSaveTime < viewportSaveInterval {
             return
@@ -725,12 +739,12 @@ final class TimelineFeedViewController: UIViewController {
     private func updateReadLinePositions() {
         guard let configuration else { return }
         var crossedPostIDs: [TimelinePost.ID] = []
-        for indexPath in tableView.indexPathsForVisibleRows ?? [] {
+        for indexPath in collectionView.indexPathsForVisibleItems {
             guard let postID = dataSource.itemIdentifier(for: indexPath),
-                  entriesByID[postID]?.post != nil
+                  entriesByID[postID]?.post != nil,
+                  let rect = frameForEntry(at: indexPath)
             else { continue }
-            let rect = tableView.rectForRow(at: indexPath)
-            let minY = rect.minY - tableView.contentOffset.y
+            let minY = rect.minY - collectionView.contentOffset.y
             let position: TimelinePostReadLinePosition =
                 minY <= readLineY ? .aboveOrAt : .below
             let previous = readLinePositionByPostID.updateValue(
@@ -757,9 +771,9 @@ final class TimelineFeedViewController: UIViewController {
         let anchorPostID = configuration.unreadCountAnchorPostID
         let anchorMinY: CGFloat?
         if let anchorPostID,
-           let indexPath = dataSource.indexPath(for: anchorPostID) {
-            anchorMinY = tableView.rectForRow(at: indexPath).minY -
-                tableView.contentOffset.y
+           let indexPath = dataSource.indexPath(for: anchorPostID),
+           let frame = frameForEntry(at: indexPath) {
+            anchorMinY = frame.minY - collectionView.contentOffset.y
         } else {
             anchorMinY = nil
         }
@@ -776,14 +790,14 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private var readablePostIDs: [TimelinePost.ID] {
-        (tableView.indexPathsForVisibleRows ?? []).compactMap { indexPath in
+        collectionView.indexPathsForVisibleItems.compactMap { indexPath in
             guard let postID = dataSource.itemIdentifier(for: indexPath),
-                  entriesByID[postID]?.post != nil
+                  entriesByID[postID]?.post != nil,
+                  let rect = frameForEntry(at: indexPath)
             else { return nil }
-            let rect = tableView.rectForRow(at: indexPath)
             let frame = rect.offsetBy(
                 dx: 0,
-                dy: -tableView.contentOffset.y
+                dy: -collectionView.contentOffset.y
             )
             return frame.minY <= readLineY && frame.maxY > 0
                 ? postID
@@ -806,7 +820,7 @@ final class TimelineFeedViewController: UIViewController {
         kind: TimelinePostActionKind
     ) -> CGRect? {
         guard let indexPath = dataSource.indexPath(for: postID),
-              let cell = tableView.cellForRow(at: indexPath)
+              let cell = collectionView.cellForItem(at: indexPath)
         else { return nil }
         let identifier: String
         switch kind {
@@ -859,7 +873,7 @@ final class TimelineFeedViewController: UIViewController {
         for entryID: TimelineFeedEntry.ID
     ) -> TimelineGapFillDirection {
         guard let indexPath = dataSource.indexPath(for: entryID),
-              let cell = tableView.cellForRow(at: indexPath)
+              let cell = collectionView.cellForItem(at: indexPath)
         else { return displayGapDirection(for: entryID) }
 
         let rect = cell.convert(cell.bounds, to: view)
@@ -981,19 +995,7 @@ final class TimelineFeedViewController: UIViewController {
     }
 }
 
-extension TimelineFeedViewController: UITableViewDelegate {
-    func tableView(
-        _ tableView: UITableView,
-        estimatedHeightForRowAt indexPath: IndexPath
-    ) -> CGFloat {
-        guard entries.indices.contains(indexPath.row) else {
-            return tableView.estimatedRowHeight
-        }
-        return rowHeightCoordinator.estimatedHeight(
-            for: entries[indexPath.row]
-        )
-    }
-
+extension TimelineFeedViewController: UICollectionViewDelegate {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserInteraction = true
         setUserScrollActive(true)
@@ -1029,10 +1031,10 @@ extension TimelineFeedViewController: UITableViewDelegate {
         saveViewportStateIfPossible(force: true)
     }
 
-    func tableView(
-        _ tableView: UITableView,
-        willDisplay cell: UITableViewCell,
-        forRowAt indexPath: IndexPath
+    func collectionView(
+        _ collectionView: UICollectionView,
+        willDisplay cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
     ) {
         guard let postID = dataSource.itemIdentifier(for: indexPath),
               postID == entries.last(where: { $0.post != nil })?.post?.id,

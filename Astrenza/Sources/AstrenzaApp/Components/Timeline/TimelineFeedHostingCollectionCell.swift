@@ -4,11 +4,22 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
-        let attributes = super.preferredLayoutAttributesFitting(
-            layoutAttributes
+        guard let attributes = layoutAttributes.copy()
+            as? UICollectionViewLayoutAttributes
+        else { return layoutAttributes }
+        let targetSize = CGSize(
+            width: layoutAttributes.size.width,
+            height: UIView.layoutFittingCompressedSize.height
+        )
+        setNeedsLayout()
+        layoutIfNeeded()
+        let fittedSize = contentView.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
         )
         attributes.size.width = layoutAttributes.size.width
-        attributes.size.height = ceil(attributes.size.height)
+        attributes.size.height = max(1, fittedSize.height)
         return attributes
     }
 }
