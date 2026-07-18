@@ -41,6 +41,10 @@ struct TimelineFeedLayoutIndex {
         return itemIDs[index]
     }
 
+    func index(for id: TimelineFeedEntry.ID) -> Int? {
+        itemIndexByID[id]
+    }
+
     func frame(at index: Int, width: CGFloat) -> CGRect? {
         guard itemIDs.indices.contains(index) else { return nil }
         return CGRect(

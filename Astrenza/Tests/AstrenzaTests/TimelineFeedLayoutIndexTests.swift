@@ -1,5 +1,6 @@
 import CoreGraphics
 import Testing
+import UIKit
 @testable import Astrenza
 
 @Suite("Timeline feed layout index")
@@ -79,6 +80,26 @@ struct TimelineFeedLayoutIndexTests {
                 height: 800
             )
         ).lowerBound == 9_876)
+    }
+
+    @MainActor
+    @Test("Measured height is applied directly through the layout index")
+    func measuredHeightUpdatesLayoutWithoutSelfSizingInvalidation() throws {
+        let layout = TimelineFeedCollectionLayout(anchorLineY: 72)
+        layout.configure(
+            items: [
+                TimelineFeedLayoutItem(
+                    id: "post-0",
+                    estimatedHeight: 100
+                ),
+            ],
+            topPadding: 72
+        )
+        #expect(layout.updateMeasuredHeight(150, for: "post-0"))
+        #expect(layout.layoutAttributesForItem(
+            at: IndexPath(item: 0, section: 0)
+        )?.size.height == 150)
+        #expect(!layout.updateMeasuredHeight(150, for: "post-0"))
     }
 
     private func items(_ heights: [CGFloat]) -> [TimelineFeedLayoutItem] {

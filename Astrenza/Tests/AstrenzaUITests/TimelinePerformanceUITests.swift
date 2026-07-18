@@ -34,8 +34,7 @@ final class TimelinePerformanceUITests: XCTestCase {
             application.launch()
         }
 
-        let feed = application
-            .scrollViews[TimelineUISnapshotConfiguration.performanceIdentifier]
+        let feed = application.collectionViews["timeline.feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 12))
 
         if let rawDelay = environmentValue(for: "ASTRENZA_PERFORMANCE_CAPTURE_DELAY_MS"),

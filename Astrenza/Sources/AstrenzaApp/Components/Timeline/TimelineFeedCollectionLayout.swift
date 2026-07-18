@@ -62,47 +62,41 @@ final class TimelineFeedCollectionLayout: UICollectionViewLayout {
         abs(newBounds.width - layoutWidth) > 0.5
     }
 
-    override func shouldInvalidateLayout(
-        forPreferredLayoutAttributes preferredAttributes:
-            UICollectionViewLayoutAttributes,
-        withOriginalAttributes originalAttributes:
-            UICollectionViewLayoutAttributes
+    @discardableResult
+    func updateMeasuredHeight(
+        _ height: CGFloat,
+        for entryID: TimelineFeedEntry.ID
     ) -> Bool {
-        abs(
-            preferredAttributes.size.height -
-                originalAttributes.size.height
-        ) > 0.5
-    }
-
-    override func invalidationContext(
-        forPreferredLayoutAttributes preferredAttributes:
-            UICollectionViewLayoutAttributes,
-        withOriginalAttributes originalAttributes:
-            UICollectionViewLayoutAttributes
-    ) -> UICollectionViewLayoutInvalidationContext {
-        let context = super.invalidationContext(
-            forPreferredLayoutAttributes: preferredAttributes,
-            withOriginalAttributes: originalAttributes
-        )
-        let indexPath = originalAttributes.indexPath
-        guard indexPath.section == 0,
+        guard let itemIndex = layoutIndex.index(for: entryID),
+              let originalFrame = layoutIndex.frame(
+                at: itemIndex,
+                width: layoutWidth
+              ),
               let delta = layoutIndex.updateHeight(
-                preferredAttributes.size.height,
-                at: indexPath.item
+                height,
+                at: itemIndex
               )
-        else { return context }
+        else { return false }
 
-        context.invalidateItems(at: [indexPath])
+        let indexPath = IndexPath(item: itemIndex, section: 0)
+        let context = UICollectionViewLayoutInvalidationContext()
+        let visibleDownstreamIndexPaths = collectionView?
+            .indexPathsForVisibleItems
+            .filter {
+                $0.section == indexPath.section &&
+                    $0.item > indexPath.item
+            } ?? []
+        context.invalidateItems(
+            at: [indexPath] + visibleDownstreamIndexPaths
+        )
         if let collectionView,
-           originalAttributes.frame.maxY <=
+           originalFrame.maxY <=
             collectionView.contentOffset.y + anchorLineY {
-            context.contentOffsetAdjustment.y += delta
+            context.contentOffsetAdjustment.y = delta
         }
-        if let entryID = layoutIndex.id(at: indexPath.item),
-           let height = layoutIndex.height(at: indexPath.item) {
-            onMeasuredHeight?(entryID, height)
-        }
-        return context
+        invalidateLayout(with: context)
+        onMeasuredHeight?(entryID, height)
+        return true
     }
 
     private func layoutAttributes(

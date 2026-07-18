@@ -172,7 +172,8 @@ final class TimelineFeedViewController: UIViewController {
             applyEntries(
                 nextConfiguration.entries,
                 forceVisibleReconfiguration:
-                    contentRevisionChanged || swipeSettingsChanged
+                    contentRevisionChanged || swipeSettingsChanged,
+                reconfigureAllVisible: swipeSettingsChanged
             )
         }
 
@@ -243,6 +244,12 @@ final class TimelineFeedViewController: UIViewController {
             }
             .margins(.all, 0)
             .background { Color.astrenzaBackground }
+            cell.configureMeasurement(for: entryID) { [weak self] id, height in
+                guard let self,
+                      entriesByID[id] != nil
+                else { return }
+                collectionLayout.updateMeasuredHeight(height, for: id)
+            }
             return cell
         }
     }
@@ -289,7 +296,8 @@ final class TimelineFeedViewController: UIViewController {
 
     private func applyEntries(
         _ newEntries: [TimelineFeedEntry],
-        forceVisibleReconfiguration: Bool
+        forceVisibleReconfiguration: Bool,
+        reconfigureAllVisible: Bool = false
     ) {
         rowHeightCoordinator.prepareForEntries(
             oldEntries: entries,
@@ -314,8 +322,28 @@ final class TimelineFeedViewController: UIViewController {
                 dataSource.itemIdentifier(for: $0)
             }
         )
+        let oldFingerprintsByID = Dictionary(
+            uniqueKeysWithValues: entries.map {
+                ($0.id, TimelineRenderFingerprint.entry($0))
+            }
+        )
+        let changedCommonIDs: Set<TimelineFeedEntry.ID> = Set(
+            newEntries.compactMap { entry -> TimelineFeedEntry.ID? in
+                guard let oldFingerprint = oldFingerprintsByID[entry.id],
+                      oldFingerprint != TimelineRenderFingerprint.entry(entry)
+                else { return nil }
+                return entry.id
+            }
+        )
         let reconfiguredIDs = forceVisibleReconfiguration
-            ? visibleIDs.intersection(oldIDSet).intersection(newIDSet)
+            ? visibleIDs
+                .intersection(oldIDSet)
+                .intersection(newIDSet)
+                .intersection(
+                    reconfigureAllVisible
+                        ? visibleIDs
+                        : changedCommonIDs
+                )
             : []
 
         let visibleAnchor = captureVisibleAnchor()
