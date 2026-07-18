@@ -29,6 +29,8 @@ final class TimelineFeedViewController: UIViewController {
     private var readLinePositionByPostID:
         [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
+    private let rowHeightCoordinator =
+        TimelineFeedRowHeightCoordinator()
     private var pendingPostSnapshotPosition = PostSnapshotPosition.unchanged
     private var pendingPreservedAnchor: TimelineFeedVisibleAnchor?
     private var pendingRefreshAnchor: TimelineFeedVisibleAnchor?
@@ -78,7 +80,7 @@ final class TimelineFeedViewController: UIViewController {
         tableView.keyboardDismissMode = .interactive
         tableView.accessibilityIdentifier = "timeline.feed"
         tableView.register(
-            UITableViewCell.self,
+            TimelineFeedHostingCell.self,
             forCellReuseIdentifier: cellReuseIdentifier
         )
         tableView.delegate = self
@@ -119,11 +121,21 @@ final class TimelineFeedViewController: UIViewController {
         let previousConfiguration = configuration
         let sourceChanged = previousConfiguration?.sourceIdentity !=
             nextConfiguration.sourceIdentity
+        if sourceChanged {
+            rowHeightCoordinator.flush()
+        }
         configuration = nextConfiguration
 
         if sourceChanged {
             resetForSourceChange()
+            rowHeightCoordinator.reset(
+                layoutCache: nextConfiguration.layoutCache
+            )
         }
+        rowHeightCoordinator.configure(
+            onLayoutCacheChanged:
+                nextConfiguration.onLayoutCacheChanged
+        )
 
         let previousRestoreRequest = restoreCoordinator.request
         restoreCoordinator.synchronize(
@@ -168,6 +180,7 @@ final class TimelineFeedViewController: UIViewController {
         menuCoordinator.close()
         saveViewportStateIfPossible(force: true)
         setUserScrollActive(false)
+        rowHeightCoordinator.flush()
     }
 
     private func makeDataSource()
@@ -180,10 +193,10 @@ final class TimelineFeedViewController: UIViewController {
                   let configuration
             else { return nil }
 
-            let cell = tableView.dequeueReusableCell(
+            guard let cell = tableView.dequeueReusableCell(
                 withIdentifier: cellReuseIdentifier,
                 for: indexPath
-            )
+            ) as? TimelineFeedHostingCell else { return nil }
             cell.selectionStyle = .none
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
@@ -216,7 +229,23 @@ final class TimelineFeedViewController: UIViewController {
             }
             .margins(.all, 0)
             .background { Color.astrenzaBackground }
+            observeHeight(of: cell, for: entryID)
             return cell
+        }
+    }
+
+    private func observeHeight(
+        of cell: TimelineFeedHostingCell,
+        for entryID: TimelineFeedEntry.ID
+    ) {
+        cell.observeHeight(for: entryID) { [weak self] entryID, height in
+            guard let self,
+                  entriesByID[entryID]?.post != nil
+            else { return }
+            rowHeightCoordinator.recordMeasuredHeight(
+                height,
+                for: entryID
+            )
         }
     }
 
@@ -277,6 +306,10 @@ final class TimelineFeedViewController: UIViewController {
         _ newEntries: [TimelineFeedEntry],
         forceVisibleReconfiguration: Bool
     ) {
+        rowHeightCoordinator.prepareForEntries(
+            oldEntries: entries,
+            newEntries: newEntries
+        )
         let oldIDs = entries.map(\.id)
         let newIDs = newEntries.map(\.id)
         let structureChanged = oldIDs != newIDs
@@ -968,11 +1001,24 @@ final class TimelineFeedViewController: UIViewController {
     private func setUserScrollActive(_ isActive: Bool) {
         guard isUserScrollActive != isActive else { return }
         isUserScrollActive = isActive
+        rowHeightCoordinator.setScrollActive(isActive)
         configuration?.onScrollActivityChanged(isActive)
     }
 }
 
 extension TimelineFeedViewController: UITableViewDelegate {
+    func tableView(
+        _ tableView: UITableView,
+        estimatedHeightForRowAt indexPath: IndexPath
+    ) -> CGFloat {
+        guard entries.indices.contains(indexPath.row) else {
+            return tableView.estimatedRowHeight
+        }
+        return rowHeightCoordinator.estimatedHeight(
+            for: entries[indexPath.row]
+        )
+    }
+
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserInteraction = true
         setUserScrollActive(true)

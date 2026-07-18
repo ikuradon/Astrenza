@@ -18,6 +18,7 @@ struct TimelineFeedCollectionConfiguration {
     let scrollCommand: TimelineScrollCommand?
     let viewportRestoreProtectionActive: Bool
     let followsRealtimeEntries: Bool
+    let layoutCache: TimelineLayoutCache
     let unreadCountAnchorPostID: TimelinePost.ID?
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
@@ -36,6 +37,7 @@ struct TimelineFeedCollectionConfiguration {
     let onViewportStateChanged: (TimelineViewportState) -> Void
     let onPostsCrossedReadLineTowardNewer: ([TimelinePost.ID]) -> Void
     let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
+    let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     let onPullRefreshPresentationChanged:
         (TimelinePullRefreshPresentation) -> Void
 }

@@ -222,6 +222,7 @@ struct TimelineFeedView: View {
             viewportRestoreProtectionActive:
                 viewportRestoreProtectionActive,
             followsRealtimeEntries: followsRealtimeEntries,
+            layoutCache: layoutCache,
             unreadCountAnchorPostID: unreadCountAnchorPostID,
             onOpenPost: onOpenPost,
             onOpenProfile: onOpenProfile,
@@ -241,6 +242,7 @@ struct TimelineFeedView: View {
                 onPostsCrossedReadLineTowardNewer,
             onUnreadPillPlacementChanged:
                 onUnreadPillPlacementChanged,
+            onLayoutCacheChanged: onLayoutCacheChanged,
             onPullRefreshPresentationChanged: {
                 pullRefreshPresentation = $0
             }
