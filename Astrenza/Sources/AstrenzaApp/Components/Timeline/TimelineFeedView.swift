@@ -188,6 +188,7 @@ struct TimelineFeedView: View {
             TimelineFeedCollectionView(
                 configuration: collectionConfiguration
             )
+            .ignoresSafeArea(.container, edges: .bottom)
 
             if entries.isEmpty {
                 TimelineEmptyStateView(
