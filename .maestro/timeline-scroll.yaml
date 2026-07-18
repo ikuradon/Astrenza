@@ -20,15 +20,23 @@ appId: com.ikuradon.Astrenza
     id: timeline.gap.row
 - assertVisible:
     text: User Cache
-- assertVisible:
-    text: User Relay
 - assertNotVisible:
     text: Missing notes
 - swipe:
     start: 50%, 75%
-    end: 50%, 35%
-    duration: 450
+    end: 50%, 60%
+    duration: 280
+- assertVisible:
+    text: User Relay
+- swipe:
+    start: 50%, 75%
+    end: 50%, 55%
+    duration: 320
 - assertVisible:
     text: User Longform
+- swipe:
+    start: 50%, 75%
+    end: 50%, 55%
+    duration: 320
 - assertVisible:
     text: Show more

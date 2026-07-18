@@ -60,7 +60,7 @@ struct HomeTimelineFeedContentView: View {
             onPostActionChoice: onPostActionChoice,
             onRefresh: onRefresh,
             onLoadOlderPost: onLoadOlderPost,
-            onBackfillGap: onBackfillGap,
+            onBackfillGap: hasLiveAccount ? onBackfillGap : nil,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onScrollActivityChanged: onScrollActivityChanged,
             onInitialViewportReady: onInitialViewportReady,
