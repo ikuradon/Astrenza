@@ -118,15 +118,13 @@ struct TimelineFeedHostingCollectionCellTests {
         let hostingController = UIHostingController(
             rootView: TimelinePostRow(
                 post: post,
-                isActionMenuPresented: false,
                 swipeSettings: TimelineSwipeSettings(),
-                onActionEvent: { _ in },
                 onOpenPost: { _ in },
                 onOpenProfile: { _ in },
                 onReplyPost: { _ in },
                 onOpenMedia: { _, _ in },
                 onOpenURL: { _ in },
-                onDismissActionMenu: {}
+                onPostActionChoice: { _, _ in }
             )
             .fixedSize(horizontal: false, vertical: true)
             .frame(
@@ -230,7 +228,6 @@ struct TimelineFeedHostingCollectionCellTests {
                     entryID: "post-0",
                     geometryFingerprint: 0,
                     swipeSettings: TimelineSwipeSettings(),
-                    isActionMenuPresented: false,
                     gapDirection: .older,
                     isFetchingGap: false
                 )
@@ -296,7 +293,6 @@ struct TimelineFeedHostingCollectionCellTests {
                     entryID: "resizing-post",
                     geometryFingerprint: configuredHeight.hashValue,
                     swipeSettings: TimelineSwipeSettings(),
-                    isActionMenuPresented: false,
                     gapDirection: .older,
                     isFetchingGap: false
                 )
@@ -594,15 +590,13 @@ private enum HostedCellContent {
                 case let .timelinePost(post):
                     TimelinePostRow(
                         post: post,
-                        isActionMenuPresented: false,
                         swipeSettings: TimelineSwipeSettings(),
-                        onActionEvent: { _ in },
                         onOpenPost: { _ in },
                         onOpenProfile: { _ in },
                         onReplyPost: { _ in },
                         onOpenMedia: { _, _ in },
                         onOpenURL: { _ in },
-                        onDismissActionMenu: {}
+                        onPostActionChoice: { _, _ in }
                     )
                 }
             }
@@ -667,7 +661,6 @@ private final class HostedCellDataSource:
                 entryID: entryID,
                 geometryFingerprint: content.geometryFingerprint,
                 swipeSettings: TimelineSwipeSettings(),
-                isActionMenuPresented: false,
                 gapDirection: .older,
                 isFetchingGap: false
             )

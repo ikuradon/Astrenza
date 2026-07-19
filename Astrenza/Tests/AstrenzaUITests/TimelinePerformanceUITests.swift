@@ -122,6 +122,76 @@ final class TimelinePerformanceUITests: XCTestCase {
         )
     }
 
+    func testActionButtonsUseSystemMenusWithoutLockingFeedScrolling() async throws {
+        guard environmentValue(for: "ASTRENZA_RUN_PERFORMANCE_UI") == "1" else {
+            return
+        }
+
+        let application = XCUIApplication()
+        self.application = application
+        application.launchArguments = [
+            "-AstrenzaDebugRoute", "timeline-performance",
+            "-AstrenzaPerformancePostCount", "100"
+        ]
+        application.launch()
+
+        let feed = application.collectionViews["timeline.feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 12))
+        let firstBody = application.staticTexts["timeline.body.performance-0"]
+        XCTAssertTrue(firstBody.waitForExistence(timeout: 5))
+        let initialY = firstBody.frame.minY
+        let openedPost = application.staticTexts[
+            "astrenza.debug.timeline.performance.last-opened-post"
+        ]
+
+        let repost = application.descendants(matching: .any)[
+            "timeline.action.repost.performance-0"
+        ]
+        XCTAssertTrue(repost.waitForExistence(timeout: 5))
+        repost.press(forDuration: 0.8)
+
+        let quotedRepost = application.buttons["Quoted Repost"]
+        XCTAssertTrue(
+            quotedRepost.waitForExistence(timeout: 3),
+            "Long-pressing Repost must present the UIKit context menu"
+        )
+        XCTAssertFalse(
+            openedPost.exists,
+            "Opening an action context menu must not open post detail"
+        )
+        quotedRepost.tap()
+
+        let more = application.descendants(matching: .any)[
+            "timeline.action.more.performance-0"
+        ]
+        XCTAssertTrue(more.waitForExistence(timeout: 3))
+        more.tap()
+        let viewDetails = application.buttons["View Details"]
+        XCTAssertTrue(
+            viewDetails.waitForExistence(timeout: 3),
+            "Tapping More must present the same UIKit menu as its primary action"
+        )
+        viewDetails.tap()
+        XCTAssertTrue(openedPost.waitForExistence(timeout: 2))
+        XCTAssertEqual(
+            openedPost.label,
+            "performance-0",
+            "View Details must commit the selected post"
+        )
+
+        feed.swipeUp(velocity: .fast)
+        let deadline = Date().addingTimeInterval(3)
+        while firstBody.exists,
+              abs(firstBody.frame.minY - initialY) < 40,
+              Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(
+            !firstBody.exists || abs(firstBody.frame.minY - initialY) >= 40,
+            "Dismissing a system action menu must leave vertical scrolling enabled"
+        )
+    }
+
     func testRowBackgroundOpensPostWithoutLeakingFromExplicitControls() async throws {
         guard environmentValue(for: "ASTRENZA_RUN_PERFORMANCE_UI") == "1" else {
             return

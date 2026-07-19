@@ -6,7 +6,6 @@ struct HomeTimelineFeedContentView: View {
     let selectedTimeline: TimelineKind
     let sourceIdentity: String
     let viewportIdentity: TimelineFeedViewportIdentity
-    let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
@@ -41,7 +40,6 @@ struct HomeTimelineFeedContentView: View {
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
             viewportIdentity: viewportIdentity,
-            actionMenuTopClearance: actionMenuTopClearance,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             scrollCommand: scrollCommand,

@@ -89,14 +89,6 @@ enum TabBarMinimizeDirection: Equatable {
     }
 }
 
-struct UnreadBadgeFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
 enum HomeUnreadPillPlacement: Equatable {
     case hidden
     case visible(offsetY: CGFloat)

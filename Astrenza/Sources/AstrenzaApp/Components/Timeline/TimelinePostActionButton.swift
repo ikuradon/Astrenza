@@ -7,11 +7,10 @@ struct TimelinePostActionButton: View {
     let isActive: Bool
     let accessibilityLabel: String
     var accessibilityIdentifier: String?
-    var supportsLongPressDrag = false
+    var menuKind: TimelinePostActionKind?
+    var showsMenuAsPrimaryAction = false
     var action: () -> Void = {}
-    var onLongPress: () -> Void = {}
-    var onLongPressDragChanged: (CGPoint) -> Void = { _ in }
-    var onLongPressDragEnded: (CGPoint?) -> Void = { _ in }
+    var onMenuSelection: (TimelinePostActionMenuSelection) -> Void = { _ in }
 
     var body: some View {
         UIKitTimelinePostActionButton(
@@ -19,11 +18,10 @@ struct TimelinePostActionButton: View {
             isActive: isActive,
             accessibilityLabel: accessibilityLabel,
             accessibilityIdentifier: accessibilityIdentifier,
-            supportsLongPressDrag: supportsLongPressDrag,
+            menuKind: menuKind,
+            showsMenuAsPrimaryAction: showsMenuAsPrimaryAction,
             action: action,
-            onLongPress: onLongPress,
-            onLongPressDragChanged: onLongPressDragChanged,
-            onLongPressDragEnded: onLongPressDragEnded
+            onMenuSelection: onMenuSelection
         )
         .frame(height: AstrenzaTimelineMetrics.actionHeight)
         .frame(maxWidth: .infinity)
@@ -38,33 +36,10 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
     let isActive: Bool
     let accessibilityLabel: String
     let accessibilityIdentifier: String?
-    let supportsLongPressDrag: Bool
+    let menuKind: TimelinePostActionKind?
+    let showsMenuAsPrimaryAction: Bool
     let action: () -> Void
-    let onBegan: () -> Void
-    let onMoved: (CGPoint) -> Void
-    let onEnded: (CGPoint?) -> Void
-
-    init(
-        systemName: String,
-        isActive: Bool,
-        accessibilityLabel: String,
-        accessibilityIdentifier: String?,
-        supportsLongPressDrag: Bool,
-        action: @escaping () -> Void,
-        onLongPress: @escaping () -> Void,
-        onLongPressDragChanged: @escaping (CGPoint) -> Void,
-        onLongPressDragEnded: @escaping (CGPoint?) -> Void
-    ) {
-        self.systemName = systemName
-        self.isActive = isActive
-        self.accessibilityLabel = accessibilityLabel
-        self.accessibilityIdentifier = accessibilityIdentifier
-        self.supportsLongPressDrag = supportsLongPressDrag
-        self.action = action
-        self.onBegan = onLongPress
-        self.onMoved = onLongPressDragChanged
-        self.onEnded = onLongPressDragEnded
-    }
+    let onMenuSelection: (TimelinePostActionMenuSelection) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -75,25 +50,13 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         control.backgroundColor = .clear
         control.isAccessibilityElement = true
         control.accessibilityTraits = [.button]
-        control.imageView.contentMode = .center
-        control.addSubview(control.imageView)
-
-        let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
-        tapRecognizer.cancelsTouchesInView = true
-        tapRecognizer.delegate = context.coordinator
-        control.addGestureRecognizer(tapRecognizer)
-
-        if supportsLongPressDrag {
-            let longPressRecognizer = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
-            longPressRecognizer.minimumPressDuration = 0.42
-            longPressRecognizer.allowableMovement = 14
-            longPressRecognizer.cancelsTouchesInView = false
-            longPressRecognizer.delaysTouchesBegan = false
-            longPressRecognizer.delaysTouchesEnded = false
-            longPressRecognizer.delegate = context.coordinator
-            control.addGestureRecognizer(longPressRecognizer)
-        }
-
+        control.imageView?.contentMode = .center
+        control.addAction(
+            UIAction { [weak coordinator = context.coordinator] _ in
+                coordinator?.performPrimaryAction()
+            },
+            for: .primaryActionTriggered
+        )
         return control
     }
 
@@ -102,92 +65,52 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
         uiView.update(systemName: systemName, isActive: isActive)
         uiView.accessibilityLabel = accessibilityLabel
         uiView.accessibilityIdentifier = accessibilityIdentifier
+        uiView.updateMenu(
+            kind: menuKind,
+            showsAsPrimaryAction: showsMenuAsPrimaryAction,
+            makeMenu: context.coordinator.makeMenu
+        )
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    @MainActor
+    final class Coordinator: NSObject {
         var parent: UIKitTimelinePostActionButton
-        private var didBegin = false
-        private weak var lockedScrollView: UIScrollView?
-        private var lockedScrollViewWasEnabled: Bool?
 
         init(parent: UIKitTimelinePostActionButton) {
             self.parent = parent
         }
 
-        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-            guard recognizer.state == .ended else { return }
+        func performPrimaryAction() {
             parent.action()
         }
 
-        @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
-            guard parent.supportsLongPressDrag else { return }
-
-            switch recognizer.state {
-            case .began:
-                didBegin = true
-                lockScrollViewIfNeeded(from: recognizer.view)
-                parent.onBegan()
-                parent.onMoved(windowLocation(for: recognizer))
-            case .changed:
-                guard didBegin else { return }
-                parent.onMoved(windowLocation(for: recognizer))
-            case .ended:
-                parent.onEnded(didBegin ? windowLocation(for: recognizer) : nil)
-                didBegin = false
-                unlockScrollViewIfNeeded()
-            case .cancelled, .failed:
-                parent.onEnded(nil)
-                didBegin = false
-                unlockScrollViewIfNeeded()
-            default:
-                break
+        func makeMenu(for kind: TimelinePostActionKind) -> UIMenu {
+            TimelinePostActionMenuBuilder.make(kind: kind) { [weak self] selection in
+                self?.parent.onMenuSelection(selection)
             }
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            false
-        }
-
-        private func windowLocation(for recognizer: UILongPressGestureRecognizer) -> CGPoint {
-            guard let view = recognizer.view else {
-                return recognizer.location(in: nil)
-            }
-
-            return view.convert(recognizer.location(in: view), to: nil)
-        }
-
-        private func lockScrollViewIfNeeded(from view: UIView?) {
-            guard lockedScrollViewWasEnabled == nil,
-                  let scrollView = view?.enclosingScrollView()
-            else { return }
-
-            lockedScrollView = scrollView
-            lockedScrollViewWasEnabled = scrollView.isScrollEnabled
-            scrollView.isScrollEnabled = false
-        }
-
-        private func unlockScrollViewIfNeeded() {
-            guard let lockedScrollViewWasEnabled,
-                  let lockedScrollView
-            else { return }
-
-            lockedScrollView.isScrollEnabled = lockedScrollViewWasEnabled
-            self.lockedScrollViewWasEnabled = nil
-            self.lockedScrollView = nil
         }
     }
 
-    final class ActionButtonControl: UIControl {
-        let imageView = UIImageView()
+    final class ActionButtonControl: UIButton {
         private var configuredSystemName: String?
         private var configuredIsActive: Bool?
+        private var configuredMenuKind: TimelinePostActionKind?
+        private var configuredShowsMenuAsPrimaryAction = false
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            contentHorizontalAlignment = .fill
+            contentVerticalAlignment = .fill
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            imageView.frame = bounds
+            imageView?.frame = bounds
         }
 
         func update(systemName: String, isActive: Bool) {
@@ -201,22 +124,28 @@ private struct UIKitTimelinePostActionButton: UIViewRepresentable {
                 pointSize: AstrenzaTimelineMetrics.actionIconSize,
                 weight: isActive ? .bold : .semibold
             )
-            imageView.image = UIImage(systemName: systemName, withConfiguration: configuration)
-            imageView.tintColor = isActive ? UIColor.label : UIColor.secondaryLabel
-            imageView.preferredSymbolConfiguration = configuration
+            setImage(
+                UIImage(systemName: systemName, withConfiguration: configuration),
+                for: .normal
+            )
+            tintColor = isActive ? .label : .secondaryLabel
+            imageView?.preferredSymbolConfiguration = configuration
         }
-    }
-}
 
-private extension UIView {
-    func enclosingScrollView() -> UIScrollView? {
-        var currentView = superview
-        while let view = currentView {
-            if let scrollView = view as? UIScrollView {
-                return scrollView
-            }
-            currentView = view.superview
+        func updateMenu(
+            kind: TimelinePostActionKind?,
+            showsAsPrimaryAction: Bool,
+            makeMenu: (TimelinePostActionKind) -> UIMenu
+        ) {
+            let effectivePrimaryAction = kind != nil && showsAsPrimaryAction
+            guard configuredMenuKind != kind ||
+                    configuredShowsMenuAsPrimaryAction != effectivePrimaryAction
+            else { return }
+
+            configuredMenuKind = kind
+            configuredShowsMenuAsPrimaryAction = effectivePrimaryAction
+            menu = kind.map(makeMenu)
+            self.showsMenuAsPrimaryAction = effectivePrimaryAction
         }
-        return nil
     }
 }

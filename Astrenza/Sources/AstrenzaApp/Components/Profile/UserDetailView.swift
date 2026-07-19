@@ -365,15 +365,13 @@ struct UserDetailView: View {
             ForEach(filteredPosts) { post in
                 TimelinePostRow(
                     post: post,
-                    isActionMenuPresented: false,
                     swipeSettings: swipeSettings,
-                    onActionEvent: { _ in },
                     onOpenPost: onOpenPost,
                     onOpenProfile: onOpenProfile,
                     onReplyPost: onReplyPost,
                     onOpenMedia: onOpenMedia,
                     onOpenURL: onOpenURL,
-                    onDismissActionMenu: {}
+                    onPostActionChoice: { _, _ in }
                 )
             }
         }

@@ -2,26 +2,19 @@ import SwiftUI
 
 struct TimelinePostRow: View {
     let post: TimelinePost
-    let isActionMenuPresented: Bool
     let swipeSettings: TimelineSwipeSettings
-    let onActionEvent: (TimelinePostActionEvent) -> Void
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
-    let onDismissActionMenu: () -> Void
-    private var needsFloatingActionAnchors: Bool {
-        isActionMenuPresented || isActionLongPressActive
-    }
+    let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
     @State private var didHandleActionGesture = false
-    @State private var isActionLongPressActive = false
 
     var body: some View {
         TimelineSwipeContainer(
             swipeSettings: swipeSettings,
-            isEnabled: !isActionLongPressActive,
-            onSwipeChanged: onDismissActionMenu,
+            onSwipeChanged: {},
             onSwipeAction: performSwipeAction
         ) {
             rowContent
@@ -114,46 +107,18 @@ struct TimelinePostRow: View {
                 isActive: post.actionState.didRepost,
                 accessibilityLabel: "Repost",
                 accessibilityIdentifier: "timeline.action.repost.\(post.id)",
-                supportsLongPressDrag: true,
-                action: {
-                    sendActionEvent(.repost, phase: .tap)
-                },
-                onLongPress: {
-                    isActionLongPressActive = true
-                    sendActionEvent(.repost, phase: .longPressBegan)
-                },
-                onLongPressDragChanged: { location in
-                    sendActionEvent(.repost, phase: .dragChanged(location))
-                },
-                onLongPressDragEnded: { location in
-                    isActionLongPressActive = false
-                    sendActionEvent(.repost, phase: .dragEnded(location))
-                }
+                menuKind: .repost,
+                onMenuSelection: handleActionMenuSelection
             )
-            .floatingActionAnchor(postID: post.id, kind: .repost, isEnabled: needsFloatingActionAnchors)
             TimelinePostActionButton(
                 inactiveSystemName: "star",
                 activeSystemName: "star.fill",
                 isActive: post.actionState.didFavorite,
                 accessibilityLabel: "Favorite",
                 accessibilityIdentifier: "timeline.action.favorite.\(post.id)",
-                supportsLongPressDrag: true,
-                action: {
-                    sendActionEvent(.favorite, phase: .tap)
-                },
-                onLongPress: {
-                    isActionLongPressActive = true
-                    sendActionEvent(.favorite, phase: .longPressBegan)
-                },
-                onLongPressDragChanged: { location in
-                    sendActionEvent(.favorite, phase: .dragChanged(location))
-                },
-                onLongPressDragEnded: { location in
-                    isActionLongPressActive = false
-                    sendActionEvent(.favorite, phase: .dragEnded(location))
-                }
+                menuKind: .favorite,
+                onMenuSelection: handleActionMenuSelection
             )
-            .floatingActionAnchor(postID: post.id, kind: .favorite, isEnabled: needsFloatingActionAnchors)
             TimelinePostActionButton(
                 inactiveSystemName: "bolt",
                 activeSystemName: "bolt.fill",
@@ -164,35 +129,28 @@ struct TimelinePostRow: View {
             TimelinePostActionButton(
                 inactiveSystemName: "gearshape",
                 activeSystemName: "gearshape.fill",
-                isActive: isActionMenuPresented,
+                isActive: false,
                 accessibilityLabel: "More actions",
                 accessibilityIdentifier: "timeline.action.more.\(post.id)",
-                supportsLongPressDrag: true,
-                action: {
-                    sendActionEvent(.more, phase: .tap)
-                },
-                onLongPress: {
-                    isActionLongPressActive = true
-                    sendActionEvent(.more, phase: .longPressBegan)
-                },
-                onLongPressDragChanged: { location in
-                    sendActionEvent(.more, phase: .dragChanged(location))
-                },
-                onLongPressDragEnded: { location in
-                    isActionLongPressActive = false
-                    sendActionEvent(.more, phase: .dragEnded(location))
-                }
+                menuKind: .more,
+                showsMenuAsPrimaryAction: true,
+                onMenuSelection: handleActionMenuSelection
             )
-            .floatingActionAnchor(postID: post.id, kind: .more, isEnabled: needsFloatingActionAnchors)
         }
         .padding(.top, 2)
     }
 }
 
 private extension TimelinePostRow {
-    func sendActionEvent(_ kind: TimelinePostActionKind, phase: TimelinePostActionPhase) {
-        didHandleActionGesture = true
-        onActionEvent(TimelinePostActionEvent(postID: post.id, kind: kind, phase: phase))
+    func handleActionMenuSelection(_ selection: TimelinePostActionMenuSelection) {
+        switch selection {
+        case .more(.viewDetails):
+            onOpenPost(post)
+        case .more(let choice):
+            onPostActionChoice(post, choice)
+        case .repost, .favorite:
+            break
+        }
     }
 
     func handleRowTap() {
@@ -201,7 +159,6 @@ private extension TimelinePostRow {
             return
         }
 
-        onDismissActionMenu()
         onOpenPost(post)
     }
 
@@ -211,19 +168,16 @@ private extension TimelinePostRow {
             return
         }
 
-        onDismissActionMenu()
         onOpenProfile(post)
     }
 
     func openEmbeddedPost(_ selectedPost: TimelinePost) {
         didHandleActionGesture = true
-        onDismissActionMenu()
         onOpenPost(selectedPost)
     }
 
     func openAttachment(_ media: TimelineMedia, initialTileIndex: Int) {
         didHandleActionGesture = true
-        onDismissActionMenu()
 
         if media.isFullscreenMedia {
             onOpenMedia(media, initialTileIndex)
@@ -299,8 +253,6 @@ private extension TimelinePostRow {
         guard action.kind != .noAction else {
             return true
         }
-
-        onDismissActionMenu()
 
         switch action.kind {
         case .viewDetail:

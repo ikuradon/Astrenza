@@ -5,7 +5,6 @@ struct TimelineFeedView: View {
     let sourceIdentity: String
     let sourceRevision: Int
     let viewportIdentity: TimelineFeedViewportIdentity
-    let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
@@ -42,7 +41,6 @@ struct TimelineFeedView: View {
         sourceIdentity: String = "timeline",
         sourceRevision: Int = 0,
         viewportIdentity: TimelineFeedViewportIdentity? = nil,
-        actionMenuTopClearance: CGFloat,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
@@ -76,7 +74,6 @@ struct TimelineFeedView: View {
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
             viewportIdentity: viewportIdentity,
-            actionMenuTopClearance: actionMenuTopClearance,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             scrollCommand: scrollCommand,
@@ -115,7 +112,6 @@ struct TimelineFeedView: View {
         sourceIdentity: String = "timeline",
         sourceRevision: Int = 0,
         viewportIdentity: TimelineFeedViewportIdentity? = nil,
-        actionMenuTopClearance: CGFloat,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
@@ -151,7 +147,6 @@ struct TimelineFeedView: View {
             accountID: viewportState?.accountID ?? "mock-account",
             timelineKey: viewportState?.timelineKey ?? "home"
         )
-        self.actionMenuTopClearance = actionMenuTopClearance
         self.swipeSettings = swipeSettings
         self.viewportState = viewportState
         self.scrollCommand = scrollCommand
@@ -215,7 +210,6 @@ struct TimelineFeedView: View {
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
             viewportIdentity: viewportIdentity,
-            actionMenuTopClearance: actionMenuTopClearance,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             scrollCommand: scrollCommand,

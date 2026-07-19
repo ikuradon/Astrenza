@@ -259,15 +259,13 @@ struct PostDetailView: View {
     private func detailThreadRow(_ threadPost: TimelinePost) -> some View {
         TimelinePostRow(
             post: threadPost,
-            isActionMenuPresented: false,
             swipeSettings: swipeSettings,
-            onActionEvent: { _ in },
             onOpenPost: onOpenPost,
             onOpenProfile: { _ in },
             onReplyPost: onReplyPost,
             onOpenMedia: onOpenMedia,
             onOpenURL: onOpenURL,
-            onDismissActionMenu: {}
+            onPostActionChoice: { _, _ in }
         )
     }
 }

@@ -142,14 +142,6 @@ struct HomeUnreadBadge: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(displayCount) unread posts")
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: UnreadBadgeFramePreferenceKey.self,
-                    value: proxy.frame(in: .named("homeTimelineChrome"))
-                )
-            }
-        }
     }
 }
 

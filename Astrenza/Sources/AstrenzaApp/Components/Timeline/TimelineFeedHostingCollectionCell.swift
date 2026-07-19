@@ -5,7 +5,6 @@ struct TimelineFeedCellSizingIdentity: Hashable {
     let entryID: TimelineFeedEntry.ID
     let geometryFingerprint: Int
     let swipeSettings: TimelineSwipeSettings
-    let isActionMenuPresented: Bool
     let gapDirection: TimelineGapFillDirection
     let isFetchingGap: Bool
 }

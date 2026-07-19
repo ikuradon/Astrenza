@@ -110,7 +110,6 @@ private struct AstrenzaDebugTimelineSnapshotView: View {
             entries: feedModel.entries,
             sourceIdentity: "debug/snapshot/\(snapshotCase.rawValue)",
             sourceRevision: feedModel.revision,
-            actionMenuTopClearance: 96,
             swipeSettings: TimelineSwipeSettings(),
             viewportState: nil,
             layoutCache: TimelineLayoutCache(),
@@ -129,15 +128,13 @@ private struct AstrenzaDebugTimelineSnapshotView: View {
     private func snapshotRow(post: TimelinePost) -> some View {
         TimelinePostRow(
             post: post,
-            isActionMenuPresented: false,
             swipeSettings: TimelineSwipeSettings(),
-            onActionEvent: { _ in },
             onOpenPost: { _ in },
             onOpenProfile: { _ in },
             onReplyPost: { _ in },
             onOpenMedia: { _, _ in },
             onOpenURL: { _ in },
-            onDismissActionMenu: {}
+            onPostActionChoice: { _, _ in }
         )
         .background(Color.astrenzaBackground)
     }
@@ -168,7 +165,6 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
         TimelineFeedView(
             entries: entries,
             sourceIdentity: "debug/performance/\(postCount)",
-            actionMenuTopClearance: 96,
             swipeSettings: TimelineSwipeSettings(),
             viewportState: nil,
             layoutCache: TimelineLayoutCache(),

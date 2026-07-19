@@ -5,6 +5,45 @@ import UIKit
 @Suite("Timeline row gesture arbitration")
 struct TimelinePostRowGestureTests {
     @MainActor
+    @Test("Action menus use system menu elements in stable semantic groups")
+    func actionMenusUseSystemMenuElements() {
+        let repostMenu = TimelinePostActionMenuBuilder.make(
+            kind: .repost,
+            onSelect: { _ in }
+        )
+        #expect(repostMenu.actionTitles == ["Repost", "Quoted Repost"])
+
+        let favoriteMenu = TimelinePostActionMenuBuilder.make(
+            kind: .favorite,
+            onSelect: { _ in }
+        )
+        #expect(
+            favoriteMenu.actionTitles == [
+                "Favorite",
+                "Custom Reaction",
+                "Bookmark",
+            ]
+        )
+
+        let moreMenu = TimelinePostActionMenuBuilder.make(
+            kind: .more,
+            onSelect: { _ in }
+        )
+        #expect(moreMenu.children.compactMap { $0 as? UIMenu }.count == 4)
+        #expect(
+            moreMenu.actionTitles == [
+                "Report",
+                "Mute",
+                "Translate",
+                "Bookmark",
+                "Copy Link",
+                "Share Link",
+                "View Details",
+            ]
+        )
+    }
+
+    @MainActor
     @Test("Rows share one directional recognizer without disabling feed scrolling")
     func rowSwipeRecognizerDoesNotOwnScrollAvailability() throws {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -47,5 +86,19 @@ struct TimelinePostRowGestureTests {
 
         #expect(recognizer.view === scrollView)
         #expect(scrollView.isScrollEnabled)
+    }
+}
+
+private extension UIMenu {
+    var actionTitles: [String] {
+        children.flatMap { element -> [String] in
+            if let action = element as? UIAction {
+                return [action.title]
+            }
+            if let menu = element as? UIMenu {
+                return menu.actionTitles
+            }
+            return []
+        }
     }
 }

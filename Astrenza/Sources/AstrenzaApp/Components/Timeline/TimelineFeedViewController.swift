@@ -101,10 +101,6 @@ final class TimelineFeedViewController: UIViewController {
     }()
 
     private lazy var dataSource = makeDataSource()
-    private lazy var menuCoordinator = TimelineFeedMenuCoordinator(
-        owner: self,
-        containerView: view
-    )
 
     override func loadView() {
         let rootView = UIView()
@@ -129,7 +125,6 @@ final class TimelineFeedViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         reprojectForCurrentWidthIfNeeded()
-        menuCoordinator.relayout()
         attemptPendingRestoreIfPossible()
         publishInitialViewportReadyIfPossible()
         publishUnreadPillPlacement()
@@ -156,8 +151,6 @@ final class TimelineFeedViewController: UIViewController {
         if previousRestoreRequest != restoreCoordinator.request {
             missingRestoreAnchorAttempts = 0
         }
-        configureMenuCoordinator()
-
         let swipeSettingsChanged = lastSwipeSettings !=
             nextConfiguration.swipeSettings
         let contentRevisionChanged = previousConfiguration?.sourceRevision !=
@@ -187,7 +180,6 @@ final class TimelineFeedViewController: UIViewController {
     func prepareForRemoval() {
         restoreRetryGeneration &+= 1
         missingRestoreAnchorAttempts = 0
-        menuCoordinator.close()
         saveViewportStateIfPossible(force: true)
         setUserScrollActive(false)
     }
@@ -244,8 +236,6 @@ final class TimelineFeedViewController: UIViewController {
             entryID: entry.id,
             geometryFingerprint: TimelineGeometryFingerprint.entry(entry),
             swipeSettings: configuration.swipeSettings,
-            isActionMenuPresented:
-                menuCoordinator.openedPostID == entry.post?.id,
             gapDirection: gapDirection,
             isFetchingGap: fetchingGapDirections[entry.id] != nil
         )
@@ -260,13 +250,8 @@ final class TimelineFeedViewController: UIViewController {
             TimelineHostedFeedEntryView(
                 entry: entry,
                 swipeSettings: configuration.swipeSettings,
-                isActionMenuPresented:
-                    sizingIdentity.isActionMenuPresented,
                 gapDirection: sizingIdentity.gapDirection,
                 isFetchingGap: sizingIdentity.isFetchingGap,
-                onActionEvent: { [weak self] event in
-                    self?.handlePostActionEvent(event)
-                },
                 onOpenPost: { [weak self] post in
                     self?.openPost(post)
                 },
@@ -274,9 +259,7 @@ final class TimelineFeedViewController: UIViewController {
                 onReplyPost: configuration.onReplyPost,
                 onOpenMedia: configuration.onOpenMedia,
                 onOpenURL: configuration.onOpenURL,
-                onDismissActionMenu: { [weak self] in
-                    self?.menuCoordinator.close()
-                },
+                onPostActionChoice: configuration.onPostActionChoice,
                 onBackfillGap: { [weak self] gap in
                     self?.requestBackfill(gap)
                 }
@@ -484,25 +467,8 @@ final class TimelineFeedViewController: UIViewController {
         }
     }
 
-    private func configureMenuCoordinator() {
-        guard let configuration else { return }
-        menuCoordinator.configure(
-            actionMenuTopClearance: configuration.actionMenuTopClearance,
-            postProvider: { [weak self] postID in
-                self?.entriesByID[postID]?.post
-            },
-            onPostActionChoice: configuration.onPostActionChoice,
-            onOpenStateChanged: { [weak self] isOpen, affectedPostIDs in
-                guard let self else { return }
-                collectionView.isScrollEnabled = !isOpen
-                reconfigureEntries(Array(affectedPostIDs))
-            }
-        )
-    }
-
     private func resetForSourceChange() {
         restoreRetryGeneration &+= 1
-        menuCoordinator.close()
         measuredRowHeights = [:]
         projectedRowHeights = [:]
         projectedSizingIdentities = [:]
@@ -1069,44 +1035,8 @@ final class TimelineFeedViewController: UIViewController {
         }
     }
 
-    private func handlePostActionEvent(_ event: TimelinePostActionEvent) {
-        menuCoordinator.handle(
-            event,
-            sourceFrame: actionButtonFrame(
-                postID: event.postID,
-                kind: event.kind
-            )
-        )
-    }
-
-    private func actionButtonFrame(
-        postID: TimelinePost.ID,
-        kind: TimelinePostActionKind
-    ) -> CGRect? {
-        guard let indexPath = dataSource.indexPath(for: postID),
-              let cell = collectionView.cellForItem(at: indexPath)
-        else { return nil }
-        let identifier: String
-        switch kind {
-        case .repost:
-            identifier = "timeline.action.repost.\(postID)"
-        case .favorite:
-            identifier = "timeline.action.favorite.\(postID)"
-        case .more:
-            identifier = "timeline.action.more.\(postID)"
-        }
-        guard let button = cell.descendant(
-            accessibilityIdentifier: identifier
-        ) else { return nil }
-        return button.convert(button.bounds, to: view)
-    }
-
     private func openPost(_ post: TimelinePost) {
-        if menuCoordinator.isOpen {
-            menuCoordinator.close()
-        } else {
-            configuration?.onOpenPost(post)
-        }
+        configuration?.onOpenPost(post)
     }
 
     private func displayGapDirection(
@@ -1280,7 +1210,6 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserInteraction = true
         setUserScrollActive(true)
-        menuCoordinator.close()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1329,16 +1258,14 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
 private struct TimelineHostedFeedEntryView: View {
     let entry: TimelineFeedEntry
     let swipeSettings: TimelineSwipeSettings
-    let isActionMenuPresented: Bool
     let gapDirection: TimelineGapFillDirection
     let isFetchingGap: Bool
-    let onActionEvent: (TimelinePostActionEvent) -> Void
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
-    let onDismissActionMenu: () -> Void
+    let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
     let onBackfillGap: (TimelineGap) -> Void
 
     @ViewBuilder
@@ -1347,15 +1274,13 @@ private struct TimelineHostedFeedEntryView: View {
         case .post(let post):
             TimelinePostRow(
                 post: post,
-                isActionMenuPresented: isActionMenuPresented,
                 swipeSettings: swipeSettings,
-                onActionEvent: onActionEvent,
                 onOpenPost: onOpenPost,
                 onOpenProfile: onOpenProfile,
                 onReplyPost: onReplyPost,
                 onOpenMedia: onOpenMedia,
                 onOpenURL: onOpenURL,
-                onDismissActionMenu: onDismissActionMenu
+                onPostActionChoice: onPostActionChoice
             )
         case .gap(let gap):
             TimelineGapRow(
@@ -1368,21 +1293,5 @@ private struct TimelineHostedFeedEntryView: View {
         case .deleted(let deletedEntry):
             TimelineDeletedRow(entry: deletedEntry)
         }
-    }
-}
-
-private extension UIView {
-    func descendant(accessibilityIdentifier: String) -> UIView? {
-        if self.accessibilityIdentifier == accessibilityIdentifier {
-            return self
-        }
-        for subview in subviews {
-            if let match = subview.descendant(
-                accessibilityIdentifier: accessibilityIdentifier
-            ) {
-                return match
-            }
-        }
-        return nil
     }
 }

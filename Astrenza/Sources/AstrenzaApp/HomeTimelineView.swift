@@ -19,17 +19,12 @@ struct HomeTimelineView: View {
     @State private var viewport: HomeTimelineViewportState
     @State private var tabBarMinimizeDirection: TabBarMinimizeDirection = .towardNewer
     @State private var navigation = HomeTimelineNavigationState()
-    @State private var unreadBadgeFrame: CGRect = .zero
     @State private var unreadPillPlacement: HomeUnreadPillPlacement = .hidden
     @State private var swipeSettings = TimelineSwipeSettings()
     @State private var viewportPersistence: HomeViewportPersistenceCoordinator
 
     private var accountID: String {
         sessionStore.account?.pubkey ?? "mock-account"
-    }
-
-    private var actionMenuTopClearance: CGFloat {
-        max(unreadBadgeFrame.maxY + 10, 96)
     }
 
     private var visibleTab: TimelineTab {
@@ -157,10 +152,6 @@ struct HomeTimelineView: View {
                     .zIndex(40)
             }
         }
-        .coordinateSpace(name: "homeTimelineChrome")
-        .onPreferenceChange(UnreadBadgeFramePreferenceKey.self) { frame in
-            unreadBadgeFrame = frame
-        }
         .onAppear(perform: completeInitialAppearanceIfNeeded)
         .onChange(of: selectedTab) { _, newValue in
             handleTabSelection(newValue)
@@ -220,7 +211,6 @@ private extension HomeTimelineView {
                     accountID: accountID,
                     timelineKey: selectedTimeline.id
                 ),
-                actionMenuTopClearance: actionMenuTopClearance,
                 swipeSettings: swipeSettings,
                 viewportState: viewport.viewportState,
                 scrollCommand: viewport.scrollCommand,

@@ -12,7 +12,6 @@ struct TimelineFeedCollectionConfiguration {
     let sourceIdentity: String
     let sourceRevision: Int
     let viewportIdentity: TimelineFeedViewportIdentity
-    let actionMenuTopClearance: CGFloat
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
