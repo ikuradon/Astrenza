@@ -573,38 +573,16 @@ private struct GalleryAttachmentView: View {
 
 private struct SingleMediaAttachmentView: View {
     let tile: MediaTile
-    @State private var loadedAspectRatio: CGFloat?
-
-    init(tile: MediaTile) {
-        self.tile = tile
-        _loadedAspectRatio = State(initialValue: nil)
-    }
 
     var body: some View {
-        SingleMediaAttachmentLayout(aspectRatio: resolvedAspectRatio) {
+        SingleMediaAttachmentLayout(aspectRatio: tile.aspectRatio) {
             TimelineMediaTileView(
                 tile: tile,
-                contentMode: .fit,
-                onImageAspectRatioResolved: applyLoadedAspectRatio
+                contentMode: .fit
             )
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onChange(of: tile.id) { _, _ in
-            loadedAspectRatio = nil
-        }
-    }
-
-    private var resolvedAspectRatio: CGFloat? {
-        loadedAspectRatio ?? tile.aspectRatio
-    }
-
-    private func applyLoadedAspectRatio(_ aspectRatio: CGFloat) {
-        guard aspectRatio.isFinite,
-              aspectRatio > 0,
-              loadedAspectRatio.map({ abs($0 - aspectRatio) > 0.0001 }) ?? true
-        else { return }
-        loadedAspectRatio = aspectRatio
     }
 }
 
@@ -687,7 +665,6 @@ private struct TimelineMediaTileView: View {
     let tile: MediaTile
     var overlayCount: Int?
     var contentMode: ContentMode = .fill
-    var onImageAspectRatioResolved: ((CGFloat) -> Void)?
 
     @StateObject private var loader = RemoteMediaImageLoader()
 
@@ -730,9 +707,6 @@ private struct TimelineMediaTileView: View {
             } else {
                 await loader.load(url: nil)
             }
-            if let aspectRatio = loader.imageAspectRatio {
-                onImageAspectRatioResolved?(aspectRatio)
-            }
         }
     }
 
@@ -768,14 +742,6 @@ private final class RemoteMediaImageLoader: ObservableObject {
     @Published var image: UIImage?
 
     private var currentURL: URL?
-
-    var imageAspectRatio: CGFloat? {
-        guard let image,
-              image.size.width > 0,
-              image.size.height > 0
-        else { return nil }
-        return image.size.width / image.size.height
-    }
 
     func load(url: URL?) async {
         guard let url else {

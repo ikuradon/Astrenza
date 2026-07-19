@@ -179,3 +179,104 @@ enum TimelineRenderFingerprint {
         }
     }
 }
+
+enum TimelineLayoutFingerprint {
+    static func entry(_ entry: TimelineFeedEntry) -> Int {
+        var hasher = Hasher()
+        switch entry {
+        case .post(let post):
+            hasher.combine("post")
+            combineLayout(of: post, into: &hasher)
+        case .gap(let gap):
+            hasher.combine("gap")
+            hasher.combine(gap.id)
+            hasher.combine(String(describing: gap.state))
+        case .deleted:
+            hasher.combine("deleted")
+        }
+        return hasher.finalize()
+    }
+
+    private static func combineLayout(
+        of post: TimelinePost,
+        into hasher: inout Hasher
+    ) {
+        hasher.combine(post.id)
+        hasher.combine(post.repostedBy != nil)
+        hasher.combine(post.replyContext != nil)
+        hasher.combine(post.contentWarning != nil)
+
+        guard post.contentWarning == nil else { return }
+        hasher.combine(post.body)
+        combine(post.richBody, into: &hasher)
+        hasher.combine(post.replyMention?.text)
+        switch post.bodyPresentation {
+        case .standard:
+            hasher.combine("body-standard")
+        case .collapsed(let lineLimit, _):
+            hasher.combine("body-collapsed")
+            hasher.combine(lineLimit)
+        }
+        hasher.combine(post.bodyPresentation.collapseReason != nil)
+        hasher.combine(post.linkSummary != nil)
+
+        if let quotedPost = post.quotedPost {
+            hasher.combine("quote")
+            hasher.combine(quotedPost.body)
+            combine(quotedPost.richBody, into: &hasher)
+            hasher.combine(quotedPost.isAvailable)
+        } else {
+            hasher.combine("no-quote")
+        }
+        combineLayout(of: post.media, into: &hasher)
+    }
+
+    private static func combine(
+        _ richContent: NostrRichContent?,
+        into hasher: inout Hasher
+    ) {
+        guard let richContent else {
+            hasher.combine("no-rich-content")
+            return
+        }
+        hasher.combine(richContent.displayText)
+        for token in richContent.tokens {
+            hasher.combine(String(reflecting: token))
+        }
+        for key in richContent.profileDisplayNamesByPubkey.keys.sorted() {
+            hasher.combine(key)
+            hasher.combine(richContent.profileDisplayNamesByPubkey[key])
+        }
+        for key in richContent.eventDisplayTextByID.keys.sorted() {
+            hasher.combine(key)
+            hasher.combine(richContent.eventDisplayTextByID[key])
+        }
+    }
+
+    private static func combineLayout(
+        of media: TimelineMedia?,
+        into hasher: inout Hasher
+    ) {
+        guard let media else {
+            hasher.combine("no-media")
+            return
+        }
+        switch media {
+        case .gallery(let tiles):
+            hasher.combine("gallery")
+            hasher.combine(tiles.count)
+            if tiles.count == 1 {
+                hasher.combine(tiles.first?.width)
+                hasher.combine(tiles.first?.height)
+            }
+        case .linkPreview(let preview):
+            hasher.combine("link")
+            hasher.combine(
+                preview.imageURL != nil &&
+                    preview.remoteImageLoadMode == .automatic
+            )
+        case .unresolvedLink:
+            hasher.combine("unresolved")
+        }
+    }
+}

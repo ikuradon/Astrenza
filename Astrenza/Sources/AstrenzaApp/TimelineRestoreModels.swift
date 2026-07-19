@@ -102,7 +102,7 @@ enum TimelineContentHeightAnchorPlanner {
             let oldEntry = oldEntries[index]
             let newEntry = newEntries[index]
             guard oldEntry.id == newEntry.id else { return [] }
-            guard TimelineRenderFingerprint.entry(oldEntry) != TimelineRenderFingerprint.entry(newEntry)
+            guard TimelineLayoutFingerprint.entry(oldEntry) != TimelineLayoutFingerprint.entry(newEntry)
             else { continue }
 
             if case .post(let oldPost) = oldEntry {
@@ -144,7 +144,7 @@ enum TimelineContentHeightAnchorPlanner {
         var foundOldAnchor = false
         for entry in oldEntries {
             if case .post(let post) = entry {
-                oldFingerprintsByPostID[post.id] = TimelineRenderFingerprint.entry(entry)
+                oldFingerprintsByPostID[post.id] = TimelineLayoutFingerprint.entry(entry)
             }
             if entry.id == anchorPostID {
                 foundOldAnchor = true
@@ -157,7 +157,7 @@ enum TimelineContentHeightAnchorPlanner {
         for entry in newEntries {
             if case .post(let post) = entry,
                let oldFingerprint = oldFingerprintsByPostID[post.id],
-               oldFingerprint != TimelineRenderFingerprint.entry(entry) {
+               oldFingerprint != TimelineLayoutFingerprint.entry(entry) {
                 changedPostIDs.insert(post.id)
             }
             if entry.id == anchorPostID {

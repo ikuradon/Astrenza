@@ -95,11 +95,92 @@ struct TimelineFeedLayoutIndexTests {
             ],
             topPadding: 72
         )
-        #expect(layout.updateMeasuredHeight(150, for: "post-0"))
+        #expect(layout.updateProjectedHeights(["post-0": 150]))
         #expect(layout.layoutAttributesForItem(
             at: IndexPath(item: 0, section: 0)
         )?.size.height == 150)
-        #expect(!layout.updateMeasuredHeight(150, for: "post-0"))
+        #expect(!layout.updateProjectedHeights(["post-0": 150]))
+    }
+
+    @MainActor
+    @Test("Projected height batch updates rows in one layout transaction")
+    func projectedHeightBatchUpdatesRowsTogether() {
+        let layout = TimelineFeedCollectionLayout(anchorLineY: 72)
+        layout.configure(
+            items: items([100, 100, 100]),
+            topPadding: 72
+        )
+
+        #expect(layout.updateProjectedHeights([
+            "post-0": 140,
+            "post-1": 80,
+        ]))
+        #expect(layout.layoutAttributesForItem(
+            at: IndexPath(item: 0, section: 0)
+        )?.size.height == 140)
+        #expect(layout.layoutAttributesForItem(
+            at: IndexPath(item: 1, section: 0)
+        )?.frame.minY == 212)
+        #expect(layout.layoutAttributesForItem(
+            at: IndexPath(item: 2, section: 0)
+        )?.frame.minY == 292)
+    }
+
+    @MainActor
+    @Test("Row height projection stays immutable during user scrolling")
+    func rowHeightProjectionDefersMeasurementsDuringScroll() async throws {
+        let coordinator = TimelineFeedRowLayoutProjectionCoordinator()
+        var committedBatches: [[TimelineFeedEntry.ID: CGFloat]] = []
+        coordinator.configure(
+            onLayoutCacheChanged: { _ in },
+            onProjectedHeightsChanged: {
+                committedBatches.append($0)
+            }
+        )
+        coordinator.reset(layoutCache: TimelineLayoutCache())
+        coordinator.setScrollActive(true)
+
+        coordinator.stageMeasuredHeight(180, for: "post-0")
+        coordinator.stageMeasuredHeight(220, for: "post-1")
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(committedBatches.isEmpty)
+        #expect(coordinator.layoutCache.measuredHeights.isEmpty)
+
+        coordinator.setScrollActive(false)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(committedBatches == [[
+            "post-0": 180,
+            "post-1": 220,
+        ]])
+        #expect(coordinator.layoutCache.measuredHeights == [
+            "post-0": 180,
+            "post-1": 220,
+        ])
+    }
+
+    @MainActor
+    @Test("Restore protection keeps staged row geometry uncommitted")
+    func rowHeightProjectionDefersMeasurementsDuringRestore() async throws {
+        let coordinator = TimelineFeedRowLayoutProjectionCoordinator()
+        var committedBatches: [[TimelineFeedEntry.ID: CGFloat]] = []
+        coordinator.configure(
+            onLayoutCacheChanged: { _ in },
+            onProjectedHeightsChanged: {
+                committedBatches.append($0)
+            }
+        )
+        coordinator.reset(layoutCache: TimelineLayoutCache())
+        coordinator.setProjectionMutationSuspended(true)
+        coordinator.stageMeasuredHeight(180, for: "post-0")
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(committedBatches.isEmpty)
+        coordinator.setProjectionMutationSuspended(false)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(committedBatches == [["post-0": 180]])
     }
 
     private func items(_ heights: [CGFloat]) -> [TimelineFeedLayoutItem] {
