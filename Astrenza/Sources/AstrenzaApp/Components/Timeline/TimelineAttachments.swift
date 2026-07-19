@@ -787,48 +787,31 @@ private struct BlurHashPlaceholderView: View {
     }
 }
 
-private struct LinkPreviewAttachmentView: View {
+enum LinkPreviewCardLayout {
+    static let remoteImageHeroHeight: CGFloat = 154
+    static let fallbackHeroHeight: CGFloat = 128
+    static let minimumMetadataHeight: CGFloat = 98
+    static let fallbackTitleMeasurementWidth: CGFloat = 320
+
+    static func heroHeight(for preview: LinkPreview) -> CGFloat {
+        preview.imageURL != nil && preview.remoteImageLoadMode == .automatic
+            ? remoteImageHeroHeight
+            : fallbackHeroHeight
+    }
+}
+
+struct LinkPreviewAttachmentView: View {
     let preview: LinkPreview
-    @State private var availableWidth: CGFloat = 0
 
     var body: some View {
-        let width = measuredWidth
-        let showsRemoteImage = preview.imageURL != nil && preview.remoteImageLoadMode == .automatic
-        let height: CGFloat = showsRemoteImage ? 252 : 226
+        LinkPreviewCardStackLayout(
+            heroHeight: LinkPreviewCardLayout.heroHeight(for: preview)
+        ) {
+            LinkPreviewHeroView(preview: preview)
+                .clipped()
 
-        VStack(spacing: 0) {
-            LinkPreviewHeroView(preview: preview, containerWidth: width)
-                .frame(height: showsRemoteImage ? 154 : 128)
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    if preview.style == .youtube {
-                        Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 11, weight: .black))
-                            .foregroundStyle(.red)
-                    }
-
-                    Text(preview.host)
-                        .font(.system(size: 13, weight: .heavy, design: .rounded))
-                        .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
-                        .lineLimit(1)
-                }
-
-                Text("\(preview.title)")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-
-                Text(preview.subtitle)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(2)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            metadata
         }
-        .frame(width: width, height: height)
         .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -836,33 +819,102 @@ private struct LinkPreviewAttachmentView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: LinkPreviewAvailableWidthKey.self, value: proxy.size.width)
-            }
-        )
-        .onPreferenceChange(LinkPreviewAvailableWidthKey.self) { width in
-            guard width > 0, abs(width - availableWidth) > 0.5 else { return }
-            availableWidth = width
-        }
     }
 
-    private var measuredWidth: CGFloat {
-        availableWidth > 0 ? availableWidth : 320
+    private var metadata: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                if preview.style == .youtube {
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.red)
+                        .fixedSize()
+                }
+
+                Text(preview.host)
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Text("\(preview.title)")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+
+            Text(preview.subtitle)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.secondary)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: LinkPreviewCardLayout.minimumMetadataHeight,
+            alignment: .topLeading
+        )
     }
 }
 
-private struct LinkPreviewAvailableWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
+private struct LinkPreviewCardStackLayout: Layout {
+    let heroHeight: CGFloat
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let width = TimelineAttachmentLayoutMetrics.availableWidth(for: proposal.width)
+        let metadataHeight = resolvedMetadataHeight(
+            subviews[1].sizeThatFits(
+                ProposedViewSize(width: width, height: nil)
+            ).height
+        )
+        return CGSize(width: width, height: heroHeight + metadataHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count == 2 else { return }
+        subviews[0].place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: bounds.width,
+                height: heroHeight
+            )
+        )
+
+        let metadataHeight = max(0, bounds.height - heroHeight)
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + heroHeight),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: bounds.width,
+                height: metadataHeight
+            )
+        )
+    }
+
+    private func resolvedMetadataHeight(_ measuredHeight: CGFloat) -> CGFloat {
+        let minimumHeight = LinkPreviewCardLayout.minimumMetadataHeight
+        guard measuredHeight > minimumHeight + 1 else {
+            return minimumHeight
+        }
+        return measuredHeight
     }
 }
 
 private struct LinkPreviewHeroView: View {
     let preview: LinkPreview
-    let containerWidth: CGFloat
 
     var body: some View {
         ZStack {
@@ -882,37 +934,37 @@ private struct LinkPreviewHeroView: View {
     }
 
     private var fallbackHero: some View {
-        ZStack {
-            Color(red: 0.93, green: 0.94, blue: 0.95)
+        Color(red: 0.93, green: 0.94, blue: 0.95)
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(preview.host)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.gray)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text(preview.host)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.gray)
+                    HStack(alignment: .top) {
+                        Text("\(heroTitle)")
+                            .font(.system(size: 25, weight: .black, design: .rounded))
+                            .foregroundStyle(Color(red: 0.13, green: 0.15, blue: 0.18))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.82)
 
-                HStack(alignment: .top) {
-                    Text("\(heroTitle)")
-                        .font(.system(size: 25, weight: .black, design: .rounded))
-                        .foregroundStyle(Color(red: 0.13, green: 0.15, blue: 0.18))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        Spacer(minLength: 8)
 
-                    Spacer(minLength: 8)
-
-                    ZStack {
-                        Circle()
-                            .fill((preview.style == .youtube ? Color.red : Color.green).opacity(0.3))
-                        Image(systemName: preview.style == .youtube ? "play.rectangle.fill" : "link")
-                            .font(.system(size: 25, weight: .black))
-                            .foregroundStyle(preview.style == .youtube ? .red : .green)
+                        ZStack {
+                            Circle()
+                                .fill((preview.style == .youtube ? Color.red : Color.green).opacity(0.3))
+                            Image(systemName: preview.style == .youtube ? "play.rectangle.fill" : "link")
+                                .font(.system(size: 25, weight: .black))
+                                .foregroundStyle(preview.style == .youtube ? .red : .green)
+                        }
+                        .frame(width: 52, height: 52)
                     }
-                    .frame(width: 52, height: 52)
-                }
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
             }
-            .padding(18)
-        }
+            .clipped()
     }
 
     private var heroTitle: String {
@@ -923,7 +975,10 @@ private struct LinkPreviewHeroView: View {
         let roundedDescriptor = baseFont.fontDescriptor.withDesign(.rounded)
             ?? baseFont.fontDescriptor
         let font = UIFont(descriptor: roundedDescriptor, size: 25)
-        let naturalLineWidth = max(0, containerWidth - 112) / 0.82
+        let naturalLineWidth = max(
+            0,
+            LinkPreviewCardLayout.fallbackTitleMeasurementWidth - 112
+        ) / 0.82
         var firstLine = String(words[0])
         var consumedWords = 1
 
@@ -948,29 +1003,29 @@ private struct LinkPreviewRemoteImage: View {
     @StateObject private var loader = RemoteLinkPreviewImageLoader()
 
     var body: some View {
-        ZStack {
-            Color.astrenzaAttachmentBackground
-
-            if let image = loader.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                ProgressView()
-                    .tint(style == .youtube ? .red : Color.astrenzaAccent)
+        Color.astrenzaAttachmentBackground
+            .overlay {
+                if let image = loader.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView()
+                        .tint(style == .youtube ? .red : Color.astrenzaAccent)
+                }
             }
-
-            LinearGradient(
-                colors: [.black.opacity(0.28), .clear, .black.opacity(0.18)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
-        .task(id: url) {
-            await loader.load(url: url)
-        }
+            .overlay {
+                LinearGradient(
+                    colors: [.black.opacity(0.28), .clear, .black.opacity(0.18)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .clipped()
+            .task(id: url) {
+                await loader.load(url: url)
+            }
     }
 }
 

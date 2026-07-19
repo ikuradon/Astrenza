@@ -144,6 +144,68 @@ struct TimelineFeedHostingCollectionCellTests {
     }
 
     @MainActor
+    @Test("Long link preview metadata expands below its bounded hero")
+    func longLinkPreviewMetadataExpandsBelowHero() {
+        let compactFallback = makeLinkPreview(
+            title: "Compact title",
+            subtitle: "Compact subtitle",
+            imageURL: nil
+        )
+        let longFallback = makeLongLinkPreview(imageURL: nil)
+        let compactRemote = makeLinkPreview(
+            title: "Compact title",
+            subtitle: "Compact subtitle",
+            imageURL: URL(string: "https://example.invalid/landscape.png")
+        )
+        let longRemote = makeLongLinkPreview(
+            imageURL: URL(string: "https://example.invalid/portrait.png")
+        )
+
+        let compactFallbackHeight = measuredLinkPreviewHeight(compactFallback)
+        let longFallbackHeight = measuredLinkPreviewHeight(longFallback)
+        let compactRemoteHeight = measuredLinkPreviewHeight(compactRemote)
+        let longRemoteHeight = measuredLinkPreviewHeight(longRemote)
+
+        #expect(abs(
+            compactFallbackHeight - (
+                LinkPreviewCardLayout.fallbackHeroHeight
+                    + LinkPreviewCardLayout.minimumMetadataHeight
+            )
+        ) <= 0.5)
+        #expect(abs(
+            compactRemoteHeight - (
+                LinkPreviewCardLayout.remoteImageHeroHeight
+                    + LinkPreviewCardLayout.minimumMetadataHeight
+            )
+        ) <= 0.5)
+        #expect(longFallbackHeight > compactFallbackHeight)
+        #expect(longRemoteHeight > compactRemoteHeight)
+    }
+
+    @MainActor
+    @Test("Link preview fitting remains stable at timeline widths")
+    func linkPreviewFittingRemainsStableAtTimelineWidths() {
+        let previews = [
+            makeLongLinkPreview(imageURL: nil),
+            makeLongLinkPreview(
+                imageURL: URL(string: "https://example.invalid/extreme-aspect-ratio.png")
+            ),
+        ]
+
+        for preview in previews {
+            for width: CGFloat in [240, 320, 390] {
+                let initialHeight = measuredLinkPreviewHeight(preview, width: width)
+
+                for _ in 0 ..< 16 {
+                    #expect(abs(
+                        measuredLinkPreviewHeight(preview, width: width) - initialHeight
+                    ) <= 0.5)
+                }
+            }
+        }
+    }
+
+    @MainActor
     @Test("Mounted content keeps the projected intrinsic height")
     func mountedContentKeepsProjectedIntrinsicHeight() throws {
         for content in [
@@ -506,6 +568,49 @@ struct TimelineFeedHostingCollectionCellTests {
                 unresolvedCount: 0
             )
         )
+    }
+
+    private func makeLinkPreview(
+        title: String,
+        subtitle: String,
+        imageURL: URL?
+    ) -> LinkPreview {
+        LinkPreview(
+            title: title,
+            subtitle: subtitle,
+            host: "a-very-long-preview-hostname.example.invalid",
+            url: "https://a-very-long-preview-hostname.example.invalid/article",
+            imageURL: imageURL
+        )
+    }
+
+    private func makeLongLinkPreview(imageURL: URL?) -> LinkPreview {
+        makeLinkPreview(
+            title: String(
+                repeating: "A long title must remain entirely below the preview image. ",
+                count: 4
+            ),
+            subtitle: String(
+                repeating: "Long subtitle content must not cross the hero boundary. ",
+                count: 4
+            ),
+            imageURL: imageURL
+        )
+    }
+
+    @MainActor
+    private func measuredLinkPreviewHeight(
+        _ preview: LinkPreview,
+        width: CGFloat = 320
+    ) -> CGFloat {
+        let hostingController = UIHostingController(
+            rootView: LinkPreviewAttachmentView(preview: preview)
+                .frame(width: width)
+                .environment(\.dynamicTypeSize, .large)
+        )
+        return hostingController.sizeThatFits(
+            in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        ).height
     }
 
     @MainActor
