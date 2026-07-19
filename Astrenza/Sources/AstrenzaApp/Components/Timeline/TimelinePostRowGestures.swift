@@ -21,146 +21,79 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
 
     func updateUIView(_ uiView: MarkerView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.markerView = uiView
         DispatchQueue.main.async {
             context.coordinator.attachIfNeeded(from: uiView)
         }
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    static func dismantleUIView(
+        _ uiView: MarkerView,
+        coordinator: Coordinator
+    ) {
+        uiView.onMovedToWindow = nil
+        coordinator.detach()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
         var parent: TimelineRowPanGestureHost
-        weak var markerView: UIView?
+        weak var markerView: MarkerView?
         private weak var scrollView: UIScrollView?
-        private var recognizer: UIPanGestureRecognizer?
-        private var beganInsideRow = false
-        private var lockedScrollViewWasEnabled: Bool?
+        private weak var router: TimelineRowPanGestureRouter?
+
+        var recognizer: UIPanGestureRecognizer? {
+            router?.recognizer
+        }
 
         init(parent: TimelineRowPanGestureHost) {
             self.parent = parent
         }
 
-        deinit {
-            if let recognizer, let scrollView {
-                DispatchQueue.main.async {
-                    scrollView.removeGestureRecognizer(recognizer)
-                }
+        func attachIfNeeded(from markerView: MarkerView) {
+            guard let targetScrollView = markerView.enclosingScrollView() else {
+                detach()
+                return
             }
-        }
 
-        func attachIfNeeded(from markerView: UIView) {
+            if scrollView !== targetScrollView || router == nil {
+                detach()
+                let targetRouter = TimelineRowPanGestureRouterRegistry.router(
+                    for: targetScrollView
+                )
+                scrollView = targetScrollView
+                router = targetRouter
+                targetRouter.register(self)
+            }
             self.markerView = markerView
-            guard let targetScrollView = markerView.enclosingScrollView() else { return }
-            guard scrollView !== targetScrollView else { return }
-
-            if let recognizer, let scrollView {
-                scrollView.removeGestureRecognizer(recognizer)
-            }
-
-            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-            recognizer.minimumNumberOfTouches = 1
-            recognizer.maximumNumberOfTouches = 1
-            recognizer.cancelsTouchesInView = false
-            recognizer.delaysTouchesBegan = false
-            recognizer.delaysTouchesEnded = false
-            recognizer.delegate = self
-            targetScrollView.addGestureRecognizer(recognizer)
-
-            self.scrollView = targetScrollView
-            self.recognizer = recognizer
         }
 
-        @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
-            guard parent.isEnabled, beganInsideRow else { return }
-            let translation = recognizer.translation(in: scrollView).x
-
-            switch recognizer.state {
-            case .began:
-                lockScrollViewIfNeeded()
-                parent.onChanged(translation)
-            case .changed:
-                parent.onChanged(translation)
-            case .ended:
-                parent.onEnded(translation)
-                beganInsideRow = false
-                unlockScrollViewIfNeeded()
-            case .cancelled, .failed:
-                parent.onEnded(0)
-                beganInsideRow = false
-                unlockScrollViewIfNeeded()
-            default:
-                break
-            }
+        func detach() {
+            router?.unregister(self)
+            router = nil
+            scrollView = nil
+            markerView = nil
         }
 
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        func containsGestureStart(_ recognizer: UIPanGestureRecognizer) -> Bool {
             guard parent.isEnabled,
-                  let panRecognizer = gestureRecognizer as? UIPanGestureRecognizer,
                   let markerView,
-                  let scrollView
-            else {
-                return false
-            }
-
-            let locationInRow = panRecognizer.location(in: markerView)
-            guard markerView.bounds.contains(locationInRow) else {
-                beganInsideRow = false
-                return false
-            }
-
-            let locationInScrollView = panRecognizer.location(in: scrollView)
-            guard locationInScrollView.x > 32 else {
-                beganInsideRow = false
-                return false
-            }
-
-            let velocity = panRecognizer.velocity(in: scrollView)
-            let horizontalSpeed = abs(velocity.x)
-            let verticalSpeed = abs(velocity.y)
-            beganInsideRow = horizontalSpeed > 120 && horizontalSpeed > verticalSpeed * 1.35
-            return beganInsideRow
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            guard parent.isEnabled,
-                  gestureRecognizer === recognizer,
-                  beganInsideRow,
-                  let scrollView
+                  markerView.window != nil
             else { return false }
 
-            if otherGestureRecognizer === scrollView.panGestureRecognizer {
-                return false
-            }
-
-            if otherGestureRecognizer is UIScreenEdgePanGestureRecognizer {
-                return false
-            }
-
-            if otherGestureRecognizer.view?.isDescendant(of: scrollView) != true {
-                return false
-            }
-
-            return true
+            return markerView.bounds.contains(recognizer.location(in: markerView))
         }
 
-        private func lockScrollViewIfNeeded() {
-            guard lockedScrollViewWasEnabled == nil,
-                  let scrollView
-            else { return }
-
-            lockedScrollViewWasEnabled = scrollView.isScrollEnabled
-            scrollView.isScrollEnabled = false
+        func handleChanged(_ translationWidth: CGFloat) {
+            guard parent.isEnabled else { return }
+            parent.onChanged(translationWidth)
         }
 
-        private func unlockScrollViewIfNeeded() {
-            guard let lockedScrollViewWasEnabled,
-                  let scrollView
-            else { return }
+        func handleEnded(_ translationWidth: CGFloat) {
+            parent.onEnded(parent.isEnabled ? translationWidth : 0)
+        }
 
-            scrollView.isScrollEnabled = lockedScrollViewWasEnabled
-            self.lockedScrollViewWasEnabled = nil
+        func handleCancelled() {
+            parent.onEnded(0)
         }
     }
 
@@ -171,6 +104,141 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
             super.didMoveToWindow()
             onMovedToWindow?(self)
         }
+    }
+}
+
+@MainActor
+private final class TimelineRowPanGestureRouter: NSObject, UIGestureRecognizerDelegate {
+    final class Registration {
+        weak var participant: TimelineRowPanGestureHost.Coordinator?
+
+        init(participant: TimelineRowPanGestureHost.Coordinator) {
+            self.participant = participant
+        }
+    }
+
+    weak var scrollView: UIScrollView?
+    let recognizer: UIPanGestureRecognizer
+    private var registrations: [Registration] = []
+    private weak var activeParticipant: TimelineRowPanGestureHost.Coordinator?
+
+    init(scrollView: UIScrollView) {
+        self.scrollView = scrollView
+        recognizer = UIPanGestureRecognizer()
+        super.init()
+
+        recognizer.addTarget(self, action: #selector(handlePan(_:)))
+        recognizer.minimumNumberOfTouches = 1
+        recognizer.maximumNumberOfTouches = 1
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = self
+        scrollView.addGestureRecognizer(recognizer)
+        scrollView.panGestureRecognizer.require(toFail: recognizer)
+    }
+
+    deinit {
+        if let scrollView, recognizer.view === scrollView {
+            scrollView.removeGestureRecognizer(recognizer)
+        }
+    }
+
+    func register(_ participant: TimelineRowPanGestureHost.Coordinator) {
+        pruneRegistrations()
+        guard !registrations.contains(where: { $0.participant === participant }) else {
+            return
+        }
+        registrations.append(Registration(participant: participant))
+    }
+
+    func unregister(_ participant: TimelineRowPanGestureHost.Coordinator) {
+        if activeParticipant === participant {
+            participant.handleCancelled()
+            activeParticipant = nil
+        }
+        registrations.removeAll {
+            $0.participant == nil || $0.participant === participant
+        }
+    }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        let translation = recognizer.translation(in: scrollView).x
+
+        switch recognizer.state {
+        case .began, .changed:
+            activeParticipant?.handleChanged(translation)
+        case .ended:
+            let participant = activeParticipant
+            activeParticipant = nil
+            participant?.handleEnded(translation)
+        case .cancelled, .failed:
+            let participant = activeParticipant
+            activeParticipant = nil
+            participant?.handleCancelled()
+        default:
+            break
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        activeParticipant = nil
+        guard gestureRecognizer === recognizer,
+              let scrollView
+        else { return false }
+
+        let location = recognizer.location(in: scrollView)
+        guard location.x > 32 else { return false }
+
+        let velocity = recognizer.velocity(in: scrollView)
+        let horizontalSpeed = abs(velocity.x)
+        let verticalSpeed = abs(velocity.y)
+        guard horizontalSpeed > 120,
+              horizontalSpeed > verticalSpeed * 1.35
+        else { return false }
+
+        pruneRegistrations()
+        activeParticipant = registrations.lazy
+            .compactMap(\.participant)
+            .first { $0.containsGestureStart(recognizer) }
+        return activeParticipant != nil
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard gestureRecognizer === recognizer,
+              activeParticipant != nil,
+              let scrollView
+        else { return false }
+
+        if otherGestureRecognizer === scrollView.panGestureRecognizer {
+            return false
+        }
+        if otherGestureRecognizer is UIScreenEdgePanGestureRecognizer {
+            return false
+        }
+        return otherGestureRecognizer.view?.isDescendant(of: scrollView) == true
+    }
+
+    private func pruneRegistrations() {
+        registrations.removeAll { $0.participant == nil }
+    }
+}
+
+@MainActor
+private enum TimelineRowPanGestureRouterRegistry {
+    static let routers = NSMapTable<UIScrollView, TimelineRowPanGestureRouter>
+        .weakToStrongObjects()
+
+    static func router(for scrollView: UIScrollView) -> TimelineRowPanGestureRouter {
+        if let router = routers.object(forKey: scrollView) {
+            return router
+        }
+        let router = TimelineRowPanGestureRouter(scrollView: scrollView)
+        routers.setObject(router, forKey: scrollView)
+        return router
     }
 }
 

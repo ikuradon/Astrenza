@@ -20,6 +20,8 @@ private enum AstrenzaDebugTimelineAccessibility {
     static let snapshotResolve = "astrenza.debug.timeline.snapshot.resolve"
     static let snapshotResolved = "astrenza.debug.timeline.snapshot.resolved"
     static let performanceFeed = "astrenza.debug.timeline.performance.feed"
+    static let performanceLastOpenedPost =
+        "astrenza.debug.timeline.performance.last-opened-post"
 }
 
 private struct AstrenzaDebugTimelineSnapshotView: View {
@@ -143,6 +145,7 @@ private struct AstrenzaDebugTimelineSnapshotView: View {
 private struct AstrenzaDebugTimelinePerformanceView: View {
     let postCount: Int
     private let entries: [TimelineFeedEntry]
+    @State private var lastOpenedPostID: TimelinePost.ID?
 
     init(postCount: Int) {
         self.postCount = postCount
@@ -157,7 +160,9 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
             swipeSettings: TimelineSwipeSettings(),
             viewportState: nil,
             layoutCache: TimelineLayoutCache(),
-            onOpenPost: { _ in },
+            onOpenPost: { post in
+                lastOpenedPostID = post.id
+            },
             onOpenProfile: { _ in },
             onReplyPost: { _ in },
             onOpenMedia: { _, _ in },
@@ -173,6 +178,17 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
         .environment(\.dynamicTypeSize, .large)
         .preferredColorScheme(.dark)
         .accessibilityIdentifier(AstrenzaDebugTimelineAccessibility.performanceFeed)
+        .overlay(alignment: .topLeading) {
+            if let lastOpenedPostID {
+                Text(lastOpenedPostID)
+                    .foregroundStyle(.clear)
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier(
+                        AstrenzaDebugTimelineAccessibility.performanceLastOpenedPost
+                    )
+            }
+        }
     }
 }
 

@@ -68,4 +68,57 @@ final class TimelinePerformanceUITests: XCTestCase {
         try await Task.sleep(for: .seconds(1))
         XCTAssertEqual(application.state, .runningForeground)
     }
+
+    func testHorizontalRowSwipeKeepsVerticalFeedScrollingEnabled() async throws {
+        guard environmentValue(for: "ASTRENZA_RUN_PERFORMANCE_UI") == "1" else {
+            return
+        }
+
+        let application = XCUIApplication()
+        self.application = application
+        application.launchArguments = [
+            "-AstrenzaDebugRoute", "timeline-performance",
+            "-AstrenzaPerformancePostCount", "100"
+        ]
+        application.launch()
+
+        let feed = application.collectionViews["timeline.feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 12))
+        let firstBody = application.staticTexts["timeline.body.performance-0"]
+        XCTAssertTrue(firstBody.waitForExistence(timeout: 5))
+
+        let initialY = firstBody.frame.minY
+        let rowY = min(
+            max((firstBody.frame.midY - feed.frame.minY) / feed.frame.height, 0.1),
+            0.9
+        )
+        let swipeStart = feed.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.72, dy: rowY)
+        )
+        let swipeEnd = feed.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.25, dy: rowY)
+        )
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        let openedPost = application.staticTexts[
+            "astrenza.debug.timeline.performance.last-opened-post"
+        ]
+        XCTAssertTrue(
+            openedPost.waitForExistence(timeout: 2),
+            "The horizontal row gesture must still resolve its configured action"
+        )
+        XCTAssertEqual(openedPost.label, "performance-0")
+
+        feed.swipeUp(velocity: .fast)
+
+        let deadline = Date().addingTimeInterval(3)
+        while firstBody.exists,
+              abs(firstBody.frame.minY - initialY) < 40,
+              Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(
+            !firstBody.exists || abs(firstBody.frame.minY - initialY) >= 40,
+            "A completed horizontal row swipe must not leave vertical feed scrolling disabled"
+        )
+    }
 }
