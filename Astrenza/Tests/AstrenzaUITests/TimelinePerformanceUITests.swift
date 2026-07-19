@@ -121,4 +121,117 @@ final class TimelinePerformanceUITests: XCTestCase {
             "A completed horizontal row swipe must not leave vertical feed scrolling disabled"
         )
     }
+
+    func testRowBackgroundOpensPostWithoutLeakingFromExplicitControls() async throws {
+        guard environmentValue(for: "ASTRENZA_RUN_PERFORMANCE_UI") == "1" else {
+            return
+        }
+
+        let application = XCUIApplication()
+        self.application = application
+        application.launchArguments = [
+            "-AstrenzaDebugRoute", "timeline-performance",
+            "-AstrenzaPerformancePostCount", "100"
+        ]
+        application.launch()
+
+        let feed = application.collectionViews["timeline.feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 12))
+        let firstBody = application.staticTexts["timeline.body.performance-0"]
+        XCTAssertTrue(firstBody.waitForExistence(timeout: 5))
+        let openedPost = application.staticTexts[
+            "astrenza.debug.timeline.performance.last-opened-post"
+        ]
+
+        let avatar = application.descendants(matching: .any)[
+            "timeline.avatar.performance-0"
+        ]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+        avatar.tap()
+        let openedProfile = application.staticTexts[
+            "astrenza.debug.timeline.performance.last-opened-profile"
+        ]
+        XCTAssertTrue(openedProfile.waitForExistence(timeout: 2))
+        XCTAssertFalse(
+            openedPost.exists,
+            "The avatar must keep its profile-specific action"
+        )
+
+        let linkedProfile = application.descendants(matching: .any)[
+            "timeline.body.performance-1"
+        ]
+        XCTAssertTrue(linkedProfile.waitForExistence(timeout: 5))
+        linkedProfile.tap()
+        let linkedProfilePubkey = String(repeating: "b", count: 64)
+        let profileDeadline = Date().addingTimeInterval(2)
+        while openedProfile.label != linkedProfilePubkey,
+              Date() < profileDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(
+            openedProfile.label,
+            linkedProfilePubkey,
+            "An npub link must keep its profile-specific action"
+        )
+        XCTAssertFalse(
+            openedPost.exists,
+            "An npub link must not leak into the row detail action"
+        )
+
+        let attachment = application.descendants(matching: .any)[
+            "timeline.attachment"
+        ]
+        XCTAssertTrue(attachment.waitForExistence(timeout: 5))
+        attachment.tap()
+        XCTAssertTrue(
+            application.staticTexts[
+                "astrenza.debug.timeline.performance.opened-media"
+            ].waitForExistence(timeout: 2)
+        )
+        XCTAssertFalse(
+            openedPost.exists,
+            "An attachment must not leak into the row detail action"
+        )
+
+        let reply = application.descendants(matching: .any)[
+            "timeline.action.reply.performance-0"
+        ]
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        reply.tap()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertFalse(
+            openedPost.exists,
+            "A post action must not leak into the row detail action"
+        )
+
+        let rowY = min(
+            max((firstBody.frame.midY - feed.frame.minY) / feed.frame.height, 0.1),
+            0.9
+        )
+        feed.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.9, dy: rowY)
+        ).tap()
+
+        XCTAssertTrue(
+            openedPost.waitForExistence(timeout: 2),
+            "The non-interactive row gutter must open post detail"
+        )
+        XCTAssertEqual(openedPost.label, "performance-0")
+
+        let openPostCount = application.staticTexts[
+            "astrenza.debug.timeline.performance.open-post-count"
+        ]
+        XCTAssertEqual(openPostCount.label, "1")
+        firstBody.tap()
+        let bodyTapDeadline = Date().addingTimeInterval(2)
+        while openPostCount.label != "2",
+              Date() < bodyTapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(
+            openPostCount.label,
+            "2",
+            "A body tap must issue exactly one post-detail action"
+        )
+    }
 }

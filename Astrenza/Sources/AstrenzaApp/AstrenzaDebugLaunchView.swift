@@ -25,6 +25,12 @@ private enum AstrenzaDebugTimelineAccessibility {
     static let performanceFeed = "astrenza.debug.timeline.performance.feed"
     static let performanceLastOpenedPost =
         "astrenza.debug.timeline.performance.last-opened-post"
+    static let performanceOpenPostCount =
+        "astrenza.debug.timeline.performance.open-post-count"
+    static let performanceLastOpenedProfile =
+        "astrenza.debug.timeline.performance.last-opened-profile"
+    static let performanceOpenedMedia =
+        "astrenza.debug.timeline.performance.opened-media"
 }
 
 private struct AstrenzaDebugTimelineSnapshotView: View {
@@ -149,6 +155,9 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
     let postCount: Int
     private let entries: [TimelineFeedEntry]
     @State private var lastOpenedPostID: TimelinePost.ID?
+    @State private var openedPostCount = 0
+    @State private var lastOpenedProfilePubkey: String?
+    @State private var didOpenMedia = false
 
     init(postCount: Int) {
         self.postCount = postCount
@@ -165,10 +174,15 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
             layoutCache: TimelineLayoutCache(),
             onOpenPost: { post in
                 lastOpenedPostID = post.id
+                openedPostCount += 1
             },
-            onOpenProfile: { _ in },
+            onOpenProfile: { post in
+                lastOpenedProfilePubkey = post.author.pubkey
+            },
             onReplyPost: { _ in },
-            onOpenMedia: { _, _ in },
+            onOpenMedia: { _, _ in
+                didOpenMedia = true
+            },
             onOpenURL: { _ in },
             onScrollOffsetChanged: { _ in },
             onViewportStateChanged: { _ in },
@@ -182,16 +196,44 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
         .preferredColorScheme(.dark)
         .accessibilityIdentifier(AstrenzaDebugTimelineAccessibility.performanceFeed)
         .overlay(alignment: .topLeading) {
-            if let lastOpenedPostID {
-                Text(lastOpenedPostID)
-                    .foregroundStyle(.clear)
-                    .frame(width: 1, height: 1)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier(
-                        AstrenzaDebugTimelineAccessibility.performanceLastOpenedPost
+            VStack(spacing: 0) {
+                if let lastOpenedPostID {
+                    interactionMarker(
+                        lastOpenedPostID,
+                        identifier: AstrenzaDebugTimelineAccessibility.performanceLastOpenedPost
                     )
+                }
+                if openedPostCount > 0 {
+                    interactionMarker(
+                        String(openedPostCount),
+                        identifier: AstrenzaDebugTimelineAccessibility.performanceOpenPostCount
+                    )
+                }
+                if let lastOpenedProfilePubkey {
+                    interactionMarker(
+                        lastOpenedProfilePubkey,
+                        identifier: AstrenzaDebugTimelineAccessibility.performanceLastOpenedProfile
+                    )
+                }
+                if didOpenMedia {
+                    interactionMarker(
+                        "media",
+                        identifier: AstrenzaDebugTimelineAccessibility.performanceOpenedMedia
+                    )
+                }
             }
         }
+    }
+
+    private func interactionMarker(
+        _ value: String,
+        identifier: String
+    ) -> some View {
+        Text(value)
+            .foregroundStyle(.clear)
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier(identifier)
     }
 }
 
@@ -343,7 +385,8 @@ private enum AstrenzaDebugTimelineFixtures {
     }
 
     static func performanceEntries(count: Int) -> [TimelineFeedEntry] {
-        (0..<count).map { index in
+        let includesInteractionFixtures = count <= 100
+        return (0..<count).map { index in
             let body = switch index % 5 {
             case 0:
                 "Short performance fixture #\(index)"
@@ -356,10 +399,43 @@ private enum AstrenzaDebugTimelineFixtures {
             default:
                 "Five-line fixture #\(index)\nLine two\nLine three\nLine four\nLine five"
             }
+            let richBody: NostrRichContent? = if includesInteractionFixtures && index == 1 {
+                NostrRichContent(
+                    displayText: "@npub:bbbbbbbb",
+                    tokens: [
+                        .profile(
+                            pubkey: String(repeating: "b", count: 64),
+                            relays: ["wss://profile.example"]
+                        ),
+                    ],
+                    references: [
+                        .profile(
+                            pubkey: String(repeating: "b", count: 64),
+                            relays: ["wss://profile.example"]
+                        ),
+                    ]
+                )
+            } else {
+                nil
+            }
+            let media: TimelineMedia? = if includesInteractionFixtures && index == 2 {
+                .gallery([
+                    MediaTile(
+                        title: "Interaction fixture",
+                        colors: [.indigo, .cyan],
+                        symbolName: "photo",
+                        width: 1_200,
+                        height: 800
+                    ),
+                ])
+            } else {
+                nil
+            }
             return .post(post(
                 id: "performance-\(index)",
                 body: body,
-                media: nil,
+                richBody: richBody,
+                media: media,
                 createdAt: snapshotCreatedAt() - index
             ))
         }
@@ -442,6 +518,7 @@ private enum AstrenzaDebugTimelineFixtures {
     private static func post(
         id: String,
         body: String,
+        richBody: NostrRichContent? = nil,
         media: TimelineMedia?,
         createdAt: Int = snapshotCreatedAt()
     ) -> TimelinePost {
@@ -460,6 +537,7 @@ private enum AstrenzaDebugTimelineFixtures {
                 placeholderSeed: "snapshot-author"
             ),
             body: body,
+            richBody: richBody,
             createdAt: createdAt,
             replyCount: 3,
             boostCount: 8,

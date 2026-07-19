@@ -1262,6 +1262,21 @@ final class TimelineFeedViewController: UIViewController {
 }
 
 extension TimelineFeedViewController: UICollectionViewDelegate {
+    func collectionView(
+        _ collectionView: UICollectionView,
+        didSelectItemAt indexPath: IndexPath
+    ) {
+        defer {
+            collectionView.deselectItem(at: indexPath, animated: false)
+        }
+
+        guard let entryID = dataSource.itemIdentifier(for: indexPath),
+              case .post(let post) = entriesByID[entryID]
+        else { return }
+
+        openPost(post)
+    }
+
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserInteraction = true
         setUserScrollActive(true)
