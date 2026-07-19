@@ -11,23 +11,23 @@ struct ComposeNavigationBar: View {
     var body: some View {
         ZStack {
             Text(mode.title)
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point20, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
 
             HStack {
                 Button("Close", action: onClose)
-                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point18, weight: .heavy, design: .rounded))
                     .foregroundStyle(accent)
 
                 Spacer()
 
                 Button(mode.actionTitle, action: onSubmit)
-                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point18, weight: .heavy, design: .rounded))
                     .foregroundStyle(canSubmit ? accent : Color.secondary.opacity(0.55))
                     .disabled(!canSubmit)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, AstrenzaSpacing.point20)
         .frame(height: 72)
     }
 }
@@ -42,46 +42,46 @@ struct ComposeEditorArea: View {
     let remainingCharacters: Int
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: AstrenzaSpacing.point14) {
             userSwitcherButton
             editorStack
             characterCounter
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, AstrenzaSpacing.point18)
     }
 
     private var userSwitcherButton: some View {
         Button {
-            withAnimation(.spring(duration: 0.28, bounce: 0.2)) {
+            withAnimation(.spring(duration: AstrenzaMotion.emphasized, bounce: 0.2)) {
                 isUserSwitcherPresented.toggle()
             }
         } label: {
             UserSwitchButton(isExpanded: isUserSwitcherPresented)
         }
         .buttonStyle(.plain)
-        .padding(.top, 18)
+        .padding(.top, AstrenzaSpacing.point18)
         .accessibilityLabel("Switch user")
     }
 
     private var editorStack: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point8) {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(mode.placeholder)
-                        .font(.system(size: 18, weight: .medium, design: .rounded))
+                        .font(.astrenza(.point18, weight: .medium, design: .rounded))
                         .foregroundStyle(Color.secondary.opacity(0.78))
-                        .padding(.top, 26)
-                        .padding(.leading, 5)
+                        .padding(.top, AstrenzaSpacing.point26)
+                        .padding(.leading, AstrenzaSpacing.point5)
                         .allowsHitTesting(false)
                 }
 
                 TextEditor(text: $text)
-                    .font(.system(size: 19, weight: .medium, design: .rounded))
+                    .font(.astrenza(.point19, weight: .medium, design: .rounded))
                     .foregroundStyle(.primary)
                     .scrollContentBackground(.hidden)
                     .background(Color.clear)
                     .focused($isEditorFocused)
-                    .padding(.top, 16)
+                    .padding(.top, AstrenzaSpacing.point16)
                     .padding(.leading, -4)
                     .frame(minHeight: selectedMediaItems.isEmpty ? 320 : 64)
                     .accessibilityLabel(mode.placeholder)
@@ -89,21 +89,21 @@ struct ComposeEditorArea: View {
 
             if !selectedMediaItems.isEmpty {
                 ComposeSelectedMediaStrip(items: selectedMediaItems) { media in
-                    withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
+                    withAnimation(.spring(duration: AstrenzaMotion.standard, bounce: 0.12)) {
                         activeMediaMenuItem = media
                     }
                 }
                 .transition(.scale(scale: 0.96, anchor: .topLeading).combined(with: .opacity))
-                .padding(.leading, 2)
+                .padding(.leading, AstrenzaSpacing.point2)
             }
         }
     }
 
     private var characterCounter: some View {
         Text("\(remainingCharacters)")
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .font(.astrenza(.point18, weight: .semibold, design: .rounded))
             .foregroundStyle(remainingCharacters < 0 ? .red : Color.secondary.opacity(0.78))
-            .padding(.top, 26)
+            .padding(.top, AstrenzaSpacing.point26)
             .frame(width: 48, alignment: .trailing)
     }
 }
@@ -132,8 +132,8 @@ struct ComposeBottomControls: View {
         VStack(spacing: 0) {
             if isSensitiveReasonVisible {
                 ComposeSensitiveReasonField(sensitiveReason: $sensitiveReason, accent: accent)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, AstrenzaSpacing.point14)
+                    .padding(.bottom, AstrenzaSpacing.point8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
@@ -166,9 +166,9 @@ struct ComposeBottomControls: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.spring(duration: 0.22, bounce: 0.1), value: activeCompletion?.trigger)
-        .animation(.spring(duration: 0.22, bounce: 0.1), value: isSensitiveReasonVisible)
-        .animation(.spring(duration: 0.24, bounce: 0.12), value: isCustomEmojiPickerPresented)
+        .animation(.spring(duration: AstrenzaMotion.standard, bounce: 0.1), value: activeCompletion?.trigger)
+        .animation(.spring(duration: AstrenzaMotion.standard, bounce: 0.1), value: isSensitiveReasonVisible)
+        .animation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12), value: isCustomEmojiPickerPresented)
     }
 }
 
@@ -177,22 +177,22 @@ private struct ComposeSensitiveReasonField: View {
     let accent: Color
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AstrenzaSpacing.point10) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 16, weight: .black))
+                .font(.astrenza(.point16, weight: .black))
                 .foregroundStyle(accent)
 
             TextField("Sensitive reason", text: $sensitiveReason)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point15, weight: .semibold, design: .rounded))
                 .foregroundStyle(.primary)
                 .textFieldStyle(.plain)
                 .submitLabel(.done)
         }
-        .padding(.horizontal, 13)
+        .padding(.horizontal, AstrenzaSpacing.point13)
         .frame(height: 44)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                 .stroke(accent.opacity(0.26), lineWidth: 1)
         }
     }
@@ -239,7 +239,7 @@ private struct ComposeToolbar: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Composer settings")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, AstrenzaSpacing.point14)
         .frame(height: 60)
         .background(Color.black.opacity(0.28))
     }

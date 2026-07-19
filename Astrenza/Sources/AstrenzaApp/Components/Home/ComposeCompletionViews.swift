@@ -26,11 +26,11 @@ struct ComposeCompletionBar: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: AstrenzaSpacing.point8) {
                 if completion.trigger == "@" {
                     if completion.mentionCandidates.isEmpty {
                         Text("Start Typing a User...")
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .font(.astrenza(.point16, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
@@ -55,7 +55,7 @@ struct ComposeCompletionBar: View {
                 } else if completion.trigger == ":" {
                     if completion.customEmojiCandidates.isEmpty {
                         Text("Start Typing a Shortcode...")
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .font(.astrenza(.point16, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
@@ -70,9 +70,9 @@ struct ComposeCompletionBar: View {
                     }
                 }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, AstrenzaSpacing.point4)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, AstrenzaSpacing.point14)
         .frame(height: 60)
         .background(Color.black.opacity(0.28))
         .accessibilityLabel("Input suggestions")
@@ -134,25 +134,25 @@ struct ComposeMentionCandidateCell: View {
     let candidate: ComposeMentionCandidate
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: AstrenzaSpacing.point9) {
             AvatarView(style: candidate.avatar, size: 34)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point2) {
                 Text(candidate.displayName)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point14, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(candidate.handle)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .frame(width: 138, alignment: .leading)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, AstrenzaSpacing.point10)
         .frame(height: 50)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 }
@@ -335,28 +335,28 @@ struct ComposeHashtagCandidateCell: View {
     let candidate: ComposeHashtagCandidate
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AstrenzaSpacing.point8) {
             Image(systemName: candidate.isPinned ? "tag.fill" : "clock.arrow.circlepath")
-                .font(.system(size: 20, weight: .bold))
+                .font(.astrenza(.point20, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point1) {
                 Text(candidate.tag)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point14, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(candidate.recency)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .frame(width: 128, alignment: .leading)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, AstrenzaSpacing.point10)
         .frame(height: 50)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 }

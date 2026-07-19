@@ -128,11 +128,11 @@ struct TimelineSwipeActionIndicator: View {
     let alignment: HorizontalAlignment
 
     var body: some View {
-        VStack(alignment: alignment, spacing: 6) {
+        VStack(alignment: alignment, spacing: AstrenzaSpacing.point6) {
             Image(systemName: action.systemName)
-                .font(.system(size: 24, weight: .black))
+                .font(.astrenza(.point24, weight: .black))
             Text(action.title)
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
         }
@@ -146,13 +146,13 @@ struct TimelineSwipeFeedbackView: View {
     let action: TimelineSwipeAction
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: AstrenzaSpacing.point7) {
             Image(systemName: action.systemName)
             Text(action.title)
         }
-        .font(.system(size: 13, weight: .heavy, design: .rounded))
+        .font(.astrenza(.point13, weight: .heavy, design: .rounded))
         .foregroundStyle(.white)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, AstrenzaSpacing.point12)
         .frame(height: 32)
         .background(action.backgroundColor.opacity(0.92), in: Capsule())
         .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
@@ -188,7 +188,7 @@ struct TimelineSwipeContainer<Content: View>: View {
         .overlay(alignment: .top) {
             if let swipeFeedback {
                 TimelineSwipeFeedbackView(action: swipeFeedback)
-                    .padding(.top, 10)
+                    .padding(.top, AstrenzaSpacing.point10)
                     .transition(.scale(scale: 0.84).combined(with: .opacity))
             }
         }
@@ -221,7 +221,7 @@ struct TimelineSwipeContainer<Content: View>: View {
                     TimelineSwipeActionIndicator(action: action, alignment: .trailing)
                 }
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, AstrenzaSpacing.point24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(action.backgroundColor.opacity(swipeProgress))
         }
@@ -234,7 +234,7 @@ struct TimelineSwipeContainer<Content: View>: View {
 
     private func handleSwipeEnded(_ translationWidth: CGFloat) {
         defer {
-            withAnimation(.spring(duration: 0.2, bounce: 0.1)) {
+            withAnimation(.spring(duration: AstrenzaMotion.responsive, bounce: 0.1)) {
                 swipeTranslation = 0
             }
         }
@@ -275,12 +275,12 @@ struct TimelineSwipeContainer<Content: View>: View {
     }
 
     private func showSwipeFeedback(_ action: TimelineSwipeAction) {
-        withAnimation(.spring(duration: 0.24, bounce: 0.16)) {
+        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.16)) {
             swipeFeedback = action
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
-            withAnimation(.easeOut(duration: 0.18)) {
+            withAnimation(.easeOut(duration: AstrenzaMotion.fast)) {
                 if swipeFeedback == action {
                     swipeFeedback = nil
                 }

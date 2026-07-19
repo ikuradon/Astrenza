@@ -19,11 +19,11 @@ struct OnboardingView: View {
                 header
 
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: AstrenzaSpacing.point24) {
                         stepContent
                     }
-                    .padding(.horizontal, 22)
-                    .padding(.top, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point22)
+                    .padding(.top, AstrenzaSpacing.point18)
                     .padding(.bottom, 118)
                 }
                 .scrollIndicators(.hidden)
@@ -43,8 +43,8 @@ struct OnboardingView: View {
                 Button("Close") {
                     dismiss()
                 }
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(OnboardingPalette.accent)
+                .font(.astrenza(.point18, weight: .bold, design: .rounded))
+                .foregroundStyle(AstrenzaPalette.Onboarding.accent)
             }
         }
     }
@@ -68,39 +68,39 @@ struct OnboardingView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: AstrenzaSpacing.point12) {
             OnboardingStepIndicator(currentStep: step)
-                .padding(.top, 10)
+                .padding(.top, AstrenzaSpacing.point10)
 
             Text(step.title)
-                .font(.system(size: 30, weight: .black, design: .rounded))
+                .font(.astrenza(.point30, weight: .black, design: .rounded))
                 .multilineTextAlignment(.center)
 
             if let subtitle = step.subtitle {
                 Text(subtitle)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point15, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.74))
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point18)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 6)
-        .padding(.bottom, 10)
+        .padding(.horizontal, AstrenzaSpacing.point20)
+        .padding(.top, AstrenzaSpacing.point6)
+        .padding(.bottom, AstrenzaSpacing.point10)
     }
 
     private var welcomeStep: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: AstrenzaSpacing.point28) {
             OnboardingHeroMark()
-                .padding(.top, 24)
+                .padding(.top, AstrenzaSpacing.point24)
 
-            VStack(spacing: 10) {
+            VStack(spacing: AstrenzaSpacing.point10) {
                 Text("Welcome to Astrenza")
-                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .font(.astrenza(.point34, weight: .black, design: .rounded))
                     .multilineTextAlignment(.center)
 
                 Text("A Nostr client for timelines, relays, and keys that stay understandable.")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point20, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.8))
                     .multilineTextAlignment(.center)
             }
@@ -114,10 +114,10 @@ struct OnboardingView: View {
     }
 
     private var chooseAccessStep: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: AstrenzaSpacing.point14) {
             ForEach(OnboardingAccessMode.allCases) { mode in
                 Button {
-                    withAnimation(.snappy(duration: 0.28)) {
+                    withAnimation(.snappy(duration: AstrenzaMotion.emphasized)) {
                         accessMode = mode
                     }
                 } label: {
@@ -135,7 +135,7 @@ struct OnboardingView: View {
     }
 
     private var credentialStep: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: AstrenzaSpacing.point16) {
             OnboardingInputPanel(
                 title: "Nostr login",
                 placeholder: "nsec, ncryptsec, recovery words, bunker://, npub, or NIP-05",
@@ -143,7 +143,7 @@ struct OnboardingView: View {
                 isSecure: detectedLoginKind == .privateKey
             )
 
-            VStack(spacing: 10) {
+            VStack(spacing: AstrenzaSpacing.point10) {
                 ForEach(detectedLoginKind.detailRows) { row in
                     OnboardingProtocolRow(row: row)
                 }
@@ -152,7 +152,7 @@ struct OnboardingView: View {
     }
 
     private var createProfileStep: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: AstrenzaSpacing.point18) {
             OnboardingProfileAvatar()
 
             OnboardingInputPanel(title: "Display name", placeholder: "User Astral", text: $displayName)
@@ -168,21 +168,21 @@ struct OnboardingView: View {
     }
 
     private var relayDiscoveryStep: some View {
-        VStack(spacing: 16) {
-            Toggle(isOn: $isNIP65Enabled.animation(.snappy(duration: 0.24))) {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: AstrenzaSpacing.point16) {
+            Toggle(isOn: $isNIP65Enabled.animation(.snappy(duration: AstrenzaMotion.relaxed))) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                     Text("Fetch NIP-65 relay list automatically")
-                        .font(.system(size: 17, weight: .black, design: .rounded))
+                        .font(.astrenza(.point17, weight: .black, design: .rounded))
                     Text("Read/write relay hints are internal, but the connection plan should be visible here.")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
                 }
             }
-            .tint(OnboardingPalette.accent)
-            .padding(18)
-            .background(OnboardingPalette.card, in: RoundedRectangle(cornerRadius: 24))
+            .tint(AstrenzaPalette.Onboarding.accent)
+            .padding(AstrenzaSpacing.point18)
+            .background(AstrenzaPalette.Onboarding.card, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
 
-            VStack(spacing: 10) {
+            VStack(spacing: AstrenzaSpacing.point10) {
                 ForEach(OnboardingRelayPlan.mockValues(isNIP65Enabled: isNIP65Enabled)) { relay in
                     OnboardingRelayRow(relay: relay)
                 }
@@ -191,9 +191,9 @@ struct OnboardingView: View {
     }
 
     private var followSuggestionsStep: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: AstrenzaSpacing.point18) {
             Text("Follow a few Nostr signals?")
-                .font(.system(size: 26, weight: .black, design: .rounded))
+                .font(.astrenza(.point26, weight: .black, design: .rounded))
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 0) {
@@ -217,7 +217,7 @@ struct OnboardingView: View {
                     }
                 }
             }
-            .background(OnboardingPalette.card, in: RoundedRectangle(cornerRadius: 26))
+            .background(AstrenzaPalette.Onboarding.card, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point26))
 
             OnboardingInfoCard(
                 icon: "checkmark.seal.fill",
@@ -228,15 +228,15 @@ struct OnboardingView: View {
     }
 
     private var bottomActionBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AstrenzaSpacing.point14) {
             if step != .welcome {
                 Button {
-                    withAnimation(.snappy(duration: 0.3)) {
+                    withAnimation(.snappy(duration: AstrenzaMotion.slow)) {
                         step = step.previous(for: accessMode)
                     }
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 19, weight: .black))
+                        .font(.astrenza(.point19, weight: .black))
                         .frame(width: 56, height: 56)
                         .background(.white.opacity(0.18), in: Circle())
                 }
@@ -247,11 +247,11 @@ struct OnboardingView: View {
             Button {
                 advance()
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: AstrenzaSpacing.point10) {
                     Text(step.primaryButtonTitle(for: accessMode))
                     Image(systemName: step == .followSuggestions ? "checkmark" : "arrow.up")
                 }
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .font(.astrenza(.point18, weight: .black, design: .rounded))
                 .foregroundStyle(.black.opacity(0.82))
                 .frame(maxWidth: .infinity)
                 .frame(height: 56)
@@ -259,15 +259,15 @@ struct OnboardingView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 14)
-        .padding(.bottom, 18)
+        .padding(.horizontal, AstrenzaSpacing.point22)
+        .padding(.top, AstrenzaSpacing.point14)
+        .padding(.bottom, AstrenzaSpacing.point18)
         .background {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .overlay(
                     LinearGradient(
-                        colors: [.clear, OnboardingPalette.background.opacity(0.85)],
+                        colors: [.clear, AstrenzaPalette.Onboarding.background.opacity(0.85)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -282,7 +282,7 @@ struct OnboardingView: View {
             return
         }
 
-        withAnimation(.snappy(duration: 0.3)) {
+        withAnimation(.snappy(duration: AstrenzaMotion.slow)) {
             step = step.next(for: accessMode)
         }
     }
@@ -508,21 +508,13 @@ private struct OnboardingRecommendation: Identifiable {
     ]
 }
 
-private enum OnboardingPalette {
-    static let background = Color(red: 0.25, green: 0.02, blue: 0.82)
-    static let backgroundDeep = Color(red: 0.11, green: 0.0, blue: 0.34)
-    static let accent = Color(red: 0.74, green: 0.42, blue: 1.0)
-    static let card = Color.white.opacity(0.13)
-    static let cardSelected = Color.white.opacity(0.25)
-}
-
 private struct OnboardingBackground: View {
     var body: some View {
         LinearGradient(
             colors: [
-                OnboardingPalette.background,
-                Color(red: 0.38, green: 0.0, blue: 0.92),
-                OnboardingPalette.backgroundDeep
+                AstrenzaPalette.Onboarding.background,
+                AstrenzaPalette.Onboarding.backgroundMiddle,
+                AstrenzaPalette.Onboarding.backgroundDeep
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -543,7 +535,7 @@ private struct OnboardingStepIndicator: View {
     let currentStep: OnboardingStep
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AstrenzaSpacing.point6) {
             ForEach(OnboardingStep.allCases, id: \.self) { step in
                 Capsule()
                     .fill(step.rawValue <= currentStep.rawValue ? .white.opacity(0.86) : .white.opacity(0.24))
@@ -565,7 +557,7 @@ private struct OnboardingHeroMark: View {
                 .frame(width: 196, height: 196)
             AstrenzaLogoMark(
                 size: 150,
-                backgroundColor: Color(red: 0.96, green: 0.91, blue: 1.0),
+                backgroundColor: AstrenzaPalette.Logo.darkBackground,
                 strokeColor: .white.opacity(0.35),
                 shadowColor: .black.opacity(0.2)
             )
@@ -579,32 +571,32 @@ private struct OnboardingAccessModeCard: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AstrenzaSpacing.point14) {
             Image(systemName: mode.icon)
-                .font(.system(size: 24, weight: .black))
-                .foregroundStyle(isSelected ? .black.opacity(0.82) : OnboardingPalette.accent)
+                .font(.astrenza(.point24, weight: .black))
+                .foregroundStyle(isSelected ? .black.opacity(0.82) : AstrenzaPalette.Onboarding.accent)
                 .frame(width: 48, height: 48)
                 .background(isSelected ? .white.opacity(0.82) : .white.opacity(0.12), in: Circle())
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                 Text(mode.title)
-                    .font(.system(size: 18, weight: .black, design: .rounded))
+                    .font(.astrenza(.point18, weight: .black, design: .rounded))
                 Text(mode.subtitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.68))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: AstrenzaSpacing.point8)
 
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 24, weight: .bold))
+                .font(.astrenza(.point24, weight: .bold))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.34))
         }
-        .padding(16)
-        .background(isSelected ? OnboardingPalette.cardSelected : OnboardingPalette.card, in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point16)
+        .background(isSelected ? AstrenzaPalette.Onboarding.selectedCard : AstrenzaPalette.Onboarding.card, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
         .overlay {
-            RoundedRectangle(cornerRadius: 24)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point24)
                 .stroke(isSelected ? .white.opacity(0.42) : .white.opacity(0.1), lineWidth: 1)
         }
     }
@@ -618,9 +610,9 @@ private struct OnboardingInputPanel: View {
     var axis: Axis = .horizontal
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
             Text(title)
-                .font(.system(size: 14, weight: .black, design: .rounded))
+                .font(.astrenza(.point14, weight: .black, design: .rounded))
                 .foregroundStyle(.white.opacity(0.76))
 
             Group {
@@ -630,20 +622,20 @@ private struct OnboardingInputPanel: View {
                     TextField(placeholder, text: $text, axis: axis)
                 }
             }
-            .font(.system(size: 17, weight: .bold, design: .rounded))
+            .font(.astrenza(.point17, weight: .bold, design: .rounded))
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .foregroundStyle(.white)
-            .padding(16)
+            .padding(AstrenzaSpacing.point16)
             .frame(minHeight: axis == .vertical ? 96 : 54, alignment: .topLeading)
-            .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 18))
+            .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point18))
             .overlay {
-                RoundedRectangle(cornerRadius: 18)
+                RoundedRectangle(cornerRadius: AstrenzaRadius.point18)
                     .stroke(.white.opacity(0.14), lineWidth: 1)
             }
         }
-        .padding(18)
-        .background(OnboardingPalette.card, in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point18)
+        .background(AstrenzaPalette.Onboarding.card, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 
@@ -653,25 +645,25 @@ private struct OnboardingInfoCard: View {
     let message: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: AstrenzaSpacing.point14) {
             Image(systemName: icon)
-                .font(.system(size: 22, weight: .black))
-                .foregroundStyle(OnboardingPalette.accent)
+                .font(.astrenza(.point22, weight: .black))
+                .foregroundStyle(AstrenzaPalette.Onboarding.accent)
                 .frame(width: 42, height: 42)
                 .background(.white.opacity(0.12), in: Circle())
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
                 Text(title)
-                    .font(.system(size: 17, weight: .black, design: .rounded))
+                    .font(.astrenza(.point17, weight: .black, design: .rounded))
                 Text(message)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.68))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(OnboardingPalette.card, in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point18)
+        .background(AstrenzaPalette.Onboarding.card, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 
@@ -679,42 +671,42 @@ private struct OnboardingProtocolRow: View {
     let row: OnboardingProtocolRowModel
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AstrenzaSpacing.point12) {
             Image(systemName: row.icon)
-                .font(.system(size: 18, weight: .black))
-                .foregroundStyle(OnboardingPalette.accent)
+                .font(.astrenza(.point18, weight: .black))
+                .foregroundStyle(AstrenzaPalette.Onboarding.accent)
                 .frame(width: 38, height: 38)
                 .background(.white.opacity(0.12), in: Circle())
 
             Text(row.label)
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.astrenza(.point16, weight: .black, design: .rounded))
                 .frame(width: 92, alignment: .leading)
 
             Text(row.value)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.66))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(14)
-        .background(.black.opacity(0.17), in: RoundedRectangle(cornerRadius: 18))
+        .padding(AstrenzaSpacing.point14)
+        .background(.black.opacity(0.17), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point18))
     }
 }
 
 private struct OnboardingProfileAvatar: View {
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: AstrenzaSpacing.point10) {
             ZStack {
                 Circle()
                     .fill(LinearGradient(colors: [.cyan, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
                 Image(systemName: "sparkles")
-                    .font(.system(size: 42, weight: .black))
+                    .font(.astrenza(.point42, weight: .black))
                     .foregroundStyle(.white)
             }
             .frame(width: 112, height: 112)
             .overlay(Circle().stroke(.white.opacity(0.34), lineWidth: 3))
 
             Text("Tap later to choose avatar")
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(.astrenza(.point13, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.62))
         }
     }
@@ -724,30 +716,30 @@ private struct OnboardingRelayRow: View {
     let relay: OnboardingRelayPlan
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AstrenzaSpacing.point12) {
             Circle()
                 .fill(relay.tint)
                 .frame(width: 12, height: 12)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point3) {
                 Text(relay.url)
-                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .font(.astrenza(.point15, weight: .black, design: .rounded))
                 Text(relay.role)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.62))
             }
 
             Spacer()
 
             Text(relay.status)
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .font(.astrenza(.point12, weight: .black, design: .rounded))
                 .foregroundStyle(relay.tint)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, AstrenzaSpacing.point10)
+                .padding(.vertical, AstrenzaSpacing.point6)
                 .background(relay.tint.opacity(0.18), in: Capsule())
         }
-        .padding(16)
-        .background(OnboardingPalette.card, in: RoundedRectangle(cornerRadius: 20))
+        .padding(AstrenzaSpacing.point16)
+        .background(AstrenzaPalette.Onboarding.card, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point20))
     }
 }
 
@@ -756,28 +748,28 @@ private struct OnboardingRecommendationRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AstrenzaSpacing.point14) {
             Image(systemName: recommendation.icon)
-                .font(.system(size: 22, weight: .black))
+                .font(.astrenza(.point22, weight: .black))
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
                 .background(recommendation.tint, in: Circle())
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                 Text(recommendation.title)
-                    .font(.system(size: 18, weight: .black, design: .rounded))
+                    .font(.astrenza(.point18, weight: .black, design: .rounded))
                 Text(recommendation.subtitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.62))
             }
 
             Spacer()
 
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 27, weight: .bold))
+                .font(.astrenza(.point27, weight: .bold))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.34))
         }
-        .padding(16)
+        .padding(AstrenzaSpacing.point16)
     }
 }
 

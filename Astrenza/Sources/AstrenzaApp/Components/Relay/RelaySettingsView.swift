@@ -37,7 +37,7 @@ struct RelaySettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: AstrenzaSpacing.point18) {
                 RelaySettingsHeader(
                     isPublishingNIP65: $isPublishingNIP65,
                     hasLiveAccount: accountID != nil
@@ -58,8 +58,8 @@ struct RelaySettingsView: View {
 
                 RelayAddCard(draftRelayURL: $draftRelayURL)
             }
-            .padding(18)
-            .padding(.bottom, 24)
+            .padding(AstrenzaSpacing.point18)
+            .padding(.bottom, AstrenzaSpacing.point24)
         }
         .background(Color.astrenzaBackground.ignoresSafeArea())
         .navigationTitle("Relays")
@@ -247,38 +247,38 @@ private struct RelaySettingsHeader: View {
     let hasLiveAccount: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point14) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point6) {
                     Text("Relay Configuration")
-                        .font(.system(size: 25, weight: .black, design: .rounded))
+                        .font(.astrenza(.point25, weight: .black, design: .rounded))
                     Text("Separate the relays you read from, publish to, discover through, and keep private.")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 25, weight: .black))
+                    .font(.astrenza(.point25, weight: .black))
                     .foregroundStyle(Color.astrenzaAccent)
                     .frame(width: 50, height: 50)
                     .background(Color.astrenzaAccent.opacity(0.16), in: Circle())
             }
 
             Toggle(isOn: $isPublishingNIP65) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point3) {
                     Text("Publish NIP-65 relay list")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .font(.astrenza(.point16, weight: .black, design: .rounded))
                     Text(publishingDetail)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
             .tint(Color.astrenzaAccent)
             .disabled(true)
         }
-        .padding(18)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point18)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 
     private var publishingDetail: String {
@@ -293,27 +293,27 @@ private struct RelaySyncPolicyCard: View {
     @Binding var policy: NostrSyncPolicy
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point14) {
+            HStack(alignment: .top, spacing: AstrenzaSpacing.point12) {
                 Image(systemName: "bolt.horizontal.circle.fill")
-                    .font(.system(size: 23, weight: .black))
+                    .font(.astrenza(.point23, weight: .black))
                     .foregroundStyle(Color.astrenzaAccent)
                     .frame(width: 48, height: 48)
                     .background(Color.astrenzaAccent.opacity(0.16), in: Circle())
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
                     Text("Sync & Traffic")
-                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .font(.astrenza(.point20, weight: .black, design: .rounded))
                     Text("Choose how aggressively Home TL asks relays for followed authors, media, and OGP.")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
                 Text("Sync Mode")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
                 Picker("Sync Mode", selection: $policy.mode) {
                     ForEach(NostrSyncMode.allCases, id: \.rawValue) { mode in
@@ -323,9 +323,9 @@ private struct RelaySyncPolicyCard: View {
                 .pickerStyle(.segmented)
             }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
                 Text("Network Assumption")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
                 Picker("Network", selection: $policy.networkType) {
                     ForEach(NostrNetworkType.allCases, id: \.rawValue) { networkType in
@@ -354,10 +354,10 @@ private struct RelaySyncPolicyCard: View {
                     isOn: $policy.disableOGPOnCellular
                 )
             }
-            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18))
+            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point18))
         }
-        .padding(16)
-        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 
@@ -365,56 +365,56 @@ private struct RelayMediaResolverServiceCard: View {
     @Binding var settings: NostrMediaResolverServiceSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point14) {
+            HStack(alignment: .top, spacing: AstrenzaSpacing.point12) {
                 Image(systemName: "link.badge.plus")
-                    .font(.system(size: 23, weight: .black))
+                    .font(.astrenza(.point23, weight: .black))
                     .foregroundStyle(Color.astrenzaAccent)
                     .frame(width: 48, height: 48)
                     .background(Color.astrenzaAccent.opacity(0.16), in: Circle())
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
                     Text("Media Resolver Service")
-                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .font(.astrenza(.point20, weight: .black, design: .rounded))
                     Text(settings.configuration.isUsable ? "Ready" : "Disabled or incomplete")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
 
             Toggle(isOn: $settings.isEnabled) {
                 Text("Use service for OGP")
-                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .font(.astrenza(.point15, weight: .black, design: .rounded))
             }
             .tint(Color.astrenzaAccent)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point8) {
                 Text("Service URL")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
                 TextField("https://media.example.com", text: $settings.serviceURLString)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .textContentType(.URL)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .padding(12)
-                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+                    .font(.astrenza(.point14, weight: .semibold, design: .rounded))
+                    .padding(AstrenzaSpacing.point12)
+                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12))
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point8) {
                 Text("Bearer Token")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
                 SecureField("Token", text: $settings.bearerToken)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .padding(12)
-                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+                    .font(.astrenza(.point14, weight: .semibold, design: .rounded))
+                    .padding(AstrenzaSpacing.point12)
+                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12))
             }
         }
-        .padding(16)
-        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 
@@ -425,17 +425,17 @@ private struct RelayPolicyToggle: View {
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point3) {
                 Text(title)
-                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .font(.astrenza(.point15, weight: .black, design: .rounded))
                 Text(subtitle)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .tint(Color.astrenzaAccent)
-        .padding(14)
+        .padding(AstrenzaSpacing.point14)
     }
 }
 
@@ -448,12 +448,12 @@ private struct RelaySettingsListCard: View {
     let eventStore: NostrEventStore?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point13) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                 Text(title)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .font(.astrenza(.point20, weight: .black, design: .rounded))
                 Text(subtitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -471,10 +471,10 @@ private struct RelaySettingsListCard: View {
                     }
                 }
             }
-            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18))
+            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point18))
         }
-        .padding(16)
-        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 
@@ -503,20 +503,20 @@ private struct RelayEditableRow: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
+        VStack(spacing: AstrenzaSpacing.point10) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 Image(systemName: relay.status.icon)
-                    .font(.system(size: 18, weight: .black))
+                    .font(.astrenza(.point18, weight: .black))
                     .foregroundStyle(relay.status.tint)
                     .frame(width: 38, height: 38)
                     .background(relay.status.tint.opacity(0.14), in: Circle())
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                     Text(relay.host)
-                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .font(.astrenza(.point15, weight: .black, design: .rounded))
                         .lineLimit(1)
                     Text("\(relay.source.rawValue) / \(relay.status.rawValue)")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
 
@@ -528,25 +528,25 @@ private struct RelayEditableRow: View {
             }
 
             if showsUsageControls {
-                HStack(spacing: 8) {
+                HStack(spacing: AstrenzaSpacing.point8) {
                     RelayUsageToggle(title: "Read", icon: "arrow.down", isOn: $isReadEnabled)
                     RelayUsageToggle(title: "Write", icon: "arrow.up", isOn: $isWriteEnabled)
                 }
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: AstrenzaSpacing.point8) {
                     ForEach(relay.usage) { usage in
                         Label(usage.rawValue, systemImage: usage.icon)
-                            .font(.system(size: 11, weight: .black, design: .rounded))
+                            .font(.astrenza(.point11, weight: .black, design: .rounded))
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, AstrenzaSpacing.point9)
+                            .padding(.vertical, AstrenzaSpacing.point6)
                             .background(Color.white.opacity(0.07), in: Capsule())
                     }
                     Spacer()
                 }
             }
         }
-        .padding(14)
+        .padding(AstrenzaSpacing.point14)
         .onChange(of: isEnabled) { _, _ in savePreference() }
         .onChange(of: isReadEnabled) { _, _ in savePreference() }
         .onChange(of: isWriteEnabled) { _, _ in savePreference() }
@@ -575,10 +575,10 @@ private struct RelayUsageToggle: View {
             isOn.toggle()
         } label: {
             Label(title, systemImage: icon)
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .font(.astrenza(.point12, weight: .black, design: .rounded))
                 .foregroundStyle(isOn ? .black : .secondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                .padding(.vertical, AstrenzaSpacing.point8)
                 .background(isOn ? Color.astrenzaAccent : Color.white.opacity(0.07), in: Capsule())
         }
         .buttonStyle(.plain)
@@ -589,21 +589,21 @@ private struct RelayAddCard: View {
     @Binding var draftRelayURL: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point12) {
             Text("Add Relay")
-                .font(.system(size: 20, weight: .black, design: .rounded))
-            HStack(spacing: 10) {
+                .font(.astrenza(.point20, weight: .black, design: .rounded))
+            HStack(spacing: AstrenzaSpacing.point10) {
                 TextField("wss://relay.example", text: $draftRelayURL)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point15, weight: .bold, design: .rounded))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .padding(.horizontal, 13)
+                    .padding(.horizontal, AstrenzaSpacing.point13)
                     .frame(height: 46)
-                    .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 14))
+                    .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point14))
 
                 Button {} label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .black))
+                        .font(.astrenza(.point18, weight: .black))
                         .frame(width: 46, height: 46)
                         .background(Color.astrenzaAccent, in: Circle())
                         .foregroundStyle(.black)
@@ -611,12 +611,12 @@ private struct RelayAddCard: View {
                 .buttonStyle(.plain)
             }
             Text("Real flow should validate URL, fetch NIP-11, then mark read/write before publishing NIP-65.")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(16)
-        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 

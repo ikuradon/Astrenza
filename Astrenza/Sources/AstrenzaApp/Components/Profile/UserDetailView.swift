@@ -56,7 +56,7 @@ struct UserDetailView: View {
                     VStack(spacing: 0) {
                         profileHero
 
-                        VStack(spacing: 22) {
+                        VStack(spacing: AstrenzaSpacing.point22) {
                             profileSummary
                             latestFollowers
                             statsCard
@@ -65,7 +65,7 @@ struct UserDetailView: View {
                             timelineTabs
                             timelineRows
                         }
-                        .padding(.horizontal, 18)
+                        .padding(.horizontal, AstrenzaSpacing.point18)
                         .padding(.bottom, 132)
                     }
                     .frame(width: proxy.size.width)
@@ -155,7 +155,7 @@ struct UserDetailView: View {
         .opacity(toolbarAvatarProgress)
         .disabled(toolbarAvatarProgress < 0.85)
         .accessibilityHidden(toolbarAvatarProgress < 0.85)
-        .animation(.spring(duration: 0.24, bounce: 0.12), value: toolbarAvatarProgress)
+        .animation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12), value: toolbarAvatarProgress)
     }
 
     private func navigationBlurBackdrop(chromeLayout: ProfileNavigationChromeLayout) -> some View {
@@ -171,7 +171,7 @@ struct UserDetailView: View {
             .clipped()
             .opacity(navigationBlurProgress)
             .ignoresSafeArea(edges: .top)
-            .animation(.easeOut(duration: 0.18), value: navigationBlurProgress)
+            .animation(.easeOut(duration: AstrenzaMotion.fast), value: navigationBlurProgress)
     }
 
     private func shrinkingProfileAvatar(
@@ -198,20 +198,20 @@ struct UserDetailView: View {
         .opacity(1 - toolbarAvatarProgress)
         .disabled(toolbarAvatarProgress > 0.85)
         .accessibilityHidden(toolbarAvatarProgress > 0.85)
-        .animation(.spring(duration: 0.24, bounce: 0.12), value: compactChromeProgress)
+        .animation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12), value: compactChromeProgress)
     }
 
     private var profileSummary: some View {
-        VStack(spacing: 9) {
-            HStack(spacing: 8) {
+        VStack(spacing: AstrenzaSpacing.point9) {
+            HStack(spacing: AstrenzaSpacing.point8) {
                 Text(profile.author.primaryText)
-                    .font(.system(size: 31, weight: .black, design: .rounded))
+                    .font(.astrenza(.point31, weight: .black, design: .rounded))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 if profile.author.nip05Status == .valid {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 18, weight: .black))
+                        .font(.astrenza(.point18, weight: .black))
                         .foregroundStyle(Color.green)
                         .accessibilityLabel("NIP-05 resolved")
                 }
@@ -219,35 +219,35 @@ struct UserDetailView: View {
             .frame(maxWidth: .infinity)
 
             Text(profile.author.secondaryText)
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point22, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
             Text(profile.bio)
-                .font(.system(size: 18, weight: .medium))
+                .font(.astrenza(.point18, weight: .medium))
                 .lineSpacing(3)
                 .foregroundStyle(Color.astrenzaText)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
+                .padding(.top, AstrenzaSpacing.point4)
 
-            HStack(spacing: 10) {
+            HStack(spacing: AstrenzaSpacing.point10) {
                 relayPill
                 followButton
             }
-            .padding(.top, 10)
+            .padding(.top, AstrenzaSpacing.point10)
         }
     }
 
     private var relayPill: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AstrenzaSpacing.point6) {
             Image(systemName: "antenna.radiowaves.left.and.right")
             Text("\(profile.relayCount) relays")
         }
-        .font(.system(size: 13, weight: .heavy, design: .rounded))
+        .font(.astrenza(.point13, weight: .heavy, design: .rounded))
         .foregroundStyle(Color.astrenzaAccent)
-        .padding(.horizontal, 11)
+        .padding(.horizontal, AstrenzaSpacing.point11)
         .frame(height: 34)
         .background(Color.astrenzaAccent.opacity(0.13), in: Capsule())
         .overlay {
@@ -260,9 +260,9 @@ struct UserDetailView: View {
         Button {
         } label: {
             Text(profile.isCurrentUser ? "Edit Profile" : profile.isFollowed ? "Following" : "Follow")
-                .font(.system(size: 16, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point16, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 24)
+                .padding(.horizontal, AstrenzaSpacing.point24)
                 .frame(height: 42)
                 .background(Color.white.opacity(profile.isFollowed || profile.isCurrentUser ? 0.18 : 0.86), in: Capsule())
         }
@@ -273,9 +273,9 @@ struct UserDetailView: View {
     @ViewBuilder
     private var latestFollowers: some View {
         if !profile.latestFollowers.isEmpty {
-            VStack(spacing: 10) {
+            VStack(spacing: AstrenzaSpacing.point10) {
                 Text("LATEST FOLLOWERS")
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point15, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: -8) {
@@ -299,9 +299,9 @@ struct UserDetailView: View {
             UserProfileMetricCell(title: "FOLLOWING", value: profile.followingCount.formatted())
         }
         .frame(height: 94)
-        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous)
                 .stroke(Color.white.opacity(0.05), lineWidth: 1)
         }
     }
@@ -317,9 +317,9 @@ struct UserDetailView: View {
                 UserProfileLinkRow(systemName: "bookmark", title: "Bookmarks", value: nil)
             }
         }
-        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous)
                 .stroke(Color.white.opacity(0.05), lineWidth: 1)
         }
     }
@@ -327,23 +327,23 @@ struct UserDetailView: View {
     @ViewBuilder
     private var featuredHashtags: some View {
         if !profile.featuredHashtags.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
                 Text("FEATURED HASHTAGS")
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point15, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
-                    .padding(.leading, 2)
+                    .padding(.leading, AstrenzaSpacing.point2)
 
                 VStack(spacing: 0) {
                     ForEach(Array(profile.featuredHashtags.enumerated()), id: \.element.id) { index, hashtag in
                         if index > 0 {
-                            Divider().overlay(Color.astrenzaSeparator).padding(.leading, 16)
+                            Divider().overlay(Color.astrenzaSeparator).padding(.leading, AstrenzaSpacing.point16)
                         }
                         UserFeaturedHashtagRow(hashtag: hashtag)
                     }
                 }
-                .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous)
                         .stroke(Color.white.opacity(0.05), lineWidth: 1)
                 }
             }

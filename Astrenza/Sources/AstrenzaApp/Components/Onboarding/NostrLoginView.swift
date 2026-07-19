@@ -4,10 +4,10 @@ struct NostrLoginView: View {
     @ObservedObject var sessionStore: NostrSessionStore
 
     var body: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: AstrenzaSpacing.point28) {
             Spacer(minLength: 40)
 
-            VStack(spacing: 14) {
+            VStack(spacing: AstrenzaSpacing.point14) {
                 AstrenzaLogoMark(
                     size: 96,
                     strokeColor: Color.astrenzaAccent.opacity(0.28),
@@ -15,20 +15,20 @@ struct NostrLoginView: View {
                 )
 
                 Text("Astrenza")
-                    .font(.system(size: 42, weight: .black, design: .rounded))
+                    .font(.astrenza(.point42, weight: .black, design: .rounded))
                     .foregroundStyle(Color.astrenzaText)
 
                 Text("Nostr login for resolving NIP-65 relays, kind:3 follows, and your Home timeline.")
-                    .font(.system(size: 17, weight: .medium, design: .rounded))
+                    .font(.astrenza(.point17, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .frame(maxWidth: 330)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point12) {
                 Text("Nostr identity")
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
 
@@ -43,20 +43,20 @@ struct NostrLoginView: View {
                             await sessionStore.login()
                         }
                     }
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point18, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.astrenzaText)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, AstrenzaSpacing.point16)
                     .frame(height: 54)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous)
                             .stroke(Color.white.opacity(0.1), lineWidth: 1)
                     }
                     .accessibilityIdentifier("login.nostr_identity")
 
                 if let errorMessage = sessionStore.errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.red)
                 }
             }
@@ -67,18 +67,18 @@ struct NostrLoginView: View {
                     await sessionStore.login()
                 }
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: AstrenzaSpacing.point10) {
                     if sessionStore.isLoggingIn {
                         ProgressView()
                             .controlSize(.small)
                             .tint(Color.astrenzaBackground)
                     } else {
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 17, weight: .black))
+                            .font(.astrenza(.point17, weight: .black))
                     }
 
                     Text(sessionStore.isLoggingIn ? "Resolving" : "Continue")
-                        .font(.system(size: 18, weight: .heavy, design: .rounded))
+                        .font(.astrenza(.point18, weight: .heavy, design: .rounded))
                 }
                 .foregroundStyle(Color.astrenzaBackground)
                 .frame(maxWidth: 360)
@@ -92,7 +92,7 @@ struct NostrLoginView: View {
 
             Spacer(minLength: 60)
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, AstrenzaSpacing.point24)
         .background(Color.astrenzaBackground.ignoresSafeArea())
     }
 }

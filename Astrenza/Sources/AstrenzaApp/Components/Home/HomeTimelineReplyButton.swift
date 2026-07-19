@@ -6,7 +6,7 @@ struct HomeTimelineReplyButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrowshape.turn.up.left.fill")
-                .font(.system(size: 23, weight: .heavy))
+                .font(.astrenza(.point23, weight: .heavy))
                 .foregroundStyle(.primary)
                 .frame(width: 58, height: 58)
                 .contentShape(Circle())

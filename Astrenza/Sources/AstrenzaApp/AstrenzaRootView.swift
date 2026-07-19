@@ -194,7 +194,7 @@ struct AstrenzaRootView: View {
         let delay = max(0, startupSplashMinimumDuration - elapsed)
         guard delay > 0 else {
             startupSplashDismissTask = nil
-            withAnimation(.easeOut(duration: 0.22)) {
+            withAnimation(.easeOut(duration: AstrenzaMotion.standard)) {
                 isStartupSplashVisible = false
             }
             return
@@ -204,7 +204,7 @@ struct AstrenzaRootView: View {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                withAnimation(.easeOut(duration: 0.22)) {
+                withAnimation(.easeOut(duration: AstrenzaMotion.standard)) {
                     isStartupSplashVisible = false
                 }
             }

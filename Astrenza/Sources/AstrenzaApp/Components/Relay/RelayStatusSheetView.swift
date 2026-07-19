@@ -34,7 +34,7 @@ struct RelayStatusSheetView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: AstrenzaSpacing.point16) {
                     RelayStatusSummaryCard(
                         connected: store.connectedCount,
                         planned: store.plannedCount,
@@ -54,15 +54,15 @@ struct RelayStatusSheetView: View {
                         isLive: store.isLive
                     )
 
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
                         Text("RELAYS")
-                            .font(.system(size: 12, weight: .black, design: .rounded))
+                            .font(.astrenza(.point12, weight: .black, design: .rounded))
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 2)
+                            .padding(.horizontal, AstrenzaSpacing.point2)
 
                         ForEach(store.relays) { relay in
                             Button {
-                                withAnimation(.snappy(duration: 0.22)) {
+                                withAnimation(.snappy(duration: AstrenzaMotion.standard)) {
                                     selectedRelayURL = relay.url
                                 }
                             } label: {
@@ -76,8 +76,8 @@ struct RelayStatusSheetView: View {
                         RelayInfoPanel(relay: selectedRelay)
                     }
                 }
-                .padding(18)
-                .padding(.bottom, 22)
+                .padding(AstrenzaSpacing.point18)
+                .padding(.bottom, AstrenzaSpacing.point22)
             }
             .background(Color.astrenzaBackground.ignoresSafeArea())
             .navigationTitle("Relay Status")
@@ -514,7 +514,7 @@ private struct RelayStatusSummaryCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: AstrenzaSpacing.point18) {
             ZStack {
                 Circle()
                     .stroke(Color.white.opacity(0.12), lineWidth: 12)
@@ -527,23 +527,23 @@ private struct RelayStatusSummaryCard: View {
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 0) {
                     Text("\(connected)")
-                        .font(.system(size: 32, weight: .black, design: .rounded))
+                        .font(.astrenza(.point32, weight: .black, design: .rounded))
                     Text("/ \(planned)")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .bold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
             .frame(width: 112, height: 112)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
                 Text("Connected Relays")
-                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .font(.astrenza(.point22, weight: .black, design: .rounded))
                 Text("NIP-65 relays, DM inbox relays, and manual fallback relays are tracked separately.")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 8) {
+                HStack(spacing: AstrenzaSpacing.point8) {
                     RelayCountPill(title: "read", count: relays.filter { $0.usage.contains(.read) }.count, tint: .cyan)
                     RelayCountPill(title: "write", count: relays.filter { $0.usage.contains(.write) }.count, tint: .green)
                     RelayCountPill(title: "dm", count: relays.filter { $0.usage.contains(.dm) }.count, tint: .purple)
@@ -551,10 +551,10 @@ private struct RelayStatusSummaryCard: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(18)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point18)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
         .overlay {
-            RoundedRectangle(cornerRadius: 24)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point24)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
     }
@@ -567,10 +567,10 @@ private struct RelayCountPill: View {
 
     var body: some View {
         Text("\(count) \(title)")
-            .font(.system(size: 12, weight: .black, design: .rounded))
+            .font(.astrenza(.point12, weight: .black, design: .rounded))
             .foregroundStyle(tint)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
+            .padding(.horizontal, AstrenzaSpacing.point9)
+            .padding(.vertical, AstrenzaSpacing.point6)
             .background(tint.opacity(0.16), in: Capsule())
     }
 }
@@ -581,39 +581,39 @@ private struct RelayConnectionLogCard: View {
     let isLive: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
             HStack {
                 Label("Recent Activity", systemImage: "waveform.path.ecg")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .font(.astrenza(.point16, weight: .black, design: .rounded))
                 Spacer()
                 Text(isLive ? "DB history" : "mock live")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
             ForEach(activities.prefix(5)) { activity in
-                HStack(spacing: 10) {
+                HStack(spacing: AstrenzaSpacing.point10) {
                     Circle()
                         .fill(activity.tint)
                         .frame(width: 8, height: 8)
                     Text(activity.host)
-                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .font(.astrenza(.point13, weight: .black, design: .rounded))
                         .lineLimit(1)
                     Text(activity.message)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if activity.eventCount > 0 {
                         Text("+\(activity.eventCount)")
-                            .font(.system(size: 11, weight: .black, design: .rounded))
+                            .font(.astrenza(.point11, weight: .black, design: .rounded))
                             .foregroundStyle(.green)
                     }
                 }
             }
         }
-        .padding(16)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point20))
     }
 }
 
@@ -621,18 +621,18 @@ private struct OutboxStatusCard: View {
     let summary: OutboxStatusSummary
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AstrenzaSpacing.point14) {
             Image(systemName: summary.activeCount == 0 ? "tray" : "paperplane.circle.fill")
-                .font(.system(size: 24, weight: .black))
+                .font(.astrenza(.point24, weight: .black))
                 .foregroundStyle(summary.failed > 0 ? .red : Color.astrenzaAccent)
                 .frame(width: 48, height: 48)
                 .background(Color.white.opacity(0.08), in: Circle())
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
                 Text(summary.title)
-                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .font(.astrenza(.point16, weight: .black, design: .rounded))
                 Text(summary.detail)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -653,8 +653,8 @@ private struct OutboxStatusCard: View {
                 .accessibilityHidden(true)
             }
         }
-        .padding(16)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point20))
     }
 
     private func tint(for status: String) -> Color {
@@ -678,19 +678,19 @@ private struct SyncDiagnosticsCard: View {
     let traffic: RelayTrafficSummary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point14) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                    .font(.system(size: 20, weight: .black))
+                    .font(.astrenza(.point20, weight: .black))
                     .foregroundStyle(Color.astrenzaAccent)
                     .frame(width: 42, height: 42)
                     .background(Color.astrenzaAccent.opacity(0.14), in: Circle())
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                     Text("Sync Diagnostics")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .font(.astrenza(.point16, weight: .black, design: .rounded))
                     Text(policy.diagnosticsDetail)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -698,21 +698,21 @@ private struct SyncDiagnosticsCard: View {
                 Spacer(minLength: 0)
 
                 Text(policy.mode.displayTitle)
-                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .font(.astrenza(.point11, weight: .black, design: .rounded))
                     .foregroundStyle(Color.astrenzaAccent)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, AstrenzaSpacing.point9)
+                    .padding(.vertical, AstrenzaSpacing.point6)
                     .background(Color.astrenzaAccent.opacity(0.16), in: Capsule())
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: AstrenzaSpacing.point10) {
                 TrafficWindowTile(title: "Session", totals: traffic.session)
                 TrafficWindowTile(title: "Today", totals: traffic.today)
                 TrafficWindowTile(title: "Billing", totals: traffic.billingCycle)
             }
         }
-        .padding(16)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+        .padding(AstrenzaSpacing.point16)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point20))
     }
 }
 
@@ -721,20 +721,20 @@ private struct TrafficWindowTile: View {
     let totals: NostrRelayTrafficTotals
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point6) {
             Text(totals.totalBytes.formattedByteCount)
-                .font(.system(size: 14, weight: .black, design: .rounded))
+                .font(.astrenza(.point14, weight: .black, design: .rounded))
                 .lineLimit(1)
             Text(title)
-                .font(.system(size: 10, weight: .black, design: .rounded))
+                .font(.astrenza(.point10, weight: .black, design: .rounded))
                 .foregroundStyle(.secondary)
             Text("\(totals.receivedMessages + totals.sentMessages) msg")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.astrenza(.point10, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+        .padding(AstrenzaSpacing.point10)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point14))
     }
 }
 
@@ -743,32 +743,32 @@ private struct RelayStatusRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AstrenzaSpacing.point12) {
             Image(systemName: relay.status.icon)
-                .font(.system(size: 20, weight: .black))
+                .font(.astrenza(.point20, weight: .black))
                 .foregroundStyle(relay.status.tint)
                 .frame(width: 42, height: 42)
                 .background(relay.status.tint.opacity(0.14), in: Circle())
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
+                HStack(spacing: AstrenzaSpacing.point8) {
                     Text(relay.displayName)
-                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .font(.astrenza(.point16, weight: .black, design: .rounded))
                         .lineLimit(1)
                     Text(relay.source.rawValue)
-                        .font(.system(size: 10, weight: .black, design: .rounded))
+                        .font(.astrenza(.point10, weight: .black, design: .rounded))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, AstrenzaSpacing.point7)
+                        .padding(.vertical, AstrenzaSpacing.point3)
                         .background(Color.white.opacity(0.08), in: Capsule())
                 }
                 Text(relay.url)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let runtimeState = relay.runtimeState {
                     Text("Runtime: \(runtimeState.displayText)")
-                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .font(.astrenza(.point11, weight: .black, design: .rounded))
                         .foregroundStyle(runtimeState.tint)
                         .lineLimit(1)
                 }
@@ -776,19 +776,19 @@ private struct RelayStatusRow: View {
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: AstrenzaSpacing.point4) {
                 Text(relay.status.rawValue)
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(relay.status.tint)
                 Text(relay.pingMilliseconds.map { "\($0) ms" } ?? "no ping")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point11, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(14)
-        .background(isSelected ? Color.white.opacity(0.13) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+        .padding(AstrenzaSpacing.point14)
+        .background(isSelected ? Color.white.opacity(0.13) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point20))
         .overlay {
-            RoundedRectangle(cornerRadius: 20)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point20)
                 .stroke(isSelected ? Color.astrenzaAccent.opacity(0.5) : Color.white.opacity(0.06), lineWidth: 1)
         }
     }
@@ -798,42 +798,42 @@ private struct RelayInfoPanel: View {
     let relay: RelayDescriptor
 
     private let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10)
+        GridItem(.flexible(), spacing: AstrenzaSpacing.point10),
+        GridItem(.flexible(), spacing: AstrenzaSpacing.point10)
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point14) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                     Text("NIP-11 INFO")
-                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .font(.astrenza(.point12, weight: .black, design: .rounded))
                         .foregroundStyle(.secondary)
                     Text(relay.displayName)
-                        .font(.system(size: 22, weight: .black, design: .rounded))
+                        .font(.astrenza(.point22, weight: .black, design: .rounded))
                 }
                 Spacer()
                 Text(relay.status.rawValue)
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(relay.status.tint)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, AstrenzaSpacing.point10)
+                    .padding(.vertical, AstrenzaSpacing.point6)
                     .background(relay.status.tint.opacity(0.16), in: Capsule())
             }
 
             Text(relay.description)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            LazyVGrid(columns: columns, spacing: 10) {
+            LazyVGrid(columns: columns, spacing: AstrenzaSpacing.point10) {
                 RelayMetricTile(title: "Received", value: relay.receivedBytes, icon: "arrow.down")
                 RelayMetricTile(title: "Sent", value: relay.sentBytes, icon: "arrow.up")
                 RelayMetricTile(title: "Events", value: relay.eventCount, icon: "number")
                 RelayMetricTile(title: "Lifecycle", value: "\(relay.lifecycle.totalProblems)", icon: "exclamationmark.triangle")
             }
 
-            VStack(spacing: 8) {
+            VStack(spacing: AstrenzaSpacing.point8) {
                 RelayInfoLine(title: "Sync Range", value: relay.syncRangeDescription)
                 RelayInfoLine(title: "Last EOSE", value: relay.lastEOSEDescription)
                 RelayInfoLine(title: "Runtime", value: relay.runtimeStateDescription)
@@ -847,17 +847,17 @@ private struct RelayInfoPanel: View {
             HStack {
                 ForEach(relay.usage) { usage in
                     Label(usage.rawValue, systemImage: usage.icon)
-                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .font(.astrenza(.point11, weight: .black, design: .rounded))
                         .foregroundStyle(.primary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, AstrenzaSpacing.point8)
+                        .padding(.vertical, AstrenzaSpacing.point6)
                         .background(Color.white.opacity(0.08), in: Capsule())
                 }
             }
             .lineLimit(1)
         }
-        .padding(18)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 24))
+        .padding(AstrenzaSpacing.point18)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point24))
     }
 }
 
@@ -867,20 +867,20 @@ private struct RelayMetricTile: View {
     let icon: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point8) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .black))
+                .font(.astrenza(.point16, weight: .black))
                 .foregroundStyle(Color.astrenzaAccent)
             Text(value)
-                .font(.system(size: 17, weight: .black, design: .rounded))
+                .font(.astrenza(.point17, weight: .black, design: .rounded))
                 .lineLimit(1)
             Text(title)
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .font(.astrenza(.point11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 16))
+        .padding(AstrenzaSpacing.point12)
+        .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point16))
     }
 }
 
@@ -891,11 +891,11 @@ private struct RelayInfoLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
-                .font(.system(size: 13, weight: .black, design: .rounded))
+                .font(.astrenza(.point13, weight: .black, design: .rounded))
                 .foregroundStyle(.secondary)
                 .frame(width: 104, alignment: .leading)
             Text(value)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

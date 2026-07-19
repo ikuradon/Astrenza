@@ -89,7 +89,7 @@ private struct AstrenzaDebugTimelineSnapshotView: View {
 
             Button(action: resolveLateArrival) {
                 Text(isResolved ? "Resolved" : "Resolve Fixture")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point15, weight: .semibold, design: .rounded))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .buttonStyle(.plain)

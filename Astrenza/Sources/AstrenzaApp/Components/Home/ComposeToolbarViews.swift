@@ -38,7 +38,7 @@ struct ComposeToolIcon: View {
 
     var body: some View {
         Image(systemName: systemName)
-            .font(.system(size: 22, weight: .bold))
+            .font(.astrenza(.point22, weight: .bold))
             .foregroundStyle(Color.astrenzaAccent)
             .frame(width: 43, height: 44)
             .contentShape(Rectangle())

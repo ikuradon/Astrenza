@@ -1288,8 +1288,8 @@ private struct TimelineHostedFeedEntryView: View {
                 direction: gapDirection,
                 onTap: { onBackfillGap(gap) }
             )
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, AstrenzaSpacing.point14)
+            .padding(.vertical, AstrenzaSpacing.point8)
         case .deleted(let deletedEntry):
             TimelineDeletedRow(entry: deletedEntry)
         }

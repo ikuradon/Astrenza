@@ -14,37 +14,37 @@ struct TimelineMediaView: View {
                 .saturation(isObscured ? 0.65 : 1)
 
             if isObscured {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .opacity(0.82)
 
-                VStack(spacing: 8) {
+                VStack(spacing: AstrenzaSpacing.point8) {
                     Image(systemName: "eye.slash.fill")
-                        .font(.system(size: 24, weight: .bold))
+                        .font(.astrenza(.point24, weight: .bold))
                     Text("From outside your follows")
-                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .font(.astrenza(.point14, weight: .heavy, design: .rounded))
                     Text("Tap to reveal")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.secondary)
                 }
                 .foregroundStyle(.primary)
             }
 
             if media.requiresTapToLoadRemoteMedia && !isObscured {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .opacity(0.72)
 
-                VStack(spacing: 7) {
+                VStack(spacing: AstrenzaSpacing.point7) {
                     Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.astrenza(.point22, weight: .bold))
                     Text("Tap to load")
-                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .font(.astrenza(.point12, weight: .heavy, design: .rounded))
                 }
                 .foregroundStyle(.primary)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
     }
 
     @ViewBuilder
@@ -83,7 +83,7 @@ struct TimelineAttachmentButton: View {
 
     var body: some View {
         TimelineMediaView(media: visibleMedia, isObscured: isObscured)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(key: TimelineAttachmentSizePreferenceKey.self, value: proxy.size)
@@ -111,11 +111,11 @@ struct TimelineAttachmentButton: View {
 
     private func activate(at location: CGPoint?) {
         if isObscured {
-            withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
+            withAnimation(.spring(duration: AstrenzaMotion.emphasized, bounce: 0.14)) {
                 isRevealed = true
             }
         } else if isDeferredRemoteLoad {
-            withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
+            withAnimation(.spring(duration: AstrenzaMotion.emphasized, bounce: 0.14)) {
                 isRemoteLoadAllowed = true
             }
         } else {
@@ -230,7 +230,7 @@ struct TimelineFullscreenMediaViewer: View {
                 galleryViewer(tiles: galleryTiles)
             } else {
                 TimelineMediaView(media: media)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, AstrenzaSpacing.point12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .offset(y: dismissalDrag.height)
                     .scaleEffect(dismissalScale)
@@ -248,7 +248,7 @@ struct TimelineFullscreenMediaViewer: View {
         .contentShape(Rectangle())
         .simultaneousGesture(chromeToggleGesture)
         .simultaneousGesture(dismissalGesture)
-        .animation(.spring(duration: 0.2, bounce: 0.08), value: isChromeVisible)
+        .animation(.spring(duration: AstrenzaMotion.responsive, bounce: 0.08), value: isChromeVisible)
     }
 
     @ViewBuilder
@@ -256,7 +256,7 @@ struct TimelineFullscreenMediaViewer: View {
         TabView(selection: $selectedTileIndex) {
             ForEach(Array(tiles.enumerated()), id: \.element.id) { index, tile in
                 TimelineFullscreenMediaPage(tile: tile)
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point18)
                     .tag(index)
             }
         }
@@ -266,7 +266,7 @@ struct TimelineFullscreenMediaViewer: View {
         }
         .offset(y: dismissalDrag.height)
         .scaleEffect(dismissalScale)
-        .animation(.spring(duration: 0.22, bounce: 0.08), value: selectedTileIndex)
+        .animation(.spring(duration: AstrenzaMotion.standard, bounce: 0.08), value: selectedTileIndex)
     }
 
     private var dismissalGesture: some Gesture {
@@ -331,7 +331,7 @@ private struct TimelineFullscreenMediaChrome: View {
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 17, weight: .black))
+                    .font(.astrenza(.point17, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .background(.ultraThinMaterial, in: Circle())
@@ -339,29 +339,29 @@ private struct TimelineFullscreenMediaChrome: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Close media viewer")
         }
-        .padding(.top, 18)
-        .padding(.horizontal, 18)
+        .padding(.top, AstrenzaSpacing.point18)
+        .padding(.horizontal, AstrenzaSpacing.point18)
     }
 
     private func mediaInfoPanel(tile: MediaTile) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: AstrenzaSpacing.point8) {
             Text(tile.altText ?? tile.title)
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point15, weight: .heavy, design: .rounded))
                 .foregroundStyle(.white.opacity(0.94))
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
 
             if let galleryTiles, galleryTiles.count > 1 {
                 Text("\(selectedTileIndex + 1) / \(galleryTiles.count)")
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                     .foregroundStyle(.white.opacity(0.78))
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .padding(.horizontal, 26)
-        .padding(.bottom, 24)
+        .padding(.horizontal, AstrenzaSpacing.point14)
+        .padding(.vertical, AstrenzaSpacing.point10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous))
+        .padding(.horizontal, AstrenzaSpacing.point26)
+        .padding(.bottom, AstrenzaSpacing.point24)
     }
 }
 
@@ -391,7 +391,7 @@ private struct TimelineFullscreenMediaPage: View {
             .highPriorityGesture(doubleTapZoomGesture)
             .onChange(of: scale) { _, newValue in
                 if newValue <= 1.01 {
-                    withAnimation(.spring(duration: 0.22, bounce: 0.08)) {
+                    withAnimation(.spring(duration: AstrenzaMotion.standard, bounce: 0.08)) {
                         offset = .zero
                     }
                 }
@@ -415,7 +415,7 @@ private struct TimelineFullscreenMediaPage: View {
 
             if tile.isVideo {
                 Image(systemName: "play.fill")
-                    .font(.system(size: 30, weight: .black))
+                    .font(.astrenza(.point30, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 76, height: 76)
                     .background(.black.opacity(0.44), in: Circle())
@@ -439,11 +439,11 @@ private struct TimelineFullscreenMediaPage: View {
             BlurHashPlaceholderView(blurhash: tile.blurhash, colors: tile.colors)
 
             Image(systemName: tile.symbolName)
-                .font(.system(size: 82, weight: .bold))
+                .font(.astrenza(.point82, weight: .bold))
                 .foregroundStyle(.white.opacity(0.86))
         }
         .aspectRatio(tile.aspectRatio ?? 0.82, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point18, style: .continuous))
     }
 
     private var doubleTapZoomGesture: some Gesture {
@@ -466,7 +466,7 @@ private struct TimelineFullscreenMediaPage: View {
                 state = value.magnification
             }
             .onEnded { value in
-                withAnimation(.spring(duration: 0.24, bounce: 0.1)) {
+                withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.1)) {
                     scale = min(max(scale * value.magnification, 1), 4.5)
                     if scale <= 1.01 {
                         offset = .zero
@@ -481,7 +481,7 @@ private struct TimelineFullscreenMediaPage: View {
                 state = value.translation
             }
             .onEnded { value in
-                withAnimation(.spring(duration: 0.22, bounce: 0.08)) {
+                withAnimation(.spring(duration: AstrenzaMotion.standard, bounce: 0.08)) {
                     offset.width += value.translation.width
                     offset.height += value.translation.height
                 }
@@ -526,7 +526,7 @@ private struct GalleryAttachmentView: View {
             GalleryAttachmentLayout(aspectRatio: resolvedAspectRatio) {
                 galleryGrid
             }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -537,25 +537,25 @@ private struct GalleryAttachmentView: View {
         case 0:
             EmptyView()
         case 2:
-            HStack(spacing: 2) {
+            HStack(spacing: AstrenzaSpacing.point2) {
                 TimelineMediaTileView(tile: tiles[0])
                 TimelineMediaTileView(tile: tiles[1])
             }
         case 3:
-            VStack(spacing: 2) {
-                HStack(spacing: 2) {
+            VStack(spacing: AstrenzaSpacing.point2) {
+                HStack(spacing: AstrenzaSpacing.point2) {
                     TimelineMediaTileView(tile: tiles[0])
                     TimelineMediaTileView(tile: tiles[1])
                 }
                 TimelineMediaTileView(tile: tiles[2])
             }
         default:
-            VStack(spacing: 2) {
-                HStack(spacing: 2) {
+            VStack(spacing: AstrenzaSpacing.point2) {
+                HStack(spacing: AstrenzaSpacing.point2) {
                     TimelineMediaTileView(tile: tiles[0])
                     TimelineMediaTileView(tile: tiles[1])
                 }
-                HStack(spacing: 2) {
+                HStack(spacing: AstrenzaSpacing.point2) {
                     TimelineMediaTileView(tile: tiles[2])
                     TimelineMediaTileView(
                         tile: tiles[3],
@@ -580,7 +580,7 @@ private struct SingleMediaAttachmentView: View {
                 tile: tile,
                 contentMode: .fit
             )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -675,7 +675,7 @@ private struct TimelineMediaTileView: View {
 
             if tile.isVideo {
                     Image(systemName: "play.fill")
-                    .font(.system(size: 20, weight: .black))
+                    .font(.astrenza(.point20, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .background(.black.opacity(0.42), in: Circle())
@@ -693,7 +693,7 @@ private struct TimelineMediaTileView: View {
                     .fill(.black.opacity(0.34))
 
                 Text("+\(overlayCount)")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.astrenza(.point24, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.38), radius: 10, y: 4)
             }
@@ -722,7 +722,7 @@ private struct TimelineMediaTileView: View {
             BlurHashPlaceholderView(blurhash: tile.blurhash, colors: tile.colors)
 
             Image(systemName: tile.symbolName)
-                .font(.system(size: 34, weight: .bold))
+                .font(.astrenza(.point34, weight: .bold))
                 .foregroundStyle(.white.opacity(0.88))
                 .blur(radius: overlayCount == nil ? 0 : 5)
         }
@@ -730,9 +730,9 @@ private struct TimelineMediaTileView: View {
 
     private var fallbackLabel: some View {
         Text(tile.title)
-            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .font(.astrenza(.point12, weight: .heavy, design: .rounded))
             .foregroundStyle(.white.opacity(0.9))
-            .padding(10)
+            .padding(AstrenzaSpacing.point10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 }
@@ -812,27 +812,27 @@ struct LinkPreviewAttachmentView: View {
 
             metadata
         }
-        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var metadata: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
+            HStack(spacing: AstrenzaSpacing.point6) {
                 if preview.style == .youtube {
                     Image(systemName: "play.rectangle.fill")
-                        .font(.system(size: 11, weight: .black))
+                        .font(.astrenza(.point11, weight: .black))
                         .foregroundStyle(.red)
                         .fixedSize()
                 }
 
                 Text(preview.host)
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                     .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -840,17 +840,17 @@ struct LinkPreviewAttachmentView: View {
             }
 
             Text("\(preview.title)")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.astrenza(.point15, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
 
             Text(preview.subtitle)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color.secondary)
                 .lineLimit(2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, AstrenzaSpacing.point12)
+        .padding(.vertical, AstrenzaSpacing.point10)
         .frame(
             maxWidth: .infinity,
             minHeight: LinkPreviewCardLayout.minimumMetadataHeight,
@@ -934,27 +934,27 @@ private struct LinkPreviewHeroView: View {
     }
 
     private var fallbackHero: some View {
-        Color(red: 0.93, green: 0.94, blue: 0.95)
+        AstrenzaPalette.linkPreviewFallbackBackground
             .overlay(alignment: .topLeading) {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point12) {
                     Text(preview.host)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .bold, design: .rounded))
                         .foregroundStyle(.gray)
 
                     HStack(alignment: .top) {
                         Text("\(heroTitle)")
-                            .font(.system(size: 25, weight: .black, design: .rounded))
-                            .foregroundStyle(Color(red: 0.13, green: 0.15, blue: 0.18))
+                            .font(.astrenza(.point25, weight: .black, design: .rounded))
+                            .foregroundStyle(AstrenzaPalette.linkPreviewFallbackText)
                             .lineLimit(2)
                             .minimumScaleFactor(0.82)
 
-                        Spacer(minLength: 8)
+                        Spacer(minLength: AstrenzaSpacing.point8)
 
                         ZStack {
                             Circle()
                                 .fill((preview.style == .youtube ? Color.red : Color.green).opacity(0.3))
                             Image(systemName: preview.style == .youtube ? "play.rectangle.fill" : "link")
-                                .font(.system(size: 25, weight: .black))
+                                .font(.astrenza(.point25, weight: .black))
                                 .foregroundStyle(preview.style == .youtube ? .red : .green)
                         }
                         .frame(width: 52, height: 52)
@@ -962,7 +962,7 @@ private struct LinkPreviewHeroView: View {
 
                     Spacer(minLength: 0)
                 }
-                .padding(18)
+                .padding(AstrenzaSpacing.point18)
             }
             .clipped()
     }
@@ -971,10 +971,10 @@ private struct LinkPreviewHeroView: View {
         let words = preview.title.split(separator: " ")
         guard words.count > 1 else { return preview.title }
 
-        let baseFont = UIFont.systemFont(ofSize: 25, weight: .black)
+        let baseFont = UIFont.astrenza(.point25, weight: .black)
         let roundedDescriptor = baseFont.fontDescriptor.withDesign(.rounded)
             ?? baseFont.fontDescriptor
-        let font = UIFont(descriptor: roundedDescriptor, size: 25)
+        let font = UIFont(descriptor: roundedDescriptor, size: baseFont.pointSize)
         let naturalLineWidth = max(
             0,
             LinkPreviewCardLayout.fallbackTitleMeasurementWidth - 112
@@ -1036,7 +1036,7 @@ private struct YouTubePlayBadge: View {
                 .fill(.red)
                 .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
             Image(systemName: "play.fill")
-                .font(.system(size: 22, weight: .black))
+                .font(.astrenza(.point22, weight: .black))
                 .foregroundStyle(.white)
                 .offset(x: 2)
         }
@@ -1066,24 +1066,24 @@ private struct UnresolvedLinkAttachmentView: View {
     let preview: UnresolvedLinkPreview
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AstrenzaSpacing.point10) {
             ZStack {
                 Circle()
                     .fill(Color.white.opacity(0.08))
                 Image(systemName: "link")
-                    .font(.system(size: 15, weight: .black))
+                    .font(.astrenza(.point15, weight: .black))
                     .foregroundStyle(Color.astrenzaAccent)
             }
             .frame(width: 32, height: 32)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                 Text(preview.host)
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point12, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(preview.url)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point11, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1094,11 +1094,11 @@ private struct UnresolvedLinkAttachmentView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, AstrenzaSpacing.point10)
         .frame(height: 62)
-        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
         }
     }

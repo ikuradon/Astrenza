@@ -41,7 +41,7 @@ struct FilterMatchingPostsSheet: View {
                             FilterMatchingPostRowView(post: post)
                             if post.id != model.posts.last?.id {
                                 SettingsDivider()
-                                    .padding(.leading, 18)
+                                    .padding(.leading, AstrenzaSpacing.point18)
                             }
                         }
                     }
@@ -53,7 +53,7 @@ struct FilterMatchingPostsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done", action: onDone)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point18, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.astrenzaAccent)
                 }
             }
@@ -67,27 +67,27 @@ private struct FilterMatchingPostRowView: View {
     let post: FilterMatchingPostRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point6) {
+            HStack(spacing: AstrenzaSpacing.point8) {
                 Text(post.author)
-                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .font(.astrenza(.point14, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
                 Text(formattedDate)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.tertiary)
             }
 
             Text(post.body)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point16, weight: .semibold, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, AstrenzaSpacing.point18)
+        .padding(.vertical, AstrenzaSpacing.point12)
     }
 
     private var formattedDate: String {

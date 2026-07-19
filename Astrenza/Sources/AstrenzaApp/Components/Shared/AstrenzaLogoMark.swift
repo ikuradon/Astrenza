@@ -27,7 +27,7 @@ struct AstrenzaLogoMark: View {
             return backgroundColor
         }
         return colorScheme == .dark
-            ? Color(red: 0.96, green: 0.91, blue: 1.0)
-            : Color(red: 0.98, green: 0.95, blue: 1.0)
+            ? AstrenzaPalette.Logo.darkBackground
+            : AstrenzaPalette.Logo.lightBackground
     }
 }

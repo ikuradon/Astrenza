@@ -20,7 +20,7 @@ struct TimelinePostContentView: View {
     }
 
     private var postContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point6) {
             textContent
 
             bodySummaryContent
@@ -53,7 +53,7 @@ struct TimelinePostContentView: View {
     @ViewBuilder
     private var bodySummaryContent: some View {
         if post.bodyPresentation.collapseReason != nil || post.linkSummary != nil {
-            HStack(spacing: 7) {
+            HStack(spacing: AstrenzaSpacing.point7) {
                 if let collapseReason = post.bodyPresentation.collapseReason {
                     TimelineBodySummaryPill(
                         systemName: collapseReason.systemName,
@@ -76,7 +76,7 @@ struct TimelinePostContentView: View {
     }
 
     private var attachmentContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point6) {
             if let quotedPost = post.quotedPost {
                 Button {
                     onOpenQuotedPost(quotedPost.timelinePost())
@@ -97,7 +97,7 @@ struct TimelinePostContentView: View {
                     accessibilityLabel: "Open attachment for post by \(post.author.primaryText)",
                     onOpen: onOpenAttachment
                 )
-                .padding(.top, 2)
+                .padding(.top, AstrenzaSpacing.point2)
             }
         }
     }

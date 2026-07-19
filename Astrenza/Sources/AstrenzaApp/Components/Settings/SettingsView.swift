@@ -137,11 +137,11 @@ struct SettingsView: View {
                 }
 
                 Text("Astrenza 0.1.0")
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point16, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 4)
-                    .padding(.bottom, 22)
+                    .padding(.top, AstrenzaSpacing.point4)
+                    .padding(.bottom, AstrenzaSpacing.point22)
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -206,7 +206,7 @@ private struct DisplaySettingsView: View {
         SettingsList {
             SettingsSection(title: "POST PREVIEW") {
                 SettingsPostPreviewCard()
-                    .padding(16)
+                    .padding(AstrenzaSpacing.point16)
             }
 
             SettingsSection(title: "APPEARANCE") {
@@ -225,16 +225,16 @@ private struct DisplaySettingsView: View {
                 VStack(spacing: 0) {
                     SettingsToggleContent(title: "Use System Size", isOn: $usesSystemTextSize)
                     SettingsDivider()
-                    HStack(spacing: 16) {
+                    HStack(spacing: AstrenzaSpacing.point16) {
                         Text("A")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.astrenza(.point18, weight: .bold, design: .rounded))
                         Slider(value: $textScale)
                             .tint(.secondary)
                         Text("A")
-                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .font(.astrenza(.point30, weight: .bold, design: .rounded))
                     }
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point18)
                     .frame(height: 58)
                 }
             }
@@ -391,15 +391,15 @@ private struct EmptySettingsDestination: View {
     var body: some View {
         SettingsList {
             SettingsSection {
-                HStack(spacing: 12) {
+                HStack(spacing: AstrenzaSpacing.point12) {
                     Image(systemName: "hammer.fill")
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.astrenza(.point22, weight: .bold))
                         .foregroundStyle(Color.astrenzaAccent)
                     Text("Mock screen")
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point19, weight: .semibold, design: .rounded))
                     Spacer()
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, AstrenzaSpacing.point18)
                 .frame(height: 60)
             }
         }
@@ -414,16 +414,16 @@ struct NostrLocalStateRow: View {
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AstrenzaSpacing.point12) {
             SettingsIcon(systemName: icon, tint: tint)
             Text(title)
-                .font(.system(size: 17, weight: .black, design: .rounded))
+                .font(.astrenza(.point17, weight: .black, design: .rounded))
             Spacer()
             Text("\(value)")
-                .font(.system(size: 19, weight: .black, design: .rounded))
+                .font(.astrenza(.point19, weight: .black, design: .rounded))
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, AstrenzaSpacing.point16)
         .frame(height: 58)
     }
 }
@@ -433,44 +433,44 @@ struct NostrListSummaryRow: View {
     let items: [NostrListItemRecord]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point10) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 SettingsIcon(systemName: iconName, tint: tint)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 7) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point3) {
+                    HStack(spacing: AstrenzaSpacing.point7) {
                         Text(displayTitle)
-                            .font(.system(size: 17, weight: .black, design: .rounded))
+                            .font(.astrenza(.point17, weight: .black, design: .rounded))
                             .lineLimit(1)
                         Text("kind:\(summary.kind)")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .font(.astrenza(.point11, weight: .bold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
                     Text(summary.visibility)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
                 Text("\(items.count)")
-                    .font(.system(size: 19, weight: .black, design: .rounded))
+                    .font(.astrenza(.point19, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
             if !items.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point7) {
                     ForEach(items.prefix(5), id: \.rowID) { item in
                         NostrListItemLine(item: item)
                     }
                     if items.count > 5 {
                         Text("+\(items.count - 5) more")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .font(.astrenza(.point12, weight: .bold, design: .rounded))
                             .foregroundStyle(.tertiary)
                     }
                 }
                 .padding(.leading, 46)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.horizontal, AstrenzaSpacing.point16)
+        .padding(.vertical, AstrenzaSpacing.point13)
     }
 
     private var displayTitle: String {
@@ -514,13 +514,13 @@ private struct NostrListItemLine: View {
     let item: NostrListItemRecord
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: AstrenzaSpacing.point7) {
             Text(item.itemType)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.astrenza(.point11, weight: .black, design: .rounded))
                 .foregroundStyle(Color.astrenzaAccent)
                 .frame(width: 52, alignment: .leading)
             Text(displayValue)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -544,20 +544,20 @@ struct NostrListEmptyRow: View {
     let subtitle: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: AstrenzaSpacing.point12) {
             SettingsIcon(systemName: icon, tint: .gray)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point4) {
                 Text(title)
-                    .font(.system(size: 17, weight: .black, design: .rounded))
+                    .font(.astrenza(.point17, weight: .black, design: .rounded))
                 Text(subtitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.horizontal, AstrenzaSpacing.point16)
+        .padding(.vertical, AstrenzaSpacing.point13)
     }
 }
 
@@ -571,27 +571,27 @@ private struct AccountSettingsView: View {
     var body: some View {
         SettingsList {
             SettingsSection {
-                HStack(spacing: 14) {
+                HStack(spacing: AstrenzaSpacing.point14) {
                     AvatarView(style: summary.avatarStyle, size: 54)
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: AstrenzaSpacing.point3) {
                         Text(summary.title)
-                            .font(.system(size: 24, weight: .black, design: .rounded))
+                            .font(.astrenza(.point24, weight: .black, design: .rounded))
                         Text(summary.subtitle)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .font(.astrenza(.point15, weight: .bold, design: .rounded))
                             .foregroundStyle(.secondary)
                         Text(summary.npub)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
                     if summary.isSelected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 22, weight: .bold))
+                            .font(.astrenza(.point22, weight: .bold))
                             .foregroundStyle(Color.astrenzaAccent)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, AstrenzaSpacing.point16)
+                .padding(.vertical, AstrenzaSpacing.point12)
             }
 
             SettingsSection(title: "NOSTR ACCOUNT") {
@@ -641,11 +641,11 @@ struct SettingsList<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point26) {
                 content()
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 34)
+            .padding(.horizontal, AstrenzaSpacing.point18)
+            .padding(.top, AstrenzaSpacing.point34)
             .padding(.bottom, 40)
         }
         .background(Color.astrenzaSettingsBackground.ignoresSafeArea())
@@ -664,26 +664,26 @@ struct SettingsSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point8) {
             if let title {
                 Text(title)
                     .settingsSectionTitleStyle()
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, AstrenzaSpacing.point14)
             }
 
             VStack(spacing: 0) {
                 content()
             }
-            .background(Color.astrenzaSettingsCard, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .background(Color.astrenzaSettingsCard, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point15, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point15, style: .continuous))
 
             if let footerText = footer?() {
                 Text(footerText)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point16, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 2)
+                    .padding(.horizontal, AstrenzaSpacing.point14)
+                    .padding(.top, AstrenzaSpacing.point2)
             }
         }
     }
@@ -787,7 +787,7 @@ private struct SettingsActionRow: View {
         Button(action: action) {
             SettingsRowShell(icon: icon, tint: tint) {
                 Text(title)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point18, weight: .bold, design: .rounded))
                 Spacer()
             }
         }
@@ -816,19 +816,19 @@ private struct SettingsAccountRow: View {
             SettingsRowShell(iconView: {
                 AvatarView(style: summary.avatarStyle, size: 36)
             }) {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point1) {
                     Text(summary.title)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point18, weight: .bold, design: .rounded))
                         .lineLimit(1)
                     Text(summary.subtitle)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
                 if summary.isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.astrenza(.point16, weight: .bold))
                         .foregroundStyle(Color.astrenzaAccent)
                 }
                 Image(systemName: "chevron.right")
@@ -858,12 +858,12 @@ private struct SettingsRowShell<Icon: View, Content: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AstrenzaSpacing.point14) {
             iconView()
                 .frame(width: 42)
             content()
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, AstrenzaSpacing.point14)
         .frame(minHeight: 58)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
@@ -883,7 +883,7 @@ private struct SettingsToggleContent: View {
         }
         .toggleStyle(.switch)
         .tint(.blue)
-        .padding(.horizontal, 18)
+        .padding(.horizontal, AstrenzaSpacing.point18)
         .frame(minHeight: 58)
         .settingsRowTextStyle()
     }
@@ -903,11 +903,11 @@ private struct SettingsChoiceRow: View {
                 Spacer()
                 if selectedValue == (value ?? title) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.astrenza(.point18, weight: .bold))
                         .foregroundStyle(.blue)
                 }
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, AstrenzaSpacing.point18)
             .frame(minHeight: 58)
             .contentShape(Rectangle())
         }
@@ -915,7 +915,7 @@ private struct SettingsChoiceRow: View {
         .settingsRowTextStyle()
         .overlay(alignment: .bottom) {
             SettingsDivider()
-                .padding(.leading, 18)
+                .padding(.leading, AstrenzaSpacing.point18)
         }
     }
 }
@@ -950,10 +950,10 @@ struct SettingsIcon: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point9, style: .continuous)
                 .fill(tint.gradient)
             Image(systemName: systemName)
-                .font(.system(size: 21, weight: .black))
+                .font(.astrenza(.point21, weight: .black))
                 .foregroundStyle(.white)
         }
         .frame(width: 36, height: 36)
@@ -962,43 +962,43 @@ struct SettingsIcon: View {
 
 private struct SettingsPostPreviewCard: View {
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: AstrenzaSpacing.point12) {
             AvatarView(style: AvatarStyle(primary: .black, secondary: .red, symbolName: "app.fill"), size: 48)
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point7) {
                 HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: AstrenzaSpacing.point1) {
                         Text("Astrenza")
-                            .font(.system(size: 18, weight: .heavy, design: .rounded))
+                            .font(.astrenza(.point18, weight: .heavy, design: .rounded))
                         Text("alpha@mock.example")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text("1m")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point15, weight: .bold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
 
                 Text("Thanks for trying Astrenza. Tune the timeline until it feels exactly right.")
-                    .font(.system(size: 18, weight: .regular, design: .rounded))
+                    .font(.astrenza(.point18, weight: .regular, design: .rounded))
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 30) {
+                HStack(spacing: AstrenzaSpacing.point30) {
                     Image(systemName: "bubble.left")
                     Image(systemName: "arrow.triangle.2.circlepath")
                     Image(systemName: "star.fill")
                     Image(systemName: "square.and.arrow.up")
                     Image(systemName: "gearshape")
                 }
-                .font(.system(size: 19, weight: .bold))
+                .font(.astrenza(.point19, weight: .bold))
                 .foregroundStyle(.secondary)
-                .padding(.top, 4)
+                .padding(.top, AstrenzaSpacing.point4)
             }
         }
         .foregroundStyle(.primary)
-        .padding(14)
-        .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(AstrenzaSpacing.point14)
+        .background(Color.black, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point16, style: .continuous))
     }
 }
 

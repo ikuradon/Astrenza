@@ -11,7 +11,7 @@ struct TimelineReplyContextView: View {
     let style: TimelineReplyContextStyle
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AstrenzaSpacing.point6) {
             AvatarView(style: context.avatar, size: avatarSize)
 
             Text(context.author.primaryText)
@@ -25,9 +25,9 @@ struct TimelineReplyContextView: View {
 
         }
         .foregroundStyle(Color.secondary)
-        .padding(.leading, 4)
-        .padding(.trailing, 9)
-        .padding(.vertical, 3)
+        .padding(.leading, AstrenzaSpacing.point4)
+        .padding(.trailing, AstrenzaSpacing.point9)
+        .padding(.vertical, AstrenzaSpacing.point3)
         .background(backgroundColor, in: Capsule())
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel("\(context.author.primaryText) reply context")
@@ -62,7 +62,7 @@ struct TimelineReplyContextView: View {
 struct TimelineReplyMarker: View {
     var body: some View {
         Image(systemName: "bubble.left.and.bubble.right")
-            .font(.system(size: 12, weight: .black))
+            .font(.astrenza(.point12, weight: .black))
             .foregroundStyle(Color.secondary)
             .accessibilityLabel("Reply")
     }
@@ -80,17 +80,17 @@ struct TimelineBodySummaryPill: View {
     var prominence: TimelineBodySummaryProminence = .normal
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: AstrenzaSpacing.point4) {
             Image(systemName: systemName)
-                .font(.system(size: 10, weight: .black))
+                .font(.astrenza(.point10, weight: .black))
 
             Text(text)
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point11, weight: .heavy, design: .rounded))
                 .lineLimit(1)
         }
         .foregroundStyle(foregroundStyle)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
+        .padding(.horizontal, AstrenzaSpacing.point7)
+        .padding(.vertical, AstrenzaSpacing.point4)
         .background(backgroundColor, in: Capsule())
         .overlay {
             Capsule()

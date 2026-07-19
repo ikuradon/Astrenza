@@ -26,7 +26,7 @@ struct RelayStatusRingButton: View {
     }
 
     var body: some View {
-        HStack(spacing: 8 * labelProgress) {
+        HStack(spacing: AstrenzaSpacing.point8 * labelProgress) {
             ZStack {
                 Circle()
                     .stroke(Color.white.opacity(0.18), lineWidth: 4)
@@ -47,7 +47,7 @@ struct RelayStatusRingButton: View {
                             Color.white.opacity(0.84),
                             style: StrokeStyle(lineWidth: 2, lineCap: .round)
                         )
-                        .padding(7)
+                        .padding(AstrenzaSpacing.point7)
                         .rotationEffect(.degrees(processingRotation))
                         .onAppear {
                             withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
@@ -59,17 +59,17 @@ struct RelayStatusRingButton: View {
                         }
                 }
                 Text("\(connected)")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.astrenza(.point12, weight: .black, design: .rounded))
                     .foregroundStyle(.primary)
             }
             .frame(width: ringSize, height: ringSize)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text("Relays")
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point12, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
                 Text(processingLabel ?? "\(connected)/\(planned)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point10, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .contentTransition(.numericText())
                     .lineLimit(1)

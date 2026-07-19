@@ -35,14 +35,14 @@ struct FilterEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel", action: onCancel)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point18, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.astrenzaAccent)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") {
                         onSave(draft)
                     }
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point18, weight: .bold, design: .rounded))
                     .foregroundStyle(draft.canSave ? Color.astrenzaAccent : .secondary)
                     .disabled(!draft.canSave)
                 }
@@ -54,18 +54,18 @@ struct FilterEditorSheet: View {
 
     @ViewBuilder
     private var userSearchContent: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AstrenzaSpacing.point10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 28, weight: .bold))
+                .font(.astrenza(.point28, weight: .bold))
             TextField("Search People", text: $searchText)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .font(.astrenza(.point24, weight: .bold, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
         }
         .foregroundStyle(.black)
-        .padding(.horizontal, 18)
+        .padding(.horizontal, AstrenzaSpacing.point18)
         .frame(height: 64)
-        .background(Color.astrenzaAccent.opacity(0.95), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.astrenzaAccent.opacity(0.95), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
 
         SettingsSection {
             ForEach(filteredCandidates) { candidate in
@@ -95,11 +95,11 @@ struct FilterEditorSheet: View {
         } else if draft.kind == .keyword || draft.kind == .hashtag {
             SettingsSection {
                 TextField(inputPlaceholder, text: $draft.value)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point20, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point18)
                     .frame(height: 58)
             }
         }
@@ -166,7 +166,7 @@ struct FilterEditorSheet: View {
                         Image(systemName: "chevron.right")
                             .settingsChevronStyle()
                     }
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point18)
                     .frame(height: 58)
                     .settingsRowTextStyle()
                     .contentShape(Rectangle())
@@ -187,7 +187,7 @@ struct FilterEditorSheet: View {
                     Image(systemName: "chevron.right")
                         .settingsChevronStyle()
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, AstrenzaSpacing.point18)
                 .frame(height: 58)
                 .contentShape(Rectangle())
             }

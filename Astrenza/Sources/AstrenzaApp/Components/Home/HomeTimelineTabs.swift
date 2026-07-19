@@ -164,7 +164,11 @@ struct UIKitTimelineTabView<TimelineContent: View, ProfileContent: View>: UIView
             }
 
             if animated {
-                UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                UIView.animate(
+                    withDuration: AstrenzaMotion.fast,
+                    delay: 0,
+                    options: [.curveEaseOut, .beginFromCurrentState]
+                ) {
                     updates()
                 } completion: { _ in
                     controller.tabBar.isHidden = isHidden
@@ -415,14 +419,14 @@ private struct PlaceholderTabView: View {
     let tab: TimelineTab
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: AstrenzaSpacing.point10) {
             Image(systemName: tab.systemName(isSelected: true))
-                .font(.system(size: 34, weight: .semibold))
+                .font(.astrenza(.point34, weight: .semibold))
                 .foregroundStyle(Color.astrenzaAccent)
             Text(tab.title)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.astrenza(.point22, weight: .bold, design: .rounded))
             Text("この画面はあとで実装します")
-                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .font(.astrenza(.point14, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

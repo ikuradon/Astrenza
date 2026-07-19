@@ -16,7 +16,7 @@ struct AstrenzaStartupSplashView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                VStack(spacing: 14) {
+                VStack(spacing: AstrenzaSpacing.point14) {
                     ZStack {
                         if showsRelayRing {
                             RelayStartupRing(progressDate: elapsed)
@@ -25,7 +25,7 @@ struct AstrenzaStartupSplashView: View {
 
                         AstrenzaLogoMark(
                             size: 58,
-                            backgroundColor: Color(red: 0.96, green: 0.91, blue: 1.0),
+                            backgroundColor: AstrenzaPalette.Logo.darkBackground,
                             strokeColor: Color.white.opacity(0.16),
                             shadowColor: Color.black.opacity(0.24)
                         )
@@ -33,14 +33,14 @@ struct AstrenzaStartupSplashView: View {
                     }
                     .frame(width: 92, height: 92)
 
-                    VStack(spacing: 4) {
+                    VStack(spacing: AstrenzaSpacing.point4) {
                         Text(status.title)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.72))
                             .contentTransition(.opacity)
 
                         Text(status.detail)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .font(.astrenza(.point10, weight: .medium, design: .rounded))
                             .foregroundStyle(.white.opacity(0.44))
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
@@ -49,12 +49,12 @@ struct AstrenzaStartupSplashView: View {
                     .frame(maxWidth: 280)
                     .opacity(showsStatusText ? 1 : 0)
                     .offset(y: showsStatusText ? 0 : 4)
-                    .animation(.easeOut(duration: 0.18), value: showsStatusText)
-                    .animation(.easeOut(duration: 0.18), value: showsStatusDetail)
-                    .animation(.easeInOut(duration: 0.16), value: status)
+                    .animation(.easeOut(duration: AstrenzaMotion.fast), value: showsStatusText)
+                    .animation(.easeOut(duration: AstrenzaMotion.fast), value: showsStatusDetail)
+                    .animation(.easeInOut(duration: AstrenzaMotion.quick), value: status)
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: showsRelayRing)
+            .animation(.easeOut(duration: AstrenzaMotion.fast), value: showsRelayRing)
         }
         .allowsHitTesting(true)
         .accessibilityHidden(true)

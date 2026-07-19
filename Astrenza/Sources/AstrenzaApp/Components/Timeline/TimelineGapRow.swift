@@ -7,16 +7,16 @@ struct TimelineGapRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 icon
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point3) {
                     Text(gap.title)
-                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .font(.astrenza(.point14, weight: .heavy, design: .rounded))
                         .foregroundStyle(.primary)
 
                     Text(detailText)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.astrenza(.point12, weight: .semibold, design: .rounded))
                         .foregroundStyle(Color.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
@@ -26,14 +26,14 @@ struct TimelineGapRow: View {
 
                 trailingIndicator
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, AstrenzaSpacing.point14)
             .frame(height: 58)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point13, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                RoundedRectangle(cornerRadius: AstrenzaRadius.point13, style: .continuous)
                     .stroke(Color.astrenzaAccent.opacity(0.18), lineWidth: 1)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point13, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -47,7 +47,7 @@ struct TimelineGapRow: View {
                 .fill(Color.astrenzaAccent.opacity(0.16))
 
             Image(systemName: iconSystemName)
-                .font(.system(size: 15, weight: .black))
+                .font(.astrenza(.point15, weight: .black))
                 .foregroundStyle(Color.astrenzaAccent)
         }
         .frame(width: 34, height: 34)
@@ -84,7 +84,7 @@ struct TimelineGapRow: View {
                 .tint(Color.astrenzaAccent)
         case .needsBackfill, .limited:
             Image(systemName: direction == .newer ? "chevron.up" : "chevron.down")
-                .font(.system(size: 12, weight: .black))
+                .font(.astrenza(.point12, weight: .black))
                 .foregroundStyle(Color.astrenzaAccent.opacity(0.86))
         }
     }

@@ -57,24 +57,24 @@ struct HomeTimelineTopBar: View {
                 .accessibilityIdentifier("home.relay_status.button")
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, AstrenzaSpacing.point18)
+        .padding(.top, AstrenzaSpacing.point12)
+        .padding(.bottom, AstrenzaSpacing.point8)
     }
 
     @ViewBuilder
     private var titleControl: some View {
         if visibleTab == .home {
             Button(action: toggleTimelineMenu) {
-                HStack(spacing: 7) {
+                HStack(spacing: AstrenzaSpacing.point7) {
                     Text(selectedTimeline.title)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point20, weight: .bold, design: .rounded))
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.astrenza(.point15, weight: .bold))
                         .rotationEffect(.degrees(isTimelineMenuPresented ? 180 : 0))
                 }
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, AstrenzaSpacing.point14)
                 .frame(height: 42)
                 .contentShape(Capsule())
                 .astrenzaGlass(tint: Color.white.opacity(0.04), in: Capsule())
@@ -90,9 +90,9 @@ struct HomeTimelineTopBar: View {
             }
         } else {
             Text(visibleTab.title)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.astrenza(.point20, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, AstrenzaSpacing.point14)
                 .frame(height: 42)
                 .astrenzaGlass(tint: Color.white.opacity(0.04), in: Capsule())
         }
@@ -106,7 +106,7 @@ struct HomeTimelineTopBar: View {
     }
 
     private func toggleTimelineMenu() {
-        withAnimation(.snappy(duration: 0.18)) {
+        withAnimation(.snappy(duration: AstrenzaMotion.fast)) {
             isTimelineMenuPresented.toggle()
             isUserSwitcherPresented = false
         }
@@ -114,7 +114,7 @@ struct HomeTimelineTopBar: View {
 
     private func selectAccount(_ pubkey: String) {
         onSelectAccount(pubkey)
-        withAnimation(.spring(duration: 0.24, bounce: 0.14)) {
+        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.14)) {
             isUserSwitcherPresented = false
         }
     }
@@ -131,12 +131,12 @@ struct HomeUnreadBadge: View {
     var body: some View {
         Button(action: onTap) {
             Text(displayCount)
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point11, weight: .heavy, design: .rounded))
                 .foregroundStyle(.black)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, AstrenzaSpacing.point8)
+                .padding(.vertical, AstrenzaSpacing.point4)
                 .background(Color.astrenzaAccent, in: Capsule())
                 .shadow(color: Color.astrenzaAccent.opacity(0.18), radius: 7, y: 3)
         }
@@ -175,22 +175,22 @@ struct HomeFilterIndicator: View {
     }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: AstrenzaSpacing.point9) {
             Button(action: onOpenFilters) {
-                HStack(spacing: 8) {
+                HStack(spacing: AstrenzaSpacing.point8) {
                     Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.astrenza(.point15, weight: .bold))
                     VStack(alignment: .leading, spacing: 0) {
                         Text(title)
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                         Text(subtitle)
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .font(.astrenza(.point10, weight: .bold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
                 }
                 .foregroundStyle(status.isSuspended ? .secondary : Color.astrenzaAccent)
-                .padding(.leading, 12)
-                .padding(.vertical, 7)
+                .padding(.leading, AstrenzaSpacing.point12)
+                .padding(.vertical, AstrenzaSpacing.point7)
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -202,7 +202,7 @@ struct HomeFilterIndicator: View {
 
             Button(action: status.isSuspended ? onResume : onClear) {
                 Image(systemName: controlIcon)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.astrenza(.point17, weight: .bold))
                     .foregroundStyle(status.isSuspended ? Color.astrenzaAccent : .secondary)
                     .frame(width: 30, height: 34)
                     .contentShape(Circle())
@@ -210,7 +210,7 @@ struct HomeFilterIndicator: View {
             .buttonStyle(.plain)
             .accessibilityLabel(controlLabel)
         }
-        .padding(.trailing, 7)
+        .padding(.trailing, AstrenzaSpacing.point7)
         .astrenzaGlass(tint: Color.white.opacity(0.05), in: Capsule())
         .shadow(color: Color.black.opacity(0.18), radius: 16, y: 8)
     }

@@ -6,30 +6,30 @@ struct TimelineEmptyStateView: View {
     let onSecondaryAction: (() -> Void)?
 
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: AstrenzaSpacing.point22) {
             symbol
 
-            VStack(spacing: 8) {
+            VStack(spacing: AstrenzaSpacing.point8) {
                 Text(state.title)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point28, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.astrenzaText)
 
                 Text(state.message)
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .font(.astrenza(.point16, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .frame(maxWidth: 310)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 Button(action: onPrimaryAction) {
                     Label(state.primaryActionTitle, systemImage: "arrow.right")
                         .labelStyle(.titleOnly)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point16, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.astrenzaBackground)
                         .frame(height: 42)
-                        .padding(.horizontal, 18)
+                        .padding(.horizontal, AstrenzaSpacing.point18)
                         .background(Color.astrenzaAccent, in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -38,10 +38,10 @@ struct TimelineEmptyStateView: View {
                    let onSecondaryAction {
                     Button(action: onSecondaryAction) {
                         Text(secondaryActionTitle)
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .font(.astrenza(.point16, weight: .semibold, design: .rounded))
                             .foregroundStyle(Color.astrenzaAccent)
                             .frame(height: 42)
-                            .padding(.horizontal, 18)
+                            .padding(.horizontal, AstrenzaSpacing.point18)
                             .background(Color.white.opacity(0.07), in: Capsule())
                     }
                     .buttonStyle(.plain)
@@ -49,7 +49,7 @@ struct TimelineEmptyStateView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 28)
+        .padding(.horizontal, AstrenzaSpacing.point28)
         .padding(.top, 150)
         .padding(.bottom, 120)
         .accessibilityElement(children: .combine)
@@ -72,7 +72,7 @@ struct TimelineEmptyStateView: View {
                 .frame(width: 92, height: 92)
 
             Image(systemName: state.systemName)
-                .font(.system(size: 38, weight: .semibold))
+                .font(.astrenza(.point38, weight: .semibold))
                 .foregroundStyle(Color.astrenzaAccent)
         }
         .overlay {

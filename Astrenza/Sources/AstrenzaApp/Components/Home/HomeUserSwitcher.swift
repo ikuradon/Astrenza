@@ -11,10 +11,10 @@ struct UserSwitchButton: View {
 
     var body: some View {
         AvatarView(style: account?.avatarStyle ?? Self.fallbackAvatar, size: 34)
-            .padding(4)
+            .padding(AstrenzaSpacing.point4)
             .scaleEffect(isExpanded ? 1.06 : 1)
             .astrenzaGlass(tint: Color.white.opacity(isExpanded ? 0.1 : 0.05), in: Circle())
-            .animation(.spring(duration: 0.28, bounce: 0.2), value: isExpanded)
+            .animation(.spring(duration: AstrenzaMotion.emphasized, bounce: 0.2), value: isExpanded)
             .accessibilityLabel("Switch user")
     }
 
@@ -53,7 +53,7 @@ struct UserSwitcherMenu: View {
 
             Divider()
                 .overlay(Color.astrenzaSeparator)
-                .padding(.vertical, 2)
+                .padding(.vertical, AstrenzaSpacing.point2)
 
             UserSwitcherActionRow(
                 title: "アカウント追加",
@@ -69,9 +69,9 @@ struct UserSwitcherMenu: View {
                 action: onSettingsTap
             )
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, AstrenzaSpacing.point7)
         .frame(width: 268)
-        .astrenzaGlass(tint: Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .astrenzaGlass(tint: Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point18, style: .continuous))
         .shadow(color: .black.opacity(0.38), radius: 18, y: 10)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("User switcher")
@@ -84,22 +84,22 @@ private struct UserSwitcherRow: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 10) {
+            HStack(spacing: AstrenzaSpacing.point10) {
                 AvatarView(style: account.avatarStyle, size: 28)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point2) {
                     Text(account.title)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.astrenza(.point15, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    HStack(spacing: 5) {
+                    HStack(spacing: AstrenzaSpacing.point5) {
                         Text(account.subtitle)
                             .foregroundStyle(.secondary)
                         Text(account.npub)
                             .foregroundStyle(Color.secondary.opacity(0.72))
                     }
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point11, weight: .semibold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                 }
@@ -108,11 +108,11 @@ private struct UserSwitcherRow: View {
 
                 if account.isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.astrenza(.point13, weight: .black))
                         .foregroundStyle(Color.astrenzaAccent)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, AstrenzaSpacing.point12)
             .frame(height: 54)
             .contentShape(Rectangle())
         }
@@ -128,18 +128,18 @@ private struct UserSwitcherActionRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: AstrenzaSpacing.point10) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.astrenza(.point16, weight: .bold))
                     .frame(width: 28, height: 28)
 
                 Text(title)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point15, weight: .bold, design: .rounded))
 
                 Spacer(minLength: 0)
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, AstrenzaSpacing.point12)
             .frame(height: 43)
             .contentShape(Rectangle())
         }
@@ -149,20 +149,20 @@ private struct UserSwitcherActionRow: View {
 
 private struct UserSwitcherPlaceholderRow: View {
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AstrenzaSpacing.point10) {
             AvatarView(style: AvatarStyle(primary: .black, secondary: .cyan, symbolName: "cat.fill"), size: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point2) {
                 Text("No account")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.astrenza(.point15, weight: .bold, design: .rounded))
                 Text("Login from Settings")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, AstrenzaSpacing.point12)
         .frame(height: 50)
     }
 }

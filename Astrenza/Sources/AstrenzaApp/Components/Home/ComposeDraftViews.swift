@@ -53,9 +53,9 @@ struct ComposeSettingsMenu: View {
             )
         }
         .frame(width: 278)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.38), radius: 22, y: 12)
@@ -69,19 +69,19 @@ struct ComposeSettingsMenu: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 Text(title)
-                    .font(.system(size: 17, weight: .medium, design: .rounded))
+                    .font(.astrenza(.point17, weight: .medium, design: .rounded))
                     .foregroundStyle(isEnabled ? Color.primary : Color.secondary.opacity(0.65))
 
                 Spacer(minLength: 0)
 
                 Image(systemName: systemName)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.astrenza(.point20, weight: .semibold))
                     .foregroundStyle(isEnabled ? Color.primary : Color.secondary.opacity(0.65))
                     .frame(width: 28)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, AstrenzaSpacing.point18)
             .frame(height: 50)
             .contentShape(Rectangle())
         }
@@ -102,23 +102,23 @@ struct ComposeDraftsView: View {
         VStack(spacing: 0) {
             ZStack {
                 Text("Drafts")
-                    .font(.system(size: 20, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point20, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
 
                 HStack {
                     Button("Close", action: dismiss.callAsFunction)
-                        .font(.system(size: 18, weight: .heavy, design: .rounded))
+                        .font(.astrenza(.point18, weight: .heavy, design: .rounded))
                         .foregroundStyle(Color.astrenzaAccent)
                     Spacer()
                     Button(editMode.isEditing ? "Done" : "Edit") {
-                        withAnimation(.snappy(duration: 0.18)) {
+                        withAnimation(.snappy(duration: AstrenzaMotion.fast)) {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
-                        .font(.system(size: 18, weight: .medium, design: .rounded))
+                        .font(.astrenza(.point18, weight: .medium, design: .rounded))
                         .foregroundStyle(Color.astrenzaAccent)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, AstrenzaSpacing.point20)
             }
             .frame(height: 72)
 
@@ -131,19 +131,19 @@ struct ComposeDraftsView: View {
                     } label: {
                         HStack {
                             Text(draft.text.isEmpty ? "Media draft" : draft.text)
-                                .font(.system(size: 17, weight: .medium, design: .rounded))
+                                .font(.astrenza(.point17, weight: .medium, design: .rounded))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                             Spacer()
                             if draft.mediaCount > 0 {
                                 Label("\(draft.mediaCount)", systemImage: "photo")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .font(.astrenza(.point12, weight: .bold, design: .rounded))
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .padding(.horizontal, 18)
+                        .padding(.horizontal, AstrenzaSpacing.point18)
                         .frame(height: 58)
-                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point10, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
@@ -155,7 +155,7 @@ struct ComposeDraftsView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .environment(\.editMode, $editMode)
-            .padding(.top, 22)
+            .padding(.top, AstrenzaSpacing.point22)
 
             Spacer(minLength: 0)
         }

@@ -83,12 +83,12 @@ struct NostrListSettingsView: View {
                 } label: {
                     HStack {
                         Text("Potential Spam")
-                            .font(.system(size: 17, weight: .black, design: .rounded))
+                            .font(.astrenza(.point17, weight: .black, design: .rounded))
                         Spacer()
                         Text(potentialSpamRule?.isEnabled == true ? "Enabled" : "Disabled")
                             .foregroundStyle(Color.astrenzaAccent)
                     }
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, AstrenzaSpacing.point18)
                     .frame(minHeight: 58)
                     .contentShape(Rectangle())
                 }
@@ -144,11 +144,11 @@ struct NostrListSettingsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(isEditingFilters ? "Done" : "Edit") {
-                    withAnimation(.snappy(duration: 0.18)) {
+                    withAnimation(.snappy(duration: AstrenzaMotion.fast)) {
                         isEditingFilters.toggle()
                     }
                 }
-                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .font(.astrenza(.point17, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.astrenzaAccent)
                 .disabled(accountID == nil || eventStore == nil)
             }

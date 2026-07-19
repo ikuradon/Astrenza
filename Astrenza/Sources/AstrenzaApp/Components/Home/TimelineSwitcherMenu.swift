@@ -11,13 +11,13 @@ struct TimelineSwitcherMenu: View {
                 } label: {
                     HStack {
                         Text(kind.title)
-                            .font(.system(size: 19, weight: .medium, design: .rounded))
+                            .font(.astrenza(.point19, weight: .medium, design: .rounded))
                         Spacer()
                         Image(systemName: kind.systemName)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.astrenza(.point22, weight: .semibold))
                     }
                     .foregroundStyle(kind == selected ? .primary : .secondary)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, AstrenzaSpacing.point20)
                     .frame(height: 55)
                     .contentShape(Rectangle())
                 }
@@ -29,9 +29,9 @@ struct TimelineSwitcherMenu: View {
             }
         }
         .frame(width: 286)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point16, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.45), radius: 22, y: 12)

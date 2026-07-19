@@ -22,10 +22,10 @@ struct TimelinePostRow: View {
     }
 
     private var rowContent: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point5) {
             if let repostedBy = post.repostedBy {
                 RepostAttributionView(attribution: repostedBy)
-                    .padding(.leading, AstrenzaTimelineMetrics.avatarSize - 7)
+                    .padding(.leading, AstrenzaTimelineMetrics.avatarSize - AstrenzaSpacing.point7)
                     .padding(.trailing, AstrenzaTimelineMetrics.rowHorizontalPadding)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: handleRowTap)
@@ -72,12 +72,12 @@ struct TimelinePostRow: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: AstrenzaSpacing.point6) {
             TimelineAuthorHeader(author: post.author, isLocked: post.isLocked)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: AstrenzaSpacing.point8)
 
             if post.replyContext != nil {
                 TimelineReplyMarker()
@@ -137,7 +137,7 @@ struct TimelinePostRow: View {
                 onMenuSelection: handleActionMenuSelection
             )
         }
-        .padding(.top, 2)
+        .padding(.top, AstrenzaSpacing.point2)
     }
 }
 

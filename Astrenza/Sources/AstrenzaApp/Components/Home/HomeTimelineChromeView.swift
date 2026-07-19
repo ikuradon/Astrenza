@@ -106,7 +106,7 @@ struct HomeTimelineChromeView: View {
             alignment: .topTrailing
         )
         .padding(.top, 88)
-        .padding(.trailing, 22)
+        .padding(.trailing, AstrenzaSpacing.point22)
     }
 
     private var filterIndicator: some View {
@@ -122,7 +122,7 @@ struct HomeTimelineChromeView: View {
             alignment: .topLeading
         )
         .padding(.top, 72)
-        .padding(.leading, 16)
+        .padding(.leading, AstrenzaSpacing.point16)
         .transition(
             .scale(scale: 0.92, anchor: .topLeading)
                 .combined(with: .opacity)

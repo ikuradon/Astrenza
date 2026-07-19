@@ -113,17 +113,17 @@ struct ComposeSheetView: View {
                 Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture {
-                        withAnimation(.spring(duration: 0.24, bounce: 0.14)) {
+                        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.14)) {
                             isUserSwitcherPresented = false
                         }
                     }
 
                 UserSwitcherMenu {
-                    withAnimation(.spring(duration: 0.24, bounce: 0.14)) {
+                    withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.14)) {
                         isUserSwitcherPresented = false
                     }
                 }
-                .padding(.leading, 18)
+                .padding(.leading, AstrenzaSpacing.point18)
                 .padding(.top, 154)
                 .transition(.scale(scale: 0.72, anchor: .topLeading).combined(with: .opacity))
                 .zIndex(20)
@@ -133,7 +133,7 @@ struct ComposeSheetView: View {
                 Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture {
-                        withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
+                        withAnimation(.spring(duration: AstrenzaMotion.standard, bounce: 0.12)) {
                             activeMediaMenuItem = nil
                         }
                     }
@@ -161,7 +161,7 @@ struct ComposeSheetView: View {
                 Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture {
-                        withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
+                        withAnimation(.spring(duration: AstrenzaMotion.standard, bounce: 0.12)) {
                             isComposerSettingsPresented = false
                         }
                     }
@@ -344,7 +344,7 @@ struct ComposeSheetView: View {
             insertContinuousCustomEmoji(candidate.shortcode)
         } else {
             insertStandaloneToken(candidate.shortcode)
-            withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
+            withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
                 isCustomEmojiPickerPresented = false
             }
         }
@@ -366,7 +366,7 @@ struct ComposeSheetView: View {
     private func presentCustomEmojiPicker(isContinuous: Bool) {
         isEditorFocused = false
         isContinuousCustomEmojiInput = isContinuous
-        withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
+        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
             isCustomEmojiPickerPresented = true
         }
     }
@@ -378,7 +378,7 @@ struct ComposeSheetView: View {
     }
 
     private func toggleComposerSettings() {
-        withAnimation(.spring(duration: 0.22, bounce: 0.12)) {
+        withAnimation(.spring(duration: AstrenzaMotion.standard, bounce: 0.12)) {
             isComposerSettingsPresented.toggle()
         }
     }
@@ -388,7 +388,7 @@ struct ComposeSheetView: View {
             text += " "
         }
         isContinuousCustomEmojiInput = false
-        withAnimation(.spring(duration: 0.24, bounce: 0.12)) {
+        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
             isCustomEmojiPickerPresented = false
         }
         isEditorFocused = true

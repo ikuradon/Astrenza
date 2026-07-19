@@ -8,7 +8,7 @@ struct ProfileBannerView: View {
             LinearGradient(colors: style.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
 
             Image(systemName: style.symbolName)
-                .font(.system(size: 118, weight: .black))
+                .font(.astrenza(.point118, weight: .black))
                 .foregroundStyle(.white.opacity(0.18))
                 .offset(x: 96, y: 34)
 
@@ -107,12 +107,12 @@ struct UserProfileMetricCell: View {
     let value: String
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: AstrenzaSpacing.point8) {
             Text(title)
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point15, weight: .heavy, design: .rounded))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 32, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point32, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -127,30 +127,30 @@ struct UserProfileLinkRow: View {
     let value: String?
 
     var body: some View {
-        HStack(spacing: 15) {
+        HStack(spacing: AstrenzaSpacing.point15) {
             Image(systemName: systemName)
-                .font(.system(size: 25, weight: .semibold))
+                .font(.astrenza(.point25, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 34)
 
             Text(title)
-                .font(.system(size: 19, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point19, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: AstrenzaSpacing.point8)
 
             if let value {
                 Text(value)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point18, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 18, weight: .heavy))
+                .font(.astrenza(.point18, weight: .heavy))
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, AstrenzaSpacing.point16)
         .frame(height: 66)
         .contentShape(Rectangle())
     }
@@ -160,29 +160,29 @@ struct UserFeaturedHashtagRow: View {
     let hashtag: UserFeaturedHashtag
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: AstrenzaSpacing.point10) {
+            VStack(alignment: .leading, spacing: AstrenzaSpacing.point2) {
                 Text(hashtag.tag)
-                    .font(.system(size: 20, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point20, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text(hashtag.lastUsed)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: AstrenzaSpacing.point8)
 
             Text("\(hashtag.count)")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .font(.astrenza(.point18, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 18, weight: .heavy))
+                .font(.astrenza(.point18, weight: .heavy))
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, AstrenzaSpacing.point18)
         .frame(height: 66)
         .contentShape(Rectangle())
     }

@@ -29,7 +29,7 @@ struct PostDetailView: View {
                     postHeader
                         .id(DetailScrollAnchor.currentPost)
 
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: AstrenzaSpacing.point18) {
                         if let contentWarning = post.contentWarning {
                             SensitiveDetailBanner(contentWarning: contentWarning)
                         }
@@ -67,9 +67,9 @@ struct PostDetailView: View {
 
                         detailActionRow
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 14)
-                    .padding(.bottom, 20)
+                    .padding(.horizontal, AstrenzaSpacing.point20)
+                    .padding(.top, AstrenzaSpacing.point14)
+                    .padding(.bottom, AstrenzaSpacing.point20)
 
                     detailStats
                     detailMetadata
@@ -173,15 +173,15 @@ struct PostDetailView: View {
         HStack(alignment: .top, spacing: AstrenzaTimelineMetrics.rowAvatarSpacing) {
             AvatarView(style: post.avatar, size: AstrenzaTimelineMetrics.avatarSize)
 
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: AstrenzaSpacing.point6) {
                 TimelineAuthorHeader(author: post.author, isLocked: post.isLocked)
 
                 if post.contentWarning != nil {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12, weight: .black))
+                        .font(.astrenza(.point12, weight: .black))
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Sensitive post")
-                        .padding(.top, 1)
+                        .padding(.top, AstrenzaSpacing.point1)
                         .fixedSize()
                 }
             }
@@ -189,14 +189,14 @@ struct PostDetailView: View {
 
             if showsReplyParentIndicator {
                 ReplyParentIndicator()
-                    .padding(.top, 2)
+                    .padding(.top, AstrenzaSpacing.point2)
                     .transition(.scale(scale: 0.82, anchor: .topTrailing).combined(with: .opacity))
             }
         }
-        .animation(.spring(duration: 0.24, bounce: 0.12), value: showsReplyParentIndicator)
-        .padding(.horizontal, 20)
-        .padding(.top, 26)
-        .padding(.bottom, 16)
+        .animation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12), value: showsReplyParentIndicator)
+        .padding(.horizontal, AstrenzaSpacing.point20)
+        .padding(.top, AstrenzaSpacing.point26)
+        .padding(.bottom, AstrenzaSpacing.point16)
     }
 
     private var detailActionRow: some View {
@@ -207,7 +207,7 @@ struct PostDetailView: View {
             detailActionButton("square.and.arrow.up")
             detailActionButton("gearshape")
         }
-        .padding(.top, 4)
+        .padding(.top, AstrenzaSpacing.point4)
     }
 
     private func detailActionButton(_ systemName: String) -> some View {
@@ -284,34 +284,34 @@ private struct SensitiveDetailBanner: View {
     let contentWarning: TimelineContentWarning
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point7) {
+            HStack(spacing: AstrenzaSpacing.point8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 15, weight: .black))
+                    .font(.astrenza(.point15, weight: .black))
                     .foregroundStyle(.orange)
 
                 Text("Sensitive Content")
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point15, weight: .heavy, design: .rounded))
                     .foregroundStyle(.primary)
 
                 Spacer(minLength: 0)
 
                 Text("NIP-36")
-                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .font(.astrenza(.point11, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
             Text(contentWarning.displayReason)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, AstrenzaSpacing.point14)
+        .padding(.vertical, AstrenzaSpacing.point12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.13), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.orange.opacity(0.13), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                 .stroke(Color.orange.opacity(0.28), lineWidth: 1)
         }
     }
@@ -321,37 +321,37 @@ private struct DetailLinkSummaryView: View {
     let summary: TimelineLinkSummary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point7) {
+            HStack(spacing: AstrenzaSpacing.point7) {
                 Image(systemName: "link")
-                    .font(.system(size: 13, weight: .black))
+                    .font(.astrenza(.point13, weight: .black))
 
                 Text(summary.compactText)
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .font(.astrenza(.point15, weight: .heavy, design: .rounded))
 
                 if summary.unresolvedCount > 0 {
                     Text("\(summary.unresolvedCount) unresolved")
-                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .font(.astrenza(.point11, weight: .black, design: .rounded))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, AstrenzaSpacing.point7)
+                        .padding(.vertical, AstrenzaSpacing.point3)
                         .background(Color.white.opacity(0.07), in: Capsule())
                 }
             }
             .foregroundStyle(Color.astrenzaAccent)
 
             Text(summary.detailText)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .truncationMode(.middle)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, AstrenzaSpacing.point12)
+        .padding(.vertical, AstrenzaSpacing.point10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         }
     }
@@ -363,12 +363,12 @@ private struct DetailMetricCell: View {
     var showsDivider = false
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: AstrenzaSpacing.point5) {
             Text("\(value)")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point18, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
             Text(title)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point18, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -386,11 +386,11 @@ private struct DetailMetadataCell: View {
     var showsDivider = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AstrenzaSpacing.point8) {
             Image(systemName: systemName)
-                .font(.system(size: 20, weight: .semibold))
+                .font(.astrenza(.point20, weight: .semibold))
             Text(text)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .font(.astrenza(.point17, weight: .semibold, design: .rounded))
                 .lineLimit(1)
         }
         .foregroundStyle(.secondary)
@@ -407,9 +407,9 @@ private struct ReplyParentIndicator: View {
     var body: some View {
         HStack(spacing: -3) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 17, weight: .black))
+                .font(.astrenza(.point17, weight: .black))
             Image(systemName: "arrow.up")
-                .font(.system(size: 13, weight: .black))
+                .font(.astrenza(.point13, weight: .black))
                 .offset(y: -4)
         }
         .foregroundStyle(.secondary)

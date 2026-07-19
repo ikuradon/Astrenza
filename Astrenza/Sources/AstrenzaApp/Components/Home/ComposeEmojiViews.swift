@@ -74,40 +74,40 @@ struct ComposeCustomEmojiPicker: View {
     let candidates: [ComposeCustomEmojiCandidate]
     let onSelect: (ComposeCustomEmojiCandidate) -> Void
     let onReturn: () -> Void
-    private let columns = Array(repeating: GridItem(.flexible(minimum: 30, maximum: 44), spacing: 16), count: 8)
+    private let columns = Array(repeating: GridItem(.flexible(minimum: 30, maximum: 44), spacing: AstrenzaSpacing.point16), count: 8)
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: AstrenzaSpacing.point18) {
                     emojiSection("CUSTOM", values: candidates)
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 22)
-                .padding(.bottom, isContinuousInput ? 72 : 24)
+                .padding(.horizontal, AstrenzaSpacing.point18)
+                .padding(.top, AstrenzaSpacing.point22)
+                .padding(.bottom, isContinuousInput ? 72 : AstrenzaSpacing.point24)
             }
 
             if isContinuousInput {
                 Button(action: onReturn) {
                     Image(systemName: "return")
-                        .font(.system(size: 20, weight: .heavy))
+                        .font(.astrenza(.point20, weight: .heavy))
                         .foregroundStyle(.white)
                         .frame(width: 58, height: 48)
-                        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous)
                                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
                         }
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 12)
-                .padding(.bottom, 12)
+                .padding(.trailing, AstrenzaSpacing.point12)
+                .padding(.bottom, AstrenzaSpacing.point12)
                 .accessibilityLabel("Finish emoji input")
                 .accessibilityIdentifier("compose.emoji.finish")
             }
         }
         .frame(height: 330)
-        .background(Color(white: 0.18))
+        .background(AstrenzaPalette.emojiPickerBackground)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Color.black.opacity(0.32))
@@ -117,13 +117,13 @@ struct ComposeCustomEmojiPicker: View {
     }
 
     private func emojiSection(_ title: String, values: [ComposeCustomEmojiCandidate]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: AstrenzaSpacing.point16) {
             Text(title)
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                 .foregroundStyle(.secondary)
                 .tracking(1.2)
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: AstrenzaSpacing.point18) {
                 ForEach(values) { candidate in
                     Button {
                         onSelect(candidate)
@@ -156,7 +156,7 @@ struct ComposeCustomEmojiCandidateCell: View {
     let candidate: ComposeCustomEmojiCandidate
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: AstrenzaSpacing.point7) {
             ZStack {
                 Circle()
                     .fill(candidate.tint.opacity(0.18))
@@ -166,14 +166,14 @@ struct ComposeCustomEmojiCandidateCell: View {
             .frame(width: 34, height: 34)
 
             Text(candidate.shortcode)
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point14, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .frame(width: 122, alignment: .leading)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, AstrenzaSpacing.point10)
         .frame(height: 50)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 }

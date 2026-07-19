@@ -18,7 +18,7 @@ struct ComposeSelectedMediaStrip: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(spacing: AstrenzaSpacing.point10) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         Button {
                             onMenu(item)
@@ -30,8 +30,8 @@ struct ComposeSelectedMediaStrip: View {
                         .accessibilityIdentifier(index == 0 ? "compose.media.thumbnail" : "compose.media.thumbnail.\(index)")
                     }
                 }
-                .padding(.vertical, 2)
-                .padding(.trailing, items.count > 1 ? 28 : 0)
+                .padding(.vertical, AstrenzaSpacing.point2)
+                .padding(.trailing, items.count > 1 ? AstrenzaSpacing.point28 : 0)
             }
             .mask {
                 LinearGradient(
@@ -47,18 +47,18 @@ struct ComposeSelectedMediaStrip: View {
             }
 
             if items.count > 1 {
-                HStack(spacing: 3) {
+                HStack(spacing: AstrenzaSpacing.point3) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .black))
+                        .font(.astrenza(.point10, weight: .black))
                     Text("\(items.count)")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .font(.astrenza(.point11, weight: .heavy, design: .rounded))
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, AstrenzaSpacing.point8)
                 .frame(height: 24)
                 .background(Color.black.opacity(0.58), in: Capsule())
-                .padding(.trailing, 4)
-                .padding(.bottom, 8)
+                .padding(.trailing, AstrenzaSpacing.point4)
+                .padding(.bottom, AstrenzaSpacing.point8)
                 .accessibilityLabel("\(items.count) selected media")
                 .accessibilityIdentifier("compose.media.count")
             }
@@ -75,18 +75,18 @@ struct ComposeSelectedMediaThumbnail: View {
             .resizable()
             .scaledToFill()
             .frame(width: 96, height: 96)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
             .overlay(alignment: .bottomTrailing) {
                 if item.altText != nil {
                     Image(systemName: "text.bubble")
-                        .font(.system(size: 12, weight: .black))
+                        .font(.astrenza(.point12, weight: .black))
                         .foregroundStyle(.white)
-                        .padding(6)
+                        .padding(AstrenzaSpacing.point6)
                         .background(Color.black.opacity(0.55), in: Circle())
-                        .padding(5)
+                        .padding(AstrenzaSpacing.point5)
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point8, style: .continuous))
     }
 }
 
@@ -106,9 +106,9 @@ struct ComposeMediaActionMenu: View {
             mediaMenuButton("Remove", systemName: "minus.circle", tint: .red, action: onRemove)
         }
         .frame(width: 268)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AstrenzaRadius.point14, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.35), radius: 20, y: 12)
@@ -122,17 +122,17 @@ struct ComposeMediaActionMenu: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: AstrenzaSpacing.point12) {
                 Text(title)
-                    .font(.system(size: 17, weight: .medium, design: .rounded))
+                    .font(.astrenza(.point17, weight: .medium, design: .rounded))
                     .foregroundStyle(tint)
                 Spacer(minLength: 0)
                 Image(systemName: systemName)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.astrenza(.point20, weight: .semibold))
                     .foregroundStyle(tint)
                     .frame(width: 28)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, AstrenzaSpacing.point18)
             .frame(height: 50)
             .contentShape(Rectangle())
         }

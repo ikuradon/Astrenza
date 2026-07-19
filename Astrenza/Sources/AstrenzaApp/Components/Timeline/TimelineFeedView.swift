@@ -250,7 +250,7 @@ private struct TimelinePullRefreshIndicator: View {
 
     var body: some View {
         let visibleProgress = isRefreshing ? 1 : progress
-        HStack(spacing: 8) {
+        HStack(spacing: AstrenzaSpacing.point8) {
             ProgressView(value: isRefreshing ? nil : visibleProgress)
                 .progressViewStyle(.circular)
                 .controlSize(.small)
@@ -258,10 +258,10 @@ private struct TimelinePullRefreshIndicator: View {
                 .frame(width: 18, height: 18)
 
             Text(isRefreshing ? "Updating" : "Pull to update")
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .font(.astrenza(.point12, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, AstrenzaSpacing.point12)
         .frame(height: 34)
         .astrenzaGlass(
             tint: Color.white.opacity(0.06),
@@ -271,9 +271,9 @@ private struct TimelinePullRefreshIndicator: View {
         .opacity(isRefreshing || progress > 0.08 ? 1 : 0)
         .allowsHitTesting(false)
         .animation(
-            .spring(duration: 0.22, bounce: 0.12),
+            .spring(duration: AstrenzaMotion.standard, bounce: 0.12),
             value: isRefreshing
         )
-        .animation(.snappy(duration: 0.12), value: progress)
+        .animation(.snappy(duration: AstrenzaMotion.instant), value: progress)
     }
 }

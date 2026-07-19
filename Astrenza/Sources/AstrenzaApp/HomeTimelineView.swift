@@ -146,8 +146,8 @@ struct HomeTimelineView: View {
             if isPostDetailPresented {
                 HomeTimelineReplyButton(action: presentReplyComposer)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 24)
+                    .padding(.trailing, AstrenzaSpacing.point18)
+                    .padding(.bottom, AstrenzaSpacing.point24)
                     .transition(.scale(scale: 0.78, anchor: .bottomTrailing).combined(with: .opacity))
                     .zIndex(40)
             }
@@ -389,7 +389,7 @@ private extension HomeTimelineView {
 
     func dismissFloatingMenus() {
         guard isUserSwitcherPresented || isTimelineMenuPresented else { return }
-        withAnimation(.spring(duration: 0.28, bounce: 0.14)) {
+        withAnimation(.spring(duration: AstrenzaMotion.emphasized, bounce: 0.14)) {
             isUserSwitcherPresented = false
             isTimelineMenuPresented = false
         }
