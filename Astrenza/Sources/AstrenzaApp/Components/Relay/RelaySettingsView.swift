@@ -12,35 +12,24 @@ struct RelaySettingsView: View {
     @State private var mediaResolverSettings: NostrMediaResolverServiceSettings
     private let syncPolicyStore: NostrSyncPolicySettingsStore
     private let mediaResolverSettingsStore: NostrMediaResolverSettingsStore
-    private let liveNIP65Relays: [RelayDescriptor]?
+    private let liveProjectionLoader: RelaySettingsLiveProjectionLoader
+    @State private var liveNIP65Relays: [RelayDescriptor]?
 
     init(
         accountID: String? = nil,
         eventStore: NostrEventStore? = nil,
         syncPolicyStore: NostrSyncPolicySettingsStore = .shared,
         mediaResolverSettingsStore: NostrMediaResolverSettingsStore = .shared,
+        liveProjectionLoader: RelaySettingsLiveProjectionLoader = .live,
         onSyncPolicyChange: @escaping (NostrSyncPolicy) -> Void = { _ in }
     ) {
         self.accountID = accountID
         self.eventStore = eventStore
         self.syncPolicyStore = syncPolicyStore
         self.mediaResolverSettingsStore = mediaResolverSettingsStore
+        self.liveProjectionLoader = liveProjectionLoader
         self.onSyncPolicyChange = onSyncPolicyChange
-        if let accountID {
-            let relayListEvent = try? eventStore?.latestReplaceableEvent(
-                pubkey: accountID,
-                kind: 10_002
-            )
-            let preferences = (try? eventStore?.relayPreferences(
-                accountID: accountID
-            )) ?? []
-            liveNIP65Relays = RelaySettingsLiveProjection.nip65Relays(
-                event: relayListEvent ?? nil,
-                preferences: preferences
-            )
-        } else {
-            liveNIP65Relays = nil
-        }
+        _liveNIP65Relays = State(initialValue: nil)
         _isPublishingNIP65 = State(initialValue: accountID == nil)
         _syncPolicy = State(initialValue: syncPolicyStore.policy(accountID: accountID))
         _mediaResolverSettings = State(initialValue: mediaResolverSettingsStore.settings())
@@ -82,6 +71,9 @@ struct RelaySettingsView: View {
         .onChange(of: mediaResolverSettings) { _, settings in
             mediaResolverSettingsStore.save(settings)
         }
+        .task(id: liveProjectionLoadIdentity) {
+            await loadLiveProjection()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Publish") {}
@@ -94,6 +86,28 @@ struct RelaySettingsView: View {
         }
     }
 
+    private var liveProjectionLoadIdentity: String {
+        let storeIdentity = eventStore.map { ObjectIdentifier($0).hashValue } ?? 0
+        return "\(accountID ?? "preview"):\(storeIdentity)"
+    }
+
+    private func loadLiveProjection() async {
+        guard let accountID, let eventStore else {
+            liveNIP65Relays = nil
+            return
+        }
+
+        let source = await liveProjectionLoader.load(
+            accountID: accountID,
+            eventStore: eventStore
+        )
+        guard !Task.isCancelled else { return }
+        liveNIP65Relays = RelaySettingsLiveProjection.nip65Relays(
+            event: source.relayListEvent,
+            preferences: source.preferences
+        )
+    }
+
     @ViewBuilder
     private var sectionContent: some View {
         switch selectedSection {
@@ -101,9 +115,11 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "NIP-65 Home Relays",
                 subtitle: "Read/write relays published as kind:10002.",
-                relays: liveNIP65Relays ?? RelayMockStore.relays.filter {
-                    $0.source == .nip65 || $0.source == .manual
-                },
+                relays: accountID == nil
+                    ? RelayMockStore.relays.filter {
+                        $0.source == .nip65 || $0.source == .manual
+                    }
+                    : liveNIP65Relays ?? [],
                 showsUsageControls: true,
                 accountID: accountID,
                 eventStore: eventStore
@@ -112,7 +128,7 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "DM Inbox Relays",
                 subtitle: "Used for gift wraps and private message discovery.",
-                relays: liveNIP65Relays == nil ? RelayMockStore.relays.filter {
+                relays: accountID == nil ? RelayMockStore.relays.filter {
                     $0.usage.contains(.dm) || $0.source == .nip17
                 } : [],
                 showsUsageControls: false,
@@ -123,7 +139,7 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "Search / Discovery",
                 subtitle: "Indexers, search relays, and recommended bootstrap relays.",
-                relays: liveNIP65Relays == nil ?
+                relays: accountID == nil ?
                     RelayMockStore.relays.filter { $0.usage.contains(.search) } +
                     RelayMockStore.recommended : [],
                 showsUsageControls: false,
@@ -134,7 +150,7 @@ struct RelaySettingsView: View {
             RelaySettingsListCard(
                 title: "Blocked / Trusted",
                 subtitle: "Local relay policy and trust decisions.",
-                relays: liveNIP65Relays == nil ? RelayMockStore.relays.filter {
+                relays: accountID == nil ? RelayMockStore.relays.filter {
                     $0.source == .blocked
                 } : [],
                 showsUsageControls: false,
@@ -142,6 +158,46 @@ struct RelaySettingsView: View {
                 eventStore: eventStore
             )
         }
+    }
+}
+
+struct RelaySettingsLiveProjectionSource: Sendable {
+    let relayListEvent: NostrEvent?
+    let preferences: [NostrRelayPreferenceRecord]
+}
+
+struct RelaySettingsLiveProjectionLoader: Sendable {
+    private let loadSource: @Sendable (
+        _ accountID: String,
+        _ eventStore: NostrEventStore
+    ) async -> RelaySettingsLiveProjectionSource
+
+    init(
+        load: @escaping @Sendable (
+            _ accountID: String,
+            _ eventStore: NostrEventStore
+        ) async -> RelaySettingsLiveProjectionSource
+    ) {
+        loadSource = load
+    }
+
+    static let live = RelaySettingsLiveProjectionLoader { accountID, eventStore in
+        await Task.detached(priority: .userInitiated) {
+            RelaySettingsLiveProjectionSource(
+                relayListEvent: try? eventStore.latestReplaceableEvent(
+                    pubkey: accountID,
+                    kind: 10_002
+                ),
+                preferences: (try? eventStore.relayPreferences(accountID: accountID)) ?? []
+            )
+        }.value
+    }
+
+    func load(
+        accountID: String,
+        eventStore: NostrEventStore
+    ) async -> RelaySettingsLiveProjectionSource {
+        await loadSource(accountID, eventStore)
     }
 }
 

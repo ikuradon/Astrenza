@@ -1,4 +1,5 @@
 #if DEBUG
+import AstrenzaCore
 import Combine
 import SwiftUI
 
@@ -11,6 +12,8 @@ struct AstrenzaDebugLaunchView: View {
             AstrenzaDebugTimelineSnapshotView(snapshotCase: snapshotCase)
         case .timelinePerformance(let postCount):
             AstrenzaDebugTimelinePerformanceView(postCount: postCount)
+        case .settingsNavigation:
+            AstrenzaDebugSettingsNavigationView()
         }
     }
 }
@@ -189,6 +192,48 @@ private struct AstrenzaDebugTimelinePerformanceView: View {
                     )
             }
         }
+    }
+}
+
+private struct AstrenzaDebugSettingsNavigationView: View {
+    private let accountID = String(repeating: "a", count: 64)
+    private let eventStore: NostrEventStore?
+    @State private var swipeSettings = TimelineSwipeSettings()
+
+    init() {
+        eventStore = try? NostrEventStore.inMemory()
+    }
+
+    var body: some View {
+        SettingsView(
+            onClose: {},
+            swipeSettings: $swipeSettings,
+            accountID: accountID,
+            eventStore: eventStore,
+            accountSummaries: [accountSummary]
+        )
+        .preferredColorScheme(.dark)
+    }
+
+    private var accountSummary: NostrAccountSummary {
+        NostrAccountSummary(
+            id: accountID,
+            account: NostrAccount(
+                pubkey: accountID,
+                displayIdentifier: "debug@astrenza.local",
+                readOnly: true
+            ),
+            title: "Debug Account",
+            subtitle: "debug@astrenza.local",
+            npub: "npub1debug",
+            avatarStyle: AvatarStyle(
+                primary: .black,
+                secondary: .cyan,
+                symbolName: "person.crop.circle.fill"
+            ),
+            isSelected: true,
+            isReadOnly: true
+        )
     }
 }
 

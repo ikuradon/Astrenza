@@ -603,6 +603,7 @@ private struct AccountSettingsView: View {
                 SettingsNavigationRow(title: "Profile", icon: "person.crop.circle.fill", tint: .cyan) {
                     EmptySettingsDestination(title: "Profile")
                 }
+                .accessibilityIdentifier("settings.account.profile")
                 SettingsValueNavigationRow(title: "Keys / Signer", value: summary.signerLabel, icon: "key.fill", tint: .purple) {
                     EmptySettingsDestination(title: "Keys / Signer")
                 }
@@ -836,6 +837,7 @@ private struct SettingsAccountRow: View {
         }
         .buttonStyle(.plain)
         .settingsRowTextStyle()
+        .accessibilityIdentifier("settings.account.\(summary.id)")
     }
 }
 

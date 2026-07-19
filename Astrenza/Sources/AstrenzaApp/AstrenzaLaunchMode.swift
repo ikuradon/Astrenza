@@ -28,6 +28,7 @@ struct AstrenzaLaunchMode {
 enum AstrenzaDebugLaunchRoute: Equatable {
     case timelineSnapshot(AstrenzaDebugTimelineSnapshotCase)
     case timelinePerformance(postCount: Int)
+    case settingsNavigation
 }
 
 enum AstrenzaDebugTimelineSnapshotCase: String, CaseIterable {
@@ -59,6 +60,9 @@ extension AstrenzaLaunchMode {
                 ?? environment["ASTRENZA_PERFORMANCE_POST_COUNT"]
             let postCount = min(max(Int(rawCount ?? "") ?? 10_000, 1), 100_000)
             return .timelinePerformance(postCount: postCount)
+
+        case "settings-navigation":
+            return .settingsNavigation
 
         default:
             return nil
