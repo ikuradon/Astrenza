@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 struct TimelineFeedCellSizingIdentity: Hashable {
@@ -18,20 +19,68 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
 
     private var sizingIdentity: TimelineFeedCellSizingIdentity?
     private var measurement: Measurement?
+    private let hostingController = UIHostingController(
+        rootView: AnyView(EmptyView())
+    )
+
+    var hostedContentFrame: CGRect {
+        hostingController.view.frame
+    }
+
+    var hostedSafeAreaIsDisabled: Bool {
+        hostingController.safeAreaRegions.isEmpty
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        contentView.clipsToBounds = true
+        hostingController.safeAreaRegions = []
+        hostingController.view.backgroundColor = .clear
+        hostingController.view.clipsToBounds = true
+        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(hostingController.view)
+        NSLayoutConstraint.activate([
+            hostingController.view.topAnchor.constraint(
+                equalTo: contentView.topAnchor
+            ),
+            hostingController.view.leadingAnchor.constraint(
+                equalTo: contentView.leadingAnchor
+            ),
+            hostingController.view.trailingAnchor.constraint(
+                equalTo: contentView.trailingAnchor
+            ),
+            hostingController.view.bottomAnchor.constraint(
+                equalTo: contentView.bottomAnchor
+            ),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     func configure(
-        contentConfiguration: UIContentConfiguration,
+        rootView: AnyView,
+        parentViewController: UIViewController?,
         sizingIdentity: TimelineFeedCellSizingIdentity
     ) {
         if self.sizingIdentity != sizingIdentity {
             measurement = nil
         }
+        attachHostingControllerIfNeeded(to: parentViewController)
         self.sizingIdentity = sizingIdentity
-        self.contentConfiguration = contentConfiguration
+        hostingController.rootView = rootView
+        clipsToBounds = true
+        contentView.clipsToBounds = true
+        hostingController.view.clipsToBounds = true
+        setNeedsLayout()
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        hostingController.rootView = AnyView(EmptyView())
         sizingIdentity = nil
         measurement = nil
     }
@@ -50,24 +99,11 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
             return measurement.height
         }
 
-        bounds.size = CGSize(width: width, height: 180)
-        contentView.bounds.size = bounds.size
-        setNeedsLayout()
-        layoutIfNeeded()
-        let proposedAttributes = UICollectionViewLayoutAttributes(
-            forCellWith: IndexPath(item: 0, section: 0)
-        )
-        proposedAttributes.size = CGSize(width: width, height: 180)
-        _ = super.preferredLayoutAttributesFitting(
-            proposedAttributes
-        )
-        let fittedSize = contentView.systemLayoutSizeFitting(
-            CGSize(
+        let fittedSize = hostingController.sizeThatFits(
+            in: CGSize(
                 width: width,
-                height: UIView.layoutFittingCompressedSize.height
-            ),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
+                height: CGFloat.greatestFiniteMagnitude
+            )
         )
         let displayScale = max(1, traitCollection.displayScale)
         let height = max(
@@ -80,5 +116,20 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
             height: height
         )
         return height
+    }
+
+    private func attachHostingControllerIfNeeded(
+        to parentViewController: UIViewController?
+    ) {
+        guard let parentViewController,
+              hostingController.parent !== parentViewController
+        else { return }
+
+        if hostingController.parent != nil {
+            hostingController.willMove(toParent: nil)
+            hostingController.removeFromParent()
+        }
+        parentViewController.addChild(hostingController)
+        hostingController.didMove(toParent: parentViewController)
     }
 }

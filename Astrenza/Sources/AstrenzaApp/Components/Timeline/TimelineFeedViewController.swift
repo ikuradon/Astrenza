@@ -215,13 +215,14 @@ final class TimelineFeedViewController: UIViewController {
                 for: entry,
                 configuration: configuration
             )
-            let hostedConfiguration = hostedContentConfiguration(
+            let hostedView = hostedContentView(
                 for: entry,
                 configuration: configuration,
                 sizingIdentity: sizingIdentity
             )
             cell.configure(
-                contentConfiguration: hostedConfiguration,
+                rootView: hostedView,
+                parentViewController: self,
                 sizingIdentity: sizingIdentity
             )
             return cell
@@ -250,12 +251,12 @@ final class TimelineFeedViewController: UIViewController {
         )
     }
 
-    private func hostedContentConfiguration(
+    private func hostedContentView(
         for entry: TimelineFeedEntry,
         configuration: TimelineFeedCollectionConfiguration,
         sizingIdentity: TimelineFeedCellSizingIdentity
-    ) -> UIHostingConfiguration<TimelineHostedFeedEntryView, Color> {
-        UIHostingConfiguration {
+    ) -> AnyView {
+        AnyView(
             TimelineHostedFeedEntryView(
                 entry: entry,
                 swipeSettings: configuration.swipeSettings,
@@ -280,9 +281,15 @@ final class TimelineFeedViewController: UIViewController {
                     self?.requestBackfill(gap)
                 }
             )
-        }
-        .margins(.all, 0)
-        .background { Color.astrenzaBackground }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
+            .id(sizingIdentity)
+            .background(Color.astrenzaBackground)
+        )
     }
 
     private func configureProjectedGeometry(
@@ -341,26 +348,20 @@ final class TimelineFeedViewController: UIViewController {
                 if let measuredHeight = measuredRowHeights[measurementKey] {
                     height = measuredHeight
                 } else {
-                    let hostedConfiguration = hostedContentConfiguration(
+                    let hostedView = hostedContentView(
                         for: entry,
                         configuration: configuration,
                         sizingIdentity: sizingIdentity
                     )
                     measurementCell.configure(
-                        contentConfiguration: hostedConfiguration,
+                        rootView: hostedView,
+                        parentViewController: nil,
                         sizingIdentity: sizingIdentity
                     )
-                    measurementCell.frame = CGRect(
-                        x: -width,
-                        y: 0,
-                        width: width,
-                        height: 1
-                    )
-                    let measuredHeight = measurementCell.measuredHeight(
+                    height = measurementCell.measuredHeight(
                         fittingWidth: width
                     )
-                    measuredRowHeights[measurementKey] = measuredHeight
-                    height = measuredHeight
+                    measuredRowHeights[measurementKey] = height
                 }
             }
             nextHeights[entry.id] = height

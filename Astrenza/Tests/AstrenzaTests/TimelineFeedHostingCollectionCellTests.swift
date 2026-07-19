@@ -59,18 +59,14 @@ struct TimelineFeedHostingCollectionCellTests {
                 at: IndexPath(item: 1, section: 0)
             )?.frame
         )
-        let cell = try #require(collectionView.cellForItem(at: indexPath))
-        let fitted = cell.contentView.systemLayoutSizeFitting(
-            CGSize(
-                width: first.width,
-                height: UIView.layoutFittingCompressedSize.height
-            ),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
+        let cell = try #require(
+            collectionView.cellForItem(at: indexPath)
+                as? TimelineFeedHostingCollectionCell
         )
+        let fittedHeight = cell.measuredHeight(fittingWidth: first.width)
 
         #expect(first.width == 390)
-        #expect(abs(first.height - fitted.height) <= 0.5)
+        #expect(abs(first.height - fittedHeight) <= 0.5)
         #expect(first.maxY <= second.minY)
         #expect(abs(first.maxY - second.minY) <= 0.5)
     }
@@ -108,6 +104,111 @@ struct TimelineFeedHostingCollectionCellTests {
     }
 
     @MainActor
+    @Test("Projected height matches an unconstrained hosting measurement")
+    func projectedHeightMatchesHostingControllerMeasurement() {
+        let post = makeYouTubeTimelinePost()
+        let content = HostedCellContent.timelinePost(post)
+        let measurementCell = TimelineFeedHostingCollectionCell(frame: .zero)
+        HostedCellDataSource.configure(
+            cell: measurementCell,
+            content: content,
+            entryID: post.id
+        )
+        let projectedHeight = measurementCell.measuredHeight(fittingWidth: 390)
+        let hostingController = UIHostingController(
+            rootView: TimelinePostRow(
+                post: post,
+                isActionMenuPresented: false,
+                swipeSettings: TimelineSwipeSettings(),
+                onActionEvent: { _ in },
+                onOpenPost: { _ in },
+                onOpenProfile: { _ in },
+                onReplyPost: { _ in },
+                onOpenMedia: { _, _ in },
+                onOpenURL: { _ in },
+                onDismissActionMenu: {}
+            )
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
+        )
+        let hostingHeight = hostingController.sizeThatFits(
+            in: CGSize(
+                width: 390,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        ).height
+
+        #expect(abs(projectedHeight - hostingHeight) <= 0.5)
+    }
+
+    @MainActor
+    @Test("Mounted content keeps the projected intrinsic height")
+    func mountedContentKeepsProjectedIntrinsicHeight() throws {
+        for content in [
+            HostedCellContent.timelinePost(makeTimelinePost()),
+            HostedCellContent.timelinePost(makeYouTubeTimelinePost()),
+        ] {
+            let (collectionView, dataSource) = makeCollectionView(
+                contents: [content]
+            )
+            _ = dataSource
+            let indexPath = IndexPath(item: 0, section: 0)
+            let projectedHeight = try #require(
+                collectionView.collectionViewLayout
+                    .layoutAttributesForItem(at: indexPath)?.size.height
+            )
+            let cell = try #require(
+                collectionView.cellForItem(at: indexPath)
+                    as? TimelineFeedHostingCollectionCell
+            )
+            cell.layoutIfNeeded()
+            let measuredHeight = cell.measuredHeight(
+                fittingWidth: collectionView.bounds.width
+            )
+
+            #expect(abs(projectedHeight - measuredHeight) <= 0.5)
+            #expect(abs(cell.hostedContentFrame.minX) <= 0.5)
+            #expect(abs(cell.hostedContentFrame.minY) <= 0.5)
+            #expect(
+                abs(cell.hostedContentFrame.height - projectedHeight) <= 0.5
+            )
+        }
+    }
+
+    @MainActor
+    @Test("Hosted content is clipped at the projected row boundary")
+    func hostedContentIsContainedByProjectedRowBounds() throws {
+        let contents: [HostedCellContent] = [
+            .text(String(repeating: "Mounted timeline text ", count: 24)),
+            .timelinePost(makeTimelinePost()),
+        ]
+        for content in contents {
+            let (collectionView, dataSource) = makeCollectionView(
+                contents: [content]
+            )
+            _ = dataSource
+            let indexPath = IndexPath(item: 0, section: 0)
+            _ = try #require(
+                collectionView.collectionViewLayout
+                    .layoutAttributesForItem(at: indexPath)?.frame
+            )
+            let cell = try #require(
+                collectionView.cellForItem(at: indexPath)
+                    as? TimelineFeedHostingCollectionCell
+            )
+            cell.layoutIfNeeded()
+            #expect(cell.clipsToBounds)
+            #expect(cell.contentView.clipsToBounds)
+            #expect(cell.hostedContentFrame == cell.contentView.bounds)
+            #expect(cell.hostedSafeAreaIsDisabled)
+        }
+    }
+
+    @MainActor
     @Test("Repeated reconfiguration does not grow a timeline post row")
     func repeatedReconfigurationDoesNotGrowRowHeight() throws {
         let post = makeTimelinePost()
@@ -122,24 +223,9 @@ struct TimelineFeedHostingCollectionCellTests {
                 withReuseIdentifier: "cell",
                 for: indexPath
             ) as? TimelineFeedHostingCollectionCell else { return nil }
-            let hostedConfiguration = UIHostingConfiguration {
-                TimelinePostRow(
-                    post: post,
-                    isActionMenuPresented: false,
-                    swipeSettings: TimelineSwipeSettings(),
-                    onActionEvent: { _ in },
-                    onOpenPost: { _ in },
-                    onOpenProfile: { _ in },
-                    onReplyPost: { _ in },
-                    onOpenMedia: { _, _ in },
-                    onOpenURL: { _ in },
-                    onDismissActionMenu: {}
-                )
-            }
-            .margins(.all, 0)
-            .background { Color.astrenzaBackground }
             cell.configure(
-                contentConfiguration: hostedConfiguration,
+                rootView: content.makeContentView(),
+                parentViewController: nil,
                 sizingIdentity: TimelineFeedCellSizingIdentity(
                     entryID: "post-0",
                     geometryFingerprint: 0,
@@ -199,12 +285,13 @@ struct TimelineFeedHostingCollectionCellTests {
                 withReuseIdentifier: "cell",
                 for: indexPath
             ) as? TimelineFeedHostingCollectionCell else { return nil }
-            let hostedConfiguration = UIHostingConfiguration {
-                Color.clear.frame(height: configuredHeight)
-            }
-            .margins(.all, 0)
             cell.configure(
-                contentConfiguration: hostedConfiguration,
+                rootView: AnyView(
+                    Color.clear
+                        .frame(height: configuredHeight)
+                        .fixedSize(horizontal: false, vertical: true)
+                ),
+                parentViewController: nil,
                 sizingIdentity: TimelineFeedCellSizingIdentity(
                     entryID: "resizing-post",
                     geometryFingerprint: configuredHeight.hashValue,
@@ -387,6 +474,44 @@ struct TimelineFeedHostingCollectionCellTests {
         )
     }
 
+    private func makeYouTubeTimelinePost() -> TimelinePost {
+        TimelinePost(
+            id: "youtube-row",
+            authorName: "YouTube Author",
+            handle: "youtube@example.com",
+            avatar: AvatarStyle(
+                primary: .cyan,
+                secondary: .indigo,
+                symbolName: "play.rectangle.fill"
+            ),
+            body: "正解が知りたい。",
+            richBody: NostrRichContent(
+                displayText: "正解が知りたい。",
+                tokens: [.text("正解が知りたい。")],
+                references: []
+            ),
+            createdAt: 1_784_455_666,
+            replyCount: 0,
+            boostCount: 0,
+            favoriteCount: 0,
+            isLocked: false,
+            media: .linkPreview(LinkPreview(
+                title: "7年分のそうめんちゅるちゅるASMRを比較してみた！【ホロライブ切り抜き/大神ミオ】",
+                subtitle: "YouTube でお気に入りの動画や音楽を楽しみ、オリジナルのコンテンツを共有しましょう。",
+                host: "www.youtube.com",
+                url: "https://www.youtube.com/shorts/XyvI2U2XZTs",
+                imageURL: URL(string: "https://i.ytimg.com/vi/XyvI2U2XZTs/oardefault.jpg"),
+                style: .youtube
+            )),
+            context: nil,
+            linkSummary: TimelineLinkSummary(
+                totalCount: 1,
+                visibleHosts: ["www.youtube.com"],
+                unresolvedCount: 0
+            )
+        )
+    }
+
     @MainActor
     private func makeCollectionView(
         contents: [HostedCellContent]
@@ -453,6 +578,44 @@ private enum HostedCellContent {
             TimelineRenderFingerprint.entry(.post(post))
         }
     }
+
+    @MainActor
+    func makeContentView() -> AnyView {
+        AnyView(
+            Group {
+                switch self {
+                case let .fixedHeight(height):
+                    Color.clear.frame(height: height)
+                case let .text(text):
+                    Text(text)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                case let .timelinePost(post):
+                    TimelinePostRow(
+                        post: post,
+                        isActionMenuPresented: false,
+                        swipeSettings: TimelineSwipeSettings(),
+                        onActionEvent: { _ in },
+                        onOpenPost: { _ in },
+                        onOpenProfile: { _ in },
+                        onReplyPost: { _ in },
+                        onOpenMedia: { _, _ in },
+                        onOpenURL: { _ in },
+                        onDismissActionMenu: {}
+                    )
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
+            .id(geometryFingerprint)
+            .background(Color.astrenzaBackground)
+        )
+    }
 }
 
 @MainActor
@@ -497,34 +660,9 @@ private final class HostedCellDataSource:
         content: HostedCellContent,
         entryID: String
     ) {
-        let hostedConfiguration = UIHostingConfiguration {
-            switch content {
-            case let .fixedHeight(height):
-                Color.clear.frame(height: height)
-            case let .text(text):
-                Text(text)
-                    .font(.body)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            case let .timelinePost(post):
-                TimelinePostRow(
-                    post: post,
-                    isActionMenuPresented: false,
-                    swipeSettings: TimelineSwipeSettings(),
-                    onActionEvent: { _ in },
-                    onOpenPost: { _ in },
-                    onOpenProfile: { _ in },
-                    onReplyPost: { _ in },
-                    onOpenMedia: { _, _ in },
-                    onOpenURL: { _ in },
-                    onDismissActionMenu: {}
-                )
-            }
-        }
-        .margins(.all, 0)
-        .background { Color.astrenzaBackground }
         cell.configure(
-            contentConfiguration: hostedConfiguration,
+            rootView: content.makeContentView(),
+            parentViewController: nil,
             sizingIdentity: TimelineFeedCellSizingIdentity(
                 entryID: entryID,
                 geometryFingerprint: content.geometryFingerprint,
