@@ -283,9 +283,21 @@ private enum AstrenzaDebugTimelineFixtures {
 
     static func performanceEntries(count: Int) -> [TimelineFeedEntry] {
         (0..<count).map { index in
-            .post(post(
+            let body = switch index % 5 {
+            case 0:
+                "Short performance fixture #\(index)"
+            case 1:
+                "Two-line performance fixture #\(index)\nThe second line keeps the projected height variable."
+            case 2:
+                "A medium performance fixture #\(index) verifies wrapping across several lines while scrolling quickly in both directions."
+            case 3:
+                "Variable-height performance fixture #\(index). This deliberately contains enough text to wrap repeatedly so the collection layout must preserve exact prefix sums without changing already-projected row frames during a scroll session."
+            default:
+                "Five-line fixture #\(index)\nLine two\nLine three\nLine four\nLine five"
+            }
+            return .post(post(
                 id: "performance-\(index)",
-                body: "Performance fixture post #\(index)",
+                body: body,
                 media: nil,
                 createdAt: snapshotCreatedAt() - index
             ))

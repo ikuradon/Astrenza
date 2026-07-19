@@ -1,8 +1,8 @@
 import UIKit
 
-struct TimelineFeedCellSizingIdentity: Equatable {
+struct TimelineFeedCellSizingIdentity: Hashable {
     let entryID: TimelineFeedEntry.ID
-    let renderFingerprint: Int
+    let geometryFingerprint: Int
     let swipeSettings: TimelineSwipeSettings
     let isActionMenuPresented: Bool
     let gapDirection: TimelineGapFillDirection
@@ -39,22 +39,28 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
-        let width = layoutAttributes.size.width
+        layoutAttributes
+    }
+
+    func measuredHeight(fittingWidth width: CGFloat) -> CGFloat {
         let contentSizeCategory = traitCollection.preferredContentSizeCategory
-        // Flow Layoutはscroll中にも同じRowを再照会する。前回boundsを
-        // 再測定へ混ぜず、同一表示構成・同一幅なら確定済みの高さを返す。
         if let measurement,
            abs(measurement.width - width) <= 0.5,
            measurement.contentSizeCategory == contentSizeCategory {
-            return attributes(
-                copying: layoutAttributes,
-                width: width,
-                height: measurement.height
-            )
+            return measurement.height
         }
 
-        // superの標準self-sizingと手動計測を重ねると、標準計測後の高さが
-        // contentViewの次の入力になるため、ここでは手動計測だけを採用する。
+        bounds.size = CGSize(width: width, height: 180)
+        contentView.bounds.size = bounds.size
+        setNeedsLayout()
+        layoutIfNeeded()
+        let proposedAttributes = UICollectionViewLayoutAttributes(
+            forCellWith: IndexPath(item: 0, section: 0)
+        )
+        proposedAttributes.size = CGSize(width: width, height: 180)
+        _ = super.preferredLayoutAttributesFitting(
+            proposedAttributes
+        )
         let fittedSize = contentView.systemLayoutSizeFitting(
             CGSize(
                 width: width,
@@ -73,22 +79,6 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
             contentSizeCategory: contentSizeCategory,
             height: height
         )
-        return attributes(
-            copying: layoutAttributes,
-            width: width,
-            height: height
-        )
-    }
-
-    private func attributes(
-        copying layoutAttributes: UICollectionViewLayoutAttributes,
-        width: CGFloat,
-        height: CGFloat
-    ) -> UICollectionViewLayoutAttributes {
-        guard let preferred = layoutAttributes.copy()
-            as? UICollectionViewLayoutAttributes
-        else { return layoutAttributes }
-        preferred.size = CGSize(width: width, height: height)
-        return preferred
+        return height
     }
 }

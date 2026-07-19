@@ -7,8 +7,8 @@ import UIKit
 @Suite("Timeline hosted collection cell geometry")
 struct TimelineFeedHostingCollectionCellTests {
     @MainActor
-    @Test("Self-sizing layout gives adjacent hosted rows disjoint frames")
-    func selfSizingLayoutKeepsAdjacentRowsDisjoint() throws {
+    @Test("Stable layout gives adjacent hosted rows disjoint frames")
+    func stableLayoutKeepsAdjacentRowsDisjoint() throws {
         let (collectionView, dataSource) = makeCollectionView(
             contents: [.fixedHeight(240), .fixedHeight(120)]
         )
@@ -111,7 +111,10 @@ struct TimelineFeedHostingCollectionCellTests {
     @Test("Repeated reconfiguration does not grow a timeline post row")
     func repeatedReconfigurationDoesNotGrowRowHeight() throws {
         let post = makeTimelinePost()
-        let collectionView = makeBareCollectionView()
+        let content = HostedCellContent.timelinePost(post)
+        let collectionView = makeBareCollectionView(
+            projectedItems: projectedItems(for: [content])
+        )
         let dataSource = UICollectionViewDiffableDataSource<Int, Int>(
             collectionView: collectionView
         ) { collectionView, indexPath, _ in
@@ -139,7 +142,7 @@ struct TimelineFeedHostingCollectionCellTests {
                 contentConfiguration: hostedConfiguration,
                 sizingIdentity: TimelineFeedCellSizingIdentity(
                     entryID: "post-0",
-                    renderFingerprint: 0,
+                    geometryFingerprint: 0,
                     swipeSettings: TimelineSwipeSettings(),
                     isActionMenuPresented: false,
                     gapDirection: .older,
@@ -181,7 +184,14 @@ struct TimelineFeedHostingCollectionCellTests {
     @Test("A changed sizing identity remeasures the row")
     func changedSizingIdentityRemeasuresRow() throws {
         var configuredHeight: CGFloat = 80
-        let collectionView = makeBareCollectionView()
+        let collectionView = makeBareCollectionView(
+            projectedItems: [
+                TimelineFeedProjectedLayoutItem(
+                    id: "resizing-post",
+                    height: configuredHeight
+                ),
+            ]
+        )
         let dataSource = UICollectionViewDiffableDataSource<Int, Int>(
             collectionView: collectionView
         ) { collectionView, indexPath, _ in
@@ -197,7 +207,7 @@ struct TimelineFeedHostingCollectionCellTests {
                 contentConfiguration: hostedConfiguration,
                 sizingIdentity: TimelineFeedCellSizingIdentity(
                     entryID: "resizing-post",
-                    renderFingerprint: configuredHeight.hashValue,
+                    geometryFingerprint: configuredHeight.hashValue,
                     swipeSettings: TimelineSwipeSettings(),
                     isActionMenuPresented: false,
                     gapDirection: .older,
@@ -221,6 +231,18 @@ struct TimelineFeedHostingCollectionCellTests {
         )
 
         configuredHeight = 240
+        let layout = try #require(
+            collectionView.collectionViewLayout as? TimelineFeedStableLayout
+        )
+        layout.configure(
+            items: [
+                TimelineFeedProjectedLayoutItem(
+                    id: "resizing-post",
+                    height: configuredHeight
+                ),
+            ],
+            topPadding: 72
+        )
         snapshot = dataSource.snapshot()
         snapshot.reconfigureItems([0])
         dataSource.apply(snapshot, animatingDifferences: false)
@@ -271,6 +293,41 @@ struct TimelineFeedHostingCollectionCellTests {
             )?.size.height
         )
         #expect(abs(finalHeight - initialHeight) <= 0.5)
+    }
+
+    @MainActor
+    @Test("Bidirectional scrolling keeps the complete content geometry fixed")
+    func bidirectionalScrollingKeepsContentGeometryFixed() {
+        let contents = (0 ..< 120).map { index in
+            HostedCellContent.fixedHeight(index.isMultiple(of: 2) ? 80 : 320)
+        }
+        let (collectionView, dataSource) = makeCollectionView(
+            contents: contents
+        )
+        _ = dataSource
+        let initialContentHeight = collectionView
+            .collectionViewLayout
+            .collectionViewContentSize
+            .height
+
+        var offset: CGFloat = 0
+        while offset < collectionView.collectionViewLayout
+            .collectionViewContentSize.height {
+            collectionView.contentOffset.y = offset
+            collectionView.layoutIfNeeded()
+            offset += collectionView.bounds.height * 0.75
+        }
+        while offset > 0 {
+            offset = max(0, offset - collectionView.bounds.height * 0.75)
+            collectionView.contentOffset.y = offset
+            collectionView.layoutIfNeeded()
+        }
+
+        let finalContentHeight = collectionView
+            .collectionViewLayout
+            .collectionViewContentSize
+            .height
+        #expect(abs(finalContentHeight - initialContentHeight) <= 0.5)
     }
 
     private func makeTimelinePost() -> TimelinePost {
@@ -334,7 +391,9 @@ struct TimelineFeedHostingCollectionCellTests {
     private func makeCollectionView(
         contents: [HostedCellContent]
     ) -> (UICollectionView, HostedCellDataSource) {
-        let collectionView = makeBareCollectionView()
+        let collectionView = makeBareCollectionView(
+            projectedItems: projectedItems(for: contents)
+        )
         let dataSource = HostedCellDataSource(contents: contents)
         collectionView.dataSource = dataSource
         collectionView.reloadData()
@@ -344,20 +403,38 @@ struct TimelineFeedHostingCollectionCellTests {
     }
 
     @MainActor
-    private func makeBareCollectionView() -> UICollectionView {
+    private func makeBareCollectionView(
+        projectedItems: [TimelineFeedProjectedLayoutItem]
+    ) -> UICollectionView {
+        let layout = TimelineFeedStableLayout()
+        layout.configure(items: projectedItems, topPadding: 72)
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844),
-            collectionViewLayout: TimelineFeedSelfSizingLayout.make(
-                topContentPadding: 72,
-                estimatedRowHeight: 60
-            )
+            collectionViewLayout: layout
         )
-        collectionView.selfSizingInvalidation = .disabled
         collectionView.register(
             TimelineFeedHostingCollectionCell.self,
             forCellWithReuseIdentifier: "cell"
         )
         return collectionView
+    }
+
+    @MainActor
+    private func projectedItems(
+        for contents: [HostedCellContent]
+    ) -> [TimelineFeedProjectedLayoutItem] {
+        let measurementCell = TimelineFeedHostingCollectionCell(frame: .zero)
+        return contents.enumerated().map { index, content in
+            HostedCellDataSource.configure(
+                cell: measurementCell,
+                content: content,
+                entryID: "test-\(index)"
+            )
+            return TimelineFeedProjectedLayoutItem(
+                id: "test-\(index)",
+                height: measurementCell.measuredHeight(fittingWidth: 390)
+            )
+        }
     }
 }
 
@@ -366,7 +443,7 @@ private enum HostedCellContent {
     case text(String)
     case timelinePost(TimelinePost)
 
-    var renderFingerprint: Int {
+    var geometryFingerprint: Int {
         switch self {
         case let .fixedHeight(height):
             height.hashValue
@@ -407,6 +484,19 @@ private final class HostedCellDataSource:
             return UICollectionViewCell()
         }
         let content = contents[indexPath.item]
+        Self.configure(
+            cell: cell,
+            content: content,
+            entryID: "test-\(indexPath.item)"
+        )
+        return cell
+    }
+
+    static func configure(
+        cell: TimelineFeedHostingCollectionCell,
+        content: HostedCellContent,
+        entryID: String
+    ) {
         let hostedConfiguration = UIHostingConfiguration {
             switch content {
             case let .fixedHeight(height):
@@ -436,14 +526,13 @@ private final class HostedCellDataSource:
         cell.configure(
             contentConfiguration: hostedConfiguration,
             sizingIdentity: TimelineFeedCellSizingIdentity(
-                entryID: "test-\(indexPath.item)",
-                renderFingerprint: content.renderFingerprint,
+                entryID: entryID,
+                geometryFingerprint: content.geometryFingerprint,
                 swipeSettings: TimelineSwipeSettings(),
                 isActionMenuPresented: false,
                 gapDirection: .older,
                 isFetchingGap: false
             )
         )
-        return cell
     }
 }

@@ -7,6 +7,18 @@ final class TimelineFeedViewController: UIViewController {
         case main
     }
 
+    private struct RowMeasurementKey: Hashable {
+        let reuseKey: RowMeasurementReuseKey
+        let widthInPixels: Int
+        let contentSizeCategory: String
+        let localeIdentifier: String
+    }
+
+    private enum RowMeasurementReuseKey: Hashable {
+        case simplePost(bodyTextHeightInPixels: Int)
+        case exact(TimelineFeedCellSizingIdentity)
+    }
+
     private let anchorLineY: CGFloat = 72
     private let readLineY: CGFloat = 96
     private let topContentPadding: CGFloat = 72
@@ -47,9 +59,17 @@ final class TimelineFeedViewController: UIViewController {
     private var pullRefreshProgress: CGFloat = 0
     private var restoreRetryGeneration: UInt64 = 0
     private var missingRestoreAnchorAttempts = 0
+    private var measuredRowHeights: [RowMeasurementKey: CGFloat] = [:]
+    private var projectedRowHeights:
+        [TimelineFeedEntry.ID: CGFloat] = [:]
+    private var projectedSizingIdentities:
+        [TimelineFeedEntry.ID: TimelineFeedCellSizingIdentity] = [:]
+    private var projectedWidth: CGFloat = 0
+    private var hasDeferredGeometryProjection = false
 
-    private lazy var collectionLayout = TimelineFeedSelfSizingLayout.make(
-        topContentPadding: topContentPadding
+    private lazy var collectionLayout = TimelineFeedStableLayout()
+    private lazy var measurementCell = TimelineFeedHostingCollectionCell(
+        frame: .zero
     )
 
     private lazy var collectionView: UICollectionView = {
@@ -62,9 +82,6 @@ final class TimelineFeedViewController: UIViewController {
         collectionView.showsVerticalScrollIndicator = true
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
-        // SwiftUIのintrinsic size通知をscroll中の再レイアウトへ直結させず、
-        // diffable snapshotの更新をRow再計測の明示的な境界にする。
-        collectionView.selfSizingInvalidation = .disabled
         collectionView.contentInset = UIEdgeInsets(
             top: 0,
             left: 0,
@@ -111,6 +128,7 @@ final class TimelineFeedViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        reprojectForCurrentWidthIfNeeded()
         menuCoordinator.relayout()
         attemptPendingRestoreIfPossible()
         publishInitialViewportReadyIfPossible()
@@ -193,50 +211,275 @@ final class TimelineFeedViewController: UIViewController {
             ) as? TimelineFeedHostingCollectionCell else { return nil }
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
-            let gapDirection = displayGapDirection(for: entryID)
-            let isFetchingGap = fetchingGapDirections[entryID] != nil
-            let isActionMenuPresented =
-                menuCoordinator.openedPostID == entry.post?.id
-            let hostedConfiguration = UIHostingConfiguration {
-                TimelineHostedFeedEntryView(
-                    entry: entry,
-                    swipeSettings: configuration.swipeSettings,
-                    isActionMenuPresented: isActionMenuPresented,
-                    gapDirection: gapDirection,
-                    isFetchingGap: isFetchingGap,
-                    onActionEvent: { [weak self] event in
-                        self?.handlePostActionEvent(event)
-                    },
-                    onOpenPost: { [weak self] post in
-                        self?.openPost(post)
-                    },
-                    onOpenProfile: configuration.onOpenProfile,
-                    onReplyPost: configuration.onReplyPost,
-                    onOpenMedia: configuration.onOpenMedia,
-                    onOpenURL: configuration.onOpenURL,
-                    onDismissActionMenu: { [weak self] in
-                        self?.menuCoordinator.close()
-                    },
-                    onBackfillGap: { [weak self] gap in
-                        self?.requestBackfill(gap)
-                    }
-                )
-            }
-            .margins(.all, 0)
-            .background { Color.astrenzaBackground }
+            let sizingIdentity = rowSizingIdentity(
+                for: entry,
+                configuration: configuration
+            )
+            let hostedConfiguration = hostedContentConfiguration(
+                for: entry,
+                configuration: configuration,
+                sizingIdentity: sizingIdentity
+            )
             cell.configure(
                 contentConfiguration: hostedConfiguration,
-                sizingIdentity: TimelineFeedCellSizingIdentity(
-                    entryID: entryID,
-                    renderFingerprint:
-                        TimelineRenderFingerprint.entry(entry),
-                    swipeSettings: configuration.swipeSettings,
-                    isActionMenuPresented: isActionMenuPresented,
-                    gapDirection: gapDirection,
-                    isFetchingGap: isFetchingGap
-                )
+                sizingIdentity: sizingIdentity
             )
             return cell
+        }
+    }
+
+    private func rowSizingIdentity(
+        for entry: TimelineFeedEntry,
+        configuration: TimelineFeedCollectionConfiguration
+    ) -> TimelineFeedCellSizingIdentity {
+        let gapDirection: TimelineGapFillDirection
+        switch entry {
+        case .gap:
+            gapDirection = displayGapDirection(for: entry.id)
+        case .post, .deleted:
+            gapDirection = .older
+        }
+        return TimelineFeedCellSizingIdentity(
+            entryID: entry.id,
+            geometryFingerprint: TimelineGeometryFingerprint.entry(entry),
+            swipeSettings: configuration.swipeSettings,
+            isActionMenuPresented:
+                menuCoordinator.openedPostID == entry.post?.id,
+            gapDirection: gapDirection,
+            isFetchingGap: fetchingGapDirections[entry.id] != nil
+        )
+    }
+
+    private func hostedContentConfiguration(
+        for entry: TimelineFeedEntry,
+        configuration: TimelineFeedCollectionConfiguration,
+        sizingIdentity: TimelineFeedCellSizingIdentity
+    ) -> UIHostingConfiguration<TimelineHostedFeedEntryView, Color> {
+        UIHostingConfiguration {
+            TimelineHostedFeedEntryView(
+                entry: entry,
+                swipeSettings: configuration.swipeSettings,
+                isActionMenuPresented:
+                    sizingIdentity.isActionMenuPresented,
+                gapDirection: sizingIdentity.gapDirection,
+                isFetchingGap: sizingIdentity.isFetchingGap,
+                onActionEvent: { [weak self] event in
+                    self?.handlePostActionEvent(event)
+                },
+                onOpenPost: { [weak self] post in
+                    self?.openPost(post)
+                },
+                onOpenProfile: configuration.onOpenProfile,
+                onReplyPost: configuration.onReplyPost,
+                onOpenMedia: configuration.onOpenMedia,
+                onOpenURL: configuration.onOpenURL,
+                onDismissActionMenu: { [weak self] in
+                    self?.menuCoordinator.close()
+                },
+                onBackfillGap: { [weak self] gap in
+                    self?.requestBackfill(gap)
+                }
+            )
+        }
+        .margins(.all, 0)
+        .background { Color.astrenzaBackground }
+    }
+
+    private func configureProjectedGeometry(
+        for projectedEntries: [TimelineFeedEntry],
+        configuration: TimelineFeedCollectionConfiguration,
+        width: CGFloat,
+        freezesExistingRows: Bool
+    ) {
+        guard width > 0 else { return }
+        let displayScale = max(
+            1,
+            collectionView.traitCollection.displayScale
+        )
+        measurementCell.traitOverrides.preferredContentSizeCategory =
+            collectionView.traitCollection.preferredContentSizeCategory
+        measurementCell.traitOverrides.layoutDirection =
+            collectionView.traitCollection.layoutDirection
+        measurementCell.traitOverrides.displayScale = displayScale
+        let widthInPixels = Int((width * displayScale).rounded())
+        let contentSizeCategory = collectionView
+            .traitCollection
+            .preferredContentSizeCategory
+            .rawValue
+        let localeIdentifier = Locale.autoupdatingCurrent.identifier
+        var nextHeights: [TimelineFeedEntry.ID: CGFloat] = [:]
+        var nextIdentities:
+            [TimelineFeedEntry.ID: TimelineFeedCellSizingIdentity] = [:]
+        var items: [TimelineFeedProjectedLayoutItem] = []
+        nextHeights.reserveCapacity(projectedEntries.count)
+        nextIdentities.reserveCapacity(projectedEntries.count)
+        items.reserveCapacity(projectedEntries.count)
+        for entry in projectedEntries {
+            let sizingIdentity = rowSizingIdentity(
+                for: entry,
+                configuration: configuration
+            )
+            let height: CGFloat
+            if freezesExistingRows,
+               let projectedHeight = projectedRowHeights[entry.id] {
+                height = projectedHeight
+                if projectedSizingIdentities[entry.id] != sizingIdentity {
+                    hasDeferredGeometryProjection = true
+                }
+            } else {
+                let measurementKey = RowMeasurementKey(
+                    reuseKey: rowMeasurementReuseKey(
+                        for: entry,
+                        sizingIdentity: sizingIdentity,
+                        width: width,
+                        displayScale: displayScale
+                    ),
+                    widthInPixels: widthInPixels,
+                    contentSizeCategory: contentSizeCategory,
+                    localeIdentifier: localeIdentifier
+                )
+                if let measuredHeight = measuredRowHeights[measurementKey] {
+                    height = measuredHeight
+                } else {
+                    let hostedConfiguration = hostedContentConfiguration(
+                        for: entry,
+                        configuration: configuration,
+                        sizingIdentity: sizingIdentity
+                    )
+                    measurementCell.configure(
+                        contentConfiguration: hostedConfiguration,
+                        sizingIdentity: sizingIdentity
+                    )
+                    measurementCell.frame = CGRect(
+                        x: -width,
+                        y: 0,
+                        width: width,
+                        height: 1
+                    )
+                    let measuredHeight = measurementCell.measuredHeight(
+                        fittingWidth: width
+                    )
+                    measuredRowHeights[measurementKey] = measuredHeight
+                    height = measuredHeight
+                }
+            }
+            nextHeights[entry.id] = height
+            nextIdentities[entry.id] = sizingIdentity
+            items.append(
+                TimelineFeedProjectedLayoutItem(
+                    id: entry.id,
+                    height: height
+                )
+            )
+        }
+        projectedWidth = width
+        projectedRowHeights = nextHeights
+        projectedSizingIdentities = nextIdentities
+        collectionLayout.configure(
+            items: items,
+            topPadding: topContentPadding
+        )
+    }
+
+    private func rowMeasurementReuseKey(
+        for entry: TimelineFeedEntry,
+        sizingIdentity: TimelineFeedCellSizingIdentity,
+        width: CGFloat,
+        displayScale: CGFloat
+    ) -> RowMeasurementReuseKey {
+        guard case .post(let post) = entry,
+              post.richBody == nil,
+              post.repostedBy == nil,
+              post.quotedPost == nil,
+              post.replyContext == nil,
+              post.replyMention == nil,
+              post.contentWarning == nil,
+              case .standard = post.bodyPresentation,
+              post.linkSummary == nil,
+              post.media == nil
+        else {
+            return .exact(sizingIdentity)
+        }
+        let availableWidth = max(
+            1,
+            width -
+                AstrenzaTimelineMetrics.rowHorizontalPadding * 2 -
+                AstrenzaTimelineMetrics.avatarSize -
+                AstrenzaTimelineMetrics.rowAvatarSpacing
+        )
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = AstrenzaTimelineMetrics.bodyLineSpacing
+        let attributedBody = NSAttributedString(
+            string: post.body,
+            attributes: [
+                .font: UIFont.systemFont(
+                    ofSize: AstrenzaTimelineMetrics.bodyFontSize,
+                    weight: .regular
+                ),
+                .paragraphStyle: paragraphStyle,
+            ]
+        )
+        let bodyHeight = attributedBody.boundingRect(
+            with: CGSize(
+                width: availableWidth,
+                height: CGFloat.greatestFiniteMagnitude
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+        return .simplePost(
+            bodyTextHeightInPixels: Int(
+                ceil(bodyHeight * displayScale)
+            )
+        )
+    }
+
+    private func currentProjectionWidth() -> CGFloat {
+        if collectionView.bounds.width > 0 {
+            return collectionView.bounds.width
+        }
+        if view.bounds.width > 0 {
+            return view.bounds.width
+        }
+        return view.window?.screen.bounds.width ?? 390
+    }
+
+    private func reprojectForCurrentWidthIfNeeded() {
+        guard !entries.isEmpty,
+              !isApplyingSnapshot,
+              let configuration
+        else { return }
+        let width = currentProjectionWidth()
+        guard abs(width - projectedWidth) > 0.5 else { return }
+        let anchor = captureVisibleAnchor()
+        configureProjectedGeometry(
+            for: entries,
+            configuration: configuration,
+            width: width,
+            freezesExistingRows: false
+        )
+        collectionView.layoutIfNeeded()
+        if let anchor {
+            preserve(anchor)
+        }
+    }
+
+    private func commitDeferredGeometryProjectionIfNeeded() {
+        guard hasDeferredGeometryProjection,
+              !isUserScrollActive,
+              let configuration
+        else { return }
+        hasDeferredGeometryProjection = false
+        let anchor = captureVisibleAnchor()
+        configureProjectedGeometry(
+            for: entries,
+            configuration: configuration,
+            width: currentProjectionWidth(),
+            freezesExistingRows: false
+        )
+        collectionView.layoutIfNeeded()
+        if let anchor {
+            preserve(anchor)
         }
     }
 
@@ -259,6 +502,11 @@ final class TimelineFeedViewController: UIViewController {
     private func resetForSourceChange() {
         restoreRetryGeneration &+= 1
         menuCoordinator.close()
+        measuredRowHeights = [:]
+        projectedRowHeights = [:]
+        projectedSizingIdentities = [:]
+        projectedWidth = 0
+        hasDeferredGeometryProjection = false
         entries = []
         entriesByID = [:]
         postOrderByID = [:]
@@ -304,29 +552,37 @@ final class TimelineFeedViewController: UIViewController {
                 dataSource.itemIdentifier(for: $0)
             }
         )
-        let oldFingerprintsByID = Dictionary(
-            uniqueKeysWithValues: entries.map {
-                ($0.id, TimelineRenderFingerprint.entry($0))
-            }
-        )
-        let changedCommonIDs: Set<TimelineFeedEntry.ID> = Set(
-            newEntries.compactMap { entry -> TimelineFeedEntry.ID? in
-                guard let oldFingerprint = oldFingerprintsByID[entry.id],
-                      oldFingerprint != TimelineRenderFingerprint.entry(entry)
-                else { return nil }
-                return entry.id
-            }
-        )
-        let reconfiguredIDs = forceVisibleReconfiguration
-            ? visibleIDs
-                .intersection(oldIDSet)
-                .intersection(newIDSet)
-                .intersection(
-                    reconfigureAllVisible
-                        ? visibleIDs
-                        : changedCommonIDs
-                )
-            : []
+        let commonVisibleIDs = visibleIDs
+            .intersection(oldIDSet)
+            .intersection(newIDSet)
+        let reconfiguredIDs: Set<TimelineFeedEntry.ID>
+        if !forceVisibleReconfiguration {
+            reconfiguredIDs = []
+        } else if reconfigureAllVisible {
+            reconfiguredIDs = commonVisibleIDs
+        } else {
+            let oldFingerprintsByID = Dictionary(
+                uniqueKeysWithValues: entries.compactMap { entry in
+                    commonVisibleIDs.contains(entry.id)
+                        ? (
+                            entry.id,
+                            TimelineRenderFingerprint.entry(entry)
+                        )
+                        : nil
+                }
+            )
+            reconfiguredIDs = Set(
+                newEntries.compactMap { entry -> TimelineFeedEntry.ID? in
+                    guard commonVisibleIDs.contains(entry.id),
+                          let oldFingerprint =
+                            oldFingerprintsByID[entry.id],
+                          oldFingerprint !=
+                            TimelineRenderFingerprint.entry(entry)
+                    else { return nil }
+                    return entry.id
+                }
+            )
+        }
 
         let visibleAnchor = captureVisibleAnchor()
         pendingPostSnapshotPosition = TimelineFeedViewportMutationPlanner
@@ -353,7 +609,14 @@ final class TimelineFeedViewController: UIViewController {
         fetchingGapDirections = fetchingGapDirections.filter {
             entriesByID[$0.key] != nil
         }
-
+        if let configuration {
+            configureProjectedGeometry(
+                for: newEntries,
+                configuration: configuration,
+                width: currentProjectionWidth(),
+                freezesExistingRows: isUserScrollActive
+            )
+        }
         var snapshot = NSDiffableDataSourceSnapshot<
             Section,
             TimelineFeedEntry.ID
@@ -991,6 +1254,9 @@ final class TimelineFeedViewController: UIViewController {
         guard isUserScrollActive != isActive else { return }
         isUserScrollActive = isActive
         configuration?.onScrollActivityChanged(isActive)
+        if !isActive {
+            commitDeferredGeometryProjectionIfNeeded()
+        }
     }
 }
 

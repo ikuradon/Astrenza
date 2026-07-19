@@ -111,8 +111,8 @@ enum TimelineRenderFingerprint {
     }
 
     private static func combine(_ avatar: AvatarStyle, into hasher: inout Hasher) {
-        hasher.combine(String(reflecting: avatar.primary))
-        hasher.combine(String(reflecting: avatar.secondary))
+        hasher.combine(avatar.primary)
+        hasher.combine(avatar.secondary)
         hasher.combine(avatar.symbolName)
         hasher.combine(String(describing: avatar.pictureState))
         hasher.combine(avatar.placeholderSeed)
@@ -160,7 +160,7 @@ enum TimelineRenderFingerprint {
                 hasher.combine(tile.blurhash)
                 hasher.combine(String(describing: tile.remoteLoadMode))
                 for color in tile.colors {
-                    hasher.combine(String(reflecting: color))
+                    hasher.combine(color)
                 }
             }
         case .linkPreview(let preview):
@@ -176,6 +176,128 @@ enum TimelineRenderFingerprint {
             hasher.combine("unresolved")
             hasher.combine(preview.host)
             hasher.combine(preview.url)
+        }
+    }
+}
+
+/// Rowの高さを変え得る情報だけを追跡する。
+/// 描画fingerprintには色や画像状態も含まれるため、layout projectionには使わない。
+enum TimelineGeometryFingerprint {
+    static func entry(_ entry: TimelineFeedEntry) -> Int {
+        var hasher = Hasher()
+        switch entry {
+        case .post(let post):
+            hasher.combine("post")
+            combine(post, into: &hasher)
+        case .gap:
+            // Gap rowは状態や文言によらず固定高。
+            hasher.combine("gap")
+        case .deleted:
+            hasher.combine("deleted")
+        }
+        return hasher.finalize()
+    }
+
+    private static func combine(
+        _ post: TimelinePost,
+        into hasher: inout Hasher
+    ) {
+        hasher.combine(post.body)
+        combine(post.richBody, into: &hasher)
+        hasher.combine(post.repostedBy != nil)
+
+        if let quotedPost = post.quotedPost {
+            hasher.combine("quote")
+            hasher.combine(quotedPost.body)
+            hasher.combine(quotedPost.isAvailable)
+            combine(quotedPost.richBody, into: &hasher)
+        } else {
+            hasher.combine("no-quote")
+        }
+
+        if let replyContext = post.replyContext {
+            hasher.combine("reply-context")
+            hasher.combine(replyContext.bodyPreview)
+            hasher.combine(replyContext.isSelfReply)
+            combine(replyContext.richContent, into: &hasher)
+        } else {
+            hasher.combine("no-reply-context")
+        }
+
+        hasher.combine(post.replyMention?.text)
+        hasher.combine(post.replyMention?.isExternal)
+        hasher.combine(post.contentWarning != nil)
+        switch post.bodyPresentation {
+        case .standard:
+            hasher.combine("body-standard")
+        case .collapsed(let lineLimit, let reason):
+            hasher.combine("body-collapsed")
+            hasher.combine(lineLimit)
+            hasher.combine(String(describing: reason))
+        }
+
+        if let linkSummary = post.linkSummary {
+            hasher.combine(linkSummary.totalCount)
+            hasher.combine(linkSummary.visibleHosts)
+            hasher.combine(linkSummary.unresolvedCount)
+        } else {
+            hasher.combine("no-link-summary")
+        }
+        combine(post.media, into: &hasher)
+    }
+
+    private static func combine(
+        _ richContent: NostrRichContent?,
+        into hasher: inout Hasher
+    ) {
+        guard let richContent else {
+            hasher.combine("no-rich-content")
+            return
+        }
+        hasher.combine(richContent.displayText)
+        for token in richContent.tokens {
+            switch token {
+            case .text:
+                hasher.combine("text")
+            case .url:
+                hasher.combine("url")
+            case .hashtag:
+                hasher.combine("hashtag")
+            case .profile:
+                hasher.combine("profile")
+            case .event:
+                hasher.combine("event")
+            case .customEmoji:
+                hasher.combine("custom-emoji")
+            }
+        }
+    }
+
+    private static func combine(
+        _ media: TimelineMedia?,
+        into hasher: inout Hasher
+    ) {
+        guard let media else {
+            hasher.combine("no-media")
+            return
+        }
+        switch media {
+        case .gallery(let tiles):
+            hasher.combine("gallery")
+            hasher.combine(tiles.count)
+            for tile in tiles {
+                hasher.combine(tile.width)
+                hasher.combine(tile.height)
+            }
+        case .linkPreview(let preview):
+            hasher.combine("link-preview")
+            hasher.combine(String(describing: preview.style))
+            hasher.combine(
+                preview.imageURL != nil &&
+                    preview.remoteImageLoadMode == .automatic
+            )
+        case .unresolvedLink:
+            hasher.combine("unresolved-link")
         }
     }
 }

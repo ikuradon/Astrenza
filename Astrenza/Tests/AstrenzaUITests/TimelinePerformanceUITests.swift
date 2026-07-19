@@ -17,7 +17,7 @@ final class TimelinePerformanceUITests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testTenThousandPostScrollingFlow() async throws {
+    func testTenThousandPostBidirectionalScrollingFlow() async throws {
         guard environmentValue(for: "ASTRENZA_RUN_PERFORMANCE_UI") == "1" else {
             return
         }
@@ -31,7 +31,13 @@ final class TimelinePerformanceUITests: XCTestCase {
                 "-AstrenzaDebugRoute", "timeline-performance",
                 "-AstrenzaPerformancePostCount", "10000"
             ]
+            let launchStartedAt = ProcessInfo.processInfo.systemUptime
             application.launch()
+            XCTAssertLessThan(
+                ProcessInfo.processInfo.systemUptime - launchStartedAt,
+                15,
+                "10,000-row geometry projection must not block launch"
+            )
         }
 
         let feed = application.collectionViews["timeline.feed"]
@@ -43,8 +49,21 @@ final class TimelinePerformanceUITests: XCTestCase {
             try await Task.sleep(for: .milliseconds(delayMilliseconds))
         }
 
-        for _ in 0..<24 {
-            feed.swipeUp(velocity: .fast)
+        let measureOptions = XCTMeasureOptions()
+        measureOptions.iterationCount = 1
+        measure(
+            metrics: [
+                XCTClockMetric(),
+                XCTOSSignpostMetric.scrollingAndDecelerationMetric,
+            ],
+            options: measureOptions
+        ) {
+            for _ in 0..<12 {
+                feed.swipeUp(velocity: .fast)
+            }
+            for _ in 0..<12 {
+                feed.swipeDown(velocity: .fast)
+            }
         }
         try await Task.sleep(for: .seconds(1))
         XCTAssertEqual(application.state, .runningForeground)
