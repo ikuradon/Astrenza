@@ -23,8 +23,8 @@ final class TimelineFeedViewController: UIViewController {
     private var readLinePositionByPostID:
         [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
-    private let rowLayoutProjectionCoordinator =
-        TimelineFeedRowLayoutProjectionCoordinator()
+    private let rowHeightCoordinator =
+        TimelineFeedRowHeightCoordinator()
     private var pendingPostSnapshotPosition =
         TimelineFeedSnapshotPosition.unchanged
     private var pendingPreservedAnchor: TimelineFeedVisibleAnchor?
@@ -51,9 +51,19 @@ final class TimelineFeedViewController: UIViewController {
     private var missingRestoreAnchorAttempts = 0
 
     private lazy var collectionLayout: TimelineFeedCollectionLayout = {
-        TimelineFeedCollectionLayout(
+        let layout = TimelineFeedCollectionLayout(
             anchorLineY: anchorLineY
         )
+        layout.onMeasuredHeight = { [weak self] entryID, height in
+            guard let self,
+                  entriesByID[entryID]?.post != nil
+            else { return }
+            rowHeightCoordinator.recordMeasuredHeight(
+                height,
+                for: entryID
+            )
+        }
+        return layout
     }()
 
     private lazy var collectionView: UICollectionView = {
@@ -124,23 +134,19 @@ final class TimelineFeedViewController: UIViewController {
         let sourceChanged = previousConfiguration?.sourceIdentity !=
             nextConfiguration.sourceIdentity
         if sourceChanged {
-            rowLayoutProjectionCoordinator.flush()
+            rowHeightCoordinator.flush()
         }
         configuration = nextConfiguration
 
         if sourceChanged {
             resetForSourceChange()
-            rowLayoutProjectionCoordinator.reset(
+            rowHeightCoordinator.reset(
                 layoutCache: nextConfiguration.layoutCache
             )
         }
-        rowLayoutProjectionCoordinator.configure(
+        rowHeightCoordinator.configure(
             onLayoutCacheChanged:
-                nextConfiguration.onLayoutCacheChanged,
-            onProjectedHeightsChanged: { [weak self] projectedHeights in
-                guard let self else { return }
-                collectionLayout.updateProjectedHeights(projectedHeights)
-            }
+                nextConfiguration.onLayoutCacheChanged
         )
 
         let previousRestoreRequest = restoreCoordinator.request
@@ -150,7 +156,6 @@ final class TimelineFeedViewController: UIViewController {
             isRestoreProtected:
                 nextConfiguration.viewportRestoreProtectionActive
         )
-        synchronizeRowGeometryMutationState()
         if previousRestoreRequest != restoreCoordinator.request {
             missingRestoreAnchorAttempts = 0
         }
@@ -188,8 +193,7 @@ final class TimelineFeedViewController: UIViewController {
         menuCoordinator.close()
         saveViewportStateIfPossible(force: true)
         setUserScrollActive(false)
-        rowLayoutProjectionCoordinator.setProjectionMutationSuspended(true)
-        rowLayoutProjectionCoordinator.flush()
+        rowHeightCoordinator.flush()
     }
 
     private func makeDataSource()
@@ -242,12 +246,9 @@ final class TimelineFeedViewController: UIViewController {
             .background { Color.astrenzaBackground }
             cell.configureMeasurement(for: entryID) { [weak self] id, height in
                 guard let self,
-                      entriesByID[id]?.post != nil
+                      entriesByID[id] != nil
                 else { return }
-                rowLayoutProjectionCoordinator.stageMeasuredHeight(
-                    height,
-                    for: id
-                )
+                collectionLayout.updateMeasuredHeight(height, for: id)
             }
             return cell
         }
@@ -298,7 +299,7 @@ final class TimelineFeedViewController: UIViewController {
         forceVisibleReconfiguration: Bool,
         reconfigureAllVisible: Bool = false
     ) {
-        rowLayoutProjectionCoordinator.prepareForEntries(
+        rowHeightCoordinator.prepareForEntries(
             oldEntries: entries,
             newEntries: newEntries
         )
@@ -371,7 +372,7 @@ final class TimelineFeedViewController: UIViewController {
                 TimelineFeedLayoutItem(
                     id: $0.id,
                     estimatedHeight:
-                        rowLayoutProjectionCoordinator.estimatedHeight(for: $0)
+                        rowHeightCoordinator.estimatedHeight(for: $0)
                 )
             },
             topPadding: topContentPadding
@@ -392,7 +393,6 @@ final class TimelineFeedViewController: UIViewController {
         }
 
         isApplyingSnapshot = true
-        synchronizeRowGeometryMutationState()
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
             isApplyingSnapshot = false
@@ -403,7 +403,6 @@ final class TimelineFeedViewController: UIViewController {
                 pullRefreshSourceRevision = nil
             }
             attemptPendingRestoreIfPossible()
-            synchronizeRowGeometryMutationState()
             publishInitialViewportReadyIfPossible()
             updateReadLinePositions()
             publishUnreadPillPlacement(force: true)
@@ -458,7 +457,6 @@ final class TimelineFeedViewController: UIViewController {
         let request: TimelineFeedViewportRestoreRequest
         switch restoreCoordinator.phase {
         case .ready:
-            synchronizeRowGeometryMutationState()
             return
         case .awaitingContent:
             guard let pendingRequest =
@@ -503,7 +501,6 @@ final class TimelineFeedViewController: UIViewController {
             targetContentOffset: targetOffset
         ) {
             restoreRetryGeneration &+= 1
-            synchronizeRowGeometryMutationState()
             configuration?.onScrollOffsetChanged(
                 collectionView.contentOffset.y
             )
@@ -557,7 +554,6 @@ final class TimelineFeedViewController: UIViewController {
         guard restoreCoordinator.completeUsingFallback(request: request)
         else { return }
         restoreRetryGeneration &+= 1
-        synchronizeRowGeometryMutationState()
         setContentOffset(request.state.contentOffset)
         let actualOffset = collectionView.contentOffset.y
         configuration?.onScrollOffsetChanged(actualOffset)
@@ -1022,14 +1018,8 @@ final class TimelineFeedViewController: UIViewController {
     private func setUserScrollActive(_ isActive: Bool) {
         guard isUserScrollActive != isActive else { return }
         isUserScrollActive = isActive
-        rowLayoutProjectionCoordinator.setScrollActive(isActive)
+        rowHeightCoordinator.setScrollActive(isActive)
         configuration?.onScrollActivityChanged(isActive)
-    }
-
-    private func synchronizeRowGeometryMutationState() {
-        rowLayoutProjectionCoordinator.setProjectionMutationSuspended(
-            isApplyingSnapshot || restoreCoordinator.blocksPersistence
-        )
     }
 }
 

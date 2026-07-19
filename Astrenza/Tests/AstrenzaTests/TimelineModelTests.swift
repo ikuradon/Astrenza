@@ -6,19 +6,19 @@ import Testing
 
 @Suite("Timeline models")
 struct TimelineModelTests {
-    @Test("Row layout projection reuses and publishes committed heights")
+    @Test("Table row height coordinator reuses and publishes measured heights")
     @MainActor
     func timelineFeedRowHeightCoordinatorReusesMeasuredHeights() {
         let post = MockTimelineData.posts[0]
         var initialCache = TimelineLayoutCache()
         initialCache.measuredHeights[post.id] = 240
-        let coordinator = TimelineFeedRowLayoutProjectionCoordinator()
+        let coordinator = TimelineFeedRowHeightCoordinator()
         var publishedCache: TimelineLayoutCache?
         coordinator.configure { publishedCache = $0 }
         coordinator.reset(layoutCache: initialCache)
 
         #expect(coordinator.estimatedHeight(for: .post(post)) == 240)
-        coordinator.stageMeasuredHeight(268, for: post.id)
+        coordinator.recordMeasuredHeight(268, for: post.id)
         coordinator.flush()
 
         #expect(publishedCache?.measuredHeights[post.id] == 268)
@@ -1885,86 +1885,6 @@ struct TimelineModelTests {
         }
 
         #expect(Set(fingerprints).count == fingerprints.count)
-    }
-
-    @Test("Timeline layout fingerprint ignores paint-only row updates")
-    func timelineLayoutFingerprintOnlyTracksGeometryChanges() {
-        let pubkey = String(repeating: "a", count: 64)
-        let resolvedAuthor = TimelineAuthor.resolved(
-            displayName: "Resolved profile",
-            nip05: "resolved@example.test",
-            pubkey: pubkey
-        )
-        let unresolvedAuthor = TimelineAuthor.unresolved(
-            pubkey: pubkey,
-            state: .fetching
-        )
-        let resolvedAvatar = AvatarStyle(
-            primary: .blue,
-            secondary: .purple,
-            symbolName: "person.fill"
-        )
-        let pendingAvatar = AvatarStyle(
-            primary: .orange,
-            secondary: .gray,
-            symbolName: "clock",
-            pictureState: .metadataPending
-        )
-
-        func post(
-            author: TimelineAuthor,
-            avatar: AvatarStyle,
-            body: String = "Stable body",
-            actionState: TimelinePostActionState = .none
-        ) -> TimelinePost {
-            TimelinePost(
-                id: "same-layout-id",
-                author: author,
-                avatar: avatar,
-                body: body,
-                createdAt: 100,
-                replyCount: nil,
-                boostCount: nil,
-                favoriteCount: nil,
-                isLocked: false,
-                media: nil,
-                context: nil,
-                actionState: actionState
-            )
-        }
-
-        let unresolved = TimelineFeedEntry.post(post(
-            author: unresolvedAuthor,
-            avatar: pendingAvatar
-        ))
-        let profileResolved = TimelineFeedEntry.post(post(
-            author: resolvedAuthor,
-            avatar: resolvedAvatar,
-            actionState: TimelinePostActionState(
-                didReply: true,
-                didRepost: true,
-                didFavorite: true,
-                didZap: true
-            )
-        ))
-        let bodyChanged = TimelineFeedEntry.post(post(
-            author: resolvedAuthor,
-            avatar: resolvedAvatar,
-            body: "Stable body with enough additional text to change wrapping"
-        ))
-
-        #expect(
-            TimelineRenderFingerprint.entry(unresolved) !=
-                TimelineRenderFingerprint.entry(profileResolved)
-        )
-        #expect(
-            TimelineLayoutFingerprint.entry(unresolved) ==
-                TimelineLayoutFingerprint.entry(profileResolved)
-        )
-        #expect(
-            TimelineLayoutFingerprint.entry(profileResolved) !=
-                TimelineLayoutFingerprint.entry(bodyChanged)
-        )
     }
 
     @Test("Routine persistence projection stays bounded to the in-memory 480-event window")
