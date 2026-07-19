@@ -7,11 +7,13 @@ final class NostrImageCache: @unchecked Sendable {
     static let shared = NostrImageCache(dataCache: NostrRemoteDataCache())
 
     static let mediaMaximumPixelSize = 2_048
+    static let mediaAspectRatioMaximumPixelSize = 96
     static let linkPreviewMaximumPixelSize = 1_024
     static let customEmojiMaximumPixelSize = 96
 
     private let dataCache: NostrRemoteDataCache
     private let pipeline: NostrImagePipeline
+    private let aspectRatioCache = NSCache<NSURL, NSNumber>()
 
     init(
         dataCache: NostrRemoteDataCache = NostrRemoteDataCache(),
@@ -48,7 +50,25 @@ final class NostrImageCache: @unchecked Sendable {
 
     func image(for url: URL, maximumPixelSize: Int) async throws -> UIImage {
         let image = try await pipeline.image(for: url, maximumPixelSize: maximumPixelSize)
+        if image.value.size.width > 0, image.value.size.height > 0 {
+            aspectRatioCache.setObject(
+                NSNumber(
+                    value: image.value.size.width / image.value.size.height
+                ),
+                forKey: url as NSURL
+            )
+        }
         return image.value
+    }
+
+    func cachedAspectRatio(for url: URL) -> CGFloat? {
+        guard let value = aspectRatioCache.object(
+            forKey: url as NSURL
+        )?.doubleValue,
+              value.isFinite,
+              value > 0
+        else { return nil }
+        return CGFloat(value)
     }
 
     func store(data: Data, response: URLResponse, for request: URLRequest) {

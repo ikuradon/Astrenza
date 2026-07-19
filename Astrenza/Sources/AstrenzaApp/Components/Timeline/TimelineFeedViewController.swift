@@ -1,3 +1,4 @@
+import AstrenzaCore
 import SwiftUI
 import UIKit
 
@@ -5,6 +6,17 @@ import UIKit
 final class TimelineFeedViewController: UIViewController {
     private enum Section: Hashable {
         case main
+    }
+
+    private struct PendingMeasuredHeight {
+        let height: CGFloat
+        let signature: TimelineRowHeightSignature
+        let context: TimelineRowMeasurementContext
+    }
+
+    private struct ResourcePrefetchRequest {
+        let token: UUID
+        let task: Task<Void, Never>
     }
 
     private let anchorLineY: CGFloat = 72
@@ -15,6 +27,10 @@ final class TimelineFeedViewController: UIViewController {
     private let viewportSaveInterval: TimeInterval = 0.25
     private let viewportSaveOffsetThreshold: CGFloat = 48
     private let cellReuseIdentifier = "timeline-entry"
+    private let premeasurementScreensAhead: CGFloat = 3
+    private let premeasurementScreensBehind: CGFloat = 1
+    private let maximumPendingPremeasurements = 48
+    private let maximumConcurrentResourcePrefetches = 4
 
     private var configuration: TimelineFeedCollectionConfiguration?
     private var entries: [TimelineFeedEntry] = []
@@ -25,6 +41,19 @@ final class TimelineFeedViewController: UIViewController {
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
     private let rowHeightCoordinator =
         TimelineFeedRowHeightCoordinator()
+    private let offscreenMeasurer = TimelineFeedOffscreenMeasurer()
+    private var measurementContext: TimelineRowMeasurementContext?
+    private var pendingMeasuredHeights:
+        [TimelineFeedEntry.ID: PendingMeasuredHeight] = [:]
+    private var measurementCommitTask: Task<Void, Never>?
+    private var premeasurementTask: Task<Void, Never>?
+    private var premeasurementQueue: [TimelineFeedEntry.ID] = []
+    private var premeasurementGeneration: UInt64 = 0
+    private var resourcePrefetchTasks:
+        [TimelineFeedEntry.ID: ResourcePrefetchRequest] = [:]
+    private var mediaAspectPrefetchAttempts:
+        [TimelineFeedEntry.ID: URL] = [:]
+    private var previousScrollOffset: CGFloat = 0
     private var pendingPostSnapshotPosition =
         TimelineFeedSnapshotPosition.unchanged
     private var pendingPreservedAnchor: TimelineFeedVisibleAnchor?
@@ -51,19 +80,9 @@ final class TimelineFeedViewController: UIViewController {
     private var missingRestoreAnchorAttempts = 0
 
     private lazy var collectionLayout: TimelineFeedCollectionLayout = {
-        let layout = TimelineFeedCollectionLayout(
+        TimelineFeedCollectionLayout(
             anchorLineY: anchorLineY
         )
-        layout.onMeasuredHeight = { [weak self] entryID, height in
-            guard let self,
-                  entriesByID[entryID]?.post != nil
-            else { return }
-            rowHeightCoordinator.recordMeasuredHeight(
-                height,
-                for: entryID
-            )
-        }
-        return layout
     }()
 
     private lazy var collectionView: UICollectionView = {
@@ -85,12 +104,14 @@ final class TimelineFeedViewController: UIViewController {
         collectionView.verticalScrollIndicatorInsets =
             collectionView.contentInset
         collectionView.keyboardDismissMode = .interactive
+        collectionView.selfSizingInvalidation = .disabled
         collectionView.accessibilityIdentifier = "timeline.feed"
         collectionView.register(
             TimelineFeedHostingCollectionCell.self,
             forCellWithReuseIdentifier: cellReuseIdentifier
         )
         collectionView.delegate = self
+        collectionView.prefetchDataSource = self
         return collectionView
     }()
 
@@ -122,6 +143,7 @@ final class TimelineFeedViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        synchronizeMeasurementContextIfNeeded()
         menuCoordinator.relayout()
         attemptPendingRestoreIfPossible()
         publishInitialViewportReadyIfPossible()
@@ -189,6 +211,11 @@ final class TimelineFeedViewController: UIViewController {
 
     func prepareForRemoval() {
         restoreRetryGeneration &+= 1
+        cancelPremeasurement()
+        measurementCommitTask?.cancel()
+        measurementCommitTask = nil
+        resourcePrefetchTasks.values.forEach { $0.task.cancel() }
+        resourcePrefetchTasks.removeAll()
         missingRestoreAnchorAttempts = 0
         menuCoordinator.close()
         saveViewportStateIfPossible(force: true)
@@ -206,7 +233,8 @@ final class TimelineFeedViewController: UIViewController {
         ) { [weak self] collectionView, indexPath, entryID in
             guard let self,
                   let entry = entriesByID[entryID],
-                  let configuration
+                  configuration != nil,
+                  let hostedView = hostedEntryView(for: entry)
             else { return nil }
 
             guard let cell = collectionView.dequeueReusableCell(
@@ -216,42 +244,321 @@ final class TimelineFeedViewController: UIViewController {
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
             cell.contentConfiguration = UIHostingConfiguration {
-                TimelineHostedFeedEntryView(
-                    entry: entry,
-                    swipeSettings: configuration.swipeSettings,
-                    isActionMenuPresented:
-                        menuCoordinator.openedPostID == entry.post?.id,
-                    gapDirection: displayGapDirection(for: entryID),
-                    isFetchingGap:
-                        fetchingGapDirections[entryID] != nil,
-                    onActionEvent: { [weak self] event in
-                        self?.handlePostActionEvent(event)
-                    },
-                    onOpenPost: { [weak self] post in
-                        self?.openPost(post)
-                    },
-                    onOpenProfile: configuration.onOpenProfile,
-                    onReplyPost: configuration.onReplyPost,
-                    onOpenMedia: configuration.onOpenMedia,
-                    onOpenURL: configuration.onOpenURL,
-                    onDismissActionMenu: { [weak self] in
-                        self?.menuCoordinator.close()
-                    },
-                    onBackfillGap: { [weak self] gap in
-                        self?.requestBackfill(gap)
-                    }
-                )
+                hostedView
             }
             .margins(.all, 0)
             .background { Color.astrenzaBackground }
-            cell.configureMeasurement(for: entryID) { [weak self] id, height in
+            cell.configureMeasurement(
+                for: entryID,
+                width: collectionView.bounds.width,
+                isEnabled: !isUserScrollActive &&
+                    needsMeasurement(for: entry)
+            ) { [weak self] id, height in
                 guard let self,
-                      entriesByID[id] != nil
+                      let measuredEntry = entriesByID[id]
                 else { return }
-                collectionLayout.updateMeasuredHeight(height, for: id)
+                stageMeasuredHeight(height, for: measuredEntry)
             }
             return cell
         }
+    }
+
+    private func hostedEntryView(
+        for entry: TimelineFeedEntry
+    ) -> TimelineHostedFeedEntryView? {
+        guard let configuration else { return nil }
+        return TimelineHostedFeedEntryView(
+            entry: entry,
+            swipeSettings: configuration.swipeSettings,
+            isActionMenuPresented:
+                menuCoordinator.openedPostID == entry.post?.id,
+            gapDirection: displayGapDirection(for: entry.id),
+            isFetchingGap: fetchingGapDirections[entry.id] != nil,
+            onActionEvent: { [weak self] event in
+                self?.handlePostActionEvent(event)
+            },
+            onOpenPost: { [weak self] post in
+                self?.openPost(post)
+            },
+            onOpenProfile: configuration.onOpenProfile,
+            onReplyPost: configuration.onReplyPost,
+            onOpenMedia: configuration.onOpenMedia,
+            onOpenURL: configuration.onOpenURL,
+            onDismissActionMenu: { [weak self] in
+                self?.menuCoordinator.close()
+            },
+            onBackfillGap: { [weak self] gap in
+                self?.requestBackfill(gap)
+            }
+        )
+    }
+
+    private func synchronizeMeasurementContextIfNeeded() {
+        let width = collectionView.bounds.width
+        guard width > 0 else { return }
+        let displayScale = max(traitCollection.displayScale, 1)
+        let nextContext = TimelineRowMeasurementContext(
+            containerWidth: width,
+            displayScale: displayScale,
+            contentSizeCategory:
+                traitCollection.preferredContentSizeCategory.rawValue,
+            layoutDirection:
+                view.effectiveUserInterfaceLayoutDirection == .rightToLeft
+                    ? "rtl"
+                    : "ltr",
+            localeIdentifier: Locale.current.identifier
+        )
+        guard measurementContext != nextContext else { return }
+
+        let preservedAnchor = captureVisibleAnchor()
+        measurementContext = nextContext
+        cancelPremeasurement()
+        pendingMeasuredHeights = [:]
+        rowHeightCoordinator.prepareForEntries(
+            entries,
+            context: nextContext
+        )
+        collectionLayout.configure(
+            items: entries.map {
+                TimelineFeedLayoutItem(
+                    id: $0.id,
+                    estimatedHeight:
+                        rowHeightCoordinator.estimatedHeight(for: $0)
+                )
+            },
+            topPadding: topContentPadding
+        )
+
+        UIView.performWithoutAnimation {
+            collectionView.layoutIfNeeded()
+            premeasureViewportRowsSynchronously(maxCount: 6)
+            commitPendingMeasuredHeights(force: true)
+            collectionView.layoutIfNeeded()
+            if let preservedAnchor {
+                preserve(preservedAnchor)
+            }
+        }
+        schedulePremeasurement()
+    }
+
+    private func premeasureViewportRowsSynchronously(maxCount: Int) {
+        guard maxCount > 0 else { return }
+        let visibleRect = CGRect(
+            origin: collectionView.contentOffset,
+            size: collectionView.bounds.size
+        )
+        var measuredCount = 0
+        for entryID in collectionLayout.entryIDs(intersecting: visibleRect) {
+            guard measuredCount < maxCount,
+                  measureEntryIfNeeded(entryID)
+            else { continue }
+            measuredCount += 1
+        }
+    }
+
+    private func schedulePremeasurement() {
+        guard collectionView.bounds.width > 0,
+              collectionView.bounds.height > 0,
+              measurementContext != nil,
+              !isUserScrollActive,
+              !entries.isEmpty
+        else { return }
+
+        let offset = collectionView.contentOffset.y
+        let isMovingTowardOlder = offset >= previousScrollOffset
+        previousScrollOffset = offset
+        let height = collectionView.bounds.height
+        let visibleRect = CGRect(
+            x: collectionView.contentOffset.x,
+            y: offset,
+            width: collectionView.bounds.width,
+            height: height
+        )
+        let lookaheadRect = CGRect(
+            x: visibleRect.minX,
+            y: visibleRect.minY - height * (
+                isMovingTowardOlder
+                    ? premeasurementScreensBehind
+                    : premeasurementScreensAhead
+            ),
+            width: visibleRect.width,
+            height: visibleRect.height + height * (
+                premeasurementScreensAhead +
+                    premeasurementScreensBehind
+            )
+        )
+        var candidateIDs = collectionLayout.entryIDs(
+            intersecting: lookaheadRect
+        )
+        if !isMovingTowardOlder {
+            candidateIDs.reverse()
+        }
+        let prioritizedIDs = candidateIDs.filter { entryID in
+            guard let entry = entriesByID[entryID]
+            else { return false }
+            return needsMeasurement(for: entry)
+        }
+        .prefix(maximumPendingPremeasurements)
+        premeasurementQueue = Array(prioritizedIDs)
+        startPremeasurementIfNeeded()
+    }
+
+    private func startPremeasurementIfNeeded() {
+        guard premeasurementTask == nil,
+              !isUserScrollActive,
+              !premeasurementQueue.isEmpty
+        else { return }
+        let generation = premeasurementGeneration
+        premeasurementTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled,
+                  !isUserScrollActive,
+                  generation == premeasurementGeneration,
+                  !premeasurementQueue.isEmpty {
+                try? await Task.sleep(for: .milliseconds(24))
+                guard !Task.isCancelled,
+                      !isUserScrollActive,
+                      generation == premeasurementGeneration
+                else { break }
+                let entryID = premeasurementQueue.removeFirst()
+                _ = measureEntryIfNeeded(entryID)
+            }
+            if generation == premeasurementGeneration {
+                premeasurementTask = nil
+            }
+        }
+    }
+
+    @discardableResult
+    private func measureEntryIfNeeded(
+        _ entryID: TimelineFeedEntry.ID
+    ) -> Bool {
+        guard let entry = entriesByID[entryID],
+              needsMeasurement(for: entry)
+        else { return false }
+        if shouldAwaitMediaGeometry(
+            for: entryID,
+            entry: entry
+        ) {
+            return false
+        }
+        guard let hostedView = hostedEntryView(for: entry),
+              let measurementContext
+        else { return false }
+        let height = offscreenMeasurer.height(
+            for: hostedView,
+            width: measurementContext.containerWidth,
+            context: measurementContext
+        )
+        guard height.isFinite, height > 0 else { return false }
+        stageMeasuredHeight(height, for: entry)
+        return true
+    }
+
+    private func cancelPremeasurement() {
+        premeasurementGeneration &+= 1
+        premeasurementTask?.cancel()
+        premeasurementTask = nil
+        premeasurementQueue = []
+    }
+
+    private func stageMeasuredHeight(
+        _ height: CGFloat,
+        for entry: TimelineFeedEntry
+    ) {
+        guard let post = entry.post,
+              let measurementContext,
+              entriesByID[entry.id]?.post?.id == post.id
+        else { return }
+        pendingMeasuredHeights[entry.id] = PendingMeasuredHeight(
+            height: height,
+            signature: TimelineRowHeightSignature(post: post),
+            context: measurementContext
+        )
+        scheduleMeasuredHeightCommit()
+    }
+
+    private func needsMeasurement(
+        for entry: TimelineFeedEntry
+    ) -> Bool {
+        guard let post = entry.post,
+              let measurementContext
+        else { return false }
+        if let pending = pendingMeasuredHeights[entry.id],
+           pending.context == measurementContext,
+           pending.signature == TimelineRowHeightSignature(post: post) {
+            return false
+        }
+        return rowHeightCoordinator.needsMeasurement(for: post)
+    }
+
+    private func scheduleMeasuredHeightCommit() {
+        guard measurementCommitTask == nil else { return }
+        measurementCommitTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            measurementCommitTask = nil
+            commitPendingMeasuredHeights()
+        }
+    }
+
+    private func commitPendingMeasuredHeights(force: Bool = false) {
+        measurementCommitTask?.cancel()
+        measurementCommitTask = nil
+        guard !pendingMeasuredHeights.isEmpty else { return }
+
+        let currentContext = measurementContext
+        let validPendingMeasurements = pendingMeasuredHeights.filter {
+            entryID,
+            pending in
+            guard pending.context == currentContext,
+                  let post = entriesByID[entryID]?.post
+            else { return false }
+            return pending.signature == TimelineRowHeightSignature(post: post)
+        }
+        let staleEntryIDs = Set(pendingMeasuredHeights.keys).subtracting(
+            validPendingMeasurements.keys
+        )
+        for entryID in staleEntryIDs {
+            pendingMeasuredHeights.removeValue(forKey: entryID)
+        }
+
+        let committedMeasurements:
+            [TimelineFeedEntry.ID: PendingMeasuredHeight]
+        if isUserScrollActive && !force {
+            let visibleMinY = collectionView.contentOffset.y
+            let visibleMaxY = collectionView.contentOffset.y +
+                collectionView.bounds.height
+            committedMeasurements = validPendingMeasurements.filter {
+                guard let frame = collectionLayout.frame(for: $0.key)
+                else { return false }
+                return frame.maxY <= visibleMinY ||
+                    frame.minY >= visibleMaxY
+            }
+        } else {
+            committedMeasurements = validPendingMeasurements
+        }
+        guard !committedMeasurements.isEmpty else { return }
+        for entryID in committedMeasurements.keys {
+            pendingMeasuredHeights.removeValue(forKey: entryID)
+        }
+        var committedHeights: [TimelineFeedEntry.ID: CGFloat] = [:]
+        committedHeights.reserveCapacity(committedMeasurements.count)
+        for (entryID, pending) in committedMeasurements {
+            guard let post = entriesByID[entryID]?.post else { continue }
+            _ = rowHeightCoordinator.recordMeasuredHeight(
+                pending.height,
+                for: post
+            )
+            committedHeights[entryID] = pending.height
+        }
+        guard !committedHeights.isEmpty else { return }
+        let changedIDs = collectionLayout.updateMeasuredHeights(
+            committedHeights
+        )
+        guard !changedIDs.isEmpty else { return }
+        attemptPendingRestoreIfPossible()
+        publishUnreadPillPlacement(force: true)
     }
 
     private func configureMenuCoordinator() {
@@ -272,6 +579,14 @@ final class TimelineFeedViewController: UIViewController {
 
     private func resetForSourceChange() {
         restoreRetryGeneration &+= 1
+        cancelPremeasurement()
+        measurementCommitTask?.cancel()
+        measurementCommitTask = nil
+        pendingMeasuredHeights = [:]
+        measurementContext = nil
+        resourcePrefetchTasks.values.forEach { $0.task.cancel() }
+        resourcePrefetchTasks.removeAll()
+        mediaAspectPrefetchAttempts.removeAll()
         menuCoordinator.close()
         entries = []
         entriesByID = [:]
@@ -292,6 +607,7 @@ final class TimelineFeedViewController: UIViewController {
         isProgrammaticScroll = true
         collectionView.setContentOffset(.zero, animated: false)
         isProgrammaticScroll = false
+        previousScrollOffset = 0
     }
 
     private func applyEntries(
@@ -299,10 +615,17 @@ final class TimelineFeedViewController: UIViewController {
         forceVisibleReconfiguration: Bool,
         reconfigureAllVisible: Bool = false
     ) {
-        rowHeightCoordinator.prepareForEntries(
-            oldEntries: entries,
-            newEntries: newEntries
-        )
+        if let measurementContext {
+            rowHeightCoordinator.prepareForEntries(
+                newEntries,
+                context: measurementContext
+            )
+        } else {
+            rowHeightCoordinator.prepareForEntries(
+                oldEntries: entries,
+                newEntries: newEntries
+            )
+        }
         let oldIDs = entries.map(\.id)
         let newIDs = newEntries.map(\.id)
         let structureChanged = oldIDs != newIDs
@@ -317,11 +640,6 @@ final class TimelineFeedViewController: UIViewController {
 
         let oldIDSet = Set(oldIDs)
         let newIDSet = Set(newIDs)
-        let visibleIDs = Set(
-            collectionView.indexPathsForVisibleItems.compactMap {
-                dataSource.itemIdentifier(for: $0)
-            }
-        )
         let oldFingerprintsByID = Dictionary(
             uniqueKeysWithValues: entries.map {
                 ($0.id, TimelineRenderFingerprint.entry($0))
@@ -336,12 +654,11 @@ final class TimelineFeedViewController: UIViewController {
             }
         )
         let reconfiguredIDs = forceVisibleReconfiguration
-            ? visibleIDs
-                .intersection(oldIDSet)
+            ? oldIDSet
                 .intersection(newIDSet)
                 .intersection(
                     reconfigureAllVisible
-                        ? visibleIDs
+                        ? oldIDSet
                         : changedCommonIDs
                 )
             : []
@@ -406,6 +723,7 @@ final class TimelineFeedViewController: UIViewController {
             publishInitialViewportReadyIfPossible()
             updateReadLinePositions()
             publishUnreadPillPlacement(force: true)
+            schedulePremeasurement()
         }
     }
 
@@ -1019,7 +1337,154 @@ final class TimelineFeedViewController: UIViewController {
         guard isUserScrollActive != isActive else { return }
         isUserScrollActive = isActive
         rowHeightCoordinator.setScrollActive(isActive)
+        if isActive {
+            cancelPremeasurement()
+        } else {
+            commitPendingMeasuredHeights(force: true)
+            schedulePremeasurement()
+        }
         configuration?.onScrollActivityChanged(isActive)
+    }
+
+    private func remoteImageResources(
+        for entry: TimelineFeedEntry
+    ) -> [(url: URL, maximumPixelSize: Int)] {
+        guard let post = entry.post else { return [] }
+        var resources: [(URL, Int)] = []
+        func appendAvatar(_ avatar: AvatarStyle) {
+            if let url = avatar.imageURL {
+                resources.append((url, 256))
+            }
+        }
+        func appendRichContent(_ content: NostrRichContent?) {
+            guard let content else { return }
+            for token in content.tokens {
+                if case .customEmoji(_, let url) = token {
+                    resources.append((
+                        url,
+                        NostrImageCache.customEmojiMaximumPixelSize
+                    ))
+                }
+            }
+        }
+
+        appendAvatar(post.avatar)
+        if let repostedBy = post.repostedBy {
+            appendAvatar(repostedBy.avatar)
+        }
+        if let replyContext = post.replyContext {
+            appendAvatar(replyContext.avatar)
+        }
+        if let quotedPost = post.quotedPost {
+            appendAvatar(quotedPost.avatar)
+        }
+        if case .gallery(let tiles) = post.media,
+           tiles.count == 1,
+           let tile = tiles.first,
+           tile.remoteLoadMode == .automatic,
+           tile.resolvedAspectRatio == nil,
+           let url = tile.url {
+            resources.append((
+                url,
+                NostrImageCache.mediaAspectRatioMaximumPixelSize
+            ))
+        }
+        appendRichContent(post.richBody)
+        appendRichContent(post.replyContext?.richContent)
+        appendRichContent(post.quotedPost?.richBody)
+
+        switch post.media {
+        case .gallery:
+            break
+        case .linkPreview(let preview)
+            where preview.remoteImageLoadMode == .automatic:
+            if let url = preview.imageURL {
+                resources.append((
+                    url,
+                    NostrImageCache.linkPreviewMaximumPixelSize
+                ))
+            }
+        case .unresolvedLink, .none, .linkPreview:
+            break
+        }
+
+        var seen = Set<URL>()
+        return resources.filter { seen.insert($0.0).inserted }
+    }
+
+    private func finishResourcePrefetch(
+        for entryID: TimelineFeedEntry.ID,
+        token: UUID
+    ) {
+        guard resourcePrefetchTasks[entryID]?.token == token else { return }
+        resourcePrefetchTasks.removeValue(forKey: entryID)
+        schedulePremeasurement()
+    }
+
+    private func shouldAwaitMediaGeometry(
+        for entryID: TimelineFeedEntry.ID,
+        entry: TimelineFeedEntry
+    ) -> Bool {
+        guard let url = unresolvedSingleMediaURL(for: entry) else {
+            return false
+        }
+        if resourcePrefetchTasks[entryID] != nil {
+            return true
+        }
+        guard mediaAspectPrefetchAttempts[entryID] != url else {
+            return false
+        }
+        if startResourcePrefetch(for: entryID, entry: entry) {
+            return true
+        }
+        return !resourcePrefetchTasks.isEmpty
+    }
+
+    private func unresolvedSingleMediaURL(
+        for entry: TimelineFeedEntry
+    ) -> URL? {
+        guard case .gallery(let tiles) = entry.post?.media,
+              tiles.count == 1,
+              let tile = tiles.first,
+              tile.remoteLoadMode == .automatic,
+              tile.resolvedAspectRatio == nil
+        else { return nil }
+        return tile.url
+    }
+
+    @discardableResult
+    private func startResourcePrefetch(
+        for entryID: TimelineFeedEntry.ID,
+        entry: TimelineFeedEntry
+    ) -> Bool {
+        guard resourcePrefetchTasks[entryID] == nil,
+              resourcePrefetchTasks.count <
+                maximumConcurrentResourcePrefetches
+        else { return false }
+        let resources = remoteImageResources(for: entry)
+        guard !resources.isEmpty else { return false }
+        if let url = unresolvedSingleMediaURL(for: entry) {
+            mediaAspectPrefetchAttempts[entryID] = url
+        }
+        let token = UUID()
+        let task = Task(priority: .utility) { [weak self] in
+            for resource in resources.prefix(6) {
+                guard !Task.isCancelled else { break }
+                _ = try? await NostrImageCache.shared.image(
+                    for: resource.url,
+                    maximumPixelSize: resource.maximumPixelSize
+                )
+            }
+            self?.finishResourcePrefetch(
+                for: entryID,
+                token: token
+            )
+        }
+        resourcePrefetchTasks[entryID] = ResourcePrefetchRequest(
+            token: token,
+            task: task
+        )
+        return true
     }
 }
 
@@ -1041,6 +1506,7 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
         updateReadLinePositions()
         publishUnreadPillPlacement()
         saveViewportStateIfPossible()
+        schedulePremeasurement()
     }
 
     func scrollViewDidEndDragging(
@@ -1070,6 +1536,33 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
         else { return }
         lastLoadedOlderPostID = postID
         configuration?.onLoadOlderPost?(postID)
+    }
+}
+
+extension TimelineFeedViewController:
+    UICollectionViewDataSourcePrefetching {
+    func collectionView(
+        _ collectionView: UICollectionView,
+        prefetchItemsAt indexPaths: [IndexPath]
+    ) {
+        for indexPath in indexPaths {
+            guard let entryID = dataSource.itemIdentifier(for: indexPath),
+                  let entry = entriesByID[entryID]
+            else { continue }
+            startResourcePrefetch(for: entryID, entry: entry)
+        }
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        cancelPrefetchingForItemsAt indexPaths: [IndexPath]
+    ) {
+        for indexPath in indexPaths {
+            guard let entryID = dataSource.itemIdentifier(for: indexPath)
+            else { continue }
+            resourcePrefetchTasks[entryID]?.task.cancel()
+            schedulePremeasurement()
+        }
     }
 }
 

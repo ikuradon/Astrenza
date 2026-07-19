@@ -577,7 +577,9 @@ private struct SingleMediaAttachmentView: View {
 
     init(tile: MediaTile) {
         self.tile = tile
-        _loadedAspectRatio = State(initialValue: nil)
+        _loadedAspectRatio = State(
+            initialValue: tile.resolvedAspectRatio
+        )
     }
 
     var body: some View {
@@ -596,7 +598,7 @@ private struct SingleMediaAttachmentView: View {
     }
 
     private var resolvedAspectRatio: CGFloat? {
-        loadedAspectRatio ?? tile.aspectRatio
+        loadedAspectRatio ?? tile.resolvedAspectRatio
     }
 
     private func applyLoadedAspectRatio(_ aspectRatio: CGFloat) {
@@ -823,74 +825,57 @@ private struct BlurHashPlaceholderView: View {
 
 private struct LinkPreviewAttachmentView: View {
     let preview: LinkPreview
-    @State private var availableWidth: CGFloat = 0
 
     var body: some View {
-        let width = measuredWidth
         let showsRemoteImage = preview.imageURL != nil && preview.remoteImageLoadMode == .automatic
         let height: CGFloat = showsRemoteImage ? 252 : 226
-
-        VStack(spacing: 0) {
-            LinkPreviewHeroView(preview: preview, containerWidth: width)
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            VStack(spacing: 0) {
+                LinkPreviewHeroView(
+                    preview: preview,
+                    containerWidth: width
+                )
                 .frame(height: showsRemoteImage ? 154 : 128)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    if preview.style == .youtube {
-                        Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 11, weight: .black))
-                            .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        if preview.style == .youtube {
+                            Image(systemName: "play.rectangle.fill")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(.red)
+                        }
+
+                        Text(preview.host)
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
+                            .lineLimit(1)
                     }
 
-                    Text(preview.host)
-                        .font(.system(size: 13, weight: .heavy, design: .rounded))
-                        .foregroundStyle(preview.style == .youtube ? .red : Color.astrenzaAccent)
-                        .lineLimit(1)
+                    Text("\(preview.title)")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    Text(preview.subtitle)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(2)
                 }
-
-                Text("\(preview.title)")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-
-                Text(preview.subtitle)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(2)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(width: width, height: height)
+            .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .frame(width: width, height: height)
-        .background(Color.astrenzaAttachmentBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(height: height)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: LinkPreviewAvailableWidthKey.self, value: proxy.size.width)
-            }
-        )
-        .onPreferenceChange(LinkPreviewAvailableWidthKey.self) { width in
-            guard width > 0, abs(width - availableWidth) > 0.5 else { return }
-            availableWidth = width
-        }
-    }
-
-    private var measuredWidth: CGFloat {
-        availableWidth > 0 ? availableWidth : 320
-    }
-}
-
-private struct LinkPreviewAvailableWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 
@@ -929,7 +914,6 @@ private struct LinkPreviewHeroView: View {
                         .font(.system(size: 25, weight: .black, design: .rounded))
                         .foregroundStyle(Color(red: 0.13, green: 0.15, blue: 0.18))
                         .lineLimit(2)
-                        .minimumScaleFactor(0.82)
 
                     Spacer(minLength: 8)
 
@@ -957,7 +941,7 @@ private struct LinkPreviewHeroView: View {
         let roundedDescriptor = baseFont.fontDescriptor.withDesign(.rounded)
             ?? baseFont.fontDescriptor
         let font = UIFont(descriptor: roundedDescriptor, size: 25)
-        let naturalLineWidth = max(0, containerWidth - 112) / 0.82
+        let naturalLineWidth = max(0, containerWidth - 112)
         var firstLine = String(words[0])
         var consumedWords = 1
 

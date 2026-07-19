@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
@@ -9,6 +10,8 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
 
     func configureMeasurement(
         for entryID: TimelineFeedEntry.ID,
+        width: CGFloat,
+        isEnabled: Bool,
         onMeasuredHeight:
             @escaping (TimelineFeedEntry.ID, CGFloat) -> Void
     ) {
@@ -16,7 +19,9 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
         isMeasurementScheduled = false
         representedEntryID = entryID
         self.onMeasuredHeight = onMeasuredHeight
-        scheduleMeasurement(width: bounds.width)
+        if isEnabled {
+            scheduleMeasurement(width: width)
+        }
     }
 
     override func prepareForReuse() {
@@ -25,20 +30,6 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
         isMeasurementScheduled = false
         representedEntryID = nil
         onMeasuredHeight = nil
-    }
-
-    override func apply(
-        _ layoutAttributes: UICollectionViewLayoutAttributes
-    ) {
-        super.apply(layoutAttributes)
-        scheduleMeasurement(width: layoutAttributes.size.width)
-    }
-
-    override func preferredLayoutAttributesFitting(
-        _ layoutAttributes: UICollectionViewLayoutAttributes
-    ) -> UICollectionViewLayoutAttributes {
-        scheduleMeasurement(width: layoutAttributes.size.width)
-        return layoutAttributes
     }
 
     private func scheduleMeasurement(width: CGFloat) {
@@ -65,6 +56,98 @@ final class TimelineFeedHostingCollectionCell: UICollectionViewCell {
                 verticalFittingPriority: .fittingSizeLevel
             )
             onMeasuredHeight?(entryID, max(1, fittedSize.height))
+        }
+    }
+}
+
+@MainActor
+final class TimelineFeedOffscreenMeasurer {
+    private let hostingController = UIHostingController(
+        rootView: AnyView(EmptyView())
+    )
+
+    init() {
+        hostingController.view.backgroundColor = .clear
+    }
+
+    func height<Content: View>(
+        for content: Content,
+        width: CGFloat,
+        context: TimelineRowMeasurementContext
+    ) -> CGFloat {
+        guard width.isFinite, width > 0 else { return 0 }
+        let layoutDirection: LayoutDirection =
+            context.layoutDirection == "rtl" ? .rightToLeft : .leftToRight
+        let dynamicTypeSize = DynamicTypeSize(
+            contentSizeCategory: UIContentSizeCategory(
+                rawValue: context.contentSizeCategory
+            )
+        )
+        hostingController.rootView = AnyView(
+            content
+                .frame(width: width, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+                .environment(\.layoutDirection, layoutDirection)
+                .environment(
+                    \.locale,
+                    Locale(identifier: context.localeIdentifier)
+                )
+                .dynamicTypeSize(dynamicTypeSize)
+        )
+        hostingController.view.semanticContentAttribute =
+            layoutDirection == .rightToLeft
+                ? .forceRightToLeft
+                : .forceLeftToRight
+        hostingController.view.bounds = CGRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: 1
+        )
+        hostingController.view.invalidateIntrinsicContentSize()
+        hostingController.view.setNeedsLayout()
+        hostingController.view.layoutIfNeeded()
+        let rawHeight = hostingController.sizeThatFits(
+            in: CGSize(
+                width: width,
+                height: UIView.layoutFittingExpandedSize.height
+            )
+        ).height
+        let scale = max(
+            CGFloat(context.displayScaleMilli) / 1_000,
+            1
+        )
+        return ceil(rawHeight * scale) / scale
+    }
+}
+
+private extension DynamicTypeSize {
+    init(contentSizeCategory: UIContentSizeCategory) {
+        switch contentSizeCategory {
+        case .extraSmall:
+            self = .xSmall
+        case .small:
+            self = .small
+        case .medium:
+            self = .medium
+        case .extraLarge:
+            self = .xLarge
+        case .extraExtraLarge:
+            self = .xxLarge
+        case .extraExtraExtraLarge:
+            self = .xxxLarge
+        case .accessibilityMedium:
+            self = .accessibility1
+        case .accessibilityLarge:
+            self = .accessibility2
+        case .accessibilityExtraLarge:
+            self = .accessibility3
+        case .accessibilityExtraExtraLarge:
+            self = .accessibility4
+        case .accessibilityExtraExtraExtraLarge:
+            self = .accessibility5
+        default:
+            self = .large
         }
     }
 }

@@ -6,6 +6,7 @@ final class TimelineFeedRowHeightCoordinator {
     private(set) var layoutCache = TimelineLayoutCache()
     private var hasPendingChanges = false
     private var isScrollActive = false
+    private var measurementContext: TimelineRowMeasurementContext?
     private var publishTask: Task<Void, Never>?
     private var onLayoutCacheChanged: (TimelineLayoutCache) -> Void = { _ in }
 
@@ -20,6 +21,7 @@ final class TimelineFeedRowHeightCoordinator {
         publishTask = nil
         hasPendingChanges = false
         self.layoutCache = layoutCache
+        measurementContext = nil
     }
 
     func prepareForEntries(
@@ -43,15 +45,60 @@ final class TimelineFeedRowHeightCoordinator {
         }
     }
 
+    func prepareForEntries(
+        _ newEntries: [TimelineFeedEntry],
+        context: TimelineRowMeasurementContext
+    ) {
+        measurementContext = context
+        let postIDs = Set(newEntries.compactMap { $0.post?.id })
+        let previousCount = layoutCache.measuredHeights.count
+        let didReconcile = layoutCache.reconcile(
+            posts: newEntries.compactMap(\.post),
+            context: context
+        )
+        layoutCache.prune(keeping: postIDs)
+        if didReconcile || layoutCache.measuredHeights.count != previousCount {
+            markChanged()
+        }
+    }
+
     func estimatedHeight(for entry: TimelineFeedEntry) -> CGFloat {
         switch entry {
         case .post(let post):
-            layoutCache.height(for: post)
+            if let measurementContext {
+                layoutCache.height(for: post, context: measurementContext)
+            } else {
+                layoutCache.height(for: post)
+            }
         case .gap(let gap):
             TimelineLayoutEstimator.estimatedHeight(for: gap)
         case .deleted:
             TimelineLayoutEstimator.estimatedHeightForDeletedRow
         }
+    }
+
+    func needsMeasurement(for post: TimelinePost) -> Bool {
+        guard let measurementContext else { return true }
+        return !layoutCache.hasMeasurement(
+            for: post,
+            context: measurementContext
+        )
+    }
+
+    @discardableResult
+    func recordMeasuredHeight(
+        _ height: CGFloat,
+        for post: TimelinePost
+    ) -> Bool {
+        guard let measurementContext,
+              layoutCache.recordMeasuredHeight(
+                height,
+                for: post,
+                context: measurementContext
+              )
+        else { return false }
+        markChanged()
+        return true
     }
 
     func recordMeasuredHeight(

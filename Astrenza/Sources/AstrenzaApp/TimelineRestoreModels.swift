@@ -1,4 +1,6 @@
+import AstrenzaCore
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 struct TimelineViewportState: Codable, Equatable {
@@ -49,6 +51,8 @@ struct TimelineScrollCommand: Equatable, Identifiable {
 
 struct TimelineLayoutCache: Codable, Equatable {
     var measuredHeights: [TimelinePost.ID: CGFloat] = [:]
+    var heightSignatures: [TimelinePost.ID: TimelineRowHeightSignature] = [:]
+    var measurementContext: TimelineRowMeasurementContext?
 
     mutating func merge(measuredFrames: [TimelinePost.ID: CGRect]) {
         for (postID, frame) in measuredFrames where frame.height > 0 {
@@ -74,6 +78,7 @@ struct TimelineLayoutCache: Codable, Equatable {
 
     mutating func prune(keeping postIDs: Set<TimelinePost.ID>) {
         measuredHeights = measuredHeights.filter { postIDs.contains($0.key) }
+        heightSignatures = heightSignatures.filter { postIDs.contains($0.key) }
     }
 
     @discardableResult
@@ -81,6 +86,7 @@ struct TimelineLayoutCache: Codable, Equatable {
         var didInvalidate = false
         for postID in postIDs where measuredHeights.removeValue(forKey: postID) != nil {
             didInvalidate = true
+            heightSignatures.removeValue(forKey: postID)
         }
         return didInvalidate
     }
@@ -88,6 +94,241 @@ struct TimelineLayoutCache: Codable, Equatable {
     func height(for post: TimelinePost) -> CGFloat {
         measuredHeights[post.id] ?? TimelineLayoutEstimator.estimatedHeight(for: post)
     }
+
+    func height(
+        for post: TimelinePost,
+        context: TimelineRowMeasurementContext
+    ) -> CGFloat {
+        guard measurementContext == context,
+              let height = measuredHeights[post.id],
+              let storedSignature = heightSignatures[post.id],
+              storedSignature == TimelineRowHeightSignature(post: post)
+        else {
+            return TimelineLayoutEstimator.estimatedHeight(
+                for: post,
+                availableWidth: context.containerWidth
+            )
+        }
+        return height
+    }
+
+    func hasMeasurement(
+        for post: TimelinePost,
+        context: TimelineRowMeasurementContext
+    ) -> Bool {
+        guard measurementContext == context,
+              measuredHeights[post.id] != nil,
+              let storedSignature = heightSignatures[post.id]
+        else { return false }
+        return storedSignature == TimelineRowHeightSignature(post: post)
+    }
+
+    @discardableResult
+    mutating func recordMeasuredHeight(
+        _ height: CGFloat,
+        for post: TimelinePost,
+        context: TimelineRowMeasurementContext,
+        changeThreshold: CGFloat = 0.5
+    ) -> Bool {
+        let signature = TimelineRowHeightSignature(post: post)
+        let ownsPreviousHeight = heightSignatures[post.id] == signature &&
+            measurementContext == context
+        if ownsPreviousHeight,
+           let previousHeight = measuredHeights[post.id],
+           abs(previousHeight - height) <= changeThreshold {
+            return false
+        }
+        guard height.isFinite, height > 0 else { return false }
+        if measurementContext != context {
+            measuredHeights.removeAll(keepingCapacity: true)
+            heightSignatures.removeAll(keepingCapacity: true)
+            measurementContext = context
+        }
+        measuredHeights[post.id] = height
+        heightSignatures[post.id] = signature
+        return true
+    }
+
+    @discardableResult
+    mutating func reconcile(
+        posts: [TimelinePost],
+        context: TimelineRowMeasurementContext
+    ) -> Bool {
+        if measurementContext != context {
+            let didChange = !measuredHeights.isEmpty ||
+                !heightSignatures.isEmpty ||
+                measurementContext != nil
+            measuredHeights.removeAll(keepingCapacity: true)
+            heightSignatures.removeAll(keepingCapacity: true)
+            measurementContext = context
+            return didChange
+        }
+        let postsByID = Dictionary(
+            uniqueKeysWithValues: posts.map { ($0.id, $0) }
+        )
+        var didChange = false
+        for postID in Array(measuredHeights.keys) {
+            guard let post = postsByID[postID],
+                  heightSignatures[postID] == TimelineRowHeightSignature(post: post),
+                  measurementContext == context
+            else {
+                measuredHeights.removeValue(forKey: postID)
+                heightSignatures.removeValue(forKey: postID)
+                didChange = true
+                continue
+            }
+        }
+        return didChange
+    }
+}
+
+struct TimelineRowMeasurementContext: Hashable, Codable {
+    static let layoutVersion = 1
+
+    let containerWidthPixels: Int
+    let displayScaleMilli: Int
+    let contentSizeCategory: String
+    let layoutDirection: String
+    let localeIdentifier: String
+    let layoutVersion: Int
+
+    init(
+        containerWidth: CGFloat,
+        displayScale: CGFloat,
+        contentSizeCategory: String,
+        layoutDirection: String,
+        localeIdentifier: String
+    ) {
+        let boundedScale = max(displayScale, 1)
+        containerWidthPixels = Int((containerWidth * boundedScale).rounded())
+        displayScaleMilli = Int((boundedScale * 1_000).rounded())
+        self.contentSizeCategory = contentSizeCategory
+        self.layoutDirection = layoutDirection
+        self.localeIdentifier = localeIdentifier
+        layoutVersion = Self.layoutVersion
+    }
+
+    var containerWidth: CGFloat {
+        CGFloat(containerWidthPixels) /
+            max(CGFloat(displayScaleMilli) / 1_000, 1)
+    }
+}
+
+struct TimelineRowHeightSignature: Hashable, Codable {
+    static let schemaVersion = 1
+
+    let version: Int
+    let digest: String
+
+    init(post: TimelinePost) {
+        var builder = DigestBuilder()
+        builder.append(post.repostedBy != nil)
+        builder.append(post.replyContext != nil)
+        builder.append(post.contentWarning != nil)
+        if post.contentWarning == nil {
+            builder.append(Self.layoutText(
+                plain: post.body,
+                rich: post.richBody,
+                mention: post.replyMention?.text
+            ))
+            builder.append(post.bodyPresentation.timelineLineLimit)
+            builder.append(post.quotedPost?.isAvailable)
+            if post.quotedPost?.isAvailable == true {
+                builder.append(
+                    post.quotedPost.map {
+                        Self.layoutText(
+                            plain: $0.body,
+                            rich: $0.richBody,
+                            mention: nil
+                        )
+                    }
+                )
+            }
+            Self.appendMedia(post.media, to: &builder)
+            builder.append(
+                post.bodyPresentation.collapseReason != nil ||
+                    post.linkSummary != nil
+            )
+        }
+        version = Self.schemaVersion
+        digest = Data(SHA256.hash(data: builder.data))
+            .base64EncodedString()
+    }
+
+    private struct DigestBuilder {
+        private(set) var data = Data()
+
+        mutating func append(_ value: String?) {
+            guard let value else {
+                data.append(0)
+                return
+            }
+            data.append(1)
+            let bytes = Data(value.utf8)
+            var count = UInt64(bytes.count).bigEndian
+            withUnsafeBytes(of: &count) { data.append(contentsOf: $0) }
+            data.append(bytes)
+        }
+
+        mutating func append(_ value: Int?) {
+            append(value.map(String.init))
+        }
+
+        mutating func append(_ value: Bool?) {
+            append(value.map { $0 ? "1" : "0" })
+        }
+
+        mutating func append(_ value: Bool) {
+            append(Optional(value))
+        }
+    }
+
+    private static func appendMedia(
+        _ media: TimelineMedia?,
+        to builder: inout DigestBuilder
+    ) {
+        guard let media else {
+            builder.append("none")
+            return
+        }
+        switch media {
+        case .gallery(let tiles) where tiles.count == 1:
+            builder.append("single")
+            builder.append(
+                tiles[0].resolvedAspectRatio.map {
+                    Int(($0 * 10_000).rounded())
+                }
+            )
+        case .gallery(let tiles):
+            builder.append("gallery")
+            builder.append(tiles.count)
+        case .linkPreview(let preview):
+            builder.append("link")
+            builder.append(
+                preview.imageURL != nil &&
+                    preview.remoteImageLoadMode == .automatic
+            )
+        case .unresolvedLink:
+            builder.append("unresolved")
+        }
+    }
+
+    private static func layoutText(
+        plain: String,
+        rich: NostrRichContent?,
+        mention: String?
+    ) -> String {
+        let prefix = mention.map { "\($0) " } ?? ""
+        guard let rich else { return prefix + plain }
+        return prefix + rich.tokens.map { token in
+            if case .customEmoji = token {
+                return "\u{FFFC}"
+            }
+            return rich.displayText(for: token)
+        }
+        .joined()
+    }
+
 }
 
 enum TimelineContentHeightAnchorPlanner {
@@ -95,25 +336,18 @@ enum TimelineContentHeightAnchorPlanner {
         oldEntries: [TimelineFeedEntry],
         newEntries: [TimelineFeedEntry]
     ) -> Set<TimelinePost.ID> {
-        guard oldEntries.count == newEntries.count else { return [] }
-        var changedPostIDs = Set<TimelinePost.ID>()
-
-        for index in oldEntries.indices {
-            let oldEntry = oldEntries[index]
-            let newEntry = newEntries[index]
-            guard oldEntry.id == newEntry.id else { return [] }
-            guard TimelineRenderFingerprint.entry(oldEntry) != TimelineRenderFingerprint.entry(newEntry)
-            else { continue }
-
-            if case .post(let oldPost) = oldEntry {
-                changedPostIDs.insert(oldPost.id)
+        let oldSignatures = Dictionary(
+            uniqueKeysWithValues: oldEntries.compactMap { entry in
+                entry.post.map { ($0.id, TimelineRowHeightSignature(post: $0)) }
             }
-            if case .post(let newPost) = newEntry {
-                changedPostIDs.insert(newPost.id)
-            }
-        }
-
-        return changedPostIDs
+        )
+        return Set(newEntries.compactMap { entry in
+            guard let post = entry.post,
+                  let oldSignature = oldSignatures[post.id],
+                  oldSignature != TimelineRowHeightSignature(post: post)
+            else { return nil }
+            return post.id
+        })
     }
 
     static func changedPostIDsAffectingAnchor(
@@ -140,11 +374,13 @@ enum TimelineContentHeightAnchorPlanner {
         newEntries: [TimelineFeedEntry],
         anchorPostID: TimelinePost.ID
     ) -> Set<TimelinePost.ID> {
-        var oldFingerprintsByPostID: [TimelinePost.ID: Int] = [:]
+        var oldFingerprintsByPostID:
+            [TimelinePost.ID: TimelineRowHeightSignature] = [:]
         var foundOldAnchor = false
         for entry in oldEntries {
             if case .post(let post) = entry {
-                oldFingerprintsByPostID[post.id] = TimelineRenderFingerprint.entry(entry)
+                oldFingerprintsByPostID[post.id] =
+                    TimelineRowHeightSignature(post: post)
             }
             if entry.id == anchorPostID {
                 foundOldAnchor = true
@@ -157,7 +393,7 @@ enum TimelineContentHeightAnchorPlanner {
         for entry in newEntries {
             if case .post(let post) = entry,
                let oldFingerprint = oldFingerprintsByPostID[post.id],
-               oldFingerprint != TimelineRenderFingerprint.entry(entry) {
+               oldFingerprint != TimelineRowHeightSignature(post: post) {
                 changedPostIDs.insert(post.id)
             }
             if entry.id == anchorPostID {
@@ -420,8 +656,22 @@ enum TimelineLayoutEstimator {
     }
 
     static func estimatedHeight(for post: TimelinePost) -> CGFloat {
+        estimatedHeight(for: post, availableWidth: 414)
+    }
+
+    static func estimatedHeight(
+        for post: TimelinePost,
+        availableWidth: CGFloat
+    ) -> CGFloat {
         var height: CGFloat = 92
-        height += bodyHeight(for: post)
+        let contentWidth = max(
+            1,
+            availableWidth -
+                2 * AstrenzaTimelineMetrics.rowHorizontalPadding -
+                AstrenzaTimelineMetrics.avatarSize -
+                AstrenzaTimelineMetrics.rowAvatarSpacing
+        )
+        height += bodyHeight(for: post, contentWidth: contentWidth)
 
         if post.repostedBy != nil {
             height += 25
@@ -436,7 +686,10 @@ enum TimelineLayoutEstimator {
         }
 
         if let media = post.media {
-            height += mediaEstimatedHeight(media)
+            height += mediaEstimatedHeight(
+                media,
+                availableWidth: contentWidth
+            )
         }
 
         if post.contentWarning != nil {
@@ -450,30 +703,57 @@ enum TimelineLayoutEstimator {
         return height
     }
 
-    private static func bodyHeight(for post: TimelinePost) -> CGFloat {
+    private static func bodyHeight(
+        for post: TimelinePost,
+        contentWidth: CGFloat
+    ) -> CGFloat {
         let lineLimit = post.bodyPresentation.timelineLineLimit
-        let estimatedLineCount = max(1, Int(ceil(Double(post.body.count) / 34.0)))
+        let estimatedCharactersPerLine = max(
+            8,
+            Int((contentWidth / 9.1).rounded(.down))
+        )
+        let estimatedLineCount = max(
+            1,
+            Int(
+                ceil(
+                    Double(post.body.count) /
+                        Double(estimatedCharactersPerLine)
+                )
+            )
+        )
         let visibleLineCount = lineLimit.map { min($0, estimatedLineCount) } ?? estimatedLineCount
         return CGFloat(visibleLineCount) * 22
     }
 
-    private static func mediaEstimatedHeight(_ media: TimelineMedia) -> CGFloat {
+    private static func mediaEstimatedHeight(
+        _ media: TimelineMedia,
+        availableWidth: CGFloat
+    ) -> CGFloat {
         switch media {
         case .gallery(let tiles):
-            return galleryEstimatedHeight(tiles)
+            return galleryEstimatedHeight(
+                tiles,
+                availableWidth: availableWidth
+            )
         case .linkPreview(let preview):
-            return preview.imageURL == nil ? 226 : 252
+            return preview.imageURL != nil &&
+                preview.remoteImageLoadMode == .automatic
+                ? 252
+                : 226
         case .unresolvedLink:
             return 72
         }
     }
 
-    private static func galleryEstimatedHeight(_ tiles: [MediaTile]) -> CGFloat {
-        let estimatedWidth: CGFloat = 414
+    private static func galleryEstimatedHeight(
+        _ tiles: [MediaTile],
+        availableWidth: CGFloat
+    ) -> CGFloat {
+        let estimatedWidth = max(1, availableWidth)
         switch tiles.count {
         case 1:
             return TimelineMediaLayoutMetrics.singleMediaSize(
-                aspectRatio: tiles.first?.aspectRatio,
+                aspectRatio: tiles.first?.resolvedAspectRatio,
                 availableWidth: estimatedWidth
             ).height
         default:

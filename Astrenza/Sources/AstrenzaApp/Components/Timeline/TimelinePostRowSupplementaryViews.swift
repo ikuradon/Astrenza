@@ -124,7 +124,6 @@ struct TimelineAuthorHeader: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .minimumScaleFactor(0.88)
 
                 if isLocked {
                     Image(systemName: "lock.fill")
@@ -146,7 +145,6 @@ struct TimelineAuthorHeader: View {
                     .foregroundStyle(Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .minimumScaleFactor(0.9)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

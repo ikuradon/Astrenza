@@ -1011,6 +1011,12 @@ struct MediaTile: Identifiable {
         return CGFloat(width) / CGFloat(height)
     }
 
+    var resolvedAspectRatio: CGFloat? {
+        aspectRatio ?? url.flatMap {
+            NostrImageCache.shared.cachedAspectRatio(for: $0)
+        }
+    }
+
     var isPortrait: Bool {
         guard let aspectRatio else { return false }
         return aspectRatio < 0.82
