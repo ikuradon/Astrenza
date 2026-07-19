@@ -6,24 +6,6 @@ import Testing
 
 @Suite("Timeline models")
 struct TimelineModelTests {
-    @Test("Table row height coordinator reuses and publishes measured heights")
-    @MainActor
-    func timelineFeedRowHeightCoordinatorReusesMeasuredHeights() {
-        let post = MockTimelineData.posts[0]
-        var initialCache = TimelineLayoutCache()
-        initialCache.measuredHeights[post.id] = 240
-        let coordinator = TimelineFeedRowHeightCoordinator()
-        var publishedCache: TimelineLayoutCache?
-        coordinator.configure { publishedCache = $0 }
-        coordinator.reset(layoutCache: initialCache)
-
-        #expect(coordinator.estimatedHeight(for: .post(post)) == 240)
-        coordinator.recordMeasuredHeight(268, for: post.id)
-        coordinator.flush()
-
-        #expect(publishedCache?.measuredHeights[post.id] == 268)
-    }
-
     @Test("Programmatic tab selection does not consume a user selection intent")
     func programmaticTabSelectionDoesNotConsumeUserIntent() {
         var intent = HomeTimelineTabSelectionIntent()

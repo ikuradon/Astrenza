@@ -23,8 +23,6 @@ final class TimelineFeedViewController: UIViewController {
     private var readLinePositionByPostID:
         [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
-    private let rowHeightCoordinator =
-        TimelineFeedRowHeightCoordinator()
     private var pendingPostSnapshotPosition =
         TimelineFeedSnapshotPosition.unchanged
     private var pendingPreservedAnchor: TimelineFeedVisibleAnchor?
@@ -50,21 +48,9 @@ final class TimelineFeedViewController: UIViewController {
     private var restoreRetryGeneration: UInt64 = 0
     private var missingRestoreAnchorAttempts = 0
 
-    private lazy var collectionLayout: TimelineFeedCollectionLayout = {
-        let layout = TimelineFeedCollectionLayout(
-            anchorLineY: anchorLineY
-        )
-        layout.onMeasuredHeight = { [weak self] entryID, height in
-            guard let self,
-                  entriesByID[entryID]?.post != nil
-            else { return }
-            rowHeightCoordinator.recordMeasuredHeight(
-                height,
-                for: entryID
-            )
-        }
-        return layout
-    }()
+    private lazy var collectionLayout = TimelineFeedSelfSizingLayout.make(
+        topContentPadding: topContentPadding
+    )
 
     private lazy var collectionView: UICollectionView = {
         let collectionView = UICollectionView(
@@ -76,6 +62,9 @@ final class TimelineFeedViewController: UIViewController {
         collectionView.showsVerticalScrollIndicator = true
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
+        // SwiftUIのintrinsic size通知をscroll中の再レイアウトへ直結させず、
+        // diffable snapshotの更新をRow再計測の明示的な境界にする。
+        collectionView.selfSizingInvalidation = .disabled
         collectionView.contentInset = UIEdgeInsets(
             top: 0,
             left: 0,
@@ -133,21 +122,11 @@ final class TimelineFeedViewController: UIViewController {
         let previousConfiguration = configuration
         let sourceChanged = previousConfiguration?.sourceIdentity !=
             nextConfiguration.sourceIdentity
-        if sourceChanged {
-            rowHeightCoordinator.flush()
-        }
         configuration = nextConfiguration
 
         if sourceChanged {
             resetForSourceChange()
-            rowHeightCoordinator.reset(
-                layoutCache: nextConfiguration.layoutCache
-            )
         }
-        rowHeightCoordinator.configure(
-            onLayoutCacheChanged:
-                nextConfiguration.onLayoutCacheChanged
-        )
 
         let previousRestoreRequest = restoreCoordinator.request
         restoreCoordinator.synchronize(
@@ -193,7 +172,6 @@ final class TimelineFeedViewController: UIViewController {
         menuCoordinator.close()
         saveViewportStateIfPossible(force: true)
         setUserScrollActive(false)
-        rowHeightCoordinator.flush()
     }
 
     private func makeDataSource()
@@ -244,12 +222,6 @@ final class TimelineFeedViewController: UIViewController {
             }
             .margins(.all, 0)
             .background { Color.astrenzaBackground }
-            cell.configureMeasurement(for: entryID) { [weak self] id, height in
-                guard let self,
-                      entriesByID[id] != nil
-                else { return }
-                collectionLayout.updateMeasuredHeight(height, for: id)
-            }
             return cell
         }
     }
@@ -299,10 +271,6 @@ final class TimelineFeedViewController: UIViewController {
         forceVisibleReconfiguration: Bool,
         reconfigureAllVisible: Bool = false
     ) {
-        rowHeightCoordinator.prepareForEntries(
-            oldEntries: entries,
-            newEntries: newEntries
-        )
         let oldIDs = entries.map(\.id)
         let newIDs = newEntries.map(\.id)
         let structureChanged = oldIDs != newIDs
@@ -366,16 +334,6 @@ final class TimelineFeedViewController: UIViewController {
         entries = newEntries
         entriesByID = Dictionary(
             uniqueKeysWithValues: newEntries.map { ($0.id, $0) }
-        )
-        collectionLayout.configure(
-            items: newEntries.map {
-                TimelineFeedLayoutItem(
-                    id: $0.id,
-                    estimatedHeight:
-                        rowHeightCoordinator.estimatedHeight(for: $0)
-                )
-            },
-            topPadding: topContentPadding
         )
         rebuildPostOrder()
         fetchingGapDirections = fetchingGapDirections.filter {
@@ -1018,7 +976,6 @@ final class TimelineFeedViewController: UIViewController {
     private func setUserScrollActive(_ isActive: Bool) {
         guard isUserScrollActive != isActive else { return }
         isUserScrollActive = isActive
-        rowHeightCoordinator.setScrollActive(isActive)
         configuration?.onScrollActivityChanged(isActive)
     }
 }
