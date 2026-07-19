@@ -193,15 +193,17 @@ final class TimelineFeedViewController: UIViewController {
             ) as? TimelineFeedHostingCollectionCell else { return nil }
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
-            cell.contentConfiguration = UIHostingConfiguration {
+            let gapDirection = displayGapDirection(for: entryID)
+            let isFetchingGap = fetchingGapDirections[entryID] != nil
+            let isActionMenuPresented =
+                menuCoordinator.openedPostID == entry.post?.id
+            let hostedConfiguration = UIHostingConfiguration {
                 TimelineHostedFeedEntryView(
                     entry: entry,
                     swipeSettings: configuration.swipeSettings,
-                    isActionMenuPresented:
-                        menuCoordinator.openedPostID == entry.post?.id,
-                    gapDirection: displayGapDirection(for: entryID),
-                    isFetchingGap:
-                        fetchingGapDirections[entryID] != nil,
+                    isActionMenuPresented: isActionMenuPresented,
+                    gapDirection: gapDirection,
+                    isFetchingGap: isFetchingGap,
                     onActionEvent: { [weak self] event in
                         self?.handlePostActionEvent(event)
                     },
@@ -222,6 +224,18 @@ final class TimelineFeedViewController: UIViewController {
             }
             .margins(.all, 0)
             .background { Color.astrenzaBackground }
+            cell.configure(
+                contentConfiguration: hostedConfiguration,
+                sizingIdentity: TimelineFeedCellSizingIdentity(
+                    entryID: entryID,
+                    renderFingerprint:
+                        TimelineRenderFingerprint.entry(entry),
+                    swipeSettings: configuration.swipeSettings,
+                    isActionMenuPresented: isActionMenuPresented,
+                    gapDirection: gapDirection,
+                    isFetchingGap: isFetchingGap
+                )
+            )
             return cell
         }
     }
