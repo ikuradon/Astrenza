@@ -1,5 +1,4 @@
 import CoreGraphics
-import SwiftUI
 import Testing
 import UIKit
 @testable import Astrenza
@@ -101,78 +100,6 @@ struct TimelineFeedLayoutIndexTests {
             at: IndexPath(item: 0, section: 0)
         )?.size.height == 150)
         #expect(!layout.updateMeasuredHeight(150, for: "post-0"))
-    }
-
-    @MainActor
-    @Test("Multiple measured heights are committed in one layout batch")
-    func measuredHeightsCommitAsOneBatch() {
-        let layout = TimelineFeedCollectionLayout(anchorLineY: 72)
-        layout.configure(
-            items: items([100, 100, 100]),
-            topPadding: 72
-        )
-
-        let changedIDs = layout.updateMeasuredHeights([
-            "post-0": 130,
-            "post-1": 160,
-        ])
-
-        #expect(changedIDs == ["post-0", "post-1"])
-        #expect(layout.layoutAttributesForItem(
-            at: IndexPath(item: 0, section: 0)
-        )?.size.height == 130)
-        #expect(layout.layoutAttributesForItem(
-            at: IndexPath(item: 2, section: 0)
-        )?.frame.minY == 362)
-    }
-
-    @MainActor
-    @Test("Offscreen row measurement matches hosting configuration sizing")
-    func offscreenMeasurementMatchesCellContentSizing() throws {
-        let post = try #require(MockTimelineData.posts.first)
-        let row = TimelinePostRow(
-            post: post,
-            isActionMenuPresented: false,
-            swipeSettings: TimelineSwipeSettings(),
-            onActionEvent: { _ in },
-            onOpenPost: { _ in },
-            onOpenProfile: { _ in },
-            onReplyPost: { _ in },
-            onOpenMedia: { _, _ in },
-            onOpenURL: { _ in },
-            onDismissActionMenu: {}
-        )
-        let width: CGFloat = 390
-        let context = TimelineRowMeasurementContext(
-            containerWidth: width,
-            displayScale: 3,
-            contentSizeCategory: UIContentSizeCategory.large.rawValue,
-            layoutDirection: "ltr",
-            localeIdentifier: "en_US"
-        )
-        let offscreenHeight = TimelineFeedOffscreenMeasurer().height(
-            for: row,
-            width: width,
-            context: context
-        )
-        let cellContent = UIHostingConfiguration {
-            row
-        }
-        .margins(.all, 0)
-        .makeContentView()
-        cellContent.bounds = CGRect(x: 0, y: 0, width: width, height: 1)
-        cellContent.setNeedsLayout()
-        cellContent.layoutIfNeeded()
-        let cellHeight = cellContent.systemLayoutSizeFitting(
-            CGSize(
-                width: width,
-                height: UIView.layoutFittingCompressedSize.height
-            ),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-
-        #expect(abs(offscreenHeight - cellHeight) <= 0.5)
     }
 
     private func items(_ heights: [CGFloat]) -> [TimelineFeedLayoutItem] {

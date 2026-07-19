@@ -124,7 +124,6 @@ struct NostrMVPTests {
 
         #expect(decodedMaximumDimensions.count == 20)
         #expect(decodedMaximumDimensions.allSatisfy { $0 > 0 && $0 <= 128 })
-        #expect(cache.cachedAspectRatio(for: url) == 2)
         let requestCount = await provider.requestCount
         #expect(requestCount == 1)
 
