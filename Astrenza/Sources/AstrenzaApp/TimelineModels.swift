@@ -936,9 +936,26 @@ enum TimelineMedia {
 }
 
 enum TimelineMediaLayoutMetrics {
-    static let galleryAspectRatio: CGFloat = 1.9
     static let singleFallbackAspectRatio: CGFloat = 1.35
     static let singleMaximumHeight: CGFloat = 300
+
+    static func galleryGridSize(
+        tileCount: Int,
+        availableWidth: CGFloat,
+        spacing: CGFloat
+    ) -> CGSize {
+        guard tileCount > 1 else { return .zero }
+        let boundedWidth = max(availableWidth, 0)
+        let boundedSpacing = min(max(spacing, 0), boundedWidth)
+        let tileSide = max(
+            0,
+            (boundedWidth - boundedSpacing) / 2
+        )
+        let rowCount = tileCount == 2 ? 1 : 2
+        let height = tileSide * CGFloat(rowCount)
+            + boundedSpacing * CGFloat(rowCount - 1)
+        return CGSize(width: boundedWidth, height: height)
+    }
 
     static func singleMediaSize(
         aspectRatio rawAspectRatio: CGFloat?,
@@ -959,15 +976,6 @@ enum TimelineMediaLayoutMetrics {
             return singleFallbackAspectRatio
         }
         return rawAspectRatio
-    }
-
-    static func galleryAspectRatio(for tiles: [MediaTile]) -> CGFloat {
-        switch tiles.count {
-        case 1:
-            return singleAspectRatio(tiles.first?.aspectRatio)
-        default:
-            return galleryAspectRatio
-        }
     }
 }
 

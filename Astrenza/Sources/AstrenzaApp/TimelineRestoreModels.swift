@@ -477,8 +477,11 @@ enum TimelineLayoutEstimator {
                 availableWidth: estimatedWidth
             ).height
         default:
-            let aspectRatio = TimelineMediaLayoutMetrics.galleryAspectRatio(for: tiles)
-            return min(max(estimatedWidth / aspectRatio, 160), 420)
+            return TimelineMediaLayoutMetrics.galleryGridSize(
+                tileCount: tiles.count,
+                availableWidth: estimatedWidth,
+                spacing: AstrenzaSpacing.point2
+            ).height
         }
     }
 }

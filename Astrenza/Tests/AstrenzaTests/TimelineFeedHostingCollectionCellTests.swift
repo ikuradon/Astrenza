@@ -352,6 +352,41 @@ struct TimelineFeedHostingCollectionCellTests {
     }
 
     @MainActor
+    @Test("Mounted multi-image galleries use one or two complete tile rows")
+    func mountedGalleryFrameUsesCompleteTileRows() {
+        let expectedHeights: [Int: CGFloat] = [
+            2: 159,
+            3: 320,
+            4: 320,
+        ]
+
+        for (tileCount, expectedHeight) in expectedHeights {
+            let cell = TimelineFeedHostingCollectionCell(frame: .zero)
+            cell.configure(
+                rootView: AnyView(
+                    TimelineMediaView(
+                        media: .gallery(makeGalleryTiles(count: tileCount))
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                ),
+                parentViewController: nil,
+                sizingIdentity: TimelineFeedCellSizingIdentity(
+                    entryID: "gallery-\(tileCount)",
+                    geometryFingerprint: tileCount,
+                    swipeSettings: TimelineSwipeSettings(),
+                    gapDirection: .older,
+                    isFetchingGap: false
+                )
+            )
+
+            #expect(abs(
+                cell.measuredHeight(fittingWidth: 320) - expectedHeight
+            ) <= 0.5)
+        }
+    }
+
+    @MainActor
     @Test("Long link preview metadata expands below its bounded hero")
     func longLinkPreviewMetadataExpandsBelowHero() {
         let compactFallback = makeLinkPreview(
@@ -778,6 +813,16 @@ struct TimelineFeedHostingCollectionCellTests {
                 unresolvedCount: 0
             )
         )
+    }
+
+    private func makeGalleryTiles(count: Int) -> [MediaTile] {
+        (0 ..< count).map { index in
+            MediaTile(
+                title: "Gallery tile \(index)",
+                colors: [.indigo, .cyan],
+                symbolName: "photo"
+            )
+        }
     }
 
     private func makeLinkPreview(

@@ -523,7 +523,10 @@ private struct GalleryAttachmentView: View {
         if tiles.count == 1 {
             SingleMediaAttachmentView(tile: tiles[0])
         } else {
-            GalleryAttachmentLayout(aspectRatio: resolvedAspectRatio) {
+            GalleryAttachmentLayout(
+                tileCount: tiles.count,
+                spacing: AstrenzaSpacing.point2
+            ) {
                 galleryGrid
             }
             .clipShape(RoundedRectangle(cornerRadius: AstrenzaRadius.point12, style: .continuous))
@@ -564,10 +567,6 @@ private struct GalleryAttachmentView: View {
                 }
             }
         }
-    }
-
-    private var resolvedAspectRatio: CGFloat {
-        TimelineMediaLayoutMetrics.galleryAspectRatio(for: tiles)
     }
 }
 
@@ -617,7 +616,8 @@ enum TimelineAttachmentLayoutMetrics {
 }
 
 private struct GalleryAttachmentLayout: Layout {
-    let aspectRatio: CGFloat
+    let tileCount: Int
+    let spacing: CGFloat
 
     func sizeThatFits(
         proposal: ProposedViewSize,
@@ -626,9 +626,14 @@ private struct GalleryAttachmentLayout: Layout {
     ) -> CGSize {
         guard !subviews.isEmpty else { return .zero }
         let width = TimelineAttachmentLayoutMetrics.resolvedWidth(for: proposal.width)
+        let gridSize = TimelineMediaLayoutMetrics.galleryGridSize(
+            tileCount: tileCount,
+            availableWidth: width.measurementWidth,
+            spacing: spacing
+        )
         return CGSize(
             width: width.reportedWidth,
-            height: width.measurementWidth / aspectRatio
+            height: gridSize.height
         )
     }
 

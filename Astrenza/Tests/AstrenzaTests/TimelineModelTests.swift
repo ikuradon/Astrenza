@@ -7854,6 +7854,35 @@ struct TimelineModelTests {
         #expect(missing.height <= TimelineMediaLayoutMetrics.singleMaximumHeight)
     }
 
+    @Test("Gallery frame height follows its visible row count")
+    func galleryFrameHeightFollowsVisibleRows() {
+        let twoTiles = TimelineMediaLayoutMetrics.galleryGridSize(
+            tileCount: 2,
+            availableWidth: 320,
+            spacing: 2
+        )
+        let threeTiles = TimelineMediaLayoutMetrics.galleryGridSize(
+            tileCount: 3,
+            availableWidth: 320,
+            spacing: 2
+        )
+        let fourTiles = TimelineMediaLayoutMetrics.galleryGridSize(
+            tileCount: 4,
+            availableWidth: 320,
+            spacing: 2
+        )
+        let overflowTiles = TimelineMediaLayoutMetrics.galleryGridSize(
+            tileCount: 8,
+            availableWidth: 320,
+            spacing: 2
+        )
+
+        #expect(twoTiles == CGSize(width: 320, height: 159))
+        #expect(threeTiles == CGSize(width: 320, height: 320))
+        #expect(fourTiles == threeTiles)
+        #expect(overflowTiles == fourTiles)
+    }
+
     @Test("Home viewport restore protection does not treat the temporary top as newest")
     func homeViewportRestoreProtectionBlocksTemporaryTopFollowing() {
         #expect(!HomeTimelineViewportRestorePolicy.isAtNewestWindow(
