@@ -309,8 +309,8 @@ extension MockTimelineData {
             context: nil,
             bodyPresentation: .collapsed(lineLimit: 3, reason: .linkHeavy),
             linkSummary: TimelineLinkSummary(
-                totalCount: 12,
-                visibleHosts: ["docs.mock.example", "design.mock.example", "notes.mock.example"],
+                totalCount: 11,
+                visibleHosts: ["docs.mock.example", "notes.mock.example"],
                 unresolvedCount: 2
             )
         ),
@@ -346,9 +346,9 @@ extension MockTimelineData {
             ),
             bodyPresentation: .collapsed(lineLimit: 4, reason: .lowTrustLinks),
             linkSummary: TimelineLinkSummary(
-                totalCount: 9,
+                totalCount: 8,
                 visibleHosts: ["short.mock", "unknown.mock.example"],
-                unresolvedCount: 6
+                unresolvedCount: 5
             )
         ),
         TimelinePost(

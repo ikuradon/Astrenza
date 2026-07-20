@@ -23,13 +23,24 @@ struct NostrTimelinePresentationProjection {
         return .standard
     }
 
-    static func linkSummary(from linkURLs: [URL]) -> TimelineLinkSummary? {
-        guard !linkURLs.isEmpty else { return nil }
-        let hosts = Array(Set(linkURLs.compactMap(\.host))).sorted()
+    static func linkSummary(
+        from linkURLs: [URL],
+        media: TimelineMedia? = nil
+    ) -> TimelineLinkSummary? {
+        let summarizedURLs: ArraySlice<URL>
+        switch media {
+        case .linkPreview, .unresolvedLink:
+            summarizedURLs = linkURLs.dropFirst()
+        case .gallery, nil:
+            summarizedURLs = linkURLs[...]
+        }
+
+        guard !summarizedURLs.isEmpty else { return nil }
+        let hosts = Array(Set(summarizedURLs.compactMap(\.host))).sorted()
         return TimelineLinkSummary(
-            totalCount: linkURLs.count,
+            totalCount: summarizedURLs.count,
             visibleHosts: hosts,
-            unresolvedCount: linkURLs.count
+            unresolvedCount: summarizedURLs.count
         )
     }
 }

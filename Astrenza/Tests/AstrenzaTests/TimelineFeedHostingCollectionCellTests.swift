@@ -806,12 +806,7 @@ struct TimelineFeedHostingCollectionCellTests {
                 imageURL: URL(string: "https://i.ytimg.com/vi/XyvI2U2XZTs/oardefault.jpg"),
                 style: .youtube
             )),
-            context: nil,
-            linkSummary: TimelineLinkSummary(
-                totalCount: 1,
-                visibleHosts: ["www.youtube.com"],
-                unresolvedCount: 0
-            )
+            context: nil
         )
     }
 

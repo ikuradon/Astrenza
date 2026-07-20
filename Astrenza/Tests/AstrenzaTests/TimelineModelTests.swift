@@ -576,6 +576,7 @@ struct TimelineModelTests {
             #expect(card.host == "Example")
             #expect(card.imageURL?.absoluteString == "https://example.test/card.png")
             #expect(card.style == .standard)
+            #expect(post.linkSummary == nil)
             #expect(post.body == "read")
             #expect(post.richBody?.tokens.contains { token in
                 if case .url = token {
@@ -1013,6 +1014,64 @@ struct TimelineModelTests {
         #expect(summary.unresolvedCount == 5)
     }
 
+    @Test("Link summary excludes the link represented by an OGP attachment")
+    func linkSummaryExcludesPromotedOGPLink() throws {
+        let links = [
+            try #require(URL(string: "https://ogp.example.test/article")),
+            try #require(URL(string: "https://remaining.example.test/reference"))
+        ]
+        let pendingMedia = TimelineMedia.unresolvedLink(UnresolvedLinkPreview(
+            host: "ogp.example.test",
+            url: links[0].absoluteString
+        ))
+        let resolvedMedia = TimelineMedia.linkPreview(LinkPreview(
+            title: "OGP article",
+            subtitle: "Resolved metadata",
+            host: "ogp.example.test",
+            url: links[0].absoluteString
+        ))
+
+        #expect(
+            NostrTimelinePresentationProjection.linkSummary(
+                from: [links[0]],
+                media: pendingMedia
+            ) == nil
+        )
+        #expect(
+            NostrTimelinePresentationProjection.linkSummary(
+                from: [links[0]],
+                media: resolvedMedia
+            ) == nil
+        )
+
+        let remainingSummary = try #require(
+            NostrTimelinePresentationProjection.linkSummary(
+                from: links,
+                media: resolvedMedia
+            )
+        )
+        #expect(remainingSummary.totalCount == 1)
+        #expect(remainingSummary.visibleHosts == ["remaining.example.test"])
+        #expect(remainingSummary.unresolvedCount == 1)
+    }
+
+    @Test("Link summary keeps all links when media does not contain an OGP attachment")
+    func linkSummaryKeepsLinksAlongsideGallery() throws {
+        let links = [
+            try #require(URL(string: "https://a.example.test/one")),
+            try #require(URL(string: "https://b.example.test/two"))
+        ]
+        let gallery = TimelineMedia.gallery([
+            MediaTile(title: "Photo", colors: [.blue, .indigo], symbolName: "photo")
+        ])
+
+        let summary = try #require(
+            NostrTimelinePresentationProjection.linkSummary(from: links, media: gallery)
+        )
+        #expect(summary.totalCount == 2)
+        #expect(summary.visibleHosts == ["a.example.test", "b.example.test"])
+    }
+
     @Test("Nostr materializer gives YouTube previews a video card style")
     func nostrMaterializerUsesYouTubeLinkPreviewStyle() throws {
         let author = String(repeating: "a", count: 64)
@@ -1378,7 +1437,7 @@ struct TimelineModelTests {
         #expect(post.quotedPost?.createdAt == quoted.createdAt)
         #expect(post.contentWarning?.displayReason == "sensitive")
         #expect(post.bodyPresentation.collapseReason == .lowTrustLinks)
-        #expect(post.linkSummary?.totalCount == 1)
+        #expect(post.linkSummary == nil)
         if case .linkPreview(let card) = post.media {
             #expect(card.title == "Example Card")
             #expect(card.host == "Example")

@@ -29,6 +29,14 @@ struct NostrTimelinePostProjection {
         )
         let bodyText = richBody?.displayText ?? item.body
         let contentWarning = event.flatMap(NostrTimelineAuthorProjection.contentWarning(from:))
+        let media = NostrTimelineMediaProjection.media(
+            assets: mediaAssets,
+            mediaAttachments: mediaAttachments,
+            linkURLs: linkURLs,
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
+            palette: NostrTimelineAuthorProjection.avatarPalette(for: item.pubkey),
+            policy: policy
+        )
         let replyProjection = event.map {
             NostrTimelineReplyProjection(
                 event: $0,
@@ -76,14 +84,7 @@ struct NostrTimelinePostProjection {
             boostCount: nil,
             favoriteCount: nil,
             isLocked: false,
-            media: NostrTimelineMediaProjection.media(
-                assets: mediaAssets,
-                mediaAttachments: mediaAttachments,
-                linkURLs: linkURLs,
-                linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL,
-                palette: NostrTimelineAuthorProjection.avatarPalette(for: item.pubkey),
-                policy: policy
-            ),
+            media: media,
             context: nil,
             repostedBy: repostedBy,
             quotedPost: event.flatMap {
@@ -106,7 +107,10 @@ struct NostrTimelinePostProjection {
                 isFollowed: item.isFollowed,
                 filterMatch: item.filterMatch
             ),
-            linkSummary: NostrTimelinePresentationProjection.linkSummary(from: linkURLs),
+            linkSummary: NostrTimelinePresentationProjection.linkSummary(
+                from: linkURLs,
+                media: media
+            ),
             actionState: .none
         )
     }
