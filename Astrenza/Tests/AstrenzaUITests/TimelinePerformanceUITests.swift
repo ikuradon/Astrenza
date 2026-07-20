@@ -122,6 +122,58 @@ final class TimelinePerformanceUITests: XCTestCase {
         )
     }
 
+    func testSubthresholdHorizontalRowSwipeDoesNotOpenPost() async throws {
+        let application = XCUIApplication()
+        self.application = application
+        application.launchArguments = [
+            "-AstrenzaDebugRoute", "timeline-performance",
+            "-AstrenzaPerformancePostCount", "100"
+        ]
+        application.launch()
+
+        let feed = application.collectionViews["timeline.feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 12))
+        let firstBody = application.staticTexts["timeline.body.performance-0"]
+        XCTAssertTrue(firstBody.waitForExistence(timeout: 5))
+
+        let rowY = min(
+            max((firstBody.frame.midY - feed.frame.minY) / feed.frame.height, 0.1),
+            0.9
+        )
+        let swipeStart = feed.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.72, dy: rowY)
+        )
+        let swipeEnd = feed.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.64, dy: rowY)
+        )
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        try await Task.sleep(for: .milliseconds(250))
+
+        let openedPost = application.staticTexts[
+            "astrenza.debug.timeline.performance.last-opened-post"
+        ]
+        XCTAssertFalse(
+            openedPost.exists,
+            "A recognized horizontal gesture below the action threshold must not become a row tap"
+        )
+
+        firstBody.tap()
+        XCTAssertTrue(
+            openedPost.waitForExistence(timeout: 2),
+            "A normal row tap must remain available after a cancelled swipe"
+        )
+        XCTAssertEqual(openedPost.label, "performance-0")
+        let openPostCount = application.staticTexts[
+            "astrenza.debug.timeline.performance.open-post-count"
+        ]
+        XCTAssertTrue(openPostCount.waitForExistence(timeout: 2))
+        XCTAssertEqual(
+            openPostCount.label,
+            "1",
+            "The post must open exactly once after the next touch sequence begins"
+        )
+    }
+
     func testActionButtonsUseSystemMenusWithoutLockingFeedScrolling() async throws {
         guard environmentValue(for: "ASTRENZA_RUN_PERFORMANCE_UI") == "1" else {
             return

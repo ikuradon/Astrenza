@@ -108,6 +108,29 @@ struct TimelineRowPanGestureHost: UIViewRepresentable {
 }
 
 @MainActor
+final class TimelineRowGestureArbitrator {
+    private(set) var suppressesRowTap = false
+
+    func touchSequenceDidBegin() {
+        suppressesRowTap = false
+    }
+
+    func horizontalSwipeDidBegin() {
+        suppressesRowTap = true
+    }
+}
+
+@MainActor
+private final class TimelineRowPanGestureRecognizer: UIPanGestureRecognizer {
+    var onTouchSequenceBegan: (() -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onTouchSequenceBegan?()
+        super.touchesBegan(touches, with: event)
+    }
+}
+
+@MainActor
 private final class TimelineRowPanGestureRouter: NSObject, UIGestureRecognizerDelegate {
     final class Registration {
         weak var participant: TimelineRowPanGestureHost.Coordinator?
@@ -118,19 +141,23 @@ private final class TimelineRowPanGestureRouter: NSObject, UIGestureRecognizerDe
     }
 
     weak var scrollView: UIScrollView?
-    let recognizer: UIPanGestureRecognizer
+    let recognizer: TimelineRowPanGestureRecognizer
+    let arbitrator = TimelineRowGestureArbitrator()
     private var registrations: [Registration] = []
     private weak var activeParticipant: TimelineRowPanGestureHost.Coordinator?
 
     init(scrollView: UIScrollView) {
         self.scrollView = scrollView
-        recognizer = UIPanGestureRecognizer()
+        recognizer = TimelineRowPanGestureRecognizer()
         super.init()
 
+        recognizer.onTouchSequenceBegan = { [weak self] in
+            self?.arbitrator.touchSequenceDidBegin()
+        }
         recognizer.addTarget(self, action: #selector(handlePan(_:)))
         recognizer.minimumNumberOfTouches = 1
         recognizer.maximumNumberOfTouches = 1
-        recognizer.cancelsTouchesInView = false
+        recognizer.cancelsTouchesInView = true
         recognizer.delaysTouchesBegan = false
         recognizer.delaysTouchesEnded = false
         recognizer.delegate = self
@@ -166,7 +193,10 @@ private final class TimelineRowPanGestureRouter: NSObject, UIGestureRecognizerDe
         let translation = recognizer.translation(in: scrollView).x
 
         switch recognizer.state {
-        case .began, .changed:
+        case .began:
+            arbitrator.horizontalSwipeDidBegin()
+            activeParticipant?.handleChanged(translation)
+        case .changed:
             activeParticipant?.handleChanged(translation)
         case .ended:
             let participant = activeParticipant
@@ -240,6 +270,13 @@ private enum TimelineRowPanGestureRouterRegistry {
         routers.setObject(router, forKey: scrollView)
         return router
     }
+}
+
+@MainActor
+func timelineRowGestureArbitrator(
+    for scrollView: UIScrollView
+) -> TimelineRowGestureArbitrator {
+    TimelineRowPanGestureRouterRegistry.router(for: scrollView).arbitrator
 }
 
 private extension UIView {

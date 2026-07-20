@@ -9,6 +9,7 @@ struct TimelinePostRow: View {
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
+    var onRowTap: ((TimelinePost) -> Void)? = nil
     @State private var didHandleActionGesture = false
 
     var body: some View {
@@ -162,7 +163,7 @@ private extension TimelinePostRow {
             return
         }
 
-        onOpenPost(post)
+        (onRowTap ?? onOpenPost)(post)
     }
 
     func handleAvatarTap() {

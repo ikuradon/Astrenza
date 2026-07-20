@@ -79,6 +79,7 @@ struct TimelinePostRowGestureTests {
         let recognizer = try #require(firstCoordinator.recognizer)
         #expect(recognizer.view === scrollView)
         #expect(secondCoordinator.recognizer === recognizer)
+        #expect(recognizer.cancelsTouchesInView)
         #expect(scrollView.isScrollEnabled)
 
         firstCoordinator.detach()
@@ -86,6 +87,21 @@ struct TimelinePostRowGestureTests {
 
         #expect(recognizer.view === scrollView)
         #expect(scrollView.isScrollEnabled)
+    }
+
+    @MainActor
+    @Test("A recognized row swipe suppresses taps until the next touch sequence")
+    func rowSwipeSuppressesTapForItsWholeTouchSequence() {
+        let arbitrator = TimelineRowGestureArbitrator()
+
+        arbitrator.touchSequenceDidBegin()
+        #expect(!arbitrator.suppressesRowTap)
+
+        arbitrator.horizontalSwipeDidBegin()
+        #expect(arbitrator.suppressesRowTap)
+
+        arbitrator.touchSequenceDidBegin()
+        #expect(!arbitrator.suppressesRowTap)
     }
 }
 

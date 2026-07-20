@@ -81,6 +81,9 @@ final class TimelineFeedViewController: UIViewController {
     private var hasDeferredGeometryProjection = false
 
     private lazy var collectionLayout = TimelineFeedStableLayout()
+    private lazy var rowGestureArbitrator = timelineRowGestureArbitrator(
+        for: collectionView
+    )
     private lazy var measurementCell = TimelineFeedHostingCollectionCell(
         frame: .zero
     )
@@ -320,6 +323,9 @@ final class TimelineFeedViewController: UIViewController {
                 isFetchingGap: sizingIdentity.isFetchingGap,
                 onOpenPost: { [weak self] post in
                     self?.openPost(post)
+                },
+                onRowTap: { [weak self] post in
+                    self?.openPostFromRowTap(post)
                 },
                 onOpenProfile: configuration.onOpenProfile,
                 onReplyPost: configuration.onReplyPost,
@@ -1189,6 +1195,11 @@ final class TimelineFeedViewController: UIViewController {
         configuration?.onOpenPost(post)
     }
 
+    private func openPostFromRowTap(_ post: TimelinePost) {
+        guard !rowGestureArbitrator.suppressesRowTap else { return }
+        openPost(post)
+    }
+
     private func displayGapDirection(
         for entryID: TimelineFeedEntry.ID
     ) -> TimelineGapFillDirection {
@@ -1405,7 +1416,7 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
               case .post(let post) = entriesByID[entryID]
         else { return }
 
-        openPost(post)
+        openPostFromRowTap(post)
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -1465,6 +1476,7 @@ private struct TimelineHostedFeedEntryView: View {
     let gapDirection: TimelineGapFillDirection
     let isFetchingGap: Bool
     let onOpenPost: (TimelinePost) -> Void
+    let onRowTap: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia, Int) -> Void
@@ -1484,7 +1496,8 @@ private struct TimelineHostedFeedEntryView: View {
                 onReplyPost: onReplyPost,
                 onOpenMedia: onOpenMedia,
                 onOpenURL: onOpenURL,
-                onPostActionChoice: onPostActionChoice
+                onPostActionChoice: onPostActionChoice,
+                onRowTap: onRowTap
             )
         case .gap(let gap):
             TimelineGapRow(
