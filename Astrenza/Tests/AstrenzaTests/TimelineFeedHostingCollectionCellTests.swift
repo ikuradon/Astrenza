@@ -7,6 +7,103 @@ import UIKit
 @Suite("Timeline hosted collection cell geometry")
 struct TimelineFeedHostingCollectionCellTests {
     @MainActor
+    @Test("Cell payloads survive until their diffable snapshot retires")
+    func cellPayloadsFollowSnapshotLifetime() throws {
+        let oldPost = makeTimelinePost(id: "old-post")
+        let newPost = makeTimelinePost(id: "new-post")
+        var store = TimelineFeedCellPayloadStore()
+        store.stage(
+            entries: [.post(oldPost)],
+            leadingContent: fixedLeadingContent(height: 120, revision: 1)
+        )
+
+        store.stage(entries: [.post(newPost)], leadingContent: nil)
+
+        #expect(store.entry(for: oldPost.id) != nil)
+        #expect(store.entry(for: newPost.id) != nil)
+        #expect(store.leadingContent?.renderRevision == 1)
+
+        store.retainPayloads(
+            for: [newPost.id],
+            presentsLeadingContent: false
+        )
+
+        #expect(store.entry(for: oldPost.id) == nil)
+        #expect(store.entry(for: newPost.id) != nil)
+        #expect(store.leadingContent == nil)
+    }
+
+    @MainActor
+    @Test("Dismantling keeps snapshot cells renderable")
+    func dismantlingKeepsSnapshotCellsRenderable() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: nil,
+                metrics: .home
+            )
+        )
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+
+        controller.prepareForRemoval()
+        let cell = collectionView.dataSource?.collectionView(
+            collectionView,
+            cellForItemAt: IndexPath(item: 0, section: 0)
+        )
+
+        #expect(cell is TimelineFeedHostingCollectionCell)
+    }
+
+    @MainActor
+    @Test("Changing to an empty source retires the previous snapshot")
+    func changingToEmptySourceRetiresPreviousSnapshot() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: nil,
+                metrics: .home,
+                sourceIdentity: "populated-source"
+            )
+        )
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+        await Task.yield()
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+        #expect(collectionView.numberOfItems(inSection: 0) == 1)
+
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: nil,
+                metrics: .home,
+                postCount: 0,
+                sourceIdentity: "empty-source"
+            )
+        )
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        #expect(collectionView.numberOfItems(inSection: 0) == 0)
+    }
+
+    @MainActor
     @Test("Profile surface keeps its header and post rows full width")
     func profileSurfaceUsesOneFullWidthLayout() async throws {
         let controller = TimelineFeedViewController()
@@ -899,7 +996,8 @@ struct TimelineFeedHostingCollectionCellTests {
     private func makeControllerConfiguration(
         leadingContent: TimelineFeedLeadingContent?,
         metrics: TimelineFeedCollectionMetrics,
-        postCount: Int = 1
+        postCount: Int = 1,
+        sourceIdentity: String = "surface-test"
     ) -> TimelineFeedCollectionConfiguration {
         TimelineFeedCollectionConfiguration(
             entries: (0 ..< postCount).map { index in
@@ -907,7 +1005,7 @@ struct TimelineFeedHostingCollectionCellTests {
             },
             leadingContent: leadingContent,
             metrics: metrics,
-            sourceIdentity: "surface-test",
+            sourceIdentity: sourceIdentity,
             sourceRevision: 1,
             viewportIdentity: TimelineFeedViewportIdentity(
                 accountID: "test-account",

@@ -1,8 +1,14 @@
+import OSLog
 import SwiftUI
 import UIKit
 
 @MainActor
 final class TimelineFeedViewController: UIViewController {
+    private static let logger = Logger(
+        subsystem: "com.ikuradon.Astrenza",
+        category: "TimelineFeed"
+    )
+
     private enum Section: Hashable {
         case main
     }
@@ -34,12 +40,13 @@ final class TimelineFeedViewController: UIViewController {
     private let pullRefreshTriggerOffset: CGFloat = -96
     private let viewportSaveInterval: TimeInterval = 0.25
     private let viewportSaveOffsetThreshold: CGFloat = 48
-    private let cellReuseIdentifier = "timeline-entry"
+    private static let cellReuseIdentifier = "timeline-entry"
     private let leadingContentSizingID = "\0timeline-leading-content"
 
     private var configuration: TimelineFeedCollectionConfiguration?
     private var entries: [TimelineFeedEntry] = []
     private var entriesByID: [TimelineFeedEntry.ID: TimelineFeedEntry] = [:]
+    private var cellPayloadStore = TimelineFeedCellPayloadStore()
     private var isLeadingContentPresented = false
     private var postOrderByID: [TimelinePost.ID: Int] = [:]
     private var readLinePositionByPostID:
@@ -110,7 +117,7 @@ final class TimelineFeedViewController: UIViewController {
         collectionView.accessibilityIdentifier = "timeline.feed"
         collectionView.register(
             TimelineFeedHostingCollectionCell.self,
-            forCellWithReuseIdentifier: cellReuseIdentifier
+            forCellWithReuseIdentifier: Self.cellReuseIdentifier
         )
         collectionView.delegate = self
         return collectionView
@@ -198,6 +205,7 @@ final class TimelineFeedViewController: UIViewController {
             metricsChanged {
             applyEntries(
                 nextConfiguration.entries,
+                forceSnapshotApplication: sourceChanged,
                 forceVisibleReconfiguration:
                     contentRevisionChanged || swipeSettingsChanged,
                 reconfigureAllVisible: swipeSettingsChanged,
@@ -224,7 +232,6 @@ final class TimelineFeedViewController: UIViewController {
         saveViewportStateIfPossible(force: true)
         setUserScrollActive(false)
         resetPullRefreshPresentation()
-        configuration = nil
     }
 
     private func makeDataSource()
@@ -235,16 +242,24 @@ final class TimelineFeedViewController: UIViewController {
         UICollectionViewDiffableDataSource(
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, itemID in
-            guard let self, let configuration else { return nil }
-
-            guard let cell = collectionView.dequeueReusableCell(
-                withReuseIdentifier: cellReuseIdentifier,
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: Self.cellReuseIdentifier,
                 for: indexPath
-            ) as? TimelineFeedHostingCollectionCell else { return nil }
+            ) as! TimelineFeedHostingCollectionCell
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
+            guard let self, let configuration else {
+                Self.configureUnavailableCell(
+                    cell,
+                    itemID: itemID,
+                    projectedHeight: collectionView.collectionViewLayout
+                        .layoutAttributesForItem(at: indexPath)?.size.height,
+                    parentViewController: self
+                )
+                return cell
+            }
             if itemID == .leadingContent,
-               let leadingContent = configuration.leadingContent {
+               let leadingContent = cellPayloadStore.leadingContent {
                 let sizingIdentity = leadingContentSizingIdentity(
                     leadingContent,
                     configuration: configuration
@@ -257,8 +272,21 @@ final class TimelineFeedViewController: UIViewController {
                 return cell
             }
 
-            guard case .entry(let entryID) = itemID else { return nil }
-            guard let entry = entriesByID[entryID] else { return nil }
+            guard case .entry(let entryID) = itemID,
+                  let entry = cellPayloadStore.entry(for: entryID)
+            else {
+                Self.logger.fault(
+                    "Missing payload for diffable item \(String(describing: itemID), privacy: .public)"
+                )
+                Self.configureUnavailableCell(
+                    cell,
+                    itemID: itemID,
+                    projectedHeight: collectionView.collectionViewLayout
+                        .layoutAttributesForItem(at: indexPath)?.size.height,
+                    parentViewController: self
+                )
+                return cell
+            }
             let sizingIdentity = rowSizingIdentity(
                 for: entry,
                 configuration: configuration
@@ -275,6 +303,30 @@ final class TimelineFeedViewController: UIViewController {
             )
             return cell
         }
+    }
+
+    private static func configureUnavailableCell(
+        _ cell: TimelineFeedHostingCollectionCell,
+        itemID: ItemID,
+        projectedHeight: CGFloat?,
+        parentViewController: UIViewController?
+    ) {
+        let height = max(1, projectedHeight ?? 1)
+        cell.configure(
+            rootView: AnyView(
+                Color.clear
+                    .frame(height: height)
+                    .fixedSize(horizontal: false, vertical: true)
+            ),
+            parentViewController: parentViewController,
+            sizingIdentity: TimelineFeedCellSizingIdentity(
+                entryID: "unavailable-\(String(describing: itemID))",
+                geometryFingerprint: height.hashValue,
+                swipeSettings: TimelineSwipeSettings(),
+                gapDirection: .older,
+                isFetchingGap: false
+            )
+        )
     }
 
     private func leadingContentSizingIdentity(
@@ -620,6 +672,7 @@ final class TimelineFeedViewController: UIViewController {
 
     private func applyEntries(
         _ newEntries: [TimelineFeedEntry],
+        forceSnapshotApplication: Bool = false,
         forceVisibleReconfiguration: Bool,
         reconfigureAllVisible: Bool = false,
         forceLeadingReconfiguration: Bool = false,
@@ -631,7 +684,12 @@ final class TimelineFeedViewController: UIViewController {
         let leadingStructureChanged = isLeadingContentPresented !=
             presentsLeadingContent
         let structureChanged = oldIDs != newIDs || leadingStructureChanged
-        guard structureChanged ||
+        cellPayloadStore.stage(
+            entries: newEntries,
+            leadingContent: configuration?.leadingContent
+        )
+        guard forceSnapshotApplication ||
+                structureChanged ||
                 forceVisibleReconfiguration ||
                 forceLeadingReconfiguration ||
                 forceGeometryProjection
@@ -739,6 +797,7 @@ final class TimelineFeedViewController: UIViewController {
         isApplyingSnapshot = true
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
+            retainCellPayloadsForCurrentSnapshot()
             isApplyingSnapshot = false
             view.layoutIfNeeded()
             applyPostSnapshotPosition()
@@ -751,6 +810,14 @@ final class TimelineFeedViewController: UIViewController {
             updateReadLinePositions()
             publishUnreadPillPlacement(force: true)
         }
+    }
+
+    private func retainCellPayloadsForCurrentSnapshot() {
+        let itemIDs = dataSource.snapshot().itemIdentifiers
+        cellPayloadStore.retainPayloads(
+            for: Set(itemIDs.compactMap(\.entryID)),
+            presentsLeadingContent: itemIDs.contains(.leadingContent)
+        )
     }
 
     private func applyPostSnapshotPosition() {

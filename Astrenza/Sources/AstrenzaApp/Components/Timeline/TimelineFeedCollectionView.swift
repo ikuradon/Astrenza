@@ -31,6 +31,38 @@ struct TimelineFeedLeadingContent {
 }
 
 @MainActor
+struct TimelineFeedCellPayloadStore {
+    private var entriesByID: [TimelineFeedEntry.ID: TimelineFeedEntry] = [:]
+    private(set) var leadingContent: TimelineFeedLeadingContent?
+
+    mutating func stage(
+        entries: [TimelineFeedEntry],
+        leadingContent: TimelineFeedLeadingContent?
+    ) {
+        for entry in entries {
+            entriesByID[entry.id] = entry
+        }
+        if let leadingContent {
+            self.leadingContent = leadingContent
+        }
+    }
+
+    func entry(for id: TimelineFeedEntry.ID) -> TimelineFeedEntry? {
+        entriesByID[id]
+    }
+
+    mutating func retainPayloads(
+        for entryIDs: Set<TimelineFeedEntry.ID>,
+        presentsLeadingContent: Bool
+    ) {
+        entriesByID = entriesByID.filter { entryIDs.contains($0.key) }
+        if !presentsLeadingContent {
+            leadingContent = nil
+        }
+    }
+}
+
+@MainActor
 struct TimelineFeedCollectionConfiguration {
     let entries: [TimelineFeedEntry]
     let leadingContent: TimelineFeedLeadingContent?
