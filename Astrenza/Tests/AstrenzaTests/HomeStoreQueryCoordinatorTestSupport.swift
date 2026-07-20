@@ -12,6 +12,9 @@ func expectPublicQueryResults(
         post.id
     ])
     #expect(fixture.coordinator.post(eventID: post.id)?.id == post.id)
+    #expect(fixture.coordinator.publicFeedEntries(
+        events: [fixture.interaction.eventResult]
+    ).compactMap { $0.post }.map(\.id) == [post.id])
     #expect(fixture.coordinator.profile(
         pubkey: "author",
         isCurrentUser: true
@@ -207,6 +210,15 @@ final class StoreQueryInteractionSpy: HomeStoreQueryInteracting {
         record(snapshot)
         routes.append("post:\(eventID)")
         return postResult
+    }
+
+    func publicFeedEntries(
+        events: [NostrEvent],
+        snapshot: HomeTimelineQueryStoreSnapshot
+    ) -> [TimelineFeedEntry] {
+        record(snapshot)
+        routes.append("public-feed:\(events.count)")
+        return [.post(postResult)]
     }
 
     func profile(

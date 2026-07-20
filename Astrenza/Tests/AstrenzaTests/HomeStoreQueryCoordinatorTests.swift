@@ -61,7 +61,7 @@ struct HomeStoreQueryCoordinatorTests {
         expectPublicQueryResults(fixture: fixture, post: post)
 
         let expected = StoreQuerySnapshotRecord(source: fixture.source)
-        #expect(fixture.interaction.snapshots.count == 7)
+        #expect(fixture.interaction.snapshots.count == 8)
         for snapshot in fixture.interaction.snapshots {
             #expect(snapshot == expected)
         }
@@ -69,6 +69,7 @@ struct HomeStoreQueryCoordinatorTests {
             "bookmark:\(post.id):\(fixture.account.pubkey)",
             "list:12",
             "post:\(post.id)",
+            "public-feed:1",
             "profile:author:true",
             "profile-projection:author:true:34",
             "profile-posts:author:56",
@@ -91,7 +92,7 @@ struct HomeStoreQueryCoordinatorTests {
 
         #expect(fixture.interaction.snapshots.last ==
             StoreQuerySnapshotRecord(source: fixture.source))
-        #expect(fixture.source.snapshotCount == 9)
+        #expect(fixture.source.snapshotCount == 10)
     }
 
     @Test("Event lookup, database backfill, and invalidation share the query boundary")

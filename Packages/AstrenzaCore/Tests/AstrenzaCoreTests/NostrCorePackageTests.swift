@@ -462,6 +462,50 @@ struct NostrCorePackageTests {
         #expect(tags[3].value == "screen reader text")
     }
 
+    @Test("Nostr event store selects hashtag feed events by tag, kind, and cursor")
+    func eventStoreSelectsHashtagFeedEvents() throws {
+        let store = try NostrEventStore.inMemory()
+        let newer = nostrEvent(
+            kind: 1,
+            createdAt: 300,
+            content: "newer",
+            tags: [["t", "Nostr"]]
+        )
+        let older = nostrEvent(
+            kind: 6,
+            createdAt: 200,
+            content: "older repost",
+            tags: [["t", "nostr"]]
+        )
+        let wrongTag = nostrEvent(
+            kind: 1,
+            createdAt: 250,
+            content: "other",
+            tags: [["t", "swift"]]
+        )
+        let wrongKind = nostrEvent(
+            kind: 0,
+            createdAt: 275,
+            content: "metadata",
+            tags: [["t", "nostr"]]
+        )
+        try store.save(events: [older, wrongTag, wrongKind, newer])
+
+        #expect(try store.events(
+            kinds: [1, 6],
+            tagName: "t",
+            tagValue: "nostr",
+            limit: 10
+        ).map(\.id) == [newer.id, older.id])
+        #expect(try store.events(
+            kinds: [1, 6],
+            tagName: "t",
+            tagValue: "NOSTR",
+            until: 250,
+            limit: 10
+        ).map(\.id) == [older.id])
+    }
+
     @Test("Nostr event store keeps latest replaceable head")
     func eventStoreReplaceableHeads() throws {
         let store = try NostrEventStore.inMemory()

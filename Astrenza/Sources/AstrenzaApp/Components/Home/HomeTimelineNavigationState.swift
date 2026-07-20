@@ -11,6 +11,7 @@ struct HomeTimelineNavigationState {
         switch route {
         case .post(let route): return route.post
         case .profile(let route): return route.post
+        case .hashtag: return nil
         case nil: return nil
         }
     }
@@ -35,14 +36,26 @@ struct HomeTimelineNavigationState {
         )
     }
 
+    mutating func openHashtag(
+        _ hashtag: String,
+        on stack: HomeTimelineNavigationStack
+    ) {
+        guard let route = HomeTimelineHashtagRoute(hashtag: hashtag) else {
+            return
+        }
+        append(.hashtag(route), on: stack)
+    }
+
     private mutating func append(
         _ route: HomeTimelineNavigationRoute,
         on stack: HomeTimelineNavigationStack
     ) {
         switch stack {
         case .timeline:
+            guard timelinePath.last != route else { return }
             timelinePath.append(route)
         case .profile:
+            guard profilePath.last != route else { return }
             profilePath.append(route)
         }
     }
@@ -56,6 +69,20 @@ enum HomeTimelineNavigationStack {
 enum HomeTimelineNavigationRoute: Hashable {
     case post(HomeTimelinePostRoute)
     case profile(HomeTimelineProfileRoute)
+    case hashtag(HomeTimelineHashtagRoute)
+}
+
+struct HomeTimelineHashtagRoute: Identifiable, Hashable {
+    let hashtag: String
+
+    init?(hashtag: String) {
+        guard let identity = HashtagFeedIdentity(hashtag: hashtag) else {
+            return nil
+        }
+        self.hashtag = identity.hashtag
+    }
+
+    var id: String { hashtag }
 }
 
 struct HomeTimelinePostRoute: Identifiable, Hashable {

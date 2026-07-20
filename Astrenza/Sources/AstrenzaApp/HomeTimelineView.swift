@@ -60,7 +60,8 @@ struct HomeTimelineView: View {
             onOpenProfile: openProfile,
             onReply: presentReplyComposer,
             onOpenMedia: openMedia,
-            onOpenURL: openURL
+            onOpenURL: openTimelineURL,
+            onPostActionChoice: handlePostActionChoice
         )
     }
 
@@ -71,7 +72,8 @@ struct HomeTimelineView: View {
             onOpenProfile: openProfileFromProfile,
             onReply: presentReplyComposer,
             onOpenMedia: openMedia,
-            onOpenURL: openURL
+            onOpenURL: openProfileURL,
+            onPostActionChoice: handlePostActionChoice
         )
     }
 
@@ -144,7 +146,7 @@ struct HomeTimelineView: View {
                 isUserSwitcherPresented: $isUserSwitcherPresented
             )
 
-            if isPostDetailPresented {
+            if isPostDetailPresented, navigation.activePost != nil {
                 HomeTimelineReplyButton {
                     guard let post = navigation.activePost else { return }
                     presentReplyComposer(post)
@@ -228,7 +230,7 @@ private extension HomeTimelineView {
                 onOpenProfile: openProfile,
                 onReplyPost: presentReplyComposer,
                 onOpenMedia: openMedia,
-                onOpenURL: openURL,
+                onOpenURL: openTimelineURL,
                 onPostActionChoice: handlePostActionChoice,
                 onRefresh: refreshVisibleTimeline,
                 onLoadOlderPost: loadOlderVisibleTimeline,
@@ -268,7 +270,7 @@ private extension HomeTimelineView {
                 onOpenProfile: openProfileFromProfile,
                 onReplyPost: presentReplyComposer,
                 onOpenMedia: openMedia,
-                onOpenURL: openURL
+                onOpenURL: openProfileURL
             )
             .navigationDestination(
                 for: HomeTimelineNavigationRoute.self
@@ -385,6 +387,26 @@ private extension HomeTimelineView {
     func openURL(_ url: URL) {
         dismissFloatingMenus()
         presentation.presentBrowser(url: url)
+    }
+
+    func openTimelineURL(_ url: URL) {
+        openURL(url, on: .timeline)
+    }
+
+    func openProfileURL(_ url: URL) {
+        openURL(url, on: .profile)
+    }
+
+    func openURL(
+        _ url: URL,
+        on stack: HomeTimelineNavigationStack
+    ) {
+        if case .hashtag(let hashtag) = TimelineRichContentRoute(url: url) {
+            dismissFloatingMenus()
+            navigation.openHashtag(hashtag, on: stack)
+            return
+        }
+        openURL(url)
     }
 
     func dismissFloatingMenus() {

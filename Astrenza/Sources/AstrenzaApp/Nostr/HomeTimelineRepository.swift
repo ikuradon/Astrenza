@@ -152,6 +152,40 @@ struct HomeTimelineRepository: Sendable {
         return materializedPosts(from: [event], context: context).first
     }
 
+    func publicFeedEntries(
+        events: [NostrEvent],
+        context: HomeTimelineReadContext
+    ) -> [TimelineFeedEntry] {
+        let dependencyEvents = contextEvents(for: events)
+        let materialEvents = events + dependencyEvents
+        let profilePubkeys = Set(materialEvents.flatMap { event in
+            NostrEventDependencies.extract(from: event).profilePubkeys
+        })
+        let storedMetadata = (try? eventStore?.latestReplaceableEvents(
+            pubkeys: profilePubkeys,
+            kind: 0
+        )) ?? []
+        let liveMetadata = context.metadataEvents.filter {
+            profilePubkeys.contains($0.pubkey)
+        }
+
+        return NostrTimelineMaterializer.entries(
+            noteEvents: events,
+            contextEvents: dependencyEvents,
+            metadataEvents: storedMetadata + liveMetadata,
+            nip05Resolutions: context.nip05Resolutions,
+            profileResolutionStates: context.profileResolutionStates,
+            followedPubkeys: context.followedPubkeys,
+            mediaAssetsByEventID: mediaAssetsByEventID(for: materialEvents),
+            linkPreviewsByNormalizedURL:
+                linkPreviewsByNormalizedURL(for: materialEvents),
+            filterRules: context.filterRules,
+            relayCount: max(1, context.resolvedRelayCount),
+            timeline: .publicTimelines,
+            policy: context.syncPolicy
+        )
+    }
+
     func replyAncestors(
         for post: TimelinePost,
         limit: Int,

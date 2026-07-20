@@ -20,6 +20,8 @@ struct HomeTimelineStoreComponents {
     let viewportInteractionWorkflow: HomeTimelineViewportInteractionWorkflow
     let eventStore: NostrEventStore?
     let dataInteractionWorkflow: HomeTimelineDataInteractionWorkflow
+    let dependencyResolutionCoordinator:
+        HomeTimelineDependencyResolutionCoordinator
     let runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow
     let gapBackfillInteractionWorkflow:
         HomeGapBackfillInteractionWorkflow
@@ -173,6 +175,8 @@ enum HomeTimelineStoreAssembly {
                 graph.features.viewportInteractionWorkflow,
             eventStore: input.eventStore,
             dataInteractionWorkflow: dataInteraction,
+            dependencyResolutionCoordinator:
+                graph.coordination.dependencyCoordinator,
             runtimeInteractionWorkflow: HomeTimelineRuntimeInteractionWorkflow(
                 runtime: HomeTimelineRuntimeWorkflow(
                     session: graph.runtimeEvents.runtimeSessionCoordinator,

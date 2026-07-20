@@ -5,6 +5,7 @@ struct TimelineFeedView: View {
     let sourceIdentity: String
     let sourceRevision: Int
     let viewportIdentity: TimelineFeedViewportIdentity
+    let metrics: TimelineFeedCollectionMetrics
     let swipeSettings: TimelineSwipeSettings
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
@@ -41,6 +42,7 @@ struct TimelineFeedView: View {
         sourceIdentity: String = "timeline",
         sourceRevision: Int = 0,
         viewportIdentity: TimelineFeedViewportIdentity? = nil,
+        metrics: TimelineFeedCollectionMetrics = .home,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
@@ -74,6 +76,7 @@ struct TimelineFeedView: View {
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
             viewportIdentity: viewportIdentity,
+            metrics: metrics,
             swipeSettings: swipeSettings,
             viewportState: viewportState,
             scrollCommand: scrollCommand,
@@ -112,6 +115,7 @@ struct TimelineFeedView: View {
         sourceIdentity: String = "timeline",
         sourceRevision: Int = 0,
         viewportIdentity: TimelineFeedViewportIdentity? = nil,
+        metrics: TimelineFeedCollectionMetrics = .home,
         swipeSettings: TimelineSwipeSettings,
         viewportState: TimelineViewportState?,
         scrollCommand: TimelineScrollCommand? = nil,
@@ -147,6 +151,7 @@ struct TimelineFeedView: View {
             accountID: viewportState?.accountID ?? "mock-account",
             timelineKey: viewportState?.timelineKey ?? "home"
         )
+        self.metrics = metrics
         self.swipeSettings = swipeSettings
         self.viewportState = viewportState
         self.scrollCommand = scrollCommand
@@ -207,7 +212,7 @@ struct TimelineFeedView: View {
         TimelineFeedCollectionConfiguration(
             entries: entries,
             leadingContent: nil,
-            metrics: .home,
+            metrics: metrics,
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
             viewportIdentity: viewportIdentity,

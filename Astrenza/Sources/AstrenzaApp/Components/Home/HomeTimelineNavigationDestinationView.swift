@@ -6,6 +6,7 @@ struct HomeTimelineNavigationDestinationActions {
     let onReply: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
+    let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
 }
 
 struct HomeTimelineNavigationDestinationView: View {
@@ -13,6 +14,7 @@ struct HomeTimelineNavigationDestinationView: View {
     let hasLiveAccount: Bool
     let swipeSettings: TimelineSwipeSettings
     let actions: HomeTimelineNavigationDestinationActions
+    private let timelineStore: NostrHomeTimelineStore
     private let resolver: HomeTimelineNavigationProjectionResolver
 
     init(
@@ -26,6 +28,7 @@ struct HomeTimelineNavigationDestinationView: View {
         self.hasLiveAccount = hasLiveAccount
         self.swipeSettings = swipeSettings
         self.actions = actions
+        self.timelineStore = timelineStore
         resolver = HomeTimelineNavigationProjectionResolver(
             timelineStore: timelineStore
         )
@@ -49,6 +52,14 @@ struct HomeTimelineNavigationDestinationView: View {
                 swipeSettings: swipeSettings,
                 actions: actions,
                 resolver: resolver
+            )
+        case .hashtag(let route):
+            HashtagTimelineView(
+                route: route,
+                accountID: timelineStore.account?.pubkey ?? "mock-account",
+                timelineStore: timelineStore,
+                swipeSettings: swipeSettings,
+                actions: actions
             )
         }
     }

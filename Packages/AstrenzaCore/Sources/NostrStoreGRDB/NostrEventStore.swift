@@ -602,6 +602,63 @@ public final class NostrEventStore: Sendable {
         }
     }
 
+    /// 指定したtagを持つeventを、汎用Feed projectionの初期構築に使える順序で返します。
+    ///
+    /// NIP-01のtag filterは完全一致ですが、既存clientが大文字を含む`t` tagを保存する場合も
+    /// 同じhashtag timelineへ復元できるよう、local DBではASCII case-insensitiveに照合します。
+    public func events(
+        kinds: [Int],
+        tagName: String,
+        tagValue: String,
+        until: Int? = nil,
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [NostrEvent] {
+        guard !kinds.isEmpty,
+              !tagName.isEmpty,
+              !tagValue.isEmpty,
+              limit > 0
+        else { return [] }
+
+        return try database.read { db in
+            let kindPlaceholders = kinds.map { _ in "?" }.joined(separator: ", ")
+            var arguments = StatementArguments()
+            for kind in kinds {
+                arguments += [kind]
+            }
+            arguments += [now, tagName, tagValue]
+            let untilClause: String
+            if let until {
+                untilClause = " AND events.created_at <= ?"
+                arguments += [until]
+            } else {
+                untilClause = ""
+            }
+            arguments += [limit]
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT event_id, pubkey, created_at, kind, tags_json, content, sig
+                FROM events
+                WHERE kind IN (\(kindPlaceholders))
+                    AND \(Self.visibleEventPredicate())
+                    AND EXISTS (
+                        SELECT 1
+                        FROM event_tags tag
+                        WHERE tag.event_id = events.event_id
+                            AND tag.tag_name = ?
+                            AND tag.tag_value = ? COLLATE NOCASE
+                    )\(untilClause)
+                ORDER BY created_at DESC, event_id ASC
+                LIMIT ?
+                """,
+                arguments: arguments
+            )
+            return try rows.map(decodeEvent)
+        }
+    }
+
     public func events(
         kind: Int,
         authors: [String],
@@ -3939,6 +3996,15 @@ public final class NostrEventStore: Sendable {
                 """
             )
             try db.drop(table: "feed_read_state_before_v9")
+        }
+
+        migrator.registerMigration("addCaseInsensitiveTagLookupV10") { db in
+            try db.execute(
+                sql: """
+                CREATE INDEX IF NOT EXISTS event_tags_name_value_nocase
+                ON event_tags(tag_name, tag_value COLLATE NOCASE)
+                """
+            )
         }
 
         try migrator.migrate(database)

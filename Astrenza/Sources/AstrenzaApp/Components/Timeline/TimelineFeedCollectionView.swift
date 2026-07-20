@@ -21,6 +21,11 @@ struct TimelineFeedCollectionMetrics: Equatable {
         topContentPadding: 0,
         bottomContentPadding: 132
     )
+
+    static let navigation = TimelineFeedCollectionMetrics(
+        topContentPadding: 0,
+        bottomContentPadding: 96
+    )
 }
 
 @MainActor

@@ -20,6 +20,10 @@ struct HomeTimelineQueryInteractionTests {
             eventID: post.id,
             snapshot: snapshot
         )
+        let publicEntries = workflow.publicFeedEntries(
+            events: [repository.eventResult],
+            snapshot: snapshot
+        )
         let profile = workflow.profile(
             pubkey: "author",
             isCurrentUser: true,
@@ -43,6 +47,7 @@ struct HomeTimelineQueryInteractionTests {
 
         #expect(isBookmarked)
         #expect(resolvedPost?.id == post.id)
+        #expect(publicEntries.compactMap { $0.post }.map(\.id) == [post.id])
         #expect(profile.id == repository.profileResult.id)
         #expect(profilePosts.map(\.id) == [post.id])
         #expect(ancestors.map(\.id) == [post.id])
@@ -50,6 +55,7 @@ struct HomeTimelineQueryInteractionTests {
         #expect(repository.events == [
             .isBookmarked(eventID: post.id, accountID: "account"),
             .post(eventID: post.id, accountID: "account"),
+            .publicFeed(eventIDs: [repository.eventResult.id], accountID: "account"),
             .profile(
                 pubkey: "author",
                 isCurrentUser: true,
@@ -213,6 +219,7 @@ private enum QueryRepositoryEvent: Equatable {
     case isBookmarked(eventID: String, accountID: String?)
     case listEntries(limit: Int, accountID: String?)
     case post(eventID: String, accountID: String?)
+    case publicFeed(eventIDs: [String], accountID: String?)
     case profile(pubkey: String, isCurrentUser: Bool, accountID: String?)
     case profilePosts(pubkey: String, limit: Int, accountID: String?)
     case replyAncestors(postID: String, limit: Int, accountID: String?)
@@ -303,6 +310,17 @@ private final class QueryRepositorySpy: HomeTimelineQueryRepository {
     ) -> TimelinePost? {
         events.append(.post(eventID: eventID, accountID: context.accountID))
         return postResult
+    }
+
+    func publicFeedEntries(
+        events: [NostrEvent],
+        context: HomeTimelineReadContext
+    ) -> [TimelineFeedEntry] {
+        self.events.append(.publicFeed(
+            eventIDs: events.map(\.id),
+            accountID: context.accountID
+        ))
+        return [.post(postResult)]
     }
 
     func profile(

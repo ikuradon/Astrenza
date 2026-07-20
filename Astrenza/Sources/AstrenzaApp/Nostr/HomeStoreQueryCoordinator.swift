@@ -14,6 +14,11 @@ protocol HomeStoreQueryInteracting: AnyObject {
         snapshot: HomeTimelineQueryStoreSnapshot
     ) -> TimelinePost?
 
+    func publicFeedEntries(
+        events: [NostrEvent],
+        snapshot: HomeTimelineQueryStoreSnapshot
+    ) -> [TimelineFeedEntry]
+
     func profile(
         pubkey: String,
         isCurrentUser: Bool,
@@ -179,6 +184,13 @@ final class HomeStoreQueryCoordinator {
     func post(eventID: String) -> TimelinePost? {
         interaction.post(
             eventID: eventID,
+            snapshot: currentSnapshot()
+        )
+    }
+
+    func publicFeedEntries(events: [NostrEvent]) -> [TimelineFeedEntry] {
+        interaction.publicFeedEntries(
+            events: events,
             snapshot: currentSnapshot()
         )
     }

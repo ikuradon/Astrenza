@@ -16,6 +16,11 @@ protocol HomeTimelineQueryRepository {
         context: HomeTimelineReadContext
     ) -> TimelinePost?
 
+    func publicFeedEntries(
+        events: [NostrEvent],
+        context: HomeTimelineReadContext
+    ) -> [TimelineFeedEntry]
+
     func profile(
         pubkey: String,
         isCurrentUser: Bool,
@@ -173,6 +178,20 @@ final class HomeTimelineQueryInteractionWorkflow {
         let projection = contextProjector.projection(from: snapshot)
         return repository.post(
             eventID: eventID,
+            context: readContext.context(
+                for: projection.readContextInput,
+                applyingHomeFilters: true
+            )
+        )
+    }
+
+    func publicFeedEntries(
+        events: [NostrEvent],
+        snapshot: HomeTimelineQueryStoreSnapshot
+    ) -> [TimelineFeedEntry] {
+        let projection = contextProjector.projection(from: snapshot)
+        return repository.publicFeedEntries(
+            events: events,
             context: readContext.context(
                 for: projection.readContextInput,
                 applyingHomeFilters: true

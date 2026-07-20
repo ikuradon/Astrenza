@@ -18,11 +18,12 @@ struct NostrEventStoreV2Tests {
                 sql: """
                 SELECT name, sql
                 FROM sqlite_master
-                WHERE type = 'index' AND name IN (?, ?)
+                WHERE type = 'index' AND name IN (?, ?, ?)
                 """,
                 arguments: [
                     "events_kind_pubkey_created_event",
-                    "relay_sync_events_timeline_relay_occurred_id"
+                    "relay_sync_events_timeline_relay_occurred_id",
+                    "event_tags_name_value_nocase"
                 ]
             )
             return Dictionary(uniqueKeysWithValues: rows.map { row in
@@ -40,6 +41,11 @@ struct NostrEventStoreV2Tests {
         #expect(
             indexDefinitions["relay_sync_events_timeline_relay_occurred_id"]?.contains(
                 "ON relay_sync_events( account_id, timeline_key, relay_url, occurred_at DESC, id DESC )"
+            ) == true
+        )
+        #expect(
+            indexDefinitions["event_tags_name_value_nocase"]?.contains(
+                "ON event_tags(tag_name, tag_value COLLATE NOCASE)"
             ) == true
         )
     }

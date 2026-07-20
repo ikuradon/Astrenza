@@ -204,6 +204,7 @@ private extension TimelinePostRow {
             onOpenPost(referencedEventPost(eventID: eventID))
             return .handled
         case .hashtag:
+            onOpenURL(url)
             return .handled
         case .unsupported:
             return .discarded

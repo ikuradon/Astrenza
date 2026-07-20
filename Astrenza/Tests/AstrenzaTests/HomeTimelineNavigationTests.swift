@@ -51,6 +51,23 @@ struct HomeTimelineNavigationTests {
         #expect(Set([originalProfileRoute, updatedProfileRoute]).count == 1)
     }
 
+    @Test("Hashtag route is normalized and remains on its originating stack")
+    func hashtagRouteUsesStableNormalizedIdentity() throws {
+        var state = HomeTimelineNavigationState()
+
+        state.openHashtag("##NoStR", on: .profile)
+        state.openHashtag("nostr", on: .profile)
+
+        #expect(state.timelinePath.isEmpty)
+        #expect(state.profilePath == [
+            .hashtag(try #require(HomeTimelineHashtagRoute(
+                hashtag: "nostr"
+            )))
+        ])
+        #expect(state.activePost == nil)
+        #expect(state.isPresentingDetail)
+    }
+
     @Test("Live post destination resolves the latest post before its thread")
     func livePostDestinationUsesResolvedPost() throws {
         let posts = MockTimelineData.posts

@@ -119,6 +119,7 @@ struct PostDetailView: View {
             onOpenPost(referencedEventPost(eventID: eventID))
             return .handled
         case .hashtag:
+            onOpenURL(url)
             return .handled
         case .unsupported:
             return .discarded

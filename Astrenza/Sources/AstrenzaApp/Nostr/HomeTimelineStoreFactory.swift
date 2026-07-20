@@ -129,7 +129,16 @@ enum HomeTimelineStoreFactory {
             composeEmojiResolver: NostrComposeEmojiResolver(
                 eventStore: eventStore,
                 relayClient: resolvedTimelineLoader.relayClient
-            )
+            ),
+            hashtagTimelineDependencies: eventStore.map {
+                HashtagTimelineDependencies(
+                    eventStore: $0,
+                    relayRuntime: relayRuntime,
+                    relayClient: resolvedTimelineLoader.relayClient,
+                    dependencyResolver:
+                        components.dependencyResolutionCoordinator
+                )
+            }
         )
     }
 }

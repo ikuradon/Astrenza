@@ -9,6 +9,7 @@ final class NostrHomeTimelineStore {
     private let blossomServerResolver: NostrBlossomServerResolver?
     private let profilePageResolver: NostrProfilePageResolver?
     private let composeEmojiResolver: NostrComposeEmojiResolver?
+    private let hashtagTimelineDependencies: HashtagTimelineDependencies?
 
     var presentationEventStore: NostrEventStore? {
         composition.presentation.presentationEventStore
@@ -18,16 +19,35 @@ final class NostrHomeTimelineStore {
         composition: HomeStoreComposition,
         blossomServerResolver: NostrBlossomServerResolver? = nil,
         profilePageResolver: NostrProfilePageResolver? = nil,
-        composeEmojiResolver: NostrComposeEmojiResolver? = nil
+        composeEmojiResolver: NostrComposeEmojiResolver? = nil,
+        hashtagTimelineDependencies: HashtagTimelineDependencies? = nil
     ) {
         self.composition = composition
         self.blossomServerResolver = blossomServerResolver
         self.profilePageResolver = profilePageResolver
         self.composeEmojiResolver = composeEmojiResolver
+        self.hashtagTimelineDependencies = hashtagTimelineDependencies
     }
 }
 
 extension NostrHomeTimelineStore {
+    func makeHashtagTimelineStore(
+        accountID: String,
+        hashtag: String,
+        restoreAnchorEventID: String? = nil
+    ) -> HashtagTimelineStore? {
+        guard let identity = HashtagFeedIdentity(hashtag: hashtag),
+              let hashtagTimelineDependencies
+        else { return nil }
+        return HashtagTimelineStore(
+            identity: identity,
+            accountID: accountID,
+            timelineStore: self,
+            dependencies: hashtagTimelineDependencies,
+            restoreAnchorEventID: restoreAnchorEventID
+        )
+    }
+
     func start(account: NostrAccount) {
         composition.lifecycle.start(account: account)
     }
@@ -202,6 +222,10 @@ extension NostrHomeTimelineStore {
 
     func post(eventID: String) -> TimelinePost? {
         composition.query.post(eventID: eventID)
+    }
+
+    func publicFeedEntries(events: [NostrEvent]) -> [TimelineFeedEntry] {
+        composition.query.publicFeedEntries(events: events)
     }
 
     func profile(pubkey: String, isCurrentUser: Bool = false) -> UserProfile {
