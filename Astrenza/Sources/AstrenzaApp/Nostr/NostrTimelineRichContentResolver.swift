@@ -37,23 +37,23 @@ enum NostrTimelineRichContentResolver {
         followedPubkeys: Set<String>
     ) -> [String: String] {
         let metadataByPubkey = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)
-        let profilePubkeys = richContent.references.compactMap { reference -> String? in
+        let profilePubkeys = Set(richContent.references.compactMap { reference -> String? in
             if case .profile(let pubkey, _) = reference {
                 return pubkey
             }
             return nil
-        }
+        })
 
-        return Dictionary(uniqueKeysWithValues: profilePubkeys.compactMap { pubkey in
+        return profilePubkeys.reduce(into: [String: String]()) { result, pubkey in
             guard let displayName = displayName(
                 for: pubkey,
                 metadataByPubkey: metadataByPubkey,
                 nip05Resolutions: nip05Resolutions,
                 profileResolutionStates: profileResolutionStates,
                 followedPubkeys: followedPubkeys
-            ) else { return nil }
-            return (pubkey, displayName)
-        })
+            ) else { return }
+            result[pubkey] = displayName
+        }
     }
 
     private static func eventDisplayTexts(
@@ -65,14 +65,14 @@ enum NostrTimelineRichContentResolver {
         followedPubkeys: Set<String>
     ) -> [String: String] {
         let metadataByPubkey = NostrHomeTimelineMaterializer.latestMetadataByPubkey(metadataEvents)
-        let eventIDs = richContent.references.compactMap { reference -> String? in
+        let eventIDs = Set(richContent.references.compactMap { reference -> String? in
             if case .event(let eventID, _, _, _) = reference {
                 return eventID
             }
             return nil
-        }
+        })
 
-        return Dictionary(uniqueKeysWithValues: eventIDs.compactMap { eventID in
+        return eventIDs.reduce(into: [String: String]()) { result, eventID in
             guard let event = eventsByID[eventID],
                   let displayName = displayName(
                     for: event.pubkey,
@@ -81,9 +81,9 @@ enum NostrTimelineRichContentResolver {
                     profileResolutionStates: profileResolutionStates,
                     followedPubkeys: followedPubkeys
                   )
-            else { return nil }
-            return (eventID, "note:@\(displayName)")
-        })
+            else { return }
+            result[eventID] = "note:@\(displayName)"
+        }
     }
 
     private static func displayName(
