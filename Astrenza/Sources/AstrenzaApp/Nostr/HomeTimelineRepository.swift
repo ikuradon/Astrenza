@@ -213,7 +213,9 @@ struct HomeTimelineRepository: Sendable {
         context: HomeTimelineReadContext
     ) -> [TimelinePost] {
         let events = Array(events)
-        let profilePubkeys = Set(events.flatMap { event in
+        let dependencyEvents = contextEvents(for: events)
+        let materialEvents = events + dependencyEvents
+        let profilePubkeys = Set(materialEvents.flatMap { event in
             NostrEventDependencies.extract(from: event).profilePubkeys
         })
         let storedMetadata = (try? eventStore?.latestReplaceableEvents(
@@ -226,12 +228,13 @@ struct HomeTimelineRepository: Sendable {
 
         return NostrTimelineMaterializer.posts(
             noteEvents: events,
+            contextEvents: dependencyEvents,
             metadataEvents: storedMetadata + liveMetadata,
             nip05Resolutions: context.nip05Resolutions,
             profileResolutionStates: context.profileResolutionStates,
             followedPubkeys: context.followedPubkeys,
-            mediaAssetsByEventID: mediaAssetsByEventID(for: events),
-            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: events),
+            mediaAssetsByEventID: mediaAssetsByEventID(for: materialEvents),
+            linkPreviewsByNormalizedURL: linkPreviewsByNormalizedURL(for: materialEvents),
             filterRules: context.filterRules,
             policy: context.syncPolicy
         )

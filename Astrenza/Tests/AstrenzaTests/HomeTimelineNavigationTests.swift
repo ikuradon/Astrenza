@@ -95,6 +95,59 @@ struct HomeTimelineNavigationTests {
         ])
     }
 
+    @Test("Live post destination does not downgrade a resolved quoted note")
+    func livePostDestinationPreservesResolvedQuotedNote() throws {
+        let source = try #require(MockTimelineData.posts.first)
+        let availableQuote = QuotedTimelinePost(
+            author: source.author,
+            avatar: source.avatar,
+            body: "resolved quoted body",
+            richBody: nil,
+            createdAt: 100,
+            isAvailable: true
+        )
+        let unavailableQuote = QuotedTimelinePost(
+            author: source.author,
+            avatar: source.avatar,
+            body: "Quoted note is not cached yet.",
+            richBody: nil,
+            createdAt: nil,
+            isAvailable: false
+        )
+        let fallback = makePost(
+            id: "quoted-parent",
+            author: source.author,
+            body: "visible row",
+            quotedPost: availableQuote
+        )
+        let refreshed = makePost(
+            id: fallback.id,
+            author: source.author,
+            body: "refreshed detail",
+            quotedPost: unavailableQuote
+        )
+        let resolver = HomeTimelineNavigationProjectionResolver(
+            post: { _ in refreshed },
+            replyAncestors: { _ in [] },
+            replies: { _ in [] },
+            profileProjection: { _ in
+                makeProfileProjection(for: refreshed)
+            },
+            mockProfileProjection: {
+                makeProfileProjection(for: $0)
+            }
+        )
+
+        let projection = resolver.postDetail(
+            fallbackPost: fallback,
+            hasLiveAccount: true
+        )
+
+        #expect(projection.post.body == "refreshed detail")
+        #expect(projection.post.quotedPost?.isAvailable == true)
+        #expect(projection.post.quotedPost?.body == "resolved quoted body")
+    }
+
     @Test("Mock post destination keeps route data without live queries")
     func mockPostDestinationUsesFallback() throws {
         let fallback = try #require(MockTimelineData.posts.first)
@@ -185,7 +238,8 @@ struct HomeTimelineNavigationTests {
     private func makePost(
         id: String,
         author: TimelineAuthor,
-        body: String
+        body: String,
+        quotedPost: QuotedTimelinePost? = nil
     ) -> TimelinePost {
         TimelinePost(
             id: id,
@@ -202,7 +256,8 @@ struct HomeTimelineNavigationTests {
             favoriteCount: 0,
             isLocked: false,
             media: nil,
-            context: nil
+            context: nil,
+            quotedPost: quotedPost
         )
     }
 

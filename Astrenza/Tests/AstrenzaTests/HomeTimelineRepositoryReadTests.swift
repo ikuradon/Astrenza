@@ -49,6 +49,38 @@ struct HomeTimelineRepositoryReadTests {
         #expect(fallback?.body == "fallback")
     }
 
+    @Test("Post reads materialize stored quoted note dependencies")
+    func postReadsMaterializeStoredQuotedNoteDependencies() throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let author = String(repeating: "a", count: 64)
+        let quotedAuthor = String(repeating: "b", count: 64)
+        let quoted = event(
+            id: "3",
+            pubkey: quotedAuthor,
+            createdAt: 100,
+            content: "stored quoted body"
+        )
+        let parent = event(
+            id: "4",
+            pubkey: author,
+            createdAt: 200,
+            tags: [["q", quoted.id]],
+            content: "parent body"
+        )
+        try eventStore.save(events: [parent, quoted])
+
+        let post = try #require(
+            HomeTimelineRepository(eventStore: eventStore).post(
+                eventID: parent.id,
+                context: readContext(followedPubkeys: [author])
+            )
+        )
+
+        #expect(post.quotedPost?.isAvailable == true)
+        #expect(post.quotedPost?.body == "stored quoted body")
+        #expect(post.quotedPost?.author.pubkey == quotedAuthor)
+    }
+
     @Test("Thread reads preserve materialized ancestor order and exclude non-reply references")
     func threadReadsPreserveMaterializedOrderAndFilterReferences() throws {
         let eventStore = try NostrEventStore.inMemory()

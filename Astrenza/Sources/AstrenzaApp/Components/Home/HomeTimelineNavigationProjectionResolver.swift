@@ -59,7 +59,8 @@ struct HomeTimelineNavigationProjectionResolver {
             )
         }
 
-        let resolvedPost = post(fallbackPost.id) ?? fallbackPost
+        let resolvedPost = (post(fallbackPost.id) ?? fallbackPost)
+            .preservingAvailableQuotedPost(from: fallbackPost)
         return HomeTimelinePostDetailProjection(
             post: resolvedPost,
             replyAncestors: replyAncestors(resolvedPost),
@@ -86,4 +87,40 @@ struct HomeTimelinePostDetailProjection {
     let post: TimelinePost
     let replyAncestors: [TimelinePost]
     let replies: [TimelinePost]
+}
+
+private extension TimelinePost {
+    func preservingAvailableQuotedPost(
+        from fallbackPost: TimelinePost
+    ) -> TimelinePost {
+        guard let fallbackQuotedPost = fallbackPost.quotedPost,
+              fallbackQuotedPost.isAvailable,
+              quotedPost?.isAvailable != true
+        else {
+            return self
+        }
+
+        return TimelinePost(
+            id: id,
+            author: author,
+            avatar: avatar,
+            body: body,
+            richBody: richBody,
+            createdAt: createdAt,
+            replyCount: replyCount,
+            boostCount: boostCount,
+            favoriteCount: favoriteCount,
+            isLocked: isLocked,
+            media: media,
+            context: context,
+            repostedBy: repostedBy,
+            quotedPost: fallbackQuotedPost,
+            replyContext: replyContext,
+            replyMention: replyMention,
+            contentWarning: contentWarning,
+            bodyPresentation: bodyPresentation,
+            linkSummary: linkSummary,
+            actionState: actionState
+        )
+    }
 }
