@@ -1,29 +1,43 @@
 import AstrenzaCore
 import SwiftUI
 
+struct RelayStatusCountProjection: Equatable {
+    let connected: Int
+    let planned: Int
+
+    init(
+        snapshot: HomeTimelineRelayStatusSnapshot?,
+        fallbackConnected: Int,
+        fallbackPlanned: Int
+    ) {
+        connected = snapshot?.connectedRelayCount ?? fallbackConnected
+        planned = snapshot?.plannedRelayCount ?? fallbackPlanned
+    }
+}
+
 struct RelayStatusSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store: RelayStatusSheetStore
     @State private var selectedRelayURL: String?
     private let relayURLs: [String]
-    private var relayRuntimeStates: [String: NostrRelayConnectionState]
+    private var relayStatusSnapshot: HomeTimelineRelayStatusSnapshot?
 
     init(
         relayURLs: [String] = [],
-        relayRuntimeStates: [String: NostrRelayConnectionState] = [:],
+        relayStatusSnapshot: HomeTimelineRelayStatusSnapshot? = nil,
         accountID: String? = nil,
         eventStore: NostrEventStore? = nil,
         syncPolicy: NostrSyncPolicy = .default(networkType: .unknown, lowPowerMode: false)
     ) {
         _store = StateObject(wrappedValue: RelayStatusSheetStore(
             relayURLs: relayURLs,
-            relayRuntimeStates: relayRuntimeStates,
+            relayRuntimeStates: relayStatusSnapshot?.runtimeStates ?? [:],
             accountID: accountID,
             eventStore: eventStore,
             syncPolicy: syncPolicy
         ))
         self.relayURLs = relayURLs
-        self.relayRuntimeStates = relayRuntimeStates
+        self.relayStatusSnapshot = relayStatusSnapshot
         _selectedRelayURL = State(initialValue: relayURLs.first ?? (accountID == nil ? RelayMockStore.relays.first?.url : nil))
     }
 
@@ -31,13 +45,21 @@ struct RelayStatusSheetView: View {
         store.relays.first { $0.url == selectedRelayURL } ?? store.relays.first
     }
 
+    private var statusCounts: RelayStatusCountProjection {
+        RelayStatusCountProjection(
+            snapshot: relayStatusSnapshot,
+            fallbackConnected: store.connectedCount,
+            fallbackPlanned: store.plannedCount
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: AstrenzaSpacing.point16) {
                     RelayStatusSummaryCard(
-                        connected: store.connectedCount,
-                        planned: store.plannedCount,
+                        connected: statusCounts.connected,
+                        planned: statusCounts.planned,
                         relays: store.relays
                     )
 
@@ -93,8 +115,8 @@ struct RelayStatusSheetView: View {
         .task {
             await store.refresh()
         }
-        .onChange(of: relayRuntimeStates) { _, states in
-            store.updateRuntimeStates(states)
+        .onChange(of: relayStatusSnapshot) { _, snapshot in
+            store.updateRuntimeStates(snapshot?.runtimeStates ?? [:])
         }
         .onChange(of: relayURLs) { _, urls in
             store.updateRelayURLs(urls)

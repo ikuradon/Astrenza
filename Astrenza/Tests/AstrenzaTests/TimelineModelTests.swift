@@ -3088,6 +3088,23 @@ struct TimelineModelTests {
         #expect(store.relays.first?.status == .connecting)
     }
 
+    @Test("Relay status sheet summary uses the same published counts as the Home pill")
+    @MainActor
+    func relayStatusSheetSummaryUsesHomeRelayStatusSnapshot() {
+        let counts = RelayStatusCountProjection(
+            snapshot: HomeTimelineRelayStatusSnapshot(
+                runtimeStates: ["wss://runtime.example": .connected],
+                connectedRelayCount: 2,
+                plannedRelayCount: 3
+            ),
+            fallbackConnected: 0,
+            fallbackPlanned: 3
+        )
+
+        #expect(counts.connected == 2)
+        #expect(counts.planned == 3)
+    }
+
     @Test("Relay status sheet keeps live runtime state separate from DB reachability")
     @MainActor
     func relayStatusSheetSeparatesRuntimeStateFromDBReachability() throws {

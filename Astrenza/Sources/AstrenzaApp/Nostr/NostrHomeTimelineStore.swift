@@ -273,6 +273,10 @@ extension NostrHomeTimelineStore {
         composition.status.relayRuntimeStates
     }
 
+    var relayStatusSnapshot: HomeTimelineRelayStatusSnapshot {
+        composition.status.relayStatusSnapshot
+    }
+
     var relayStatusCounts: (connected: Int, planned: Int) {
         composition.status.relayStatusCounts
     }

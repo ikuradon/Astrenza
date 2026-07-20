@@ -37,8 +37,8 @@ struct HomeTimelinePresentationModifier: ViewModifier {
         hasLiveAccount ? timelineStore.resolvedRelays : []
     }
 
-    private var relayRuntimeStates: [String: NostrRelayConnectionState] {
-        hasLiveAccount ? timelineStore.relayRuntimeStates : [:]
+    private var relayStatusSnapshot: HomeTimelineRelayStatusSnapshot? {
+        hasLiveAccount ? timelineStore.relayStatusSnapshot : nil
     }
 
     private var isComposeSubmitAvailable: Bool {
@@ -123,7 +123,7 @@ struct HomeTimelinePresentationModifier: ViewModifier {
     private var relayStatusSheet: some View {
         RelayStatusSheetView(
             relayURLs: relayURLs,
-            relayRuntimeStates: relayRuntimeStates,
+            relayStatusSnapshot: relayStatusSnapshot,
             accountID: accountID,
             eventStore: eventStore,
             syncPolicy: timelineStore.currentSyncPolicy
