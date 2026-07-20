@@ -586,14 +586,33 @@ private struct SingleMediaAttachmentView: View {
     }
 }
 
+struct TimelineAttachmentResolvedWidth: Equatable {
+    let reportedWidth: CGFloat
+    let measurementWidth: CGFloat
+}
+
 enum TimelineAttachmentLayoutMetrics {
     static let fallbackAvailableWidth: CGFloat = 320
 
-    static func availableWidth(for proposedWidth: CGFloat?) -> CGFloat {
-        guard let proposedWidth, proposedWidth.isFinite, proposedWidth > 0 else {
-            return fallbackAvailableWidth
+    static func resolvedWidth(for proposedWidth: CGFloat?) -> TimelineAttachmentResolvedWidth {
+        guard let proposedWidth, proposedWidth.isFinite else {
+            return TimelineAttachmentResolvedWidth(
+                reportedWidth: fallbackAvailableWidth,
+                measurementWidth: fallbackAvailableWidth
+            )
         }
-        return proposedWidth
+
+        guard proposedWidth > 0 else {
+            return TimelineAttachmentResolvedWidth(
+                reportedWidth: 0,
+                measurementWidth: fallbackAvailableWidth
+            )
+        }
+
+        return TimelineAttachmentResolvedWidth(
+            reportedWidth: proposedWidth,
+            measurementWidth: proposedWidth
+        )
     }
 }
 
@@ -606,8 +625,11 @@ private struct GalleryAttachmentLayout: Layout {
         cache: inout ()
     ) -> CGSize {
         guard !subviews.isEmpty else { return .zero }
-        let width = TimelineAttachmentLayoutMetrics.availableWidth(for: proposal.width)
-        return CGSize(width: width, height: width / aspectRatio)
+        let width = TimelineAttachmentLayoutMetrics.resolvedWidth(for: proposal.width)
+        return CGSize(
+            width: width.reportedWidth,
+            height: width.measurementWidth / aspectRatio
+        )
     }
 
     func placeSubviews(
@@ -634,12 +656,12 @@ private struct SingleMediaAttachmentLayout: Layout {
         cache: inout ()
     ) -> CGSize {
         guard !subviews.isEmpty else { return .zero }
-        let availableWidth = TimelineAttachmentLayoutMetrics.availableWidth(for: proposal.width)
+        let width = TimelineAttachmentLayoutMetrics.resolvedWidth(for: proposal.width)
         let mediaSize = TimelineMediaLayoutMetrics.singleMediaSize(
             aspectRatio: aspectRatio,
-            availableWidth: availableWidth
+            availableWidth: width.measurementWidth
         )
-        return CGSize(width: availableWidth, height: mediaSize.height)
+        return CGSize(width: width.reportedWidth, height: mediaSize.height)
     }
 
     func placeSubviews(
@@ -868,13 +890,16 @@ private struct LinkPreviewCardStackLayout: Layout {
         cache: inout ()
     ) -> CGSize {
         guard subviews.count == 2 else { return .zero }
-        let width = TimelineAttachmentLayoutMetrics.availableWidth(for: proposal.width)
+        let width = TimelineAttachmentLayoutMetrics.resolvedWidth(for: proposal.width)
         let metadataHeight = resolvedMetadataHeight(
             subviews[1].sizeThatFits(
-                ProposedViewSize(width: width, height: nil)
+                ProposedViewSize(width: width.measurementWidth, height: nil)
             ).height
         )
-        return CGSize(width: width, height: heroHeight + metadataHeight)
+        return CGSize(
+            width: width.reportedWidth,
+            height: heroHeight + metadataHeight
+        )
     }
 
     func placeSubviews(

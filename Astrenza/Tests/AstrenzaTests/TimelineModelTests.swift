@@ -7781,12 +7781,17 @@ struct TimelineModelTests {
         }
     }
 
-    @Test("Timeline attachment layout never starts from a one-point width")
-    func timelineAttachmentLayoutUsesStableFallbackWidth() {
-        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: nil) == 320)
-        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: 0) == 320)
-        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: .infinity) == 320)
-        #expect(TimelineAttachmentLayoutMetrics.availableWidth(for: 287) == 287)
+    @Test("Timeline attachment layout is compressible without measuring at a transient zero width")
+    func timelineAttachmentLayoutSeparatesReportedAndMeasurementWidths() {
+        let unspecified = TimelineAttachmentLayoutMetrics.resolvedWidth(for: nil)
+        let minimum = TimelineAttachmentLayoutMetrics.resolvedWidth(for: 0)
+        let unbounded = TimelineAttachmentLayoutMetrics.resolvedWidth(for: .infinity)
+        let profile = TimelineAttachmentLayoutMetrics.resolvedWidth(for: 274)
+
+        #expect(unspecified == TimelineAttachmentResolvedWidth(reportedWidth: 320, measurementWidth: 320))
+        #expect(minimum == TimelineAttachmentResolvedWidth(reportedWidth: 0, measurementWidth: 320))
+        #expect(unbounded == TimelineAttachmentResolvedWidth(reportedWidth: 320, measurementWidth: 320))
+        #expect(profile == TimelineAttachmentResolvedWidth(reportedWidth: 274, measurementWidth: 274))
     }
 
     @Test("Single media preserves its source aspect ratio up to the height cap")
