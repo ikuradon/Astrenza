@@ -20,8 +20,8 @@ struct ComposeSheetView: View {
     @State private var isUserSwitcherPresented = false
     @State private var isCameraPresented = false
     @State private var isFileImporterPresented = false
-    @State private var isCustomEmojiPickerPresented = false
-    @State private var isContinuousCustomEmojiInput = false
+    @State private var inputSurface = ComposeInputSurfaceState()
+    @State private var editorRefocusTask: Task<Void, Never>?
     @State private var isCustomEmojiResolving = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var activeMediaMenuItem: ComposeSelectedMedia?
@@ -75,6 +75,14 @@ struct ComposeSheetView: View {
 
     private var suggestionLoadIdentity: String {
         "\(accountID ?? "preview"):\(eventStore == nil ? "missing" : "available")"
+    }
+
+    private var isCustomEmojiPickerPresented: Bool {
+        inputSurface.isEmojiPickerPresented
+    }
+
+    private var isContinuousCustomEmojiInput: Bool {
+        inputSurface.isContinuousEmojiInput
     }
 
     private var autosaveIdentity: String {
@@ -280,7 +288,9 @@ struct ComposeSheetView: View {
         .onAppear {
             reloadDrafts()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
-                isEditorFocused = true
+                if inputSurface.canRefocusEditor {
+                    isEditorFocused = true
+                }
             }
         }
         .task(id: suggestionLoadIdentity) {
@@ -305,6 +315,28 @@ struct ComposeSheetView: View {
         }
         .onChange(of: isSubmitAvailable) { _, isAvailable in
             feature.updateSubmitAvailability(isAvailable)
+        }
+        .onChange(of: isEditorFocused) { _, isFocused in
+            guard isFocused else { return }
+            inputSurface.editorDidFocus()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillShowNotification
+        )) { _ in
+            inputSurface.keyboardWillShow()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardDidHideNotification
+        )) { _ in
+            withAnimation(.spring(
+                duration: AstrenzaMotion.relaxed,
+                bounce: 0.12
+            )) {
+                inputSurface.keyboardDidHide()
+            }
+        }
+        .onDisappear {
+            editorRefocusTask?.cancel()
         }
     }
 
@@ -417,7 +449,6 @@ struct ComposeSheetView: View {
             feature.text += " "
         }
         feature.text += "\(value) "
-        isEditorFocused = true
     }
 
     private func insertContinuousCustomEmoji(_ value: String) {
@@ -433,9 +464,7 @@ struct ComposeSheetView: View {
             insertContinuousCustomEmoji(candidate.shortcode)
         } else {
             insertStandaloneToken(candidate.shortcode)
-            withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
-                isCustomEmojiPickerPresented = false
-            }
+            dismissCustomEmojiPickerAndRefocusEditor()
         }
     }
 
@@ -454,16 +483,24 @@ struct ComposeSheetView: View {
     }
 
     private func presentCustomEmojiPicker(isContinuous: Bool) {
+        editorRefocusTask?.cancel()
+        let mode: ComposeCustomEmojiInputMode = isContinuous
+            ? .continuous
+            : .single
         isEditorFocused = false
-        isContinuousCustomEmojiInput = isContinuous
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
         withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
-            isCustomEmojiPickerPresented = true
+            inputSurface.requestEmojiPicker(mode: mode)
         }
     }
 
     private func toggleSensitiveReason() {
-        isCustomEmojiPickerPresented = false
-        isContinuousCustomEmojiInput = false
+        inputSurface.dismissEmojiPicker()
         feature.isSensitiveReasonVisible.toggle()
     }
 
@@ -477,11 +514,26 @@ struct ComposeSheetView: View {
         if !feature.text.isEmpty && !feature.text.last!.isWhitespace {
             feature.text += " "
         }
-        isContinuousCustomEmojiInput = false
+        inputSurface.dismissEmojiPicker()
+        scheduleEditorRefocus()
+    }
+
+    private func dismissCustomEmojiPickerAndRefocusEditor() {
         withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
-            isCustomEmojiPickerPresented = false
+            inputSurface.dismissEmojiPicker()
         }
-        isEditorFocused = true
+        scheduleEditorRefocus()
+    }
+
+    private func scheduleEditorRefocus() {
+        editorRefocusTask?.cancel()
+        editorRefocusTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(AstrenzaMotion.relaxed))
+            guard !Task.isCancelled,
+                  inputSurface.canRefocusEditor
+            else { return }
+            isEditorFocused = true
+        }
     }
 
     private func loadSelectedPhotos(_ items: [PhotosPickerItem]) {

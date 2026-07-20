@@ -7,6 +7,28 @@ import UIKit
 @Suite("Compose feature")
 @MainActor
 struct ComposeFeatureTests {
+    @Test("Custom emoji picker and software keyboard are mutually exclusive")
+    func customEmojiPickerWaitsForKeyboardDismissal() {
+        var state = ComposeInputSurfaceState()
+        state.keyboardWillShow()
+        state.requestEmojiPicker(mode: .single)
+
+        #expect(state.isSoftwareKeyboardVisible)
+        #expect(!state.isEmojiPickerPresented)
+        #expect(state.pendingEmojiMode == .single)
+
+        state.keyboardDidHide()
+
+        #expect(!state.isSoftwareKeyboardVisible)
+        #expect(state.emojiMode == .single)
+        #expect(state.isEmojiPickerPresented)
+
+        state.keyboardWillShow()
+
+        #expect(state.isSoftwareKeyboardVisible)
+        #expect(!state.isEmojiPickerPresented)
+    }
+
     @Test("Reply context keeps root, parent, recipients, and relay hint")
     func replyContextKeepsProtocolReferences() throws {
         let store = try NostrEventStore.inMemory()

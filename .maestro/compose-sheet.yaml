@@ -35,9 +35,11 @@ appId: com.ikuradon.Astrenza
 - assertVisible:
     text: CUSTOM
 - assertVisible:
-    text: PARTY PARROTS
+    text: PARTY PARROT
 - assertVisible:
     text: ":aicp:"
+- assertNotVisible:
+    text: space
 - tapOn:
     text: ":aicp:"
 - tapOn:

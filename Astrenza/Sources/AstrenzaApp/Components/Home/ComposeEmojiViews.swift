@@ -89,36 +89,40 @@ struct ComposeCustomEmojiPicker: View {
                 }
 
                 ScrollViewReader { proxy in
-                    if emojiSets.isEmpty {
-                        emptyState
-                    } else {
-                        if emojiSets.count > 1 {
-                            setRail { setID in
-                                selectedSetID = setID
-                                withAnimation(.easeInOut(duration: AstrenzaMotion.quick)) {
-                                    proxy.scrollTo(setID, anchor: .top)
-                                }
-                            }
-                        }
-
-                        ScrollView {
-                            LazyVStack(
-                                alignment: .leading,
-                                spacing: AstrenzaSpacing.point18,
-                                pinnedViews: [.sectionHeaders]
-                            ) {
-                                ForEach(emojiSets) { set in
-                                    Section {
-                                        emojiGrid(set.emojis)
-                                            .padding(.horizontal, AstrenzaSpacing.point18)
-                                            .padding(.bottom, AstrenzaSpacing.point6)
-                                    } header: {
-                                        setHeader(set)
+                    VStack(spacing: 0) {
+                        if emojiSets.isEmpty {
+                            emptyState
+                        } else {
+                            if emojiSets.count > 1 {
+                                setRail { setID in
+                                    selectedSetID = setID
+                                    withAnimation(.easeInOut(duration: AstrenzaMotion.quick)) {
+                                        proxy.scrollTo(setID, anchor: .top)
                                     }
-                                    .id(set.id)
                                 }
                             }
-                            .padding(.bottom, isContinuousInput ? 72 : AstrenzaSpacing.point24)
+
+                            ScrollView {
+                                LazyVStack(
+                                    alignment: .leading,
+                                    spacing: AstrenzaSpacing.point18
+                                ) {
+                                    ForEach(emojiSets) { set in
+                                        VStack(
+                                            alignment: .leading,
+                                            spacing: AstrenzaSpacing.point6
+                                        ) {
+                                            setHeader(set)
+
+                                            emojiGrid(set.emojis)
+                                                .padding(.horizontal, AstrenzaSpacing.point18)
+                                                .padding(.bottom, AstrenzaSpacing.point6)
+                                        }
+                                        .id(set.id)
+                                    }
+                                }
+                                .padding(.bottom, isContinuousInput ? 72 : AstrenzaSpacing.point24)
+                            }
                         }
                     }
                 }
@@ -236,8 +240,8 @@ struct ComposeCustomEmojiPicker: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, AstrenzaSpacing.point18)
-        .padding(.vertical, AstrenzaSpacing.point10)
-        .background(AstrenzaPalette.emojiPickerBackground)
+        .padding(.top, AstrenzaSpacing.point14)
+        .padding(.bottom, AstrenzaSpacing.point6)
     }
 
     private func emojiGrid(

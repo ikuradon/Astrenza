@@ -30,6 +30,69 @@ enum ComposeSheetMode: Equatable, Sendable {
     }
 }
 
+enum ComposeCustomEmojiInputMode: Equatable, Sendable {
+    case single
+    case continuous
+
+    var isContinuous: Bool {
+        self == .continuous
+    }
+}
+
+struct ComposeInputSurfaceState: Equatable, Sendable {
+    private(set) var emojiMode: ComposeCustomEmojiInputMode?
+    private(set) var pendingEmojiMode: ComposeCustomEmojiInputMode?
+    private(set) var isSoftwareKeyboardVisible = false
+
+    var isEmojiPickerPresented: Bool {
+        emojiMode != nil
+    }
+
+    var isContinuousEmojiInput: Bool {
+        emojiMode?.isContinuous == true
+    }
+
+    var canRefocusEditor: Bool {
+        emojiMode == nil && pendingEmojiMode == nil
+    }
+
+    mutating func requestEmojiPicker(
+        mode: ComposeCustomEmojiInputMode
+    ) {
+        pendingEmojiMode = mode
+        emojiMode = nil
+        activatePendingEmojiPickerIfPossible()
+    }
+
+    mutating func keyboardWillShow() {
+        isSoftwareKeyboardVisible = true
+        emojiMode = nil
+    }
+
+    mutating func keyboardDidHide() {
+        isSoftwareKeyboardVisible = false
+        activatePendingEmojiPickerIfPossible()
+    }
+
+    mutating func editorDidFocus() {
+        pendingEmojiMode = nil
+        emojiMode = nil
+    }
+
+    mutating func dismissEmojiPicker() {
+        pendingEmojiMode = nil
+        emojiMode = nil
+    }
+
+    private mutating func activatePendingEmojiPickerIfPossible() {
+        guard !isSoftwareKeyboardVisible,
+              let pendingEmojiMode
+        else { return }
+        self.pendingEmojiMode = nil
+        emojiMode = pendingEmojiMode
+    }
+}
+
 struct ComposeEventReference: Codable, Equatable, Sendable {
     let eventID: String
     let relayHint: String?
