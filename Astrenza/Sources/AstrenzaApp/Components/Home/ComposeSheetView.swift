@@ -65,6 +65,10 @@ struct ComposeSheetView: View {
         feature.remainingCharacters
     }
 
+    private var selectedAccountSummary: NostrAccountSummary? {
+        accounts.first { $0.id == accountID }
+    }
+
     private var suggestionLoadIdentity: String {
         "\(accountID ?? "preview"):\(eventStore == nil ? "missing" : "available")"
     }
@@ -296,6 +300,7 @@ struct ComposeSheetView: View {
     private var editorArea: some View {
         ComposeEditorArea(
             mode: mode,
+            account: selectedAccountSummary,
             text: $feature.text,
             isEditorFocused: $isEditorFocused,
             selectedMediaItems: feature.selectedMediaItems,

@@ -42,6 +42,7 @@ struct ComposeNavigationBar: View {
 
 struct ComposeEditorArea: View {
     let mode: ComposeSheetMode
+    let account: NostrAccountSummary?
     @Binding var text: String
     @FocusState.Binding var isEditorFocused: Bool
     let selectedMediaItems: [ComposeSelectedMedia]
@@ -64,7 +65,10 @@ struct ComposeEditorArea: View {
                 isUserSwitcherPresented.toggle()
             }
         } label: {
-            UserSwitchButton(isExpanded: isUserSwitcherPresented)
+            UserSwitchButton(
+                isExpanded: isUserSwitcherPresented,
+                account: account
+            )
         }
         .buttonStyle(.plain)
         .padding(.top, AstrenzaSpacing.point18)
