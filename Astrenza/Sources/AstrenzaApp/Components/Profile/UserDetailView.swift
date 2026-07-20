@@ -62,16 +62,13 @@ struct UserDetailView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            TimelineFeedCollectionView(
-                configuration: timelineConfiguration
-            )
-            .ignoresSafeArea(.container, edges: [.top, .bottom])
-
+        TimelineFeedCollectionView(
+            configuration: timelineConfiguration
+        )
+        .overlay(alignment: .top) {
             navigationBlurBackdrop(chromeLayout: navigationChromeLayout)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .allowsHitTesting(false)
-
+                .frame(maxWidth: .infinity)
+                .allowsHitTesting(false)
         }
         .overlay {
             GeometryReader { proxy in
@@ -84,6 +81,7 @@ struct UserDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
         .background(Color.astrenzaBackground)
         .accessibilityIdentifier("user.detail")
         .navigationTitle("")
@@ -112,6 +110,7 @@ struct UserDetailView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open profile hero image")
+            .accessibilityIdentifier("profile.hero")
         }
         .padding(.bottom, 76)
     }
