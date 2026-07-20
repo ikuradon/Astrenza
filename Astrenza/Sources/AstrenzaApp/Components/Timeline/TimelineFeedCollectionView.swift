@@ -8,9 +8,33 @@ enum TimelinePullRefreshPresentation: Equatable {
     case completed(didUpdate: Bool)
 }
 
+struct TimelineFeedCollectionMetrics: Equatable {
+    let topContentPadding: CGFloat
+    let bottomContentPadding: CGFloat
+
+    static let home = TimelineFeedCollectionMetrics(
+        topContentPadding: 72,
+        bottomContentPadding: 124
+    )
+
+    static let profile = TimelineFeedCollectionMetrics(
+        topContentPadding: 0,
+        bottomContentPadding: 132
+    )
+}
+
+@MainActor
+struct TimelineFeedLeadingContent {
+    let renderRevision: Int
+    let geometryRevision: Int
+    let rootView: AnyView
+}
+
 @MainActor
 struct TimelineFeedCollectionConfiguration {
     let entries: [TimelineFeedEntry]
+    let leadingContent: TimelineFeedLeadingContent?
+    let metrics: TimelineFeedCollectionMetrics
     let sourceIdentity: String
     let sourceRevision: Int
     let viewportIdentity: TimelineFeedViewportIdentity

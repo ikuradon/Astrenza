@@ -206,6 +206,8 @@ struct TimelineFeedView: View {
         TimelineFeedCollectionConfiguration {
         TimelineFeedCollectionConfiguration(
             entries: entries,
+            leadingContent: nil,
+            metrics: .home,
             sourceIdentity: sourceIdentity,
             sourceRevision: sourceRevision,
             viewportIdentity: viewportIdentity,

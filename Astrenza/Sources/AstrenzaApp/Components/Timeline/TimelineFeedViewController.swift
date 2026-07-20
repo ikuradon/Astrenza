@@ -7,6 +7,16 @@ final class TimelineFeedViewController: UIViewController {
         case main
     }
 
+    private enum ItemID: Hashable {
+        case leadingContent
+        case entry(TimelineFeedEntry.ID)
+
+        var entryID: TimelineFeedEntry.ID? {
+            guard case .entry(let entryID) = self else { return nil }
+            return entryID
+        }
+    }
+
     private struct RowMeasurementKey: Hashable {
         let reuseKey: RowMeasurementReuseKey
         let widthInPixels: Int
@@ -21,16 +31,16 @@ final class TimelineFeedViewController: UIViewController {
 
     private let anchorLineY: CGFloat = 72
     private let readLineY: CGFloat = 96
-    private let topContentPadding: CGFloat = 72
-    private let bottomContentPadding: CGFloat = 124
     private let pullRefreshTriggerOffset: CGFloat = -96
     private let viewportSaveInterval: TimeInterval = 0.25
     private let viewportSaveOffsetThreshold: CGFloat = 48
     private let cellReuseIdentifier = "timeline-entry"
+    private let leadingContentSizingID = "\0timeline-leading-content"
 
     private var configuration: TimelineFeedCollectionConfiguration?
     private var entries: [TimelineFeedEntry] = []
     private var entriesByID: [TimelineFeedEntry.ID: TimelineFeedEntry] = [:]
+    private var isLeadingContentPresented = false
     private var postOrderByID: [TimelinePost.ID: Int] = [:]
     private var readLinePositionByPostID:
         [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
@@ -88,7 +98,7 @@ final class TimelineFeedViewController: UIViewController {
         collectionView.contentInset = UIEdgeInsets(
             top: 0,
             left: 0,
-            bottom: bottomContentPadding,
+            bottom: TimelineFeedCollectionMetrics.home.bottomContentPadding,
             right: 0
         )
         collectionView.verticalScrollIndicatorInsets =
@@ -133,12 +143,22 @@ final class TimelineFeedViewController: UIViewController {
         publishUnreadPillPlacement()
     }
 
+    private func applyMetrics(_ metrics: TimelineFeedCollectionMetrics) {
+        guard abs(
+            collectionView.contentInset.bottom - metrics.bottomContentPadding
+        ) > 0.5 else { return }
+        collectionView.contentInset.bottom = metrics.bottomContentPadding
+        collectionView.verticalScrollIndicatorInsets =
+            collectionView.contentInset
+    }
+
     func apply(_ nextConfiguration: TimelineFeedCollectionConfiguration) {
         loadViewIfNeeded()
         let previousConfiguration = configuration
         let sourceChanged = previousConfiguration?.sourceIdentity !=
             nextConfiguration.sourceIdentity
         configuration = nextConfiguration
+        applyMetrics(nextConfiguration.metrics)
 
         if sourceChanged {
             resetForSourceChange()
@@ -158,15 +178,30 @@ final class TimelineFeedViewController: UIViewController {
             nextConfiguration.swipeSettings
         let contentRevisionChanged = previousConfiguration?.sourceRevision !=
             nextConfiguration.sourceRevision
+        let previousLeadingContent = previousConfiguration?.leadingContent
+        let nextLeadingContent = nextConfiguration.leadingContent
+        let leadingRenderChanged = previousLeadingContent?.renderRevision !=
+            nextLeadingContent?.renderRevision
+        let leadingGeometryChanged = previousLeadingContent?.geometryRevision !=
+            nextLeadingContent?.geometryRevision
+        let metricsChanged = previousConfiguration?.metrics !=
+            nextConfiguration.metrics
         lastSwipeSettings = nextConfiguration.swipeSettings
         if sourceChanged ||
             contentRevisionChanged ||
-            swipeSettingsChanged {
+            swipeSettingsChanged ||
+            leadingRenderChanged ||
+            leadingGeometryChanged ||
+            metricsChanged {
             applyEntries(
                 nextConfiguration.entries,
                 forceVisibleReconfiguration:
                     contentRevisionChanged || swipeSettingsChanged,
-                reconfigureAllVisible: swipeSettingsChanged
+                reconfigureAllVisible: swipeSettingsChanged,
+                forceLeadingReconfiguration:
+                    leadingRenderChanged || leadingGeometryChanged,
+                forceGeometryProjection:
+                    leadingGeometryChanged || metricsChanged
             )
         }
 
@@ -192,15 +227,12 @@ final class TimelineFeedViewController: UIViewController {
     private func makeDataSource()
         -> UICollectionViewDiffableDataSource<
             Section,
-            TimelineFeedEntry.ID
+            ItemID
         > {
         UICollectionViewDiffableDataSource(
             collectionView: collectionView
-        ) { [weak self] collectionView, indexPath, entryID in
-            guard let self,
-                  let entry = entriesByID[entryID],
-                  let configuration
-            else { return nil }
+        ) { [weak self] collectionView, indexPath, itemID in
+            guard let self, let configuration else { return nil }
 
             guard let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: cellReuseIdentifier,
@@ -208,6 +240,22 @@ final class TimelineFeedViewController: UIViewController {
             ) as? TimelineFeedHostingCollectionCell else { return nil }
             cell.backgroundColor = .clear
             cell.contentView.backgroundColor = .clear
+            if itemID == .leadingContent,
+               let leadingContent = configuration.leadingContent {
+                let sizingIdentity = leadingContentSizingIdentity(
+                    leadingContent,
+                    configuration: configuration
+                )
+                cell.configure(
+                    rootView: leadingContent.rootView,
+                    parentViewController: self,
+                    sizingIdentity: sizingIdentity
+                )
+                return cell
+            }
+
+            guard case .entry(let entryID) = itemID else { return nil }
+            guard let entry = entriesByID[entryID] else { return nil }
             let sizingIdentity = rowSizingIdentity(
                 for: entry,
                 configuration: configuration
@@ -224,6 +272,19 @@ final class TimelineFeedViewController: UIViewController {
             )
             return cell
         }
+    }
+
+    private func leadingContentSizingIdentity(
+        _ leadingContent: TimelineFeedLeadingContent,
+        configuration: TimelineFeedCollectionConfiguration
+    ) -> TimelineFeedCellSizingIdentity {
+        TimelineFeedCellSizingIdentity(
+            entryID: leadingContentSizingID,
+            geometryFingerprint: leadingContent.geometryRevision,
+            swipeSettings: configuration.swipeSettings,
+            gapDirection: .older,
+            isFetchingGap: false
+        )
     }
 
     private func rowSizingIdentity(
@@ -306,9 +367,58 @@ final class TimelineFeedViewController: UIViewController {
         var nextIdentities:
             [TimelineFeedEntry.ID: TimelineFeedCellSizingIdentity] = [:]
         var items: [TimelineFeedProjectedLayoutItem] = []
-        nextHeights.reserveCapacity(projectedEntries.count)
-        nextIdentities.reserveCapacity(projectedEntries.count)
-        items.reserveCapacity(projectedEntries.count)
+        let projectedItemCount = projectedEntries.count +
+            (configuration.leadingContent == nil ? 0 : 1)
+        nextHeights.reserveCapacity(projectedItemCount)
+        nextIdentities.reserveCapacity(projectedItemCount)
+        items.reserveCapacity(projectedItemCount)
+
+        if let leadingContent = configuration.leadingContent {
+            let sizingIdentity = leadingContentSizingIdentity(
+                leadingContent,
+                configuration: configuration
+            )
+            let height: CGFloat
+            if freezesExistingRows,
+               let projectedHeight = projectedRowHeights[
+                   leadingContentSizingID
+               ] {
+                height = projectedHeight
+                if projectedSizingIdentities[leadingContentSizingID] !=
+                    sizingIdentity {
+                    hasDeferredGeometryProjection = true
+                }
+            } else {
+                let measurementKey = RowMeasurementKey(
+                    reuseKey: .exact(sizingIdentity),
+                    widthInPixels: widthInPixels,
+                    contentSizeCategory: contentSizeCategory,
+                    localeIdentifier: localeIdentifier
+                )
+                if let measuredHeight = measuredRowHeights[measurementKey] {
+                    height = measuredHeight
+                } else {
+                    measurementCell.configure(
+                        rootView: leadingContent.rootView,
+                        parentViewController: nil,
+                        sizingIdentity: sizingIdentity
+                    )
+                    height = measurementCell.measuredHeight(
+                        fittingWidth: width
+                    )
+                    measuredRowHeights[measurementKey] = height
+                }
+            }
+            nextHeights[leadingContentSizingID] = height
+            nextIdentities[leadingContentSizingID] = sizingIdentity
+            items.append(
+                TimelineFeedProjectedLayoutItem(
+                    id: leadingContentSizingID,
+                    height: height
+                )
+            )
+        }
+
         for entry in projectedEntries {
             let sizingIdentity = rowSizingIdentity(
                 for: entry,
@@ -366,7 +476,7 @@ final class TimelineFeedViewController: UIViewController {
         projectedSizingIdentities = nextIdentities
         collectionLayout.configure(
             items: items,
-            topPadding: topContentPadding
+            topPadding: configuration.metrics.topContentPadding
         )
     }
 
@@ -434,7 +544,7 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private func reprojectForCurrentWidthIfNeeded() {
-        guard !entries.isEmpty,
+        guard (!entries.isEmpty || configuration?.leadingContent != nil),
               !isApplyingSnapshot,
               let configuration
         else { return }
@@ -482,6 +592,7 @@ final class TimelineFeedViewController: UIViewController {
         hasDeferredGeometryProjection = false
         entries = []
         entriesByID = [:]
+        isLeadingContentPresented = false
         postOrderByID = [:]
         readLinePositionByPostID = [:]
         pendingPreservedAnchor = nil
@@ -504,12 +615,21 @@ final class TimelineFeedViewController: UIViewController {
     private func applyEntries(
         _ newEntries: [TimelineFeedEntry],
         forceVisibleReconfiguration: Bool,
-        reconfigureAllVisible: Bool = false
+        reconfigureAllVisible: Bool = false,
+        forceLeadingReconfiguration: Bool = false,
+        forceGeometryProjection: Bool = false
     ) {
         let oldIDs = entries.map(\.id)
         let newIDs = newEntries.map(\.id)
-        let structureChanged = oldIDs != newIDs
-        guard structureChanged || forceVisibleReconfiguration else {
+        let presentsLeadingContent = configuration?.leadingContent != nil
+        let leadingStructureChanged = isLeadingContentPresented !=
+            presentsLeadingContent
+        let structureChanged = oldIDs != newIDs || leadingStructureChanged
+        guard structureChanged ||
+                forceVisibleReconfiguration ||
+                forceLeadingReconfiguration ||
+                forceGeometryProjection
+        else {
             entries = newEntries
             entriesByID = Dictionary(
                 uniqueKeysWithValues: newEntries.map { ($0.id, $0) }
@@ -522,13 +642,13 @@ final class TimelineFeedViewController: UIViewController {
         let newIDSet = Set(newIDs)
         let visibleIDs = Set(
             collectionView.indexPathsForVisibleItems.compactMap {
-                dataSource.itemIdentifier(for: $0)
+                dataSource.itemIdentifier(for: $0)?.entryID
             }
         )
         let commonVisibleIDs = visibleIDs
             .intersection(oldIDSet)
             .intersection(newIDSet)
-        let reconfiguredIDs: Set<TimelineFeedEntry.ID>
+        var reconfiguredIDs: Set<TimelineFeedEntry.ID>
         if !forceVisibleReconfiguration {
             reconfiguredIDs = []
         } else if reconfigureAllVisible {
@@ -575,6 +695,7 @@ final class TimelineFeedViewController: UIViewController {
                 )
             )
         entries = newEntries
+        isLeadingContentPresented = presentsLeadingContent
         entriesByID = Dictionary(
             uniqueKeysWithValues: newEntries.map { ($0.id, $0) }
         )
@@ -592,12 +713,21 @@ final class TimelineFeedViewController: UIViewController {
         }
         var snapshot = NSDiffableDataSourceSnapshot<
             Section,
-            TimelineFeedEntry.ID
+            ItemID
         >()
         snapshot.appendSections([.main])
-        snapshot.appendItems(newIDs, toSection: .main)
+        let entryItemIDs = newIDs.map(ItemID.entry)
+        let collectionItemIDs = presentsLeadingContent
+            ? [.leadingContent] + entryItemIDs
+            : entryItemIDs
+        snapshot.appendItems(collectionItemIDs, toSection: .main)
+        if forceLeadingReconfiguration && presentsLeadingContent {
+            snapshot.reconfigureItems([.leadingContent])
+        }
         if !reconfiguredIDs.isEmpty {
-            snapshot.reconfigureItems(Array(reconfiguredIDs))
+            snapshot.reconfigureItems(
+                reconfiguredIDs.map(ItemID.entry)
+            )
         }
 
         isApplyingSnapshot = true
@@ -682,7 +812,7 @@ final class TimelineFeedViewController: UIViewController {
         }
 
         guard let indexPath = dataSource.indexPath(
-            for: request.state.anchorPostID
+            for: .entry(request.state.anchorPostID)
         ), entriesByID[request.state.anchorPostID]?.post != nil else {
             handleMissingRestoreAnchor(request)
             return
@@ -726,7 +856,9 @@ final class TimelineFeedViewController: UIViewController {
     private func coarsePositionViewport(
         _ state: TimelineViewportState
     ) -> Bool {
-        guard let indexPath = dataSource.indexPath(for: state.anchorPostID),
+        guard let indexPath = dataSource.indexPath(
+            for: .entry(state.anchorPostID)
+        ),
               entriesByID[state.anchorPostID]?.post != nil
         else { return false }
 
@@ -772,7 +904,9 @@ final class TimelineFeedViewController: UIViewController {
 
     @discardableResult
     private func positionViewport(_ state: TimelineViewportState) -> Bool {
-        guard let indexPath = dataSource.indexPath(for: state.anchorPostID),
+        guard let indexPath = dataSource.indexPath(
+            for: .entry(state.anchorPostID)
+        ),
               entriesByID[state.anchorPostID]?.post != nil
         else { return false }
 
@@ -844,7 +978,9 @@ final class TimelineFeedViewController: UIViewController {
         let visibleIndexPaths = collectionView.indexPathsForVisibleItems
             .sorted()
         for indexPath in visibleIndexPaths {
-            guard let entryID = dataSource.itemIdentifier(for: indexPath),
+            guard let entryID = dataSource.itemIdentifier(
+                for: indexPath
+            )?.entryID,
                   entriesByID[entryID]?.post != nil,
                   let rect = frameForEntry(at: indexPath)
             else { continue }
@@ -858,7 +994,9 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private func preserve(_ anchor: TimelineFeedVisibleAnchor) {
-        guard let indexPath = dataSource.indexPath(for: anchor.postID) else {
+        guard let indexPath = dataSource.indexPath(
+            for: .entry(anchor.postID)
+        ) else {
             return
         }
         collectionView.layoutIfNeeded()
@@ -976,7 +1114,9 @@ final class TimelineFeedViewController: UIViewController {
         guard let configuration else { return }
         var crossedPostIDs: [TimelinePost.ID] = []
         for indexPath in collectionView.indexPathsForVisibleItems {
-            guard let postID = dataSource.itemIdentifier(for: indexPath),
+            guard let postID = dataSource.itemIdentifier(
+                for: indexPath
+            )?.entryID,
                   entriesByID[postID]?.post != nil,
                   let rect = frameForEntry(at: indexPath)
             else { continue }
@@ -1007,7 +1147,9 @@ final class TimelineFeedViewController: UIViewController {
         let anchorPostID = configuration.unreadCountAnchorPostID
         let anchorMinY: CGFloat?
         if let anchorPostID,
-           let indexPath = dataSource.indexPath(for: anchorPostID),
+           let indexPath = dataSource.indexPath(
+               for: .entry(anchorPostID)
+           ),
            let frame = frameForEntry(at: indexPath) {
             anchorMinY = frame.minY - collectionView.contentOffset.y
         } else {
@@ -1027,7 +1169,9 @@ final class TimelineFeedViewController: UIViewController {
 
     private var readablePostIDs: [TimelinePost.ID] {
         collectionView.indexPathsForVisibleItems.compactMap { indexPath in
-            guard let postID = dataSource.itemIdentifier(for: indexPath),
+            guard let postID = dataSource.itemIdentifier(
+                for: indexPath
+            )?.entryID,
                   entriesByID[postID]?.post != nil,
                   let rect = frameForEntry(at: indexPath)
             else { return nil }
@@ -1072,7 +1216,9 @@ final class TimelineFeedViewController: UIViewController {
     private func interactionGapDirection(
         for entryID: TimelineFeedEntry.ID
     ) -> TimelineGapFillDirection {
-        guard let indexPath = dataSource.indexPath(for: entryID),
+        guard let indexPath = dataSource.indexPath(
+            for: .entry(entryID)
+        ),
               let cell = collectionView.cellForItem(at: indexPath)
         else { return displayGapDirection(for: entryID) }
 
@@ -1120,7 +1266,9 @@ final class TimelineFeedViewController: UIViewController {
 
     private func reconfigureEntries(_ entryIDs: [TimelineFeedEntry.ID]) {
         let currentIDs = Set(dataSource.snapshot().itemIdentifiers)
-        let validIDs = entryIDs.filter { currentIDs.contains($0) }
+        let validIDs = entryIDs
+            .map(ItemID.entry)
+            .filter { currentIDs.contains($0) }
         guard !validIDs.isEmpty else { return }
         var snapshot = dataSource.snapshot()
         snapshot.reconfigureItems(validIDs)
@@ -1251,7 +1399,9 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
             collectionView.deselectItem(at: indexPath, animated: false)
         }
 
-        guard let entryID = dataSource.itemIdentifier(for: indexPath),
+        guard let entryID = dataSource.itemIdentifier(
+            for: indexPath
+        )?.entryID,
               case .post(let post) = entriesByID[entryID]
         else { return }
 
@@ -1298,7 +1448,9 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
         willDisplay cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
-        guard let postID = dataSource.itemIdentifier(for: indexPath),
+        guard let postID = dataSource.itemIdentifier(
+            for: indexPath
+        )?.entryID,
               postID == entries.last(where: { $0.post != nil })?.post?.id,
               lastLoadedOlderPostID != postID
         else { return }

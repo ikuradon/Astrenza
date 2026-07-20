@@ -7,6 +7,152 @@ import UIKit
 @Suite("Timeline hosted collection cell geometry")
 struct TimelineFeedHostingCollectionCellTests {
     @MainActor
+    @Test("Profile surface keeps its header and post rows full width")
+    func profileSurfaceUsesOneFullWidthLayout() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: TimelineFeedLeadingContent(
+                    renderRevision: 1,
+                    geometryRevision: 1,
+                    rootView: AnyView(
+                        Color.clear
+                            .frame(height: 240)
+                            .fixedSize(horizontal: false, vertical: true)
+                    )
+                ),
+                metrics: .profile
+            )
+        )
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+        let headerFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 0, section: 0)
+            )?.frame
+        )
+        let postFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 1, section: 0)
+            )?.frame
+        )
+
+        #expect(collectionView.numberOfItems(inSection: 0) == 2)
+        #expect(headerFrame.minY == 0)
+        #expect(headerFrame.width == 390)
+        #expect(postFrame.width == 390)
+        #expect(abs(headerFrame.maxY - postFrame.minY) <= 0.5)
+        #expect(collectionView.contentInset.bottom == 132)
+    }
+
+    @MainActor
+    @Test("Home surface retains its existing chrome spacing")
+    func homeSurfaceRetainsExistingMetrics() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: nil,
+                metrics: .home
+            )
+        )
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+        let postFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 0, section: 0)
+            )?.frame
+        )
+
+        #expect(collectionView.numberOfItems(inSection: 0) == 1)
+        #expect(postFrame.minY == 72)
+        #expect(postFrame.width == 390)
+        #expect(collectionView.contentInset.bottom == 124)
+    }
+
+    @MainActor
+    @Test("A profile header resize preserves the visible post anchor")
+    func profileHeaderResizePreservesVisiblePost() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: fixedLeadingContent(
+                    height: 240,
+                    revision: 1
+                ),
+                metrics: .profile,
+                postCount: 6
+            )
+        )
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+        collectionView.contentOffset.y = 200
+        collectionView.layoutIfNeeded()
+        let initialPostFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 1, section: 0)
+            )?.frame
+        )
+        let initialViewportY = initialPostFrame.minY -
+            collectionView.contentOffset.y
+
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: fixedLeadingContent(
+                    height: 400,
+                    revision: 2
+                ),
+                metrics: .profile,
+                postCount: 6
+            )
+        )
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        let updatedPostFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 1, section: 0)
+            )?.frame
+        )
+        let updatedViewportY = updatedPostFrame.minY -
+            collectionView.contentOffset.y
+
+        #expect(abs(updatedViewportY - initialViewportY) <= 0.5)
+    }
+
+    @MainActor
     @Test("Stable layout gives adjacent hosted rows disjoint frames")
     func stableLayoutKeepsAdjacentRowsDisjoint() throws {
         let (collectionView, dataSource) = makeCollectionView(
@@ -475,9 +621,11 @@ struct TimelineFeedHostingCollectionCellTests {
         #expect(abs(finalContentHeight - initialContentHeight) <= 0.5)
     }
 
-    private func makeTimelinePost() -> TimelinePost {
+    private func makeTimelinePost(
+        id: TimelinePost.ID = "self-sizing-post"
+    ) -> TimelinePost {
         TimelinePost(
-            id: "self-sizing-post",
+            id: id,
             authorName: "Astrenza",
             handle: "astrenza@example.com",
             avatar: AvatarStyle(
@@ -643,6 +791,68 @@ struct TimelineFeedHostingCollectionCellTests {
             forCellWithReuseIdentifier: "cell"
         )
         return collectionView
+    }
+
+    @MainActor
+    private func makeControllerConfiguration(
+        leadingContent: TimelineFeedLeadingContent?,
+        metrics: TimelineFeedCollectionMetrics,
+        postCount: Int = 1
+    ) -> TimelineFeedCollectionConfiguration {
+        TimelineFeedCollectionConfiguration(
+            entries: (0 ..< postCount).map { index in
+                .post(makeTimelinePost(id: "surface-post-\(index)"))
+            },
+            leadingContent: leadingContent,
+            metrics: metrics,
+            sourceIdentity: "surface-test",
+            sourceRevision: 1,
+            viewportIdentity: TimelineFeedViewportIdentity(
+                accountID: "test-account",
+                timelineKey: "test-timeline"
+            ),
+            swipeSettings: TimelineSwipeSettings(),
+            viewportState: nil,
+            scrollCommand: nil,
+            viewportRestoreProtectionActive: false,
+            followsRealtimeEntries: false,
+            layoutCache: TimelineLayoutCache(),
+            unreadCountAnchorPostID: nil,
+            onOpenPost: { _ in },
+            onOpenProfile: { _ in },
+            onReplyPost: { _ in },
+            onOpenMedia: { _, _ in },
+            onOpenURL: { _ in },
+            onPostActionChoice: { _, _ in },
+            onRefresh: nil,
+            onLoadOlderPost: nil,
+            onBackfillGap: nil,
+            onScrollOffsetChanged: { _ in },
+            onScrollActivityChanged: { _ in },
+            onInitialViewportReady: {},
+            onViewportRestoreCompleted: { _ in },
+            onViewportStateChanged: { _ in },
+            onPostsCrossedReadLineTowardNewer: { _ in },
+            onUnreadPillPlacementChanged: { _ in },
+            onLayoutCacheChanged: { _ in },
+            onPullRefreshPresentationChanged: { _ in }
+        )
+    }
+
+    @MainActor
+    private func fixedLeadingContent(
+        height: CGFloat,
+        revision: Int
+    ) -> TimelineFeedLeadingContent {
+        TimelineFeedLeadingContent(
+            renderRevision: revision,
+            geometryRevision: revision,
+            rootView: AnyView(
+                Color.clear
+                    .frame(height: height)
+                    .fixedSize(horizontal: false, vertical: true)
+            )
+        )
     }
 
     @MainActor

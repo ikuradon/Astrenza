@@ -29,14 +29,6 @@ struct ProfileAvatarTransitionMetrics: Equatable {
     }
 }
 
-private struct ProfileHeroBoundsPreferenceKey: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = nextValue() ?? value
-    }
-}
-
 struct UserDetailView: View {
     let profile: UserProfile
     let posts: [TimelinePost]
@@ -48,14 +40,13 @@ struct UserDetailView: View {
     let onOpenURL: (URL) -> Void
     @State private var selectedTab: UserProfileTimelineTab = .posts
     @State private var scrollOffset: CGFloat = 0
-    @State private var initialScrollOffset: CGFloat?
     private let profileHeroHeight: CGFloat = 268
     private let expandedAvatarSize: CGFloat = 132
     private let compactAvatarSize: CGFloat = 42
     private let navigationChromeLayout = ProfileNavigationChromeLayout(height: 60)
 
     private var normalizedScrollOffset: CGFloat {
-        scrollOffset - (initialScrollOffset ?? scrollOffset)
+        max(0, scrollOffset)
     }
 
     private var compactChromeProgress: CGFloat {
@@ -72,51 +63,23 @@ struct UserDetailView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            GeometryReader { proxy in
-                ScrollView {
-                    VStack(spacing: 0) {
-                        profileHero
-
-                        VStack(spacing: AstrenzaSpacing.point22) {
-                            profileSummary
-                            latestFollowers
-                            statsCard
-                            profileLinksCard
-                            featuredHashtags
-                            timelineTabs
-                            timelineRows
-                        }
-                        .padding(.horizontal, AstrenzaSpacing.point18)
-                        .padding(.bottom, 132)
-                    }
-                    .frame(width: proxy.size.width)
-                    .clipped()
-                }
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    geometry.contentOffset.y
-                } action: { _, nextOffset in
-                    if initialScrollOffset == nil {
-                        initialScrollOffset = nextOffset
-                    }
-                    scrollOffset = nextOffset
-                }
-                .scrollIndicators(.visible)
-                .ignoresSafeArea(edges: .top)
-            }
+            TimelineFeedCollectionView(
+                configuration: timelineConfiguration
+            )
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
 
             navigationBlurBackdrop(chromeLayout: navigationChromeLayout)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .allowsHitTesting(false)
 
         }
-        .overlayPreferenceValue(ProfileHeroBoundsPreferenceKey.self) { heroBounds in
+        .overlay {
             GeometryReader { proxy in
-                let expandedCenterY = heroBounds.map { proxy[$0].maxY } ?? profileHeroHeight - normalizedScrollOffset
-
                 shrinkingProfileAvatar(
                     chromeLayout: navigationChromeLayout,
                     containerWidth: proxy.size.width,
-                    expandedCenterY: expandedCenterY
+                    expandedCenterY:
+                        profileHeroHeight - normalizedScrollOffset
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
@@ -146,9 +109,6 @@ struct UserDetailView: View {
                     .frame(height: profileHeroHeight)
                     .frame(maxWidth: .infinity)
                     .clipped()
-                    .anchorPreference(key: ProfileHeroBoundsPreferenceKey.self, value: .bounds) { bounds in
-                        bounds
-                    }
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open profile hero image")
@@ -386,22 +346,139 @@ struct UserDetailView: View {
         .tint(Color.astrenzaAccent)
     }
 
-    private var timelineRows: some View {
+    private var profileTimelineHeader: some View {
         VStack(spacing: 0) {
-            ForEach(filteredPosts) { post in
-                TimelinePostRow(
-                    post: post,
-                    swipeSettings: swipeSettings,
-                    onOpenPost: onOpenPost,
-                    onOpenProfile: onOpenProfile,
-                    onReplyPost: onReplyPost,
-                    onOpenMedia: onOpenMedia,
-                    onOpenURL: onOpenURL,
-                    onPostActionChoice: { _, _ in }
-                )
+            profileHero
+
+            VStack(spacing: AstrenzaSpacing.point22) {
+                profileSummary
+                latestFollowers
+                statsCard
+                profileLinksCard
+                featuredHashtags
+                timelineTabs
             }
+            .padding(.horizontal, AstrenzaSpacing.point18)
+            .padding(.bottom, AstrenzaSpacing.point22)
         }
         .background(Color.astrenzaBackground)
+    }
+
+    private var timelineConfiguration:
+        TimelineFeedCollectionConfiguration {
+        let entries = filteredPosts.map(TimelineFeedEntry.post)
+        return TimelineFeedCollectionConfiguration(
+            entries: entries,
+            leadingContent: TimelineFeedLeadingContent(
+                renderRevision: profileHeaderRenderRevision,
+                geometryRevision: profileHeaderGeometryRevision,
+                rootView: AnyView(
+                    profileTimelineHeader
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .topLeading
+                        )
+                )
+            ),
+            metrics: .profile,
+            sourceIdentity: "profile-\(profile.id)",
+            sourceRevision: timelineRevision(for: entries),
+            viewportIdentity: TimelineFeedViewportIdentity(
+                accountID: profile.id,
+                timelineKey: "profile"
+            ),
+            swipeSettings: swipeSettings,
+            viewportState: nil,
+            scrollCommand: nil,
+            viewportRestoreProtectionActive: false,
+            followsRealtimeEntries: false,
+            layoutCache: TimelineLayoutCache(),
+            unreadCountAnchorPostID: nil,
+            onOpenPost: onOpenPost,
+            onOpenProfile: onOpenProfile,
+            onReplyPost: onReplyPost,
+            onOpenMedia: onOpenMedia,
+            onOpenURL: onOpenURL,
+            onPostActionChoice: { _, _ in },
+            onRefresh: nil,
+            onLoadOlderPost: nil,
+            onBackfillGap: nil,
+            onScrollOffsetChanged: { scrollOffset = $0 },
+            onScrollActivityChanged: { _ in },
+            onInitialViewportReady: {},
+            onViewportRestoreCompleted: { _ in },
+            onViewportStateChanged: { _ in },
+            onPostsCrossedReadLineTowardNewer: { _ in },
+            onUnreadPillPlacementChanged: { _ in },
+            onLayoutCacheChanged: { _ in },
+            onPullRefreshPresentationChanged: { _ in }
+        )
+    }
+
+    private var profileHeaderRenderRevision: Int {
+        var hasher = Hasher()
+        hasher.combine(selectedTab.id)
+        combineProfileHeaderGeometry(into: &hasher)
+        hasher.combine(profile.author.nip05)
+        hasher.combine(String(describing: profile.author.nip05Status))
+        hasher.combine(profile.author.profileResolutionState)
+        hasher.combine(profile.avatar.symbolName)
+        hasher.combine(profile.avatar.primary)
+        hasher.combine(profile.avatar.secondary)
+        hasher.combine(String(describing: profile.avatar.pictureState))
+        hasher.combine(profile.avatar.imageURL?.absoluteString)
+        hasher.combine(profile.banner.symbolName)
+        for color in profile.banner.colors {
+            hasher.combine(color)
+        }
+        hasher.combine(profile.banner.imageURL?.absoluteString)
+        for avatar in profile.latestFollowers {
+            hasher.combine(avatar.symbolName)
+            hasher.combine(avatar.primary)
+            hasher.combine(avatar.secondary)
+            hasher.combine(String(describing: avatar.pictureState))
+            hasher.combine(avatar.imageURL?.absoluteString)
+        }
+        return hasher.finalize()
+    }
+
+    private var profileHeaderGeometryRevision: Int {
+        var hasher = Hasher()
+        combineProfileHeaderGeometry(into: &hasher)
+        return hasher.finalize()
+    }
+
+    private func combineProfileHeaderGeometry(into hasher: inout Hasher) {
+        hasher.combine(profile.id)
+        hasher.combine(profile.author.displayName)
+        hasher.combine(profile.author.primaryText)
+        hasher.combine(profile.author.secondaryText)
+        hasher.combine(profile.bio)
+        hasher.combine(profile.isCurrentUser)
+        hasher.combine(profile.isFollowed)
+        hasher.combine(profile.followerCount)
+        hasher.combine(profile.followingCount)
+        hasher.combine(profile.postCount)
+        hasher.combine(profile.relayCount)
+        hasher.combine(profile.latestFollowers.count)
+        for hashtag in profile.featuredHashtags {
+            hasher.combine(hashtag.tag)
+            hasher.combine(hashtag.lastUsed)
+            hasher.combine(hashtag.count)
+        }
+    }
+
+    private func timelineRevision(
+        for entries: [TimelineFeedEntry]
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(selectedTab.id)
+        for entry in entries {
+            hasher.combine(TimelineRenderFingerprint.entry(entry))
+        }
+        return hasher.finalize()
     }
 
     private var filteredPosts: [TimelinePost] {
