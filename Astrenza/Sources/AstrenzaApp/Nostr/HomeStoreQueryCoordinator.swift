@@ -106,7 +106,8 @@ final class HomeStoreQuerySource: HomeStoreQuerySourcing {
             resolvedRelayCount: publishedState.resolvedRelays.count,
             syncPolicy: publishedState.syncPolicy,
             homeContentRevision: publishedState.resolvedContentRevision,
-            listContentRevision: publishedState.listProjectionRevision
+            listContentRevision: publishedState.listProjectionRevision,
+            profileDataRevision: publishedState.profileMetadataRevision
         )
     }
 }

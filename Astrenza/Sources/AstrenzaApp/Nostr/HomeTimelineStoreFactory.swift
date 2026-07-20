@@ -121,6 +121,10 @@ enum HomeTimelineStoreFactory {
             blossomServerResolver: NostrBlossomServerResolver(
                 eventStore: eventStore,
                 relayClient: resolvedTimelineLoader.relayClient
+            ),
+            profilePageResolver: NostrProfilePageResolver(
+                eventStore: eventStore,
+                relayClient: resolvedTimelineLoader.relayClient
             )
         )
     }

@@ -35,5 +35,9 @@ struct HomeTimelineProfileContentView: View {
             onOpenMedia: onOpenMedia,
             onOpenURL: onOpenURL
         )
+        .task(id: account?.pubkey) {
+            guard let account else { return }
+            await timelineStore.resolveProfilePage(pubkey: account.pubkey)
+        }
     }
 }

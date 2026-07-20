@@ -101,5 +101,8 @@ private struct HomeTimelineProfileDestinationView: View {
             onOpenMedia: actions.onOpenMedia,
             onOpenURL: actions.onOpenURL
         )
+        .task(id: selectedPost.author.pubkey) {
+            await resolver.resolveProfilePage(for: selectedPost)
+        }
     }
 }

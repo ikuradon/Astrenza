@@ -52,6 +52,7 @@ final class StoreQuerySourceSpy: HomeStoreQuerySourcing {
     var syncPolicy: NostrSyncPolicy
     var resolvedContentRevision: Int
     var listContentRevision: Int
+    var profileDataRevision: Int
     var preferredEvents: [NostrEvent]
     private(set) var snapshotCount = 0
 
@@ -62,6 +63,7 @@ final class StoreQuerySourceSpy: HomeStoreQuerySourcing {
         syncPolicy: NostrSyncPolicy,
         resolvedContentRevision: Int,
         listContentRevision: Int,
+        profileDataRevision: Int = 0,
         preferredEvents: [NostrEvent]
     ) {
         self.account = account
@@ -70,6 +72,7 @@ final class StoreQuerySourceSpy: HomeStoreQuerySourcing {
         self.syncPolicy = syncPolicy
         self.resolvedContentRevision = resolvedContentRevision
         self.listContentRevision = listContentRevision
+        self.profileDataRevision = profileDataRevision
         self.preferredEvents = preferredEvents
     }
 
@@ -81,7 +84,8 @@ final class StoreQuerySourceSpy: HomeStoreQuerySourcing {
             resolvedRelayCount: resolvedRelays.count,
             syncPolicy: syncPolicy,
             homeContentRevision: resolvedContentRevision,
-            listContentRevision: listContentRevision
+            listContentRevision: listContentRevision,
+            profileDataRevision: profileDataRevision
         )
     }
 }
@@ -93,6 +97,7 @@ struct StoreQuerySnapshotRecord: Equatable {
     let syncPolicy: NostrSyncPolicy
     let homeContentRevision: Int
     let listContentRevision: Int
+    let profileDataRevision: Int
 
     init(
         accountID: String?,
@@ -100,7 +105,8 @@ struct StoreQuerySnapshotRecord: Equatable {
         resolvedRelayCount: Int,
         syncPolicy: NostrSyncPolicy,
         homeContentRevision: Int,
-        listContentRevision: Int
+        listContentRevision: Int,
+        profileDataRevision: Int
     ) {
         self.accountID = accountID
         self.fallbackEntryIDs = fallbackEntryIDs
@@ -108,6 +114,7 @@ struct StoreQuerySnapshotRecord: Equatable {
         self.syncPolicy = syncPolicy
         self.homeContentRevision = homeContentRevision
         self.listContentRevision = listContentRevision
+        self.profileDataRevision = profileDataRevision
     }
 
     @MainActor
@@ -118,7 +125,8 @@ struct StoreQuerySnapshotRecord: Equatable {
             resolvedRelayCount: source.resolvedRelays.count,
             syncPolicy: source.syncPolicy,
             homeContentRevision: source.resolvedContentRevision,
-            listContentRevision: source.listContentRevision
+            listContentRevision: source.listContentRevision,
+            profileDataRevision: source.profileDataRevision
         )
     }
 
@@ -129,7 +137,8 @@ struct StoreQuerySnapshotRecord: Equatable {
             resolvedRelayCount: snapshot.resolvedRelayCount,
             syncPolicy: snapshot.syncPolicy,
             homeContentRevision: snapshot.homeContentRevision,
-            listContentRevision: snapshot.listContentRevision
+            listContentRevision: snapshot.listContentRevision,
+            profileDataRevision: snapshot.profileDataRevision
         )
     }
 
@@ -320,6 +329,7 @@ struct StoreQueryFixture {
             ),
             resolvedContentRevision: 17,
             listContentRevision: 19,
+            profileDataRevision: 23,
             preferredEvents: []
         )
         self.source = source

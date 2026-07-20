@@ -191,7 +191,8 @@ struct HomeTimelineQueryInteractionTests {
             resolvedRelayCount: 0,
             syncPolicy: .default(),
             homeContentRevision: revision,
-            listContentRevision: 0
+            listContentRevision: 0,
+            profileDataRevision: 0
         )
     }
 

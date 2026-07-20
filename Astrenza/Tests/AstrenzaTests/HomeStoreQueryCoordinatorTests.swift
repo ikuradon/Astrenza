@@ -16,7 +16,8 @@ struct HomeStoreQueryCoordinatorTests {
                 resolvedRelayCount: 2,
                 syncPolicy: fixture.syncPolicy,
                 homeContentRevision: 17,
-                listContentRevision: 19
+                listContentRevision: 19,
+                profileDataRevision: 0
             ))
         #expect(fixture.source.preferredEvents.map(\.id) == [
             fixture.preferredEvent.id
@@ -84,6 +85,7 @@ struct HomeStoreQueryCoordinatorTests {
         )
         fixture.source.resolvedContentRevision = 41
         fixture.source.listContentRevision = 43
+        fixture.source.profileDataRevision = 47
 
         _ = fixture.coordinator.listEntries(limit: 1)
 
@@ -168,7 +170,8 @@ struct HomeStoreQueryCoordinatorTests {
             resolvedRelayCount: 0,
             syncPolicy: .default(),
             homeContentRevision: 0,
-            listContentRevision: 0
+            listContentRevision: 0,
+            profileDataRevision: 0
         )])
     }
 }

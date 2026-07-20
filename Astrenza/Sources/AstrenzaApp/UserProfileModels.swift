@@ -19,6 +19,17 @@ struct UserProfile: Identifiable {
 struct ProfileBannerStyle {
     let colors: [Color]
     let symbolName: String
+    let imageURL: URL?
+
+    init(
+        colors: [Color],
+        symbolName: String,
+        imageURL: URL? = nil
+    ) {
+        self.colors = colors
+        self.symbolName = symbolName
+        self.imageURL = imageURL
+    }
 }
 
 struct UserFeaturedHashtag: Identifiable {

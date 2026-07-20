@@ -7,6 +7,7 @@ final class NostrHomeTimelineStore {
 
     private let composition: HomeStoreComposition
     private let blossomServerResolver: NostrBlossomServerResolver?
+    private let profilePageResolver: NostrProfilePageResolver?
 
     var presentationEventStore: NostrEventStore? {
         composition.presentation.presentationEventStore
@@ -14,10 +15,12 @@ final class NostrHomeTimelineStore {
 
     init(
         composition: HomeStoreComposition,
-        blossomServerResolver: NostrBlossomServerResolver? = nil
+        blossomServerResolver: NostrBlossomServerResolver? = nil,
+        profilePageResolver: NostrProfilePageResolver? = nil
     ) {
         self.composition = composition
         self.blossomServerResolver = blossomServerResolver
+        self.profilePageResolver = profilePageResolver
     }
 }
 
@@ -110,6 +113,32 @@ extension NostrHomeTimelineStore {
             accountID: accountID,
             relayURLs: relayURLs
         ) ?? []
+    }
+
+    func resolveProfilePage(pubkey: String) async {
+        guard let profilePageResolver else { return }
+        let eventStore = presentationEventStore
+        let relayList = NostrRelayList.parse(from:
+            try? eventStore?.latestReplaceableEvent(
+                pubkey: pubkey,
+                kind: 10_002
+            )
+        )
+        let observedRelays = (try? eventStore?.observedRelayURLsByAuthor(
+            authors: [pubkey],
+            limitPerAuthor: 4
+        )[pubkey]) ?? []
+        let relayURLs = relayList.writeRelays
+            + observedRelays
+            + resolvedRelays
+            + (account?.discoveryRelays ?? [])
+            + NostrHomeTimelineLoader.defaultBootstrapRelays
+        if await profilePageResolver.resolve(
+            pubkey: pubkey,
+            relayURLs: relayURLs
+        ) {
+            composition.application.publishProfileMetadataChange()
+        }
     }
 
     func muteAuthor(authorPubkey: String) {

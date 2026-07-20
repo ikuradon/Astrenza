@@ -13,6 +13,7 @@ struct HomeTimelineProfileProjectionQuery {
     let postsLimit: Int
     let homeContentRevision: Int
     let listContentRevision: Int
+    let profileDataRevision: Int
     let contextInput: HomeTimelineReadContextInput
 }
 
@@ -23,12 +24,14 @@ struct HomeTimelineQueryStoreSnapshot {
     let syncPolicy: NostrSyncPolicy
     let homeContentRevision: Int
     let listContentRevision: Int
+    let profileDataRevision: Int
 }
 
 struct HomeTimelineQueryContextProjection {
     let accountID: String?
     let homeContentRevision: Int
     let listContentRevision: Int
+    let profileDataRevision: Int
     let readContextInput: HomeTimelineReadContextInput
 }
 
@@ -40,6 +43,7 @@ struct HomeTimelineQueryContextProjector {
             accountID: snapshot.accountID,
             homeContentRevision: snapshot.homeContentRevision,
             listContentRevision: snapshot.listContentRevision,
+            profileDataRevision: snapshot.profileDataRevision,
             readContextInput: HomeTimelineReadContextInput(
                 accountID: snapshot.accountID,
                 fallbackEntries: snapshot.fallbackEntries,
@@ -74,6 +78,7 @@ struct HomeTimelineQueryContextProjector {
             postsLimit: postsLimit,
             homeContentRevision: projection.homeContentRevision,
             listContentRevision: projection.listContentRevision,
+            profileDataRevision: projection.profileDataRevision,
             contextInput: projection.readContextInput
         )
     }

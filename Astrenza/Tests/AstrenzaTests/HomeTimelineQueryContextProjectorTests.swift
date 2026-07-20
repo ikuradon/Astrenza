@@ -17,7 +17,8 @@ struct HomeTimelineQueryContextProjectorTests {
                 lowPowerMode: true
             ),
             homeContentRevision: 7,
-            listContentRevision: 2
+            listContentRevision: 2,
+            profileDataRevision: 11
         )
         let projector = HomeTimelineQueryContextProjector()
         let projection = projector.projection(from: snapshot)
@@ -25,6 +26,7 @@ struct HomeTimelineQueryContextProjectorTests {
         #expect(projection.accountID == "account")
         #expect(projection.homeContentRevision == 7)
         #expect(projection.listContentRevision == 2)
+        #expect(projection.profileDataRevision == 11)
         #expect(projection.readContextInput.accountID == "account")
         #expect(projection.readContextInput.fallbackEntries.map(\.id) == [
             "fallback"
@@ -52,6 +54,7 @@ struct HomeTimelineQueryContextProjectorTests {
         #expect(profileQuery.postsLimit == 80)
         #expect(profileQuery.homeContentRevision == 7)
         #expect(profileQuery.listContentRevision == 2)
+        #expect(profileQuery.profileDataRevision == 11)
         #expect(profileQuery.contextInput.resolvedRelayCount == 3)
     }
 
@@ -65,7 +68,8 @@ struct HomeTimelineQueryContextProjectorTests {
                 resolvedRelayCount: 0,
                 syncPolicy: .default(),
                 homeContentRevision: 0,
-                listContentRevision: 0
+                listContentRevision: 0,
+                profileDataRevision: 0
             )
         )
 

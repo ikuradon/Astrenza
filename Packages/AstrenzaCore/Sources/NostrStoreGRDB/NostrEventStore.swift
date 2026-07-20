@@ -1040,6 +1040,54 @@ public final class NostrEventStore: Sendable {
         }
     }
 
+    public func followerCount(
+        of pubkey: String,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> Int {
+        try database.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(DISTINCT head.pubkey)
+                FROM replaceable_heads head
+                JOIN events event ON event.event_id = head.event_id
+                JOIN event_tags tag ON tag.event_id = head.event_id
+                WHERE head.kind = 3
+                    AND \(Self.visibleEventPredicate(alias: "event"))
+                    AND tag.tag_name = 'p'
+                    AND tag.tag_value = ?
+                """,
+                arguments: [now, pubkey.lowercased()]
+            ) ?? 0
+        }
+    }
+
+    public func followerPubkeys(
+        of pubkey: String,
+        limit: Int,
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) throws -> [String] {
+        guard limit > 0 else { return [] }
+        return try database.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                SELECT DISTINCT head.pubkey
+                FROM replaceable_heads head
+                JOIN events event ON event.event_id = head.event_id
+                JOIN event_tags tag ON tag.event_id = head.event_id
+                WHERE head.kind = 3
+                    AND \(Self.visibleEventPredicate(alias: "event"))
+                    AND tag.tag_name = 'p'
+                    AND tag.tag_value = ?
+                ORDER BY head.created_at DESC, head.pubkey ASC
+                LIMIT ?
+                """,
+                arguments: [now, pubkey.lowercased(), limit]
+            )
+        }
+    }
+
     public func latestReplaceableEventReceivedAtByPubkey(
         pubkeys: Set<String>,
         kind: Int,

@@ -34,6 +34,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 7,
                 listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -44,6 +45,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 7,
                 listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -54,6 +56,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 7,
                 listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -64,6 +67,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 40,
                 homeContentRevision: 7,
                 listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -74,6 +78,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 8,
                 listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -84,6 +89,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 7,
                 listContentRevision: 3,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -94,6 +100,18 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 7,
                 listContentRevision: 2,
+                profileDataRevision: 5,
+                resolvedRelayCount: 3,
+                syncPolicy: .default(networkType: .wifi)
+            ),
+            HomeTimelineProfileProjectionCache.Key(
+                accountID: "account",
+                pubkey: "profile",
+                isCurrentUser: false,
+                postsLimit: 80,
+                homeContentRevision: 7,
+                listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 4,
                 syncPolicy: .default(networkType: .wifi)
             ),
@@ -104,6 +122,7 @@ struct HomeTimelineProfileProjectionCacheTests {
                 postsLimit: 80,
                 homeContentRevision: 7,
                 listContentRevision: 2,
+                profileDataRevision: 4,
                 resolvedRelayCount: 3,
                 syncPolicy: .default(networkType: .cellular)
             )
@@ -161,6 +180,7 @@ struct HomeTimelineProfileProjectionCacheTests {
             postsLimit: 80,
             homeContentRevision: 7,
             listContentRevision: 2,
+            profileDataRevision: 4,
             resolvedRelayCount: 3,
             syncPolicy: .default(networkType: .wifi)
         )

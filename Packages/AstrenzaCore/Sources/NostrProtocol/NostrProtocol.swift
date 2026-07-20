@@ -574,6 +574,8 @@ public struct NostrProfileMetadata: Decodable, Equatable {
     public let display_name: String?
     public let nip05: String?
     public let picture: String?
+    public let about: String?
+    public let banner: String?
 
     public var bestName: String? {
         [displayName, display_name, name]
@@ -582,9 +584,24 @@ public struct NostrProfileMetadata: Decodable, Equatable {
     }
 
     public var pictureURL: URL? {
-        guard let rawPicture = picture?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !rawPicture.isEmpty,
-              let components = URLComponents(string: rawPicture),
+        webURL(from: picture)
+    }
+
+    public var bannerURL: URL? {
+        webURL(from: banner)
+    }
+
+    public var aboutText: String? {
+        guard let value = about?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else { return nil }
+        return value
+    }
+
+    private func webURL(from value: String?) -> URL? {
+        guard let rawValue = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let components = URLComponents(string: rawValue),
               let scheme = components.scheme?.lowercased(),
               scheme == "https" || scheme == "http",
               components.host?.isEmpty == false,

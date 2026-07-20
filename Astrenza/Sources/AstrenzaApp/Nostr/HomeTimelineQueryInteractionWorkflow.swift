@@ -217,6 +217,7 @@ final class HomeTimelineQueryInteractionWorkflow {
             postsLimit: query.postsLimit,
             homeContentRevision: query.homeContentRevision,
             listContentRevision: query.listContentRevision,
+            profileDataRevision: query.profileDataRevision,
             resolvedRelayCount: input.resolvedRelayCount,
             syncPolicy: input.syncPolicy
         )

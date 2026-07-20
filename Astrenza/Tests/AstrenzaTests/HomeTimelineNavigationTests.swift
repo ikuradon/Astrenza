@@ -139,7 +139,7 @@ struct HomeTimelineNavigationTests {
     }
 
     @Test("Profile destination selects live or mock projection by account")
-    func profileDestinationSelectsAccountSource() throws {
+    func profileDestinationSelectsAccountSource() async throws {
         let selectedPost = try #require(MockTimelineData.posts.first)
         let liveProjection = makeProfileProjection(
             for: try #require(MockTimelineData.posts.dropFirst().first)
@@ -153,6 +153,9 @@ struct HomeTimelineNavigationTests {
             profileProjection: { pubkey in
                 calls.append("live:\(pubkey)")
                 return liveProjection
+            },
+            resolveProfilePage: { pubkey in
+                calls.append("resolve:\(pubkey)")
             },
             mockProfileProjection: { post in
                 calls.append("mock:\(post.id)")
@@ -168,12 +171,14 @@ struct HomeTimelineNavigationTests {
             for: selectedPost,
             hasLiveAccount: false
         )
+        await resolver.resolveProfilePage(for: selectedPost)
 
         #expect(live.profile.id == liveProjection.profile.id)
         #expect(mock.profile.id == mockProjection.profile.id)
         #expect(calls == [
             "live:\(selectedPost.author.pubkey)",
-            "mock:\(selectedPost.id)"
+            "mock:\(selectedPost.id)",
+            "resolve:\(selectedPost.author.pubkey)"
         ])
     }
 

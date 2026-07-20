@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ProfileBannerView: View {
     let style: ProfileBannerStyle
@@ -12,6 +13,10 @@ struct ProfileBannerView: View {
                 .foregroundStyle(.white.opacity(0.18))
                 .offset(x: 96, y: 34)
 
+            if let imageURL = style.imageURL {
+                ProfileBannerRemoteImage(url: imageURL)
+            }
+
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(0.18)
@@ -23,6 +28,40 @@ struct ProfileBannerView: View {
             )
         }
         .clipped()
+    }
+}
+
+private struct ProfileBannerRemoteImage: View {
+    let url: URL
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.clear
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .task(id: url.absoluteString) {
+            await loadImage()
+        }
+    }
+
+    @MainActor
+    private func loadImage() async {
+        image = nil
+        let loadedImage = try? await NostrImageCache.shared.image(
+            for: url,
+            maximumPixelSize: NostrImageCache.mediaMaximumPixelSize
+        )
+        guard !Task.isCancelled else { return }
+        image = loadedImage
     }
 }
 
@@ -86,7 +125,8 @@ extension UserProfile {
             MediaTile(
                 title: "\(author.primaryText) Avatar",
                 colors: [avatar.primary, avatar.secondary],
-                symbolName: avatar.symbolName
+                symbolName: avatar.symbolName,
+                url: avatar.imageURL
             )
         ])
     }
@@ -96,7 +136,8 @@ extension UserProfile {
             MediaTile(
                 title: "\(author.primaryText) Hero",
                 colors: banner.colors,
-                symbolName: banner.symbolName
+                symbolName: banner.symbolName,
+                url: banner.imageURL
             )
         ])
     }

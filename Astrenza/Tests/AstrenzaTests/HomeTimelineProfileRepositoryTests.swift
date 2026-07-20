@@ -29,7 +29,48 @@ struct HomeTimelineProfileRepositoryTests {
             createdAt: 100,
             content: "older"
         )
-        try eventStore.save(events: [metadata, newerPost, olderPost])
+        let contactList = event(
+            id: "6",
+            pubkey: accountID,
+            createdAt: 310,
+            kind: 3,
+            tags: [["p", otherFollow]],
+            content: ""
+        )
+        let firstFollower = String(repeating: "c", count: 64)
+        let secondFollower = String(repeating: "d", count: 64)
+        let firstFollowerContactList = event(
+            id: "7",
+            pubkey: firstFollower,
+            createdAt: 320,
+            kind: 3,
+            tags: [["p", accountID]],
+            content: ""
+        )
+        let secondFollowerContactList = event(
+            id: "8",
+            pubkey: secondFollower,
+            createdAt: 330,
+            kind: 3,
+            tags: [["p", accountID]],
+            content: ""
+        )
+        let followerMetadata = event(
+            id: "9",
+            pubkey: secondFollower,
+            createdAt: 340,
+            kind: 0,
+            content: "{\"picture\":\"https://images.example/follower.jpg\"}"
+        )
+        try eventStore.save(events: [
+            metadata,
+            newerPost,
+            olderPost,
+            contactList,
+            firstFollowerContactList,
+            secondFollowerContactList,
+            followerMetadata
+        ])
         let repository = HomeTimelineRepository(eventStore: eventStore)
 
         let projection = repository.profileProjection(
@@ -48,10 +89,15 @@ struct HomeTimelineProfileRepositoryTests {
         #expect(profile.author.secondaryText == "alice.example")
         #expect(profile.author.profileResolutionState == .resolved)
         #expect(profile.avatar.imageURL?.absoluteString == pictureURL)
-        #expect(profile.bio == "kind:0 profile metadata is cached.")
+        #expect(profile.banner.imageURL?.absoluteString == bannerURL)
+        #expect(profile.bio == "Building a better Nostr client.")
         #expect(profile.isCurrentUser)
         #expect(profile.isFollowed)
-        #expect(profile.followingCount == 2)
+        #expect(profile.followerCount == 2)
+        #expect(profile.followingCount == 1)
+        #expect(profile.latestFollowers.count == 2)
+        #expect(profile.latestFollowers.first?.imageURL?.absoluteString ==
+            "https://images.example/follower.jpg")
         #expect(profile.postCount == 2)
         #expect(profile.relayCount == 3)
         #expect(projection.posts.map(\.id) == [newerPost.id])
@@ -84,9 +130,13 @@ struct HomeTimelineProfileRepositoryTests {
         "https://images.example/alice.jpg"
     }
 
+    private var bannerURL: String {
+        "https://images.example/alice-banner.jpg"
+    }
+
     private var metadataContent: String {
         """
-        {"name":"Alice","nip05":"_@alice.example","picture":"\(pictureURL)"}
+        {"name":"Alice","nip05":"_@alice.example","picture":"\(pictureURL)","about":" Building a better Nostr client. ","banner":"\(bannerURL)"}
         """
     }
 
@@ -113,6 +163,7 @@ struct HomeTimelineProfileRepositoryTests {
         pubkey: String,
         createdAt: Int,
         kind: Int = 1,
+        tags: [[String]] = [],
         content: String
     ) -> NostrEvent {
         NostrEvent(
@@ -120,7 +171,7 @@ struct HomeTimelineProfileRepositoryTests {
             pubkey: pubkey,
             createdAt: createdAt,
             kind: kind,
-            tags: [],
+            tags: tags,
             content: content,
             sig: String(repeating: "0", count: 128)
         )

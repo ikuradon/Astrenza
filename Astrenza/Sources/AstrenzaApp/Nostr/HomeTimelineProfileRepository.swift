@@ -119,6 +119,19 @@ extension HomeTimelineRepository {
         context: HomeTimelineReadContext
     ) -> UserProfile {
         let pubkey = input.pubkey
+        let metadata = input.metadataEvent.flatMap(Self.profileMetadata)
+        let contactListEvent = try? eventStore?.latestReplaceableEvent(
+            pubkey: pubkey,
+            kind: 3
+        )
+        let followingCount = contactListEvent.map {
+            NostrContactList.pubkeys(from: $0).count
+        } ?? context.followedPubkeys.subtracting([pubkey]).count
+        let followerPubkeys = ((try? eventStore?.followerPubkeys(
+            of: pubkey,
+            limit: 9
+        )) ?? []).filter { $0 != pubkey }
+        let followerCount = (try? eventStore?.followerCount(of: pubkey)) ?? 0
         let relayCount = input.isCurrentUser
             ? context.resolvedRelayCount
             : max(1, context.resolvedRelayCount)
@@ -134,20 +147,19 @@ extension HomeTimelineRepository {
                 metadataEvent: input.metadataEvent,
                 context: context
             ),
-            banner: banner(for: pubkey),
-            bio: input.metadataEvent.flatMap(Self.profileMetadata).map { _ in
-                "kind:0 profile metadata is cached."
-            } ?? "kind:0 profile is not cached yet.",
+            banner: banner(for: pubkey, metadata: metadata),
+            bio: metadata?.aboutText ?? "",
             isCurrentUser: input.isCurrentUser,
             isFollowed: context.followedPubkeys.contains(pubkey) ||
                 input.isCurrentUser,
-            followerCount: 0,
-            followingCount: input.isCurrentUser
-                ? context.followedPubkeys.count
-                : 0,
+            followerCount: followerCount,
+            followingCount: followingCount,
             postCount: input.postCount,
             relayCount: relayCount,
-            latestFollowers: [],
+            latestFollowers: followerAvatars(
+                pubkeys: followerPubkeys,
+                context: context
+            ),
             featuredHashtags: []
         )
     }
@@ -222,12 +234,36 @@ extension HomeTimelineRepository {
         return metadata.pictureURL == nil ? .missing : .resolved
     }
 
-    private func banner(for pubkey: String) -> ProfileBannerStyle {
+    private func banner(
+        for pubkey: String,
+        metadata: NostrProfileMetadata?
+    ) -> ProfileBannerStyle {
         let palette = NostrTimelineAuthorProjection.avatarPalette(for: pubkey)
         return ProfileBannerStyle(
             colors: [palette.secondary, palette.primary],
-            symbolName: "sparkles"
+            symbolName: "sparkles",
+            imageURL: metadata?.bannerURL
         )
+    }
+
+    private func followerAvatars(
+        pubkeys: [String],
+        context: HomeTimelineReadContext
+    ) -> [AvatarStyle] {
+        guard !pubkeys.isEmpty else { return [] }
+        let metadataEvents = ((try? eventStore?.latestReplaceableEvents(
+            pubkeys: Set(pubkeys),
+            kind: 0
+        )) ?? []).reduce(into: [String: NostrEvent]()) { result, event in
+            result[event.pubkey] = event
+        }
+        return pubkeys.map { pubkey in
+            avatar(
+                for: pubkey,
+                metadataEvent: metadataEvents[pubkey],
+                context: context
+            )
+        }
     }
 
     private static func profileMetadata(

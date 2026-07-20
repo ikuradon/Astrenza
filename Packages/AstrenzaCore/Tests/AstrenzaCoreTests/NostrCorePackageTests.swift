@@ -165,15 +165,17 @@ struct NostrCorePackageTests {
         #expect(relayList.writeRelays == ["wss://write.example", "wss://both.example"])
     }
 
-    @Test("kind:0 metadata exposes display name and safe picture URL")
+    @Test("kind:0 metadata exposes profile text and safe media URLs")
     func profileMetadata() throws {
         let metadata = try JSONDecoder().decode(
             NostrProfileMetadata.self,
-            from: Data(#"{"display_name":"Reader","name":"fallback","nip05":"reader@example.com","picture":"https://cdn.example.test/avatar.png"}"#.utf8)
+            from: Data(#"{"display_name":"Reader","name":"fallback","nip05":"reader@example.com","picture":"https://cdn.example.test/avatar.png","about":" profile text ","banner":"https://cdn.example.test/banner.png"}"#.utf8)
         )
 
         #expect(metadata.bestName == "Reader")
+        #expect(metadata.aboutText == "profile text")
         #expect(metadata.pictureURL?.absoluteString == "https://cdn.example.test/avatar.png")
+        #expect(metadata.bannerURL?.absoluteString == "https://cdn.example.test/banner.png")
     }
 
     @Test("Login resolver accepts npub as read-only account without network")
@@ -470,6 +472,55 @@ struct NostrCorePackageTests {
         try store.save(events: [newer, older])
 
         #expect(try store.latestReplaceableEvent(pubkey: pubkey, kind: 0)?.id == newer.id)
+    }
+
+    @Test("Nostr event store derives followers from current kind:3 heads")
+    func eventStoreFollowerProjectionUsesCurrentContactLists() throws {
+        let store = try NostrEventStore.inMemory()
+        let profile = String(repeating: "f", count: 64)
+        let removedFollower = String(repeating: "1", count: 64)
+        let recentFollower = String(repeating: "2", count: 64)
+        let olderFollower = String(repeating: "3", count: 64)
+        let removedFollowerOldList = nostrEvent(
+            kind: 3,
+            pubkey: removedFollower,
+            createdAt: 100,
+            tags: [["p", profile]]
+        )
+        let removedFollowerCurrentList = nostrEvent(
+            kind: 3,
+            pubkey: removedFollower,
+            createdAt: 400,
+            tags: []
+        )
+        let recentFollowerList = nostrEvent(
+            kind: 3,
+            pubkey: recentFollower,
+            createdAt: 300,
+            tags: [["p", profile]]
+        )
+        let olderFollowerList = nostrEvent(
+            kind: 3,
+            pubkey: olderFollower,
+            createdAt: 200,
+            tags: [["p", profile], ["p", profile]]
+        )
+
+        try store.save(events: [
+            removedFollowerOldList,
+            removedFollowerCurrentList,
+            recentFollowerList,
+            olderFollowerList
+        ])
+
+        #expect(try store.followerCount(of: profile) == 2)
+        #expect(try store.followerPubkeys(of: profile, limit: 9) == [
+            recentFollower,
+            olderFollower
+        ])
+        #expect(try store.followerPubkeys(of: profile, limit: 1) == [
+            recentFollower
+        ])
     }
 
     @Test("Nostr event store returns replaceable head received timestamps")

@@ -32,7 +32,8 @@ struct HomeTimelineProfileQueryInteractionTests {
             resolvedRelayCount: 3,
             syncPolicy: .default(networkType: .wifi),
             homeContentRevision: 7,
-            listContentRevision: 2
+            listContentRevision: 2,
+            profileDataRevision: 11
         )
 
         let first = workflow.profileProjection(
@@ -47,10 +48,25 @@ struct HomeTimelineProfileQueryInteractionTests {
             postsLimit: 80,
             snapshot: snapshot
         )
+        let refreshed = workflow.profileProjection(
+            pubkey: pubkey,
+            isCurrentUser: false,
+            postsLimit: 80,
+            snapshot: HomeTimelineQueryStoreSnapshot(
+                accountID: snapshot.accountID,
+                fallbackEntries: snapshot.fallbackEntries,
+                resolvedRelayCount: snapshot.resolvedRelayCount,
+                syncPolicy: snapshot.syncPolicy,
+                homeContentRevision: snapshot.homeContentRevision,
+                listContentRevision: snapshot.listContentRevision,
+                profileDataRevision: 12
+            )
+        )
 
         #expect(first.posts.map(\.id) == [post.id])
         #expect(cached.profile.id == pubkey)
-        #expect(readContext.applicationValues == [true])
+        #expect(refreshed.profile.id == pubkey)
+        #expect(readContext.applicationValues == [true, true])
     }
 }
 

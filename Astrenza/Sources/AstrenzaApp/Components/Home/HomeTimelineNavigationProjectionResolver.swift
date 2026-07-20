@@ -4,6 +4,7 @@ struct HomeTimelineNavigationProjectionResolver {
     private let replyAncestors: (TimelinePost) -> [TimelinePost]
     private let replies: (TimelinePost) -> [TimelinePost]
     private let profileProjection: (String) -> HomeTimelineProfileProjection
+    private let resolveProfilePage: (String) async -> Void
     private let mockProfileProjection:
         (TimelinePost) -> HomeTimelineProfileProjection
 
@@ -14,6 +15,9 @@ struct HomeTimelineNavigationProjectionResolver {
             replies: { timelineStore.replies(for: $0) },
             profileProjection: {
                 timelineStore.profileProjection(pubkey: $0)
+            },
+            resolveProfilePage: {
+                await timelineStore.resolveProfilePage(pubkey: $0)
             },
             mockProfileProjection: { post in
                 let profile = MockTimelineData.profile(for: post)
@@ -30,12 +34,14 @@ struct HomeTimelineNavigationProjectionResolver {
         replyAncestors: @escaping (TimelinePost) -> [TimelinePost],
         replies: @escaping (TimelinePost) -> [TimelinePost],
         profileProjection: @escaping (String) -> HomeTimelineProfileProjection,
+        resolveProfilePage: @escaping (String) async -> Void = { _ in },
         mockProfileProjection: @escaping (TimelinePost) -> HomeTimelineProfileProjection
     ) {
         self.post = post
         self.replyAncestors = replyAncestors
         self.replies = replies
         self.profileProjection = profileProjection
+        self.resolveProfilePage = resolveProfilePage
         self.mockProfileProjection = mockProfileProjection
     }
 
@@ -69,6 +75,10 @@ struct HomeTimelineNavigationProjectionResolver {
             return mockProfileProjection(post)
         }
         return profileProjection(post.author.pubkey)
+    }
+
+    func resolveProfilePage(for post: TimelinePost) async {
+        await resolveProfilePage(post.author.pubkey)
     }
 }
 

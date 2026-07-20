@@ -14,6 +14,7 @@ final class HomeTimelineProfileProjectionCache {
         let postsLimit: Int
         let homeContentRevision: Int
         let listContentRevision: Int
+        let profileDataRevision: Int
         let resolvedRelayCount: Int
         let syncPolicy: NostrSyncPolicy
     }
