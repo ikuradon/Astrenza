@@ -1,25 +1,6 @@
 import SwiftUI
 
-struct ComposeCustomEmojiCandidate: Identifiable, Equatable {
-    let shortcode: String
-    let glyph: String
-    let tint: Color
-    let imageURL: URL?
-
-    init(
-        shortcode: String,
-        glyph: String,
-        tint: Color,
-        imageURL: URL? = nil
-    ) {
-        self.shortcode = shortcode
-        self.glyph = glyph
-        self.tint = tint
-        self.imageURL = imageURL
-    }
-
-    var id: String { shortcode }
-
+extension ComposeCustomEmojiCandidate {
     static let mockValues: [ComposeCustomEmojiCandidate] = [
         ComposeCustomEmojiCandidate(shortcode: ":60fpsparrot:", glyph: "🐦", tint: .pink),
         ComposeCustomEmojiCandidate(shortcode: ":aicp:", glyph: "🤖", tint: .yellow),
@@ -69,22 +50,78 @@ struct ComposeCustomEmojiCandidate: Identifiable, Equatable {
     ]
 }
 
+extension ComposeCustomEmojiSet {
+    static let previewValues: [ComposeCustomEmojiSet] = [
+        ComposeCustomEmojiSet(
+            id: "preview-custom",
+            title: "CUSTOM",
+            imageURL: nil,
+            detail: nil,
+            emojis: ComposeCustomEmojiCandidate.customPickerValues
+        ),
+        ComposeCustomEmojiSet(
+            id: "preview-party-parrot",
+            title: "PARTY PARROT",
+            imageURL: nil,
+            detail: nil,
+            emojis: ComposeCustomEmojiCandidate.partyParrotValues
+        )
+    ]
+}
+
 struct ComposeCustomEmojiPicker: View {
     let isContinuousInput: Bool
-    let candidates: [ComposeCustomEmojiCandidate]
+    let emojiSets: [ComposeCustomEmojiSet]
+    let isResolving: Bool
     let onSelect: (ComposeCustomEmojiCandidate) -> Void
     let onReturn: () -> Void
-    private let columns = Array(repeating: GridItem(.flexible(minimum: 30, maximum: 44), spacing: AstrenzaSpacing.point16), count: 8)
+    @State private var selectedSetID: String?
+    private let columns = [GridItem(
+        .adaptive(minimum: 34, maximum: 44),
+        spacing: AstrenzaSpacing.point16
+    )]
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AstrenzaSpacing.point18) {
-                    emojiSection("CUSTOM", values: candidates)
+            VStack(spacing: 0) {
+                if isResolving {
+                    resolvingHeader
                 }
-                .padding(.horizontal, AstrenzaSpacing.point18)
-                .padding(.top, AstrenzaSpacing.point22)
-                .padding(.bottom, isContinuousInput ? 72 : AstrenzaSpacing.point24)
+
+                ScrollViewReader { proxy in
+                    if emojiSets.isEmpty {
+                        emptyState
+                    } else {
+                        if emojiSets.count > 1 {
+                            setRail { setID in
+                                selectedSetID = setID
+                                withAnimation(.easeInOut(duration: AstrenzaMotion.quick)) {
+                                    proxy.scrollTo(setID, anchor: .top)
+                                }
+                            }
+                        }
+
+                        ScrollView {
+                            LazyVStack(
+                                alignment: .leading,
+                                spacing: AstrenzaSpacing.point18,
+                                pinnedViews: [.sectionHeaders]
+                            ) {
+                                ForEach(emojiSets) { set in
+                                    Section {
+                                        emojiGrid(set.emojis)
+                                            .padding(.horizontal, AstrenzaSpacing.point18)
+                                            .padding(.bottom, AstrenzaSpacing.point6)
+                                    } header: {
+                                        setHeader(set)
+                                    }
+                                    .id(set.id)
+                                }
+                            }
+                            .padding(.bottom, isContinuousInput ? 72 : AstrenzaSpacing.point24)
+                        }
+                    }
+                }
             }
 
             if isContinuousInput {
@@ -113,27 +150,148 @@ struct ComposeCustomEmojiPicker: View {
                 .fill(Color.black.opacity(0.32))
                 .frame(height: 1)
         }
+        .onAppear {
+            selectedSetID = selectedSetID ?? emojiSets.first?.id
+        }
+        .onChange(of: emojiSets.map(\.id)) { _, setIDs in
+            if selectedSetID.flatMap({ setIDs.contains($0) }) != true {
+                selectedSetID = setIDs.first
+            }
+        }
         .accessibilityLabel("Custom emoji picker")
     }
 
-    private func emojiSection(_ title: String, values: [ComposeCustomEmojiCandidate]) -> some View {
-        VStack(alignment: .leading, spacing: AstrenzaSpacing.point16) {
-            Text(title)
+    private var resolvingHeader: some View {
+        HStack(spacing: AstrenzaSpacing.point8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Resolving custom emoji sets…")
+                .font(.astrenza(.point12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, AstrenzaSpacing.point18)
+        .frame(height: 32)
+        .accessibilityIdentifier("compose.emoji.resolving")
+    }
+
+    private var emptyState: some View {
+        ContentUnavailableView(
+            "No Custom Emojis",
+            systemImage: "face.smiling",
+            description: Text(
+                isResolving
+                    ? "Looking for your kind 10030 emoji list and kind 30030 sets."
+                    : "Add an emoji list in a Nostr client to use it here."
+            )
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func setRail(
+        onSelectSet: @escaping (String) -> Void
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AstrenzaSpacing.point8) {
+                ForEach(emojiSets) { set in
+                    Button {
+                        onSelectSet(set.id)
+                    } label: {
+                        ComposeEmojiSetIcon(set: set)
+                            .frame(width: 32, height: 32)
+                            .padding(AstrenzaSpacing.point3)
+                            .background(
+                                Color.white.opacity(
+                                    selectedSetID == set.id ? 0.16 : 0.001
+                                ),
+                                in: RoundedRectangle(
+                                    cornerRadius: AstrenzaRadius.point8,
+                                    style: .continuous
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(set.title)
+                }
+            }
+            .padding(.horizontal, AstrenzaSpacing.point14)
+        }
+        .frame(height: 46)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.black.opacity(0.2))
+                .frame(height: 1)
+        }
+    }
+
+    private func setHeader(_ set: ComposeCustomEmojiSet) -> some View {
+        HStack(spacing: AstrenzaSpacing.point8) {
+            ComposeEmojiSetIcon(set: set)
+                .frame(width: 22, height: 22)
+            Text(set.title.uppercased())
                 .font(.astrenza(.point13, weight: .heavy, design: .rounded))
                 .foregroundStyle(.secondary)
                 .tracking(1.2)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, AstrenzaSpacing.point18)
+        .padding(.vertical, AstrenzaSpacing.point10)
+        .background(AstrenzaPalette.emojiPickerBackground)
+    }
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: AstrenzaSpacing.point18) {
-                ForEach(values) { candidate in
-                    Button {
-                        onSelect(candidate)
-                    } label: {
-                        ComposeCustomEmojiGridCell(candidate: candidate)
-                    }
-                    .buttonStyle(.plain)
+    private func emojiGrid(
+        _ values: [ComposeCustomEmojiCandidate]
+    ) -> some View {
+        LazyVGrid(
+            columns: columns,
+            alignment: .leading,
+            spacing: AstrenzaSpacing.point18
+        ) {
+            ForEach(values) { candidate in
+                Button {
+                    onSelect(candidate)
+                } label: {
+                    ComposeCustomEmojiGridCell(candidate: candidate)
                 }
+                .buttonStyle(.plain)
             }
         }
+    }
+}
+
+private struct ComposeEmojiSetIcon: View {
+    let set: ComposeCustomEmojiSet
+
+    var body: some View {
+        if let imageURL = set.imageURL {
+            AsyncImage(url: imageURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                case .empty, .failure:
+                    fallback
+                @unknown default:
+                    fallback
+                }
+            }
+        } else {
+            fallback
+        }
+    }
+
+    private var fallback: some View {
+        Text(set.title.prefix(1).uppercased())
+            .font(.astrenza(.point14, weight: .heavy, design: .rounded))
+            .foregroundStyle(Color.astrenzaAccent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                Color.astrenzaAccent.opacity(0.14),
+                in: RoundedRectangle(
+                    cornerRadius: AstrenzaRadius.point8,
+                    style: .continuous
+                )
+            )
     }
 }
 

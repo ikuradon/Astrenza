@@ -100,6 +100,17 @@ struct ComposeSubmitRequest: Equatable, Sendable {
 struct ComposeCustomEmojiReference: Codable, Equatable, Sendable {
     let shortcode: String
     let url: String
+    let emojiSetAddress: String?
+
+    init(
+        shortcode: String,
+        url: String,
+        emojiSetAddress: String? = nil
+    ) {
+        self.shortcode = shortcode
+        self.url = url
+        self.emojiSetAddress = emojiSetAddress
+    }
 }
 
 struct ComposeMediaUploadRequest: Codable, Equatable, Sendable {

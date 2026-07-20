@@ -8,6 +8,7 @@ final class NostrHomeTimelineStore {
     private let composition: HomeStoreComposition
     private let blossomServerResolver: NostrBlossomServerResolver?
     private let profilePageResolver: NostrProfilePageResolver?
+    private let composeEmojiResolver: NostrComposeEmojiResolver?
 
     var presentationEventStore: NostrEventStore? {
         composition.presentation.presentationEventStore
@@ -16,11 +17,13 @@ final class NostrHomeTimelineStore {
     init(
         composition: HomeStoreComposition,
         blossomServerResolver: NostrBlossomServerResolver? = nil,
-        profilePageResolver: NostrProfilePageResolver? = nil
+        profilePageResolver: NostrProfilePageResolver? = nil,
+        composeEmojiResolver: NostrComposeEmojiResolver? = nil
     ) {
         self.composition = composition
         self.blossomServerResolver = blossomServerResolver
         self.profilePageResolver = profilePageResolver
+        self.composeEmojiResolver = composeEmojiResolver
     }
 }
 
@@ -139,6 +142,30 @@ extension NostrHomeTimelineStore {
         ) {
             composition.application.publishProfileMetadataChange()
         }
+    }
+
+    func resolveComposeEmojiCatalog(accountID: String) async {
+        guard let composeEmojiResolver else { return }
+        let eventStore = presentationEventStore
+        let relayList = NostrRelayList.parse(from:
+            try? eventStore?.latestReplaceableEvent(
+                pubkey: accountID,
+                kind: 10_002
+            )
+        )
+        let observedRelays = (try? eventStore?.observedRelayURLsByAuthor(
+            authors: [accountID],
+            limitPerAuthor: 4
+        )[accountID]) ?? []
+        let relayURLs = relayList.writeRelays
+            + observedRelays
+            + resolvedRelays
+            + (account?.discoveryRelays ?? [])
+            + NostrHomeTimelineLoader.defaultBootstrapRelays
+        _ = await composeEmojiResolver.resolve(
+            accountID: accountID,
+            relayURLs: relayURLs
+        )
     }
 
     func muteAuthor(authorPubkey: String) {

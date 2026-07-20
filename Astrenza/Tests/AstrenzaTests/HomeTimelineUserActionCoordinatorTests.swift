@@ -70,6 +70,99 @@ struct HomeTimelineUserActionCoordinatorTests {
         #expect(!snapshot.mentions.contains { $0.handle.contains("mock") })
     }
 
+    @Test("Compose emoji catalog resolves kind 10030 into ordered kind 30030 sets")
+    func composeEmojiCatalogProjectsReferencedSets() throws {
+        let accountID = String(repeating: "a", count: 64)
+        let setAuthor = String(repeating: "b", count: 64)
+        let setAddress = "30030:\(setAuthor):party"
+        let emojiList = NostrEvent(
+            id: String(repeating: "3", count: 64),
+            pubkey: accountID,
+            createdAt: 300,
+            kind: 10_030,
+            tags: [
+                ["emoji", "favorite", "https://emoji.example/favorite.png"],
+                ["a", setAddress, "wss://emoji.example"]
+            ],
+            content: "",
+            sig: String(repeating: "0", count: 128)
+        )
+        let emojiSet = NostrEvent(
+            id: String(repeating: "4", count: 64),
+            pubkey: setAuthor,
+            createdAt: 400,
+            kind: 30_030,
+            tags: [
+                ["d", "party"],
+                ["title", "Party Parrot"],
+                ["image", "https://emoji.example/set.png"],
+                ["emoji", "partyparrot", "https://emoji.example/party.png"],
+                ["emoji", "invalid shortcode", "https://emoji.example/invalid.png"]
+            ],
+            content: "",
+            sig: String(repeating: "0", count: 128)
+        )
+
+        let snapshot = ComposeSuggestionSnapshot.project(
+            profiles: [],
+            recentNotes: [],
+            emojiListEvent: emojiList,
+            emojiSetEvents: [emojiSet]
+        )
+
+        #expect(snapshot.emojiSets.map(\.title) == ["MY EMOJIS", "Party Parrot"])
+        #expect(snapshot.emojiSets[0].emojis.map(\.shortcode) == [":favorite:"])
+        #expect(snapshot.emojiSets[1].emojis.map(\.shortcode) == [":partyparrot:"])
+        #expect(snapshot.emojiSets[1].emojis[0].emojiSetAddress == setAddress)
+        #expect(snapshot.completionEmojis.map(\.shortcode) == [
+            ":favorite:",
+            ":partyparrot:"
+        ])
+    }
+
+    @Test("Compose emoji source reads only sets referenced by the account list")
+    func composeEmojiSourceReadsReferencedSets() throws {
+        let store = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let setAuthor = String(repeating: "b", count: 64)
+        let referenced = NostrEvent(
+            id: String(repeating: "5", count: 64),
+            pubkey: setAuthor,
+            createdAt: 500,
+            kind: 30_030,
+            tags: [["d", "referenced"], ["emoji", "yes", "https://emoji.example/yes.png"]],
+            content: "",
+            sig: String(repeating: "0", count: 128)
+        )
+        let unrelated = NostrEvent(
+            id: String(repeating: "6", count: 64),
+            pubkey: setAuthor,
+            createdAt: 600,
+            kind: 30_030,
+            tags: [["d", "unrelated"], ["emoji", "no", "https://emoji.example/no.png"]],
+            content: "",
+            sig: String(repeating: "0", count: 128)
+        )
+        let list = NostrEvent(
+            id: String(repeating: "7", count: 64),
+            pubkey: accountID,
+            createdAt: 700,
+            kind: 10_030,
+            tags: [["a", "30030:\(setAuthor):referenced"]],
+            content: "",
+            sig: String(repeating: "0", count: 128)
+        )
+        try store.save(events: [referenced, unrelated, list])
+
+        let source = ComposeSuggestionSnapshot.source(
+            accountID: accountID,
+            eventStore: store
+        )
+
+        #expect(source.emojiListEvent?.id == list.id)
+        #expect(source.emojiSetEvents.map(\.id) == [referenced.id])
+    }
+
     @Test("Submit requires a signer before publishing")
     func submitRequiresSigner() async {
         let actions = UserActionHandlerSpy()

@@ -178,21 +178,20 @@ struct ComposeSuggestionSnapshot: Equatable {
     let mentions: [ComposeMentionCandidate]
     let hashtags: [ComposeHashtagCandidate]
     let completionEmojis: [ComposeCustomEmojiCandidate]
-    let pickerEmojis: [ComposeCustomEmojiCandidate]
+    let emojiSets: [ComposeCustomEmojiSet]
 
     static let empty = ComposeSuggestionSnapshot(
         mentions: [],
         hashtags: [],
         completionEmojis: [],
-        pickerEmojis: []
+        emojiSets: []
     )
 
     static let preview = ComposeSuggestionSnapshot(
         mentions: ComposeMentionCandidate.mockValues,
         hashtags: ComposeHashtagCandidate.recentValues,
         completionEmojis: ComposeCustomEmojiCandidate.mockValues,
-        pickerEmojis: ComposeCustomEmojiCandidate.customPickerValues +
-            ComposeCustomEmojiCandidate.partyParrotValues
+        emojiSets: ComposeCustomEmojiSet.previewValues
     )
 
     static func load(
@@ -201,14 +200,17 @@ struct ComposeSuggestionSnapshot: Equatable {
     ) -> ComposeSuggestionSnapshot {
         guard accountID != nil else { return .preview }
         guard let eventStore else { return .empty }
-        let source = source(eventStore: eventStore)
+        let source = source(accountID: accountID, eventStore: eventStore)
         return project(
             profiles: source.profiles,
-            recentNotes: source.recentNotes
+            recentNotes: source.recentNotes,
+            emojiListEvent: source.emojiListEvent,
+            emojiSetEvents: source.emojiSetEvents
         )
     }
 
     static func source(
+        accountID: String?,
         eventStore: NostrEventStore
     ) -> ComposeSuggestionSource {
         let profiles = (try? eventStore.profileSearchCandidates(
@@ -216,24 +218,55 @@ struct ComposeSuggestionSnapshot: Equatable {
             limit: 100
         )) ?? []
         let recentNotes = (try? eventStore.events(kind: 1, limit: 300)) ?? []
+        let emojiListEvent = accountID.flatMap {
+            try? eventStore.latestReplaceableEvent(pubkey: $0, kind: 10_030)
+        }
+        let emojiSetEvents = NostrEmojiSetReference
+            .references(in: emojiListEvent)
+            .compactMap { reference in
+                try? eventStore.latestAddressableEvent(
+                    kind: 30_030,
+                    pubkey: reference.pubkey,
+                    dTag: reference.dTag
+                )
+            }
         return ComposeSuggestionSource(
             profiles: profiles,
-            recentNotes: recentNotes
+            recentNotes: recentNotes,
+            emojiListEvent: emojiListEvent,
+            emojiSetEvents: emojiSetEvents
         )
     }
 
     static func project(
         profiles: [NostrProfileSearchResult],
-        recentNotes: [NostrEvent]
+        recentNotes: [NostrEvent],
+        emojiListEvent: NostrEvent? = nil,
+        emojiSetEvents: [NostrEvent] = []
     ) -> ComposeSuggestionSnapshot {
         let mentions = profiles.map(mentionCandidate)
         let hashtags = hashtagCandidates(from: recentNotes)
-        let emojis = customEmojiCandidates(from: recentNotes)
+        let recentEmojis = customEmojiCandidates(from: recentNotes)
+        let catalog = ComposeEmojiCatalogProjection.project(
+            emojiListEvent: emojiListEvent,
+            emojiSetEvents: emojiSetEvents
+        )
+        let catalogEmojis = catalog.flatMap(\.emojis)
         return ComposeSuggestionSnapshot(
             mentions: mentions,
             hashtags: hashtags,
-            completionEmojis: emojis,
-            pickerEmojis: emojis
+            completionEmojis: deduplicatedEmojis(
+                catalogEmojis + recentEmojis
+            ),
+            emojiSets: catalog.isEmpty && !recentEmojis.isEmpty
+                ? [ComposeCustomEmojiSet(
+                    id: "cached-recent",
+                    title: "RECENT",
+                    imageURL: nil,
+                    detail: nil,
+                    emojis: recentEmojis
+                )]
+                : catalog
         )
     }
 
@@ -312,12 +345,24 @@ struct ComposeSuggestionSnapshot: Equatable {
                     shortcode: ":\(name):",
                     glyph: String(name.prefix(1)).uppercased(),
                     tint: .astrenzaAccent,
-                    imageURL: imageURL
+                    imageURL: imageURL,
+                    emojiSetAddress: tag.count >= 4
+                        ? NostrEmojiSetReference.parse(address: tag[3])?.address
+                        : nil
                 ))
                 if candidates.count == 80 { return candidates }
             }
         }
         return candidates
+    }
+
+    private static func deduplicatedEmojis(
+        _ candidates: [ComposeCustomEmojiCandidate]
+    ) -> [ComposeCustomEmojiCandidate] {
+        var seen = Set<String>()
+        return candidates.filter {
+            seen.insert($0.shortcode.lowercased()).inserted
+        }
     }
 
     private static func abbreviated(_ value: String) -> String {
@@ -329,6 +374,8 @@ struct ComposeSuggestionSnapshot: Equatable {
 struct ComposeSuggestionSource: Sendable {
     let profiles: [NostrProfileSearchResult]
     let recentNotes: [NostrEvent]
+    let emojiListEvent: NostrEvent?
+    let emojiSetEvents: [NostrEvent]
 }
 
 struct ComposeHashtagCandidateCell: View {

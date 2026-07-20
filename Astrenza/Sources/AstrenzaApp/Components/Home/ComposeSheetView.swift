@@ -14,6 +14,7 @@ struct ComposeSheetView: View {
     let eventStore: NostrEventStore?
     let accounts: [NostrAccountSummary]
     let onSelectAccount: (String) -> Void
+    let onResolveCustomEmojis: ((String) async -> Void)?
     @StateObject private var feature: ComposeFeatureModel
     @State private var suggestions: ComposeSuggestionSnapshot
     @State private var isUserSwitcherPresented = false
@@ -21,6 +22,7 @@ struct ComposeSheetView: View {
     @State private var isFileImporterPresented = false
     @State private var isCustomEmojiPickerPresented = false
     @State private var isContinuousCustomEmojiInput = false
+    @State private var isCustomEmojiResolving = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var activeMediaMenuItem: ComposeSelectedMedia?
     @State private var previewMediaItem: ComposeSelectedMedia?
@@ -39,7 +41,8 @@ struct ComposeSheetView: View {
         accountID: String? = nil,
         eventStore: NostrEventStore? = nil,
         accounts: [NostrAccountSummary] = [],
-        onSelectAccount: @escaping (String) -> Void = { _ in }
+        onSelectAccount: @escaping (String) -> Void = { _ in },
+        onResolveCustomEmojis: ((String) async -> Void)? = nil
     ) {
         self.context = context
         self.isSubmitAvailable = isSubmitAvailable
@@ -48,6 +51,7 @@ struct ComposeSheetView: View {
         self.eventStore = eventStore
         self.accounts = accounts
         self.onSelectAccount = onSelectAccount
+        self.onResolveCustomEmojis = onResolveCustomEmojis
         _feature = StateObject(wrappedValue: ComposeFeatureModel(
             context: context,
             isSubmitAvailable: isSubmitAvailable
@@ -106,14 +110,32 @@ struct ComposeSheetView: View {
     }
 
     private func loadLiveSuggestions() async {
-        guard accountID != nil, let eventStore else { return }
+        guard let accountID, let eventStore else { return }
+        await applySuggestionSource(accountID: accountID, eventStore: eventStore)
+        guard !Task.isCancelled, let onResolveCustomEmojis else { return }
+        isCustomEmojiResolving = true
+        defer { isCustomEmojiResolving = false }
+        await onResolveCustomEmojis(accountID)
+        guard !Task.isCancelled else { return }
+        await applySuggestionSource(accountID: accountID, eventStore: eventStore)
+    }
+
+    private func applySuggestionSource(
+        accountID: String,
+        eventStore: NostrEventStore
+    ) async {
         let source = await Task.detached(priority: .userInitiated) {
-            ComposeSuggestionSnapshot.source(eventStore: eventStore)
+            ComposeSuggestionSnapshot.source(
+                accountID: accountID,
+                eventStore: eventStore
+            )
         }.value
         guard !Task.isCancelled else { return }
         suggestions = ComposeSuggestionSnapshot.project(
             profiles: source.profiles,
-            recentNotes: source.recentNotes
+            recentNotes: source.recentNotes,
+            emojiListEvent: source.emojiListEvent,
+            emojiSetEvents: source.emojiSetEvents
         )
     }
 
@@ -319,7 +341,8 @@ struct ComposeSheetView: View {
             isContinuousCustomEmojiInput: isContinuousCustomEmojiInput,
             selectedPhotoItems: $selectedPhotoItems,
             activeCompletion: activeCompletion,
-            customEmojiCandidates: suggestions.pickerEmojis,
+            customEmojiSets: suggestions.emojiSets,
+            isCustomEmojiResolving: isCustomEmojiResolving,
             accent: accent,
             onEmojiSelected: handleCustomEmojiSelection,
             onEmojiReturn: finishContinuousCustomEmojiInput,
@@ -424,7 +447,8 @@ struct ComposeSheetView: View {
            !feature.selectedCustomEmojis.contains(where: { $0.shortcode == shortcode }) {
             feature.recordCustomEmoji(ComposeCustomEmojiReference(
                 shortcode: shortcode,
-                url: imageURL.absoluteString
+                url: imageURL.absoluteString,
+                emojiSetAddress: candidate.emojiSetAddress
             ))
         }
     }

@@ -93,8 +93,12 @@ struct ComposePublishTagBuilder {
         if request.isSensitive {
             tags.append(["content-warning", request.sensitiveReason])
         }
-        tags.append(contentsOf: request.customEmojis.map {
-            ["emoji", $0.shortcode, $0.url]
+        tags.append(contentsOf: request.customEmojis.map { emoji in
+            var tag = ["emoji", emoji.shortcode, emoji.url]
+            if let emojiSetAddress = emoji.emojiSetAddress {
+                tag.append(emojiSetAddress)
+            }
+            return tag
         })
         tags.append(contentsOf: hashtags(in: request.text).map { ["t", $0] })
         tags.append(contentsOf: recipients(

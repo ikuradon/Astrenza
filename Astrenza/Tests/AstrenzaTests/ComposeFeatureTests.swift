@@ -83,7 +83,8 @@ struct ComposeFeatureTests {
             sensitiveReason: "spoiler",
             customEmojis: [.init(
                 shortcode: "wave",
-                url: "https://emoji.example/wave.png"
+                url: "https://emoji.example/wave.png",
+                emojiSetAddress: "30030:\(String(repeating: "a", count: 64)):waves"
             )],
             media: []
         )
@@ -111,7 +112,12 @@ struct ComposeFeatureTests {
         #expect(tags.contains(["t", "Nostr"]))
         #expect(tags.contains(["p", mentionedPubkey]))
         #expect(tags.filter { $0.count >= 2 && $0[0] == "p" && $0[1] == reference.pubkey }.count == 1)
-        #expect(tags.contains(["emoji", "wave", "https://emoji.example/wave.png"]))
+        #expect(tags.contains([
+            "emoji",
+            "wave",
+            "https://emoji.example/wave.png",
+            "30030:\(String(repeating: "a", count: 64)):waves"
+        ]))
         #expect(tags.contains { tag in
             tag.first == "imeta"
                 && tag.contains("url https://media.example/blob.jpg")

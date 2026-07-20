@@ -127,7 +127,8 @@ struct ComposeBottomControls: View {
     let isContinuousCustomEmojiInput: Bool
     @Binding var selectedPhotoItems: [PhotosPickerItem]
     let activeCompletion: ComposeCompletion?
-    let customEmojiCandidates: [ComposeCustomEmojiCandidate]
+    let customEmojiSets: [ComposeCustomEmojiSet]
+    let isCustomEmojiResolving: Bool
     let accent: Color
     let onEmojiSelected: (ComposeCustomEmojiCandidate) -> Void
     let onEmojiReturn: () -> Void
@@ -152,7 +153,8 @@ struct ComposeBottomControls: View {
             if isCustomEmojiPickerPresented {
                 ComposeCustomEmojiPicker(
                     isContinuousInput: isContinuousCustomEmojiInput,
-                    candidates: customEmojiCandidates
+                    emojiSets: customEmojiSets,
+                    isResolving: isCustomEmojiResolving
                 ) { candidate in
                     onEmojiSelected(candidate)
                 } onReturn: {

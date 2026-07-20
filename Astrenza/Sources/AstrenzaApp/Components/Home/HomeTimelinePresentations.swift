@@ -76,7 +76,12 @@ struct HomeTimelinePresentationModifier: ViewModifier {
             accountID: accountID,
             eventStore: eventStore,
             accounts: accountSummaries,
-            onSelectAccount: actions.onSelectAccount
+            onSelectAccount: actions.onSelectAccount,
+            onResolveCustomEmojis: { accountID in
+                await timelineStore.resolveComposeEmojiCatalog(
+                    accountID: accountID
+                )
+            }
         )
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)

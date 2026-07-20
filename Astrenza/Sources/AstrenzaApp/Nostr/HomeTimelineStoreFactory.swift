@@ -125,6 +125,10 @@ enum HomeTimelineStoreFactory {
             profilePageResolver: NostrProfilePageResolver(
                 eventStore: eventStore,
                 relayClient: resolvedTimelineLoader.relayClient
+            ),
+            composeEmojiResolver: NostrComposeEmojiResolver(
+                eventStore: eventStore,
+                relayClient: resolvedTimelineLoader.relayClient
             )
         )
     }
