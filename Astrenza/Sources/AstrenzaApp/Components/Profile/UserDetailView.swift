@@ -8,6 +8,27 @@ private struct ProfileNavigationChromeLayout {
     }
 }
 
+struct ProfileAvatarTransitionMetrics: Equatable {
+    let renderSize: CGFloat
+    let displaySize: CGFloat
+    let scale: CGFloat
+
+    init(
+        progress: CGFloat,
+        expandedSize: CGFloat,
+        compactSize: CGFloat
+    ) {
+        let clampedProgress = min(max(progress, 0), 1)
+        let stableRenderSize = max(expandedSize, 1)
+        let resolvedDisplaySize = stableRenderSize
+            + (compactSize - stableRenderSize) * clampedProgress
+
+        renderSize = stableRenderSize
+        displaySize = resolvedDisplaySize
+        scale = resolvedDisplaySize / stableRenderSize
+    }
+}
+
 private struct ProfileHeroBoundsPreferenceKey: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
 
@@ -155,7 +176,6 @@ struct UserDetailView: View {
         .opacity(toolbarAvatarProgress)
         .disabled(toolbarAvatarProgress < 0.85)
         .accessibilityHidden(toolbarAvatarProgress < 0.85)
-        .animation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12), value: toolbarAvatarProgress)
     }
 
     private func navigationBlurBackdrop(chromeLayout: ProfileNavigationChromeLayout) -> some View {
@@ -171,7 +191,6 @@ struct UserDetailView: View {
             .clipped()
             .opacity(navigationBlurProgress)
             .ignoresSafeArea(edges: .top)
-            .animation(.easeOut(duration: AstrenzaMotion.fast), value: navigationBlurProgress)
     }
 
     private func shrinkingProfileAvatar(
@@ -180,25 +199,32 @@ struct UserDetailView: View {
         expandedCenterY: CGFloat
     ) -> some View {
         let progress = compactChromeProgress
-        let avatarSize = expandedAvatarSize + (compactAvatarSize - expandedAvatarSize) * progress
+        let transition = ProfileAvatarTransitionMetrics(
+            progress: progress,
+            expandedSize: expandedAvatarSize,
+            compactSize: compactAvatarSize
+        )
         let compactCenterY = -chromeLayout.backdropHeight / 2
         let centerY = expandedCenterY + (compactCenterY - expandedCenterY) * progress
         let strokeWidth = 5 * (1 - progress)
 
         return ProfileAvatarMediaButton(
             profile: profile,
-            size: avatarSize,
+            size: transition.renderSize,
             label: "Open profile avatar",
             onOpenMedia: onOpenMedia
-        ) {
+        )
+        .scaleEffect(transition.scale)
+        .frame(width: transition.displaySize, height: transition.displaySize)
+        .overlay {
             Circle()
                 .stroke(Color.astrenzaBackground.opacity(1 - progress), lineWidth: strokeWidth)
+                .allowsHitTesting(false)
         }
         .position(x: containerWidth / 2, y: centerY)
         .opacity(1 - toolbarAvatarProgress)
         .disabled(toolbarAvatarProgress > 0.85)
         .accessibilityHidden(toolbarAvatarProgress > 0.85)
-        .animation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12), value: compactChromeProgress)
     }
 
     private var profileSummary: some View {

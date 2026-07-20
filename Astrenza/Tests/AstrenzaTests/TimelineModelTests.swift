@@ -7794,6 +7794,33 @@ struct TimelineModelTests {
         #expect(profile == TimelineAttachmentResolvedWidth(reportedWidth: 274, measurementWidth: 274))
     }
 
+    @Test("Collapsing profile avatar keeps one render size while its display size changes")
+    func collapsingProfileAvatarKeepsStableRenderSize() {
+        let expanded = ProfileAvatarTransitionMetrics(
+            progress: 0,
+            expandedSize: 132,
+            compactSize: 42
+        )
+        let halfway = ProfileAvatarTransitionMetrics(
+            progress: 0.5,
+            expandedSize: 132,
+            compactSize: 42
+        )
+        let compact = ProfileAvatarTransitionMetrics(
+            progress: 1,
+            expandedSize: 132,
+            compactSize: 42
+        )
+
+        #expect(expanded.renderSize == 132)
+        #expect(halfway.renderSize == 132)
+        #expect(compact.renderSize == 132)
+        #expect(expanded.displaySize == 132)
+        #expect(halfway.displaySize == 87)
+        #expect(compact.displaySize == 42)
+        #expect(abs(compact.scale - 42 / 132) < 0.0001)
+    }
+
     @Test("Single media preserves its source aspect ratio up to the height cap")
     func singleMediaLayoutPreservesAspectRatio() {
         let portrait = TimelineMediaLayoutMetrics.singleMediaSize(
