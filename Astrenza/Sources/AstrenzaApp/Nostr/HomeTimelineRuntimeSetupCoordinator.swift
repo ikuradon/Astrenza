@@ -113,8 +113,9 @@ final class HomeTimelineRuntimeSetupCoordinator {
             },
             prepareDependencies: { [weak self] in
                 guard let self else { return }
-                await dependencyCoordinator.ensureProfiles(
-                    for: contentCoordinator.noteEvents
+                await prepareRestoredDependencies(
+                    identity: identity,
+                    handlers: handlers
                 )
             },
             prepareFeed: { [weak self] in
@@ -139,6 +140,27 @@ final class HomeTimelineRuntimeSetupCoordinator {
                 )))
             }
         )
+    }
+
+    private func prepareRestoredDependencies(
+        identity: HomeTimelineRelayRuntimeConfigurationIdentity,
+        handlers: HomeTimelineRuntimeSetupHandlers
+    ) async {
+        let content = contentCoordinator.snapshot
+        let result = await dependencyCoordinator.enqueueDependencies(
+            for: content.noteEvents,
+            liveMetadataEvents: content.metadataEvents,
+            liveNoteEventIDs: Set(content.noteEvents.map(\.id)),
+            availableRelayURLs: content.resolvedRelays
+        )
+        guard result.didEnqueueSourceDependencies else { return }
+        _ = dependencyCoordinator.scheduleSourcePacketInstall { message in
+            handlers.perform(.recordDiagnostic(HomeTimelineRuntimeSetupDiagnostic(
+                relayURL: identity.resolvedRelays.first ?? "runtime",
+                subscriptionID: "astrenza-source-events",
+                message: message
+            )))
+        }
     }
 
     private func currentIdentity(

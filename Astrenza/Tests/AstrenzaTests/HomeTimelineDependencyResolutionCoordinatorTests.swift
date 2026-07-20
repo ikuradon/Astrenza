@@ -88,6 +88,49 @@ struct HomeTimelineDependencyResolutionCoordinatorTests {
         ))
     }
 
+    @Test("A completed source request without its target records an unresolved retry")
+    @MainActor
+    func completedSourceRequestWithoutTargetIsUnresolved() throws {
+        let eventID = String(repeating: "d", count: 64)
+        let coordinator = makeCoordinator()
+        #expect(coordinator.enqueueSourceDependencies(
+            NostrEventDependencies(sourceEventIDs: [eventID]),
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 100
+        ))
+        let packet = try #require(
+            coordinator
+                .drainSourcePacketPlan(requestID: "missing-completed-source")
+                .sourcePackets.first
+        )
+
+        #expect(coordinator.completeSourceRequest(
+            NostrBackwardREQCompletion(
+                groupID: packet.groupID,
+                relayURLs: packet.relayURLs,
+                subscriptionIDs: [packet.subscriptionID],
+                eventCount: 0,
+                eoseCount: 1,
+                closedCount: 0,
+                timeoutCount: 0
+            ),
+            now: 100
+        ))
+        #expect(!coordinator.enqueueSourceDependencies(
+            NostrEventDependencies(sourceEventIDs: [eventID]),
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 999
+        ))
+        #expect(coordinator.enqueueSourceDependencies(
+            NostrEventDependencies(sourceEventIDs: [eventID]),
+            cacheSnapshot: NostrDependencyFetchCacheSnapshot(),
+            availableRelayURLs: ["wss://relay.example"],
+            now: 1_000
+        ))
+    }
+
     @Test("NIP-05 resolution state is published only after the resolver completes")
     @MainActor
     func nip05ResolutionOwnership() async {

@@ -81,6 +81,33 @@ struct HomeTimelineRuntimeSetupCoordinatorTests {
         ])
     }
 
+    @Test("Setup enqueues restored quote and repost source events")
+    func setupEnqueuesRestoredSourceDependencies() async throws {
+        let system = try RuntimeSetupTestSystem()
+        await system.coordinator.configure(system.request(), handlers: system.handlers)
+        let handlers = try #require(system.configurator.capturedHandlers)
+
+        await handlers.prepareDependencies()
+        let plan = system.dependencyCoordinator.drainSourcePacketPlan(
+            requestID: "restored-sources"
+        )
+        let requestedIDs = Set(plan.sourcePackets.flatMap { packet in
+            packet.filters.flatMap { filter -> [String] in
+                guard case .strings(let ids)? = filter["ids"] else { return [] }
+                return ids
+            }
+        })
+
+        #expect(requestedIDs == [
+            String(repeating: "c", count: 64),
+            String(repeating: "e", count: 64)
+        ])
+        #expect(Set(plan.sourcePackets.flatMap(\.relayURLs)) == [
+            "wss://quote.example",
+            "wss://repost.example"
+        ])
+    }
+
     @Test("Captured identity and feed validity follow the active lifecycle")
     func handlersRejectSupersededLifecycle() async throws {
         let system = try RuntimeSetupTestSystem()

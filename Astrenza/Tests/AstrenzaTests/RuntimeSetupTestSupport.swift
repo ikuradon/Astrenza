@@ -53,6 +53,7 @@ struct RuntimeSetupTestSystem {
     let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
     let lifecycleToken: HomeTimelineLifecycleToken
     let feedSyncCoordinator: HomeTimelineFeedSyncCoordinator
+    let dependencyCoordinator: HomeTimelineDependencyResolutionCoordinator
     let configurator: RuntimeSetupConfiguratorSpy
     let coordinator: HomeTimelineRuntimeSetupCoordinator
     let probe = RuntimeSetupCommandProbe()
@@ -99,6 +100,7 @@ struct RuntimeSetupTestSystem {
         self.lifecycleCoordinator = lifecycleCoordinator
         self.lifecycleToken = lifecycleToken
         self.feedSyncCoordinator = collaborators.feedSyncCoordinator
+        self.dependencyCoordinator = collaborators.dependencyCoordinator
         self.configurator = configurator
         self.coordinator = HomeTimelineRuntimeSetupCoordinator(
             configurator: configurator,
@@ -164,13 +166,27 @@ struct RuntimeSetupTestSystem {
                         idCharacter: "1",
                         pubkey: followedPubkey,
                         createdAt: 10,
-                        kind: 1
+                        kind: 1,
+                        tags: [[
+                            "q",
+                            String(repeating: "c", count: 64),
+                            "wss://quote.example",
+                            String(repeating: "d", count: 64)
+                        ]]
                     ),
                     event(
                         idCharacter: "2",
                         pubkey: followedPubkey,
                         createdAt: 30,
-                        kind: 1
+                        kind: 6,
+                        tags: [
+                            [
+                                "e",
+                                String(repeating: "e", count: 64),
+                                "wss://repost.example"
+                            ],
+                            ["p", String(repeating: "f", count: 64)]
+                        ]
                     )
                 ],
                 metadataEvents: [],

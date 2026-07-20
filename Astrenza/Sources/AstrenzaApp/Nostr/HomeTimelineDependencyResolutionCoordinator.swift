@@ -219,7 +219,23 @@ final class HomeTimelineDependencyResolutionCoordinator {
         availableRelayURLs: [String],
         now: Int = Int(Date().timeIntervalSince1970)
     ) async -> HomeTimelineDependencyEnqueueResult {
-        let dependencies = NostrEventDependencies.extract(from: event)
+        await enqueueDependencies(
+            for: [event],
+            liveMetadataEvents: liveMetadataEvents,
+            liveNoteEventIDs: liveNoteEventIDs,
+            availableRelayURLs: availableRelayURLs,
+            now: now
+        )
+    }
+
+    func enqueueDependencies(
+        for events: [NostrEvent],
+        liveMetadataEvents: [NostrEvent],
+        liveNoteEventIDs: Set<String>,
+        availableRelayURLs: [String],
+        now: Int = Int(Date().timeIntervalSince1970)
+    ) async -> HomeTimelineDependencyEnqueueResult {
+        let dependencies = mergedDependencies(from: events)
         let cacheResult = await eventIngestor.dependencyCacheResult(
             dependencies: dependencies,
             liveMetadataEvents: liveMetadataEvents,
@@ -227,7 +243,7 @@ final class HomeTimelineDependencyResolutionCoordinator {
             now: now
         )
 
-        await ensureProfiles(for: event, dependencies: dependencies)
+        await ensureProfiles(for: events)
 
         let sourceDependencies = NostrEventDependencies(
             sourceEventIDs: dependencies.sourceEventIDs,
@@ -245,6 +261,34 @@ final class HomeTimelineDependencyResolutionCoordinator {
                 for: dependencies
             ),
             didEnqueueSourceDependencies: didEnqueueSources
+        )
+    }
+
+    private func mergedDependencies(
+        from events: [NostrEvent]
+    ) -> NostrEventDependencies {
+        var profilePubkeys: [String] = []
+        var sourceEventIDs: [String] = []
+        var profileRelayURLsByPubkey: [String: [String]] = [:]
+        var sourceRelayURLsByEventID: [String: [String]] = [:]
+
+        for event in events {
+            let dependencies = NostrEventDependencies.extract(from: event)
+            profilePubkeys.append(contentsOf: dependencies.profilePubkeys)
+            sourceEventIDs.append(contentsOf: dependencies.sourceEventIDs)
+            for (pubkey, relayURLs) in dependencies.profileRelayURLsByPubkey {
+                profileRelayURLsByPubkey[pubkey, default: []].append(contentsOf: relayURLs)
+            }
+            for (eventID, relayURLs) in dependencies.sourceRelayURLsByEventID {
+                sourceRelayURLsByEventID[eventID, default: []].append(contentsOf: relayURLs)
+            }
+        }
+
+        return NostrEventDependencies(
+            profilePubkeys: profilePubkeys,
+            sourceEventIDs: sourceEventIDs,
+            profileRelayURLsByPubkey: profileRelayURLsByPubkey,
+            sourceRelayURLsByEventID: sourceRelayURLsByEventID
         )
     }
 
@@ -354,9 +398,20 @@ final class HomeTimelineDependencyResolutionCoordinator {
         }
         switch completion.status {
         case .completed:
+            let unresolvedEventIDs = eventIDs.filter(
+                sourceQueue.pendingSourceEventIDs.contains
+            )
+            let resolvedEventIDs = eventIDs.filter {
+                !sourceQueue.pendingSourceEventIDs.contains($0)
+            }
             sourceQueue.finish(
-                sourceEventIDs: eventIDs,
+                sourceEventIDs: resolvedEventIDs,
                 succeeded: true,
+                now: now
+            )
+            sourceQueue.finish(
+                sourceEventIDs: unresolvedEventIDs,
+                succeeded: false,
                 now: now
             )
         case .partial, .closed, .timedOut:
@@ -447,28 +502,6 @@ final class HomeTimelineDependencyResolutionCoordinator {
             self.nip05Resolutions[pubkey] = resolution
             await onChange()
         }
-    }
-
-    private func ensureProfiles(
-        for event: NostrEvent,
-        dependencies: NostrEventDependencies
-    ) async {
-        await profileDirectory?.ensureProfiles(
-            pubkeys: [event.pubkey],
-            relayHintsByPubkey: dependencies.profileRelayURLsByPubkey.filter {
-                $0.key == event.pubkey
-            },
-            priority: .foreground
-        )
-        let backgroundPubkeys = dependencies.profilePubkeys.filter { $0 != event.pubkey }
-        guard !backgroundPubkeys.isEmpty else { return }
-        await profileDirectory?.ensureProfiles(
-            pubkeys: backgroundPubkeys,
-            relayHintsByPubkey: dependencies.profileRelayURLsByPubkey.filter {
-                backgroundPubkeys.contains($0.key)
-            },
-            priority: .background
-        )
     }
 
     private func profileMetadata(from event: NostrEvent) -> NostrProfileMetadata? {
