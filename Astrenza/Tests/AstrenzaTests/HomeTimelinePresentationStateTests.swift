@@ -27,7 +27,7 @@ struct HomeTimelinePresentationStateTests {
         let isInitialPresentationReady = blocker.configure(&state)
 
         let accepted = state.prepareComposer(
-            mode: .reply,
+            context: Self.replyContext,
             isInitialPresentationReady: isInitialPresentationReady
         )
 
@@ -45,7 +45,7 @@ struct HomeTimelinePresentationStateTests {
         state.presentFullscreenMedia(.gallery([]), initialTileIndex: 3)
 
         let accepted = state.prepareComposer(
-            mode: .reply,
+            context: Self.replyContext,
             isInitialPresentationReady: true
         )
 
@@ -59,6 +59,19 @@ struct HomeTimelinePresentationStateTests {
         #expect(state.isRelayStatusPresented)
         #expect(state.browserDestination != nil)
         #expect(state.fullscreenMedia != nil)
+    }
+
+    private static var replyContext: ComposeContext {
+        let reference = ComposeEventReference(
+            eventID: String(repeating: "1", count: 64),
+            relayHint: "wss://relay.example",
+            pubkey: String(repeating: "a", count: 64)
+        )
+        return .reply(ComposeReplyContext(
+            root: reference,
+            parent: reference,
+            recipientPubkeys: [reference.pubkey!]
+        ))
     }
 
     @Test(

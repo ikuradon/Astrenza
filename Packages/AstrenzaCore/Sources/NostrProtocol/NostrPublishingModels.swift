@@ -53,7 +53,12 @@ public enum NostrPublishInput: Equatable, Sendable {
                 pubkey: pubkey,
                 createdAt: createdAt,
                 kind: 1,
-                tags: replyTags(root: root, parent: parent, extraTags: tags),
+                tags: replyTags(
+                    root: root,
+                    parent: parent,
+                    extraTags: tags,
+                    authorPubkey: pubkey
+                ),
                 content: content
             )
 
@@ -66,14 +71,19 @@ public enum NostrPublishInput: Equatable, Sendable {
     private func replyTags(
         root: NostrReplyReference,
         parent: NostrReplyReference,
-        extraTags: [[String]]
+        extraTags: [[String]],
+        authorPubkey: String
     ) -> [[String]] {
-        var tags = extraTags
+        var tags = extraTags.filter {
+            !($0.count >= 2 && $0[0] == "p" && $0[1] == authorPubkey)
+        }
         tags.append(eventTag(reference: root, marker: "root"))
         if parent.eventID != root.eventID {
             tags.append(eventTag(reference: parent, marker: "reply"))
         }
-        if let parentPubkey = parent.pubkey {
+        if let parentPubkey = parent.pubkey,
+           parentPubkey != authorPubkey,
+           !tags.contains(where: { $0.count >= 2 && $0[0] == "p" && $0[1] == parentPubkey }) {
             tags.append(["p", parentPubkey])
         }
         return tags

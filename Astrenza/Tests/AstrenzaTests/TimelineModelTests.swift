@@ -93,6 +93,30 @@ struct TimelineModelTests {
         #expect(store.account == nil)
     }
 
+    @Test("Session store restores an in-memory signer after account switching")
+    @MainActor
+    func sessionStoreKeepsSignerWhileProcessIsAlive() async throws {
+        let suiteName = "AstrenzaTests.session.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let store = NostrSessionStore(defaults: defaults, restoreAccount: false)
+        store.loginInput = "nsec1g9q5zs2pg9q5zs2pg9q5zs2pg9q5zs2pg9q5zs2pg9q5zs2pg9qs3whxln"
+        await store.login()
+        let signingPubkey = try #require(store.account?.pubkey)
+        #expect(store.signer != nil)
+
+        let readOnlyPubkey = String(repeating: "9", count: 64)
+        store.loginInput = readOnlyPubkey
+        await store.login()
+        #expect(store.signer == nil)
+
+        store.selectAccount(signingPubkey)
+        #expect(store.account?.pubkey == signingPubkey)
+        #expect(store.signer != nil)
+    }
+
     @Test("Preparing account login clears only transient input")
     @MainActor
     func sessionStorePreparesAdditionalLogin() async throws {

@@ -1,63 +1,104 @@
 import AstrenzaCore
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 import UIKit
 
 struct ComposeSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isEditorFocused: Bool
-    let mode: ComposeSheetMode
+    let context: ComposeContext
     let isSubmitAvailable: Bool
-    let onSubmit: ((ComposeSubmitRequest) async -> Bool)?
+    let onSubmit: ComposeFeatureModel.SubmitHandler?
     let accountID: String?
     let eventStore: NostrEventStore?
+    let accounts: [NostrAccountSummary]
+    let onSelectAccount: (String) -> Void
+    @StateObject private var feature: ComposeFeatureModel
     @State private var suggestions: ComposeSuggestionSnapshot
-    @State private var text = ""
-    @State private var sensitiveReason = ""
-    @State private var isSensitiveReasonVisible = false
-    @State private var isSubmitting = false
     @State private var isUserSwitcherPresented = false
     @State private var isCameraPresented = false
     @State private var isFileImporterPresented = false
     @State private var isCustomEmojiPickerPresented = false
     @State private var isContinuousCustomEmojiInput = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
-    @State private var selectedMediaItems: [ComposeSelectedMedia] = []
     @State private var activeMediaMenuItem: ComposeSelectedMedia?
+    @State private var previewMediaItem: ComposeSelectedMedia?
+    @State private var altTextMediaItem: ComposeSelectedMedia?
     @State private var isComposerSettingsPresented = false
     @State private var isDraftCloseDialogPresented = false
     @State private var isDraftsViewPresented = false
     @State private var savedDatabaseDrafts: [ComposeDraft] = []
-    @State private var activeDraftID: String?
-    @State private var selectedCustomEmojis: [ComposeCustomEmojiReference] = []
-    @AppStorage("astrenza.mockComposeDraftText") private var savedDraftText = ""
-    @AppStorage("astrenza.mockComposeDraftMediaCount") private var savedDraftMediaCount = 0
-    private let characterLimit = 500
+    @State private var pendingDraftTransfer: ComposeDraftTransfer?
     private let accent = Color.astrenzaAccent
 
     init(
-        mode: ComposeSheetMode = .post,
+        context: ComposeContext = .post,
         isSubmitAvailable: Bool = true,
-        onSubmit: ((ComposeSubmitRequest) async -> Bool)? = nil,
+        onSubmit: ComposeFeatureModel.SubmitHandler? = nil,
         accountID: String? = nil,
-        eventStore: NostrEventStore? = nil
+        eventStore: NostrEventStore? = nil,
+        accounts: [NostrAccountSummary] = [],
+        onSelectAccount: @escaping (String) -> Void = { _ in }
     ) {
-        self.mode = mode
+        self.context = context
         self.isSubmitAvailable = isSubmitAvailable
         self.onSubmit = onSubmit
         self.accountID = accountID
         self.eventStore = eventStore
+        self.accounts = accounts
+        self.onSelectAccount = onSelectAccount
+        _feature = StateObject(wrappedValue: ComposeFeatureModel(
+            context: context,
+            isSubmitAvailable: isSubmitAvailable
+        ))
         _suggestions = State(
             initialValue: accountID == nil ? .preview : .empty
         )
     }
 
+    private var mode: ComposeSheetMode {
+        feature.context.mode
+    }
+
     private var remainingCharacters: Int {
-        characterLimit - text.count
+        feature.remainingCharacters
     }
 
     private var suggestionLoadIdentity: String {
         "\(accountID ?? "preview"):\(eventStore == nil ? "missing" : "available")"
+    }
+
+    private var autosaveIdentity: String {
+        let media = feature.selectedMediaItems.map {
+            "\($0.id.uuidString):\($0.altText ?? "")"
+        }.joined(separator: "|")
+        return [
+            accountID ?? "preview",
+            feature.text,
+            feature.sensitiveReason,
+            feature.isSensitiveReasonVisible.description,
+            media
+        ].joined(separator: "\u{1f}")
+    }
+
+    private var submissionFailureMessage: String {
+        guard case .failed(let message) = feature.submissionState else {
+            return ""
+        }
+        return message
+    }
+
+    private var isSubmissionFailurePresented: Binding<Bool> {
+        Binding(
+            get: {
+                if case .failed = feature.submissionState { return true }
+                return false
+            },
+            set: { isPresented in
+                if !isPresented { feature.resetFailure() }
+            }
+        )
     }
 
     private func loadLiveSuggestions() async {
@@ -72,29 +113,12 @@ struct ComposeSheetView: View {
         )
     }
 
-    private var canSubmit: Bool {
-        isSubmitAvailable
-            && !isSubmitting
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && remainingCharacters >= 0
-    }
-
     private var hasDraftContent: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedMediaItems.isEmpty
+        feature.hasContent
     }
 
     private var savedDrafts: [ComposeDraft] {
-        if accountID != nil, eventStore != nil {
-            return savedDatabaseDrafts
-        }
-        guard !savedDraftText.isEmpty || savedDraftMediaCount > 0 else { return [] }
-        return [
-            ComposeDraft(
-                id: "mock-draft-1",
-                text: savedDraftText,
-                mediaCount: savedDraftMediaCount
-            )
-        ]
+        savedDatabaseDrafts
     }
 
     var body: some View {
@@ -118,11 +142,15 @@ struct ComposeSheetView: View {
                         }
                     }
 
-                UserSwitcherMenu {
-                    withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.14)) {
-                        isUserSwitcherPresented = false
+                UserSwitcherMenu(
+                    accounts: accounts,
+                    onSelectAccount: selectAccount,
+                    onSettingsTap: {
+                        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.14)) {
+                            isUserSwitcherPresented = false
+                        }
                     }
-                }
+                )
                 .padding(.leading, AstrenzaSpacing.point18)
                 .padding(.top, 154)
                 .transition(.scale(scale: 0.72, anchor: .topLeading).combined(with: .opacity))
@@ -140,10 +168,11 @@ struct ComposeSheetView: View {
 
                 ComposeMediaActionMenu(
                     onPreview: {
+                        previewMediaItem = media
                         activeMediaMenuItem = nil
                     },
                     onAddDescription: {
-                        markMediaDescriptionRequested(media)
+                        altTextMediaItem = media
                         activeMediaMenuItem = nil
                     },
                     onRemove: {
@@ -201,8 +230,27 @@ struct ComposeSheetView: View {
             onIgnoreDraft: ignoreCurrentDraft,
             onSaveDraft: saveCurrentDraft,
             onDeleteDrafts: deleteDrafts,
-            onSelectDraft: restoreDraft
+            onSelectDraft: restoreDraft,
+            onCameraImage: addCameraImage,
+            onImportFiles: importFiles
         )
+        .sheet(item: $previewMediaItem) { media in
+            ComposeMediaPreviewView(media: media)
+        }
+        .sheet(item: $altTextMediaItem) { media in
+            ComposeMediaAltTextEditor(media: media) { altText in
+                updateAltText(altText, for: media)
+            }
+            .presentationDetents([.large])
+        }
+        .alert(
+            "Post Not Sent",
+            isPresented: isSubmissionFailurePresented
+        ) {
+            Button("OK") { feature.resetFailure() }
+        } message: {
+            Text(submissionFailureMessage)
+        }
         .onAppear {
             reloadDrafts()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
@@ -212,20 +260,33 @@ struct ComposeSheetView: View {
         .task(id: suggestionLoadIdentity) {
             await loadLiveSuggestions()
         }
-        .onChange(of: text) { _, newValue in
-            if newValue.count > characterLimit {
-                text = String(newValue.prefix(characterLimit))
-            }
+        .task(id: autosaveIdentity) {
+            guard accountID != nil, eventStore != nil else { return }
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled else { return }
+            autosaveCurrentDraft()
+        }
+        .onChange(of: feature.text) { _, _ in
+            feature.enforceCharacterLimit()
+            feature.resetFailure()
         }
         .onChange(of: selectedPhotoItems) { _, newItems in
             loadSelectedPhotos(newItems)
+        }
+        .onChange(of: accountID) { _, newAccountID in
+            transferDraftIfNeeded(to: newAccountID)
+            reloadDrafts()
+        }
+        .onChange(of: isSubmitAvailable) { _, isAvailable in
+            feature.updateSubmitAvailability(isAvailable)
         }
     }
 
     private var navigationBar: some View {
         ComposeNavigationBar(
             mode: mode,
-            canSubmit: canSubmit,
+            canSubmit: feature.canSubmit,
+            submissionState: feature.submissionState,
             accent: accent,
             onClose: closeComposer,
             onSubmit: submitComposer
@@ -235,9 +296,9 @@ struct ComposeSheetView: View {
     private var editorArea: some View {
         ComposeEditorArea(
             mode: mode,
-            text: $text,
+            text: $feature.text,
             isEditorFocused: $isEditorFocused,
-            selectedMediaItems: selectedMediaItems,
+            selectedMediaItems: feature.selectedMediaItems,
             activeMediaMenuItem: $activeMediaMenuItem,
             isUserSwitcherPresented: $isUserSwitcherPresented,
             remainingCharacters: remainingCharacters
@@ -247,8 +308,8 @@ struct ComposeSheetView: View {
     @ViewBuilder
     private var bottomComposerControls: some View {
         ComposeBottomControls(
-            sensitiveReason: $sensitiveReason,
-            isSensitiveReasonVisible: isSensitiveReasonVisible,
+            sensitiveReason: $feature.sensitiveReason,
+            isSensitiveReasonVisible: feature.isSensitiveReasonVisible,
             isCustomEmojiPickerPresented: isCustomEmojiPickerPresented,
             isContinuousCustomEmojiInput: isContinuousCustomEmojiInput,
             selectedPhotoItems: $selectedPhotoItems,
@@ -269,8 +330,8 @@ struct ComposeSheetView: View {
     }
 
     private var activeCompletion: ComposeCompletion? {
-        guard text.last?.isWhitespace != true else { return nil }
-        guard let token = text.split(whereSeparator: \.isWhitespace).last else { return nil }
+        guard feature.text.last?.isWhitespace != true else { return nil }
+        guard let token = feature.text.split(whereSeparator: \.isWhitespace).last else { return nil }
         guard let trigger = token.first, ["@", "#", ":"].contains(trigger) else { return nil }
         let query = String(token.dropFirst()).lowercased()
 
@@ -299,10 +360,10 @@ struct ComposeSheetView: View {
     }
 
     private func insertTrigger(_ trigger: String) {
-        if !text.isEmpty && !text.last!.isWhitespace {
-            text += " "
+        if !feature.text.isEmpty && !feature.text.last!.isWhitespace {
+            feature.text += " "
         }
-        text += trigger
+        feature.text += trigger
         isEditorFocused = true
     }
 
@@ -312,30 +373,30 @@ struct ComposeSheetView: View {
         }) {
             recordCustomEmoji(candidate)
         }
-        let parts = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        let parts = feature.text.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let last = parts.last, ["@", "#", ":"].contains(last.first ?? " ") else {
             insertTrigger(value)
             return
         }
 
-        text.removeLast(last.count)
-        text += "\(value) "
+        feature.text.removeLast(last.count)
+        feature.text += "\(value) "
         isEditorFocused = true
     }
 
     private func insertStandaloneToken(_ value: String) {
-        if !text.isEmpty && !text.last!.isWhitespace {
-            text += " "
+        if !feature.text.isEmpty && !feature.text.last!.isWhitespace {
+            feature.text += " "
         }
-        text += "\(value) "
+        feature.text += "\(value) "
         isEditorFocused = true
     }
 
     private func insertContinuousCustomEmoji(_ value: String) {
-        if !text.isEmpty && !text.last!.isWhitespace {
-            text += "\u{200B}"
+        if !feature.text.isEmpty && !feature.text.last!.isWhitespace {
+            feature.text += "\u{200B}"
         }
-        text += value
+        feature.text += value
     }
 
     private func handleCustomEmojiSelection(_ candidate: ComposeCustomEmojiCandidate) {
@@ -355,8 +416,8 @@ struct ComposeSheetView: View {
             in: CharacterSet(charactersIn: ":")
         )
         if let imageURL = candidate.imageURL,
-           !selectedCustomEmojis.contains(where: { $0.shortcode == shortcode }) {
-            selectedCustomEmojis.append(ComposeCustomEmojiReference(
+           !feature.selectedCustomEmojis.contains(where: { $0.shortcode == shortcode }) {
+            feature.recordCustomEmoji(ComposeCustomEmojiReference(
                 shortcode: shortcode,
                 url: imageURL.absoluteString
             ))
@@ -374,7 +435,7 @@ struct ComposeSheetView: View {
     private func toggleSensitiveReason() {
         isCustomEmojiPickerPresented = false
         isContinuousCustomEmojiInput = false
-        isSensitiveReasonVisible.toggle()
+        feature.isSensitiveReasonVisible.toggle()
     }
 
     private func toggleComposerSettings() {
@@ -384,8 +445,8 @@ struct ComposeSheetView: View {
     }
 
     private func finishContinuousCustomEmojiInput() {
-        if !text.isEmpty && !text.last!.isWhitespace {
-            text += " "
+        if !feature.text.isEmpty && !feature.text.last!.isWhitespace {
+            feature.text += " "
         }
         isContinuousCustomEmojiInput = false
         withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.12)) {
@@ -401,27 +462,109 @@ struct ComposeSheetView: View {
             for item in items {
                 guard let data = try? await item.loadTransferable(type: Data.self),
                       let image = UIImage(data: data) else { continue }
-                loadedItems.append(
-                    ComposeSelectedMedia(
-                        image: image,
-                        altText: nil
-                    )
-                )
+                let contentType = item.supportedContentTypes.first ?? .jpeg
+                if let media = await persistedMedia(
+                    data: data,
+                    image: image,
+                    mimeType: contentType.preferredMIMEType ?? "image/jpeg",
+                    fileExtension: contentType.preferredFilenameExtension ?? "jpg"
+                ) {
+                    loadedItems.append(media)
+                }
             }
             await MainActor.run {
-                selectedMediaItems.append(contentsOf: loadedItems)
+                feature.selectedMediaItems.append(contentsOf: loadedItems)
                 selectedPhotoItems = []
             }
         }
     }
 
-    private func markMediaDescriptionRequested(_ media: ComposeSelectedMedia) {
-        guard let index = selectedMediaItems.firstIndex(where: { $0.id == media.id }) else { return }
-        selectedMediaItems[index].altText = "Description pending..."
+    private func updateAltText(
+        _ altText: String,
+        for media: ComposeSelectedMedia
+    ) {
+        guard let index = feature.selectedMediaItems.firstIndex(where: { $0.id == media.id }) else { return }
+        feature.selectedMediaItems[index].altText = altText.isEmpty ? nil : altText
     }
 
     private func removeMedia(_ media: ComposeSelectedMedia) {
-        selectedMediaItems.removeAll { $0.id == media.id }
+        feature.selectedMediaItems.removeAll { $0.id == media.id }
+        if let localURL = media.localURL {
+            try? ComposeMediaFileStore().remove(localURL)
+        }
+    }
+
+    private func deleteLocalMediaFiles() {
+        guard let store = try? ComposeMediaFileStore() else { return }
+        for media in feature.selectedMediaItems {
+            if let localURL = media.localURL {
+                store.remove(localURL)
+            }
+        }
+    }
+
+    private func addCameraImage(_ image: UIImage) {
+        guard let data = image.jpegData(compressionQuality: 0.92) else { return }
+        Task {
+            if let media = await persistedMedia(
+                data: data,
+                image: image,
+                mimeType: "image/jpeg",
+                fileExtension: "jpg"
+            ) {
+                feature.selectedMediaItems.append(media)
+            }
+        }
+    }
+
+    private func importFiles(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        Task {
+            for url in urls {
+                let hasAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if hasAccess { url.stopAccessingSecurityScopedResource() }
+                }
+                guard let data = try? Data(contentsOf: url),
+                      let image = UIImage(data: data) else { continue }
+                let contentType = (try? url.resourceValues(
+                    forKeys: [.contentTypeKey]
+                ))?.contentType ?? UTType.image
+                if let media = await persistedMedia(
+                    data: data,
+                    image: image,
+                    mimeType: contentType.preferredMIMEType ?? "image/jpeg",
+                    fileExtension: contentType.preferredFilenameExtension
+                        ?? url.pathExtension
+                ) {
+                    feature.selectedMediaItems.append(media)
+                }
+            }
+        }
+    }
+
+    private func persistedMedia(
+        data: Data,
+        image: UIImage,
+        mimeType: String,
+        fileExtension: String
+    ) async -> ComposeSelectedMedia? {
+        let id = UUID()
+        let localURL = try? await Task.detached(priority: .userInitiated) {
+            try ComposeMediaFileStore().persist(
+                data: data,
+                id: id,
+                fileExtension: fileExtension
+            )
+        }.value
+        guard let localURL else { return nil }
+        return ComposeSelectedMedia(
+            id: id,
+            image: image,
+            localURL: localURL,
+            mimeType: mimeType,
+            altText: nil
+        )
     }
 
     private func closeComposer() {
@@ -433,75 +576,74 @@ struct ComposeSheetView: View {
     }
 
     private func submitComposer() {
-        guard canSubmit else { return }
-        guard let onSubmit else {
-            dismiss()
-            return
-        }
-
-        isSubmitting = true
-        let request = ComposeSubmitRequest(
-            mode: mode,
-            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-            isSensitive: isSensitiveReasonVisible,
-            sensitiveReason: sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines),
-            customEmojis: selectedCustomEmojis.filter {
-                text.contains(":\($0.shortcode):")
-            }
-        )
+        guard feature.canSubmit else { return }
         Task {
-            let didSubmit = await onSubmit(request)
-            await MainActor.run {
-                isSubmitting = false
-                if didSubmit {
-                    deleteActiveDatabaseDraftIfNeeded()
-                    dismiss()
-                }
+            let didSubmit = await feature.submit(using: onSubmit)
+            if didSubmit {
+                deleteActiveDatabaseDraftIfNeeded()
+                deleteLocalMediaFiles()
+                dismiss()
             }
         }
     }
 
     private func saveCurrentDraft() {
-        guard let accountID, let eventStore else {
-            savedDraftText = text
-            savedDraftMediaCount = selectedMediaItems.count
+        guard accountID != nil, eventStore != nil else {
             isDraftCloseDialogPresented = false
             dismiss()
             return
         }
 
-        let draftID = activeDraftID ?? UUID().uuidString
-        let warning = isSensitiveReasonVisible
-            ? sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        saveDatabaseDraft()
+        isDraftCloseDialogPresented = false
+        dismiss()
+    }
+
+    private func autosaveCurrentDraft() {
+        guard feature.hasContent else { return }
+        saveDatabaseDraft()
+    }
+
+    private func saveDatabaseDraft() {
+        guard let accountID, let eventStore else { return }
+        let draftID = feature.activeDraftID ?? UUID().uuidString
+        let warning = feature.isSensitiveReasonVisible
+            ? feature.sensitiveReason.trimmingCharacters(in: .whitespacesAndNewlines)
             : ""
-        let media = selectedMediaItems.enumerated().map { index, item in
-            NostrDraftMediaReference(
-                id: "media-\(index)",
+        let media = feature.selectedMediaItems.map { item in
+            let upload = item.uploadRequest
+            return NostrDraftMediaReference(
+                id: item.id.uuidString,
                 kind: "photo",
                 localIdentifier: nil,
-                altText: item.altText
+                localPath: item.localURL?.path,
+                mimeType: item.mimeType,
+                width: upload?.width,
+                height: upload?.height,
+                altText: item.altText,
+                uploadState: .local
             )
         }
         try? eventStore.saveDraft(NostrDraftRecord(
             draftID: draftID,
             accountID: accountID,
-            kind: 1,
-            parentEventID: mode == .reply ? "reply-context" : nil,
-            text: text,
+            context: feature.context.draftContext,
+            text: feature.text,
             contentWarning: warning.isEmpty ? nil : warning,
+            tags: feature.selectedCustomEmojis.map {
+                ["emoji", $0.shortcode, $0.url]
+            },
             media: media,
             updatedAt: Int(Date().timeIntervalSince1970)
         ))
-        activeDraftID = draftID
+        feature.activeDraftID = draftID
         reloadDrafts()
-        isDraftCloseDialogPresented = false
-        dismiss()
     }
 
     private func deleteActiveDatabaseDraftIfNeeded() {
-        guard let accountID, let eventStore, let activeDraftID else { return }
+        guard let accountID, let eventStore, let activeDraftID = feature.activeDraftID else { return }
         try? eventStore.deleteDraft(accountID: accountID, draftID: activeDraftID)
-        self.activeDraftID = nil
+        feature.activeDraftID = nil
         reloadDrafts()
     }
 
@@ -510,44 +652,41 @@ struct ComposeSheetView: View {
         dismiss()
     }
 
-    private func deleteSavedDraft() {
-        guard let accountID, let eventStore else {
-            savedDraftText = ""
-            savedDraftMediaCount = 0
-            return
-        }
-        let ids = savedDrafts.map(\.id)
-        try? eventStore.deleteDrafts(accountID: accountID, draftIDs: ids)
-        activeDraftID = nil
-        reloadDrafts()
-    }
-
     private func deleteDrafts(at offsets: IndexSet) {
-        guard let accountID, let eventStore else {
-            deleteSavedDraft()
-            return
-        }
+        guard let accountID, let eventStore else { return }
         let ids = offsets.map { savedDrafts[$0].id }
         try? eventStore.deleteDrafts(accountID: accountID, draftIDs: ids)
-        if let activeDraftID, ids.contains(activeDraftID) {
-            self.activeDraftID = nil
+        if let activeDraftID = feature.activeDraftID, ids.contains(activeDraftID) {
+            feature.activeDraftID = nil
         }
         reloadDrafts()
     }
 
     private func restoreDraft(_ draft: ComposeDraft) {
-        activeDraftID = draft.id
-        text = draft.text
+        feature.activeDraftID = draft.id
+        feature.context = draft.context
+        feature.text = draft.text
         if let contentWarning = draft.contentWarning, !contentWarning.isEmpty {
-            sensitiveReason = contentWarning
-            isSensitiveReasonVisible = true
+            feature.sensitiveReason = contentWarning
+            feature.isSensitiveReasonVisible = true
         } else {
-            sensitiveReason = ""
-            isSensitiveReasonVisible = false
+            feature.sensitiveReason = ""
+            feature.isSensitiveReasonVisible = false
         }
-        selectedMediaItems = draft.mediaReferences.map { reference in
-            ComposeSelectedMedia(
-                image: Self.placeholderDraftImage(),
+        feature.selectedCustomEmojis = draft.tags.compactMap { tag in
+            guard tag.count >= 3, tag[0] == "emoji" else { return nil }
+            return ComposeCustomEmojiReference(shortcode: tag[1], url: tag[2])
+        }
+        feature.selectedMediaItems = draft.mediaReferences.compactMap { reference in
+            guard let path = reference.localPath,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  let image = UIImage(data: data)
+            else { return nil }
+            return ComposeSelectedMedia(
+                id: UUID(uuidString: reference.id) ?? UUID(),
+                image: image,
+                localURL: URL(fileURLWithPath: path),
+                mimeType: reference.mimeType ?? "image/jpeg",
                 altText: reference.altText
             )
         }
@@ -561,15 +700,69 @@ struct ComposeSheetView: View {
         savedDatabaseDrafts = records.map(ComposeDraft.init(record:))
     }
 
-    private static func placeholderDraftImage() -> UIImage {
-        let size = CGSize(width: 180, height: 180)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { context in
-            UIColor.systemPurple.setFill()
-            context.fill(CGRect(origin: .zero, size: size))
-            UIColor.white.withAlphaComponent(0.9).setFill()
-            UIBezierPath(ovalIn: CGRect(x: 62, y: 62, width: 56, height: 56)).fill()
+    private func selectAccount(_ pubkey: String) {
+        guard pubkey != accountID else {
+            isUserSwitcherPresented = false
+            return
+        }
+        autosaveCurrentDraft()
+        if let accountID, let draftID = feature.activeDraftID {
+            pendingDraftTransfer = ComposeDraftTransfer(
+                sourceAccountID: accountID,
+                draftID: draftID
+            )
+        }
+        onSelectAccount(pubkey)
+        withAnimation(.spring(duration: AstrenzaMotion.relaxed, bounce: 0.14)) {
+            isUserSwitcherPresented = false
         }
     }
 
+    private func transferDraftIfNeeded(to newAccountID: String?) {
+        guard let transfer = pendingDraftTransfer,
+              let newAccountID,
+              newAccountID != transfer.sourceAccountID,
+              let eventStore
+        else { return }
+        feature.activeDraftID = transfer.draftID
+        saveDatabaseDraft()
+        try? eventStore.deleteDraft(
+            accountID: transfer.sourceAccountID,
+            draftID: transfer.draftID
+        )
+        pendingDraftTransfer = nil
+    }
+
+}
+
+private struct ComposeDraftTransfer: Equatable {
+    let sourceAccountID: String
+    let draftID: String
+}
+
+private extension ComposeContext {
+    var draftContext: NostrDraftContext {
+        switch self {
+        case .post:
+            .post
+        case .reply(let context):
+            .reply(
+                root: context.root.draftReference,
+                parent: context.parent.draftReference,
+                recipientPubkeys: context.recipientPubkeys
+            )
+        case .quote(let context):
+            .quote(target: context.target.draftReference)
+        }
+    }
+}
+
+private extension ComposeEventReference {
+    var draftReference: NostrDraftEventReference {
+        NostrDraftEventReference(
+            eventID: eventID,
+            relayHint: relayHint,
+            pubkey: pubkey
+        )
+    }
 }

@@ -1660,9 +1660,73 @@ struct NostrCorePackageTests {
             ["e", parent.eventID, "wss://parent.example", "reply"],
             ["p", parent.pubkey!]
         ])
+        let selfReply = NostrPublishInput.reply(
+            content: "reply",
+            root: root,
+            parent: NostrReplyReference(
+                eventID: parent.eventID,
+                pubkey: pubkey
+            ),
+            tags: [["p", pubkey]]
+        ).unsignedEvent(pubkey: pubkey, createdAt: 11)
+        #expect(!selfReply.tags.contains(["p", pubkey]))
         #expect(deletion.kind == 5)
         #expect(deletion.tags == [["e", root.eventID]])
         #expect(deletion.content == "mistake")
+    }
+
+    @Test("Blossom upload signs BUD-11 authorization and validates the descriptor")
+    func blossomUploadClient() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BlossomURLProtocolStub.self]
+        let session = URLSession(configuration: configuration)
+        let signer = FakeNostrSigner()
+        let accountID = String(repeating: "a", count: 64)
+        let body = Data("image bytes".utf8)
+        let hash = SHA256.hash(data: body)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        BlossomURLProtocolStub.requestHandler = { request in
+            #expect(request.url?.absoluteString == "https://media.example/upload")
+            #expect(request.httpMethod == "PUT")
+            #expect(request.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
+            #expect(request.value(forHTTPHeaderField: "X-SHA-256") == hash)
+            #expect(request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Nostr ") == true)
+            let descriptor = NostrUploadedBlob(
+                url: URL(string: "https://media.example/\(hash).jpg")!,
+                sha256: hash,
+                size: body.count,
+                type: "image/jpeg",
+                uploaded: 1_000
+            )
+            return (
+                httpResponse(url: request.url, statusCode: 200),
+                try JSONEncoder().encode(descriptor)
+            )
+        }
+        defer {
+            BlossomURLProtocolStub.requestHandler = nil
+            session.invalidateAndCancel()
+        }
+
+        let result = try await NostrBlossomUploadClient(urlSession: session).upload(
+            data: body,
+            mimeType: "image/jpeg",
+            serverURL: URL(string: "https://media.example")!,
+            accountID: accountID,
+            signer: signer,
+            now: 1_000
+        )
+
+        #expect(result.sha256 == hash)
+        let signedEvents = await signer.signedEvents()
+        #expect(signedEvents.count == 1)
+        let signedEvent = try #require(signedEvents.first)
+        #expect(signedEvent.kind == 24_242)
+        #expect(signedEvent.tags.contains(["t", "upload"]))
+        #expect(signedEvent.tags.contains(["x", hash]))
+        #expect(signedEvent.tags.contains(["expiration", "1300"]))
+        #expect(signedEvent.tags.contains(["server", "media.example"]))
     }
 
     @Test("Nostr publisher signs and enqueues outbox records")
@@ -5153,6 +5217,35 @@ struct NostrCorePackageTests {
         #expect(components.first as? String == "REQ")
         return try #require(components.dropFirst().first as? String)
     }
+}
+
+private final class BlossomURLProtocolStub: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "media.example"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let handler = Self.requestHandler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 private actor LockedCounter {

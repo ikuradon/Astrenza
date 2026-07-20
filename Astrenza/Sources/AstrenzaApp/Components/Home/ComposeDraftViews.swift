@@ -5,6 +5,8 @@ struct ComposeDraft: Identifiable, Equatable {
     let id: String
     let text: String
     let contentWarning: String?
+    let context: ComposeContext
+    let tags: [[String]]
     let mediaCount: Int
     let mediaReferences: [NostrDraftMediaReference]
 
@@ -12,12 +14,16 @@ struct ComposeDraft: Identifiable, Equatable {
         id: String,
         text: String,
         contentWarning: String? = nil,
+        context: ComposeContext = .post,
+        tags: [[String]] = [],
         mediaCount: Int,
         mediaReferences: [NostrDraftMediaReference] = []
     ) {
         self.id = id
         self.text = text
         self.contentWarning = contentWarning
+        self.context = context
+        self.tags = tags
         self.mediaCount = mediaCount
         self.mediaReferences = mediaReferences
     }
@@ -27,8 +33,39 @@ struct ComposeDraft: Identifiable, Equatable {
             id: record.draftID,
             text: record.text,
             contentWarning: record.contentWarning,
+            context: ComposeContext(draftContext: record.context),
+            tags: record.tags,
             mediaCount: record.media.count,
             mediaReferences: record.media
+        )
+    }
+}
+
+private extension ComposeContext {
+    init(draftContext: NostrDraftContext) {
+        switch draftContext {
+        case .post:
+            self = .post
+        case .reply(let root, let parent, let recipientPubkeys):
+            self = .reply(ComposeReplyContext(
+                root: ComposeEventReference(draftReference: root),
+                parent: ComposeEventReference(draftReference: parent),
+                recipientPubkeys: recipientPubkeys
+            ))
+        case .quote(let target):
+            self = .quote(ComposeQuoteContext(
+                target: ComposeEventReference(draftReference: target)
+            ))
+        }
+    }
+}
+
+private extension ComposeEventReference {
+    init(draftReference: NostrDraftEventReference) {
+        self.init(
+            eventID: draftReference.eventID,
+            relayHint: draftReference.relayHint,
+            pubkey: draftReference.pubkey
         )
     }
 }

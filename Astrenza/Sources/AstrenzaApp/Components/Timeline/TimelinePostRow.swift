@@ -99,7 +99,8 @@ struct TimelinePostRow: View {
                 activeSystemName: "bubble.left.fill",
                 isActive: post.actionState.didReply,
                 accessibilityLabel: "Reply",
-                accessibilityIdentifier: "timeline.action.reply.\(post.id)"
+                accessibilityIdentifier: "timeline.action.reply.\(post.id)",
+                action: { onReplyPost(post) }
             )
             TimelinePostActionButton(
                 inactiveSystemName: "arrow.triangle.2.circlepath",
@@ -148,7 +149,9 @@ private extension TimelinePostRow {
             onOpenPost(post)
         case .more(let choice):
             onPostActionChoice(post, choice)
-        case .repost, .favorite:
+        case .repost(.quotedRepost):
+            onPostActionChoice(post, .quotedRepost)
+        case .repost(.repost), .favorite:
             break
         }
     }
@@ -261,7 +264,10 @@ private extension TimelinePostRow {
         case .reply:
             onReplyPost(post)
             return false
-        case .favorite, .repost, .quote, .bookmark, .openLink, .copyLink, .copyPost, .sharePost, .readLater, .translate:
+        case .quote:
+            onPostActionChoice(post, .quotedRepost)
+            return false
+        case .favorite, .repost, .bookmark, .openLink, .copyLink, .copyPost, .sharePost, .readLater, .translate:
             return true
         case .noAction:
             return true

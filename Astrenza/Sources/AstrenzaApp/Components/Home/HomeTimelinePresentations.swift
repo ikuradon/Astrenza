@@ -4,7 +4,7 @@ import SwiftUI
 struct HomeTimelinePresentationActions {
     let onSelectAccount: (String) -> Void
     let onRemoveAccount: (String) -> Void
-    let onComposeSubmit: ((ComposeSubmitRequest) async -> Bool)?
+    let onComposeSubmit: ComposeFeatureModel.SubmitHandler?
 }
 
 struct HomeTimelinePresentationModifier: ViewModifier {
@@ -70,11 +70,13 @@ struct HomeTimelinePresentationModifier: ViewModifier {
 
     private var composerSheet: some View {
         ComposeSheetView(
-            mode: presentation.composeSheetMode,
+            context: presentation.composeContext,
             isSubmitAvailable: isComposeSubmitAvailable,
             onSubmit: actions.onComposeSubmit,
             accountID: accountID,
-            eventStore: eventStore
+            eventStore: eventStore,
+            accounts: accountSummaries,
+            onSelectAccount: actions.onSelectAccount
         )
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)

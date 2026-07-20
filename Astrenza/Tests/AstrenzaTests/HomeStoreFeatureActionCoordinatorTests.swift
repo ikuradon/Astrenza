@@ -52,12 +52,12 @@ struct HomeStoreFeatureActionCoordinatorTests {
         let fixture = StoreFeatureActionCoordinatorFixture()
         let signer = StoreFeatureActionSigner()
 
-        try await fixture.coordinator.enqueuePublish(
+        let didPublish = try await fixture.coordinator.enqueuePublish(
             fixture.publishInput,
             signer: signer
         )
         fixture.accountSource.accountValue = nil
-        try await fixture.coordinator.enqueuePublish(
+        let didPublishWithoutAccount = try await fixture.coordinator.enqueuePublish(
             fixture.publishInput,
             signer: signer
         )
@@ -81,10 +81,13 @@ struct HomeStoreFeatureActionCoordinatorTests {
         let unavailable = StoreFeatureActionCoordinatorFixture(
             hasPublish: false
         )
-        try await unavailable.coordinator.enqueuePublish(
+        let didPublishWithoutCapability = try await unavailable.coordinator.enqueuePublish(
             unavailable.publishInput,
             signer: signer
         )
+        #expect(didPublish)
+        #expect(!didPublishWithoutAccount)
+        #expect(!didPublishWithoutCapability)
         #expect(unavailable.accountSource.readCount == 1)
         #expect(unavailable.contexts.reads.isEmpty)
         #expect(unavailable.publish.calls.isEmpty)

@@ -4,6 +4,7 @@ import SwiftUI
 struct ComposeNavigationBar: View {
     let mode: ComposeSheetMode
     let canSubmit: Bool
+    let submissionState: ComposeSubmissionState
     let accent: Color
     let onClose: () -> Void
     let onSubmit: () -> Void
@@ -21,10 +22,17 @@ struct ComposeNavigationBar: View {
 
                 Spacer()
 
-                Button(mode.actionTitle, action: onSubmit)
-                    .font(.astrenza(.point18, weight: .heavy, design: .rounded))
-                    .foregroundStyle(canSubmit ? accent : Color.secondary.opacity(0.55))
-                    .disabled(!canSubmit)
+                if submissionState.isBusy {
+                    ProgressView()
+                        .tint(accent)
+                        .frame(minWidth: 50)
+                        .accessibilityLabel("Submitting post")
+                } else {
+                    Button(mode.actionTitle, action: onSubmit)
+                        .font(.astrenza(.point18, weight: .heavy, design: .rounded))
+                        .foregroundStyle(canSubmit ? accent : Color.secondary.opacity(0.55))
+                        .disabled(!canSubmit)
+                }
             }
         }
         .padding(.horizontal, AstrenzaSpacing.point20)

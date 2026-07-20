@@ -64,23 +64,34 @@ final class HomeTimelinePublishInteractionWorkflow {
     @discardableResult
     func enqueue(
         input: NostrPublishInput,
+        taggedUserReadRelays: [String] = [],
         signer: any NostrEventSigning,
-        context: HomeTimelinePublishInteractionContext
+        context: HomeTimelinePublishInteractionContext,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void = { _ in }
     ) async throws -> Bool {
         try await publish.enqueue(
             HomeTimelinePublishRequest(
                 input: input,
                 account: context.state.account,
                 accountWriteRelays: context.state.accountWriteRelays,
+                taggedUserReadRelays: taggedUserReadRelays,
                 fallbackRelays: context.state.fallbackRelays
             ),
             signer: signer,
-            effects: publishEffects(for: context.effects)
+            effects: publishEffects(
+                for: context.effects,
+                reportProgress: reportProgress
+            )
         )
     }
 
     private func publishEffects(
-        for effects: HomeTimelinePublishInteractionEffects
+        for effects: HomeTimelinePublishInteractionEffects,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void
     ) -> HomeTimelinePublishEffects {
         HomeTimelinePublishEffects(
             currentAccountID: effects.environment.currentAccountID,
@@ -98,7 +109,8 @@ final class HomeTimelinePublishInteractionWorkflow {
             },
             setPhase: { phase in
                 effects.apply(.setPhase(phase))
-            }
+            },
+            reportProgress: reportProgress
         )
     }
 }

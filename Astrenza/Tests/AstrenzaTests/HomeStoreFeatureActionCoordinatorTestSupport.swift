@@ -64,9 +64,14 @@ final class StoreFeatureActionPublishSpy: HomeStorePublishing {
     @discardableResult
     func enqueue(
         input: NostrPublishInput,
+        taggedUserReadRelays: [String],
         signer: any NostrEventSigning,
-        context: HomeTimelinePublishInteractionContext
+        context: HomeTimelinePublishInteractionContext,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void
     ) async throws -> Bool {
+        _ = (taggedUserReadRelays, reportProgress)
         calls.append(Call(
             input: input,
             state: context.state,

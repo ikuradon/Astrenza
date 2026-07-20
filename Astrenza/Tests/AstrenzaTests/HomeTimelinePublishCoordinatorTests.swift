@@ -171,7 +171,8 @@ struct HomeTimelinePublishCoordinatorTests {
         await signer.waitUntilSigningStarts()
         store.start(account: secondAccount)
         await signer.resume()
-        try await publishTask.value
+        let didPublish = try await publishTask.value
+        #expect(!didPublish)
 
         #expect(try eventStore.outboxEvents(accountID: firstAccount.pubkey).isEmpty)
         #expect(try eventStore.outboxEvents(accountID: secondAccount.pubkey).isEmpty)

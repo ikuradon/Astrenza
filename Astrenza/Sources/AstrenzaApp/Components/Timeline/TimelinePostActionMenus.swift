@@ -25,6 +25,7 @@ enum PostActionChoice: TimelinePostActionMenuChoice {
     case copyLink
     case shareLink
     case viewDetails
+    case quotedRepost
 
     var title: String {
         switch self {
@@ -42,6 +43,8 @@ enum PostActionChoice: TimelinePostActionMenuChoice {
             "Share Link"
         case .viewDetails:
             "View Details"
+        case .quotedRepost:
+            "Quoted Repost"
         }
     }
 
@@ -61,6 +64,8 @@ enum PostActionChoice: TimelinePostActionMenuChoice {
             "square.and.arrow.up"
         case .viewDetails:
             "info.circle"
+        case .quotedRepost:
+            "quote.bubble"
         }
     }
 

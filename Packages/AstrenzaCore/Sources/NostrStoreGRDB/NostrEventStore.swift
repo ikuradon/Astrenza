@@ -2583,29 +2583,31 @@ public final class NostrEventStore: Sendable {
     }
 
     public func saveDraft(_ draft: NostrDraftRecord) throws {
+        let contextData = try encoder.encode(draft.context)
+        let tagsData = try encoder.encode(draft.tags)
         let mediaData = try encoder.encode(draft.media)
         try database.write { db in
             try db.execute(
                 sql: """
                 INSERT INTO drafts (
-                    draft_id, account_id, kind, parent_event_id, text, content_warning, media_json, updated_at
+                    account_id, draft_id, context_json, text, content_warning,
+                    tags_json, media_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(draft_id) DO UPDATE SET
-                    account_id = excluded.account_id,
-                    kind = excluded.kind,
-                    parent_event_id = excluded.parent_event_id,
+                ON CONFLICT(account_id, draft_id) DO UPDATE SET
+                    context_json = excluded.context_json,
                     text = excluded.text,
                     content_warning = excluded.content_warning,
+                    tags_json = excluded.tags_json,
                     media_json = excluded.media_json,
                     updated_at = excluded.updated_at
                 """,
                 arguments: [
-                    draft.draftID,
                     draft.accountID,
-                    draft.kind,
-                    draft.parentEventID,
+                    draft.draftID,
+                    contextData,
                     draft.text,
                     draft.contentWarning,
+                    tagsData,
                     mediaData,
                     draft.updatedAt
                 ]
@@ -2618,8 +2620,8 @@ public final class NostrEventStore: Sendable {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT draft_id, account_id, kind, parent_event_id, text,
-                    content_warning, media_json, updated_at
+                SELECT account_id, draft_id, context_json, text,
+                    content_warning, tags_json, media_json, updated_at
                 FROM drafts
                 WHERE account_id = ?
                 ORDER BY updated_at DESC, draft_id DESC
@@ -3287,6 +3289,26 @@ public final class NostrEventStore: Sendable {
             }
 
             try db.create(index: "drafts_account_updated", on: "drafts", columns: ["account_id", "updated_at"], ifNotExists: true)
+        }
+
+        migrator.registerMigration("replaceComposeDraftsV2") { db in
+            try db.execute(sql: "DROP TABLE IF EXISTS drafts")
+            try db.create(table: "drafts") { table in
+                table.column("account_id", .text).notNull()
+                table.column("draft_id", .text).notNull()
+                table.column("context_json", .blob).notNull()
+                table.column("text", .text).notNull()
+                table.column("content_warning", .text)
+                table.column("tags_json", .blob).notNull()
+                table.column("media_json", .blob).notNull()
+                table.column("updated_at", .integer).notNull()
+                table.primaryKey(["account_id", "draft_id"])
+            }
+            try db.create(
+                index: "drafts_account_updated",
+                on: "drafts",
+                columns: ["account_id", "updated_at"]
+            )
         }
 
         migrator.registerMigration("addLocalFiltersAndBookmarks") { db in
@@ -6038,14 +6060,16 @@ public final class NostrEventStore: Sendable {
     }
 
     private func decodeDraft(_ row: Row) throws -> NostrDraftRecord {
+        let contextData: Data = row["context_json"]
+        let tagsData: Data = row["tags_json"]
         let mediaData: Data = row["media_json"]
         return NostrDraftRecord(
             draftID: row["draft_id"],
             accountID: row["account_id"],
-            kind: row["kind"],
-            parentEventID: row["parent_event_id"],
+            context: try decoder.decode(NostrDraftContext.self, from: contextData),
             text: row["text"],
             contentWarning: row["content_warning"],
+            tags: try decoder.decode([[String]].self, from: tagsData),
             media: try decoder.decode([NostrDraftMediaReference].self, from: mediaData),
             updatedAt: row["updated_at"]
         )

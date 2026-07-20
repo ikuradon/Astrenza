@@ -6,6 +6,15 @@ struct HomeTimelineNavigationState {
         !timelinePath.isEmpty || !profilePath.isEmpty
     }
 
+    var activePost: TimelinePost? {
+        let route = profilePath.last ?? timelinePath.last
+        switch route {
+        case .post(let route): return route.post
+        case .profile(let route): return route.post
+        case nil: return nil
+        }
+    }
+
     mutating func openPost(
         _ post: TimelinePost,
         on stack: HomeTimelineNavigationStack

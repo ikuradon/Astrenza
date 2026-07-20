@@ -5,13 +5,17 @@ struct HomeTimelinePresentationState {
     var isSettingsPresented = false
     var isFiltersSettingsPresented = false
     var isRelayStatusPresented = false
-    var composeSheetMode: ComposeSheetMode = .post
+    var composeContext: ComposeContext = .post
     var fullscreenMedia: TimelineFullscreenMediaRequest?
     var browserDestination: TimelineBrowserDestination?
 
+    var composeSheetMode: ComposeSheetMode {
+        composeContext.mode
+    }
+
     @discardableResult
     mutating func prepareComposer(
-        mode: ComposeSheetMode,
+        context: ComposeContext,
         isInitialPresentationReady: Bool
     ) -> Bool {
         guard isInitialPresentationReady,
@@ -20,7 +24,7 @@ struct HomeTimelinePresentationState {
               !isFiltersSettingsPresented
         else { return false }
 
-        composeSheetMode = mode
+        composeContext = context
         return true
     }
 

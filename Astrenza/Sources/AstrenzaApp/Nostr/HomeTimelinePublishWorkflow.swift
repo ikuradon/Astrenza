@@ -6,6 +6,7 @@ protocol HomeTimelinePublishing: Sendable {
         _ input: NostrPublishInput,
         accountID: String,
         accountWriteRelays: [String],
+        taggedUserReadRelays: [String],
         fallbackRelays: [String],
         signer: any NostrEventSigning
     ) async throws -> HomeTimelinePreparedPublish
@@ -21,6 +22,7 @@ extension HomeTimelinePublishCoordinator: HomeTimelinePublishing {
         _ input: NostrPublishInput,
         accountID: String,
         accountWriteRelays: [String],
+        taggedUserReadRelays: [String],
         fallbackRelays: [String],
         signer: any NostrEventSigning
     ) async throws -> HomeTimelinePreparedPublish {
@@ -28,6 +30,7 @@ extension HomeTimelinePublishCoordinator: HomeTimelinePublishing {
             input,
             accountID: accountID,
             accountWriteRelays: accountWriteRelays,
+            taggedUserReadRelays: taggedUserReadRelays,
             fallbackRelays: fallbackRelays,
             signer: signer
         )
@@ -82,7 +85,28 @@ struct HomeTimelinePublishRequest: Equatable, Sendable {
     let input: NostrPublishInput
     let account: NostrAccount
     let accountWriteRelays: [String]
+    var taggedUserReadRelays: [String] = []
     let fallbackRelays: [String]
+
+    init(
+        input: NostrPublishInput,
+        account: NostrAccount,
+        accountWriteRelays: [String],
+        taggedUserReadRelays: [String] = [],
+        fallbackRelays: [String]
+    ) {
+        self.input = input
+        self.account = account
+        self.accountWriteRelays = accountWriteRelays
+        self.taggedUserReadRelays = taggedUserReadRelays
+        self.fallbackRelays = fallbackRelays
+    }
+}
+
+enum HomeTimelinePublishStage: Equatable, Sendable {
+    case signing
+    case savingToOutbox
+    case queued(eventID: String)
 }
 
 struct HomeTimelinePublishEffects: Sendable {
@@ -98,6 +122,9 @@ struct HomeTimelinePublishEffects: Sendable {
     typealias PersistenceEffect = @MainActor @Sendable (
         _ account: NostrAccount
     ) async -> Void
+    typealias ProgressEffect = @MainActor @Sendable (
+        _ stage: HomeTimelinePublishStage
+    ) -> Void
 
     let currentAccountID: AccountIDProvider
     let applyContentSnapshot: ContentEffect
@@ -105,6 +132,25 @@ struct HomeTimelinePublishEffects: Sendable {
     let materializeEntries: VoidEffect
     let persistDatabase: PersistenceEffect
     let setPhase: PhaseEffect
+    var reportProgress: ProgressEffect = { _ in }
+
+    init(
+        currentAccountID: @escaping AccountIDProvider,
+        applyContentSnapshot: @escaping ContentEffect,
+        reloadNewestProjectionWindow: @escaping AccountEffect,
+        materializeEntries: @escaping VoidEffect,
+        persistDatabase: @escaping PersistenceEffect,
+        setPhase: @escaping PhaseEffect,
+        reportProgress: @escaping ProgressEffect = { _ in }
+    ) {
+        self.currentAccountID = currentAccountID
+        self.applyContentSnapshot = applyContentSnapshot
+        self.reloadNewestProjectionWindow = reloadNewestProjectionWindow
+        self.materializeEntries = materializeEntries
+        self.persistDatabase = persistDatabase
+        self.setPhase = setPhase
+        self.reportProgress = reportProgress
+    }
 }
 
 @MainActor
@@ -132,10 +178,12 @@ final class HomeTimelinePublishWorkflow {
         signer: any NostrEventSigning,
         effects: HomeTimelinePublishEffects
     ) async throws -> Bool {
+        effects.reportProgress(.signing)
         let publish = try await publisher.preparePublish(
             request.input,
             accountID: request.account.pubkey,
             accountWriteRelays: request.accountWriteRelays,
+            taggedUserReadRelays: request.taggedUserReadRelays,
             fallbackRelays: request.fallbackRelays,
             signer: signer
         )
@@ -152,6 +200,7 @@ final class HomeTimelinePublishWorkflow {
         guard effects.currentAccountID() == publish.accountID else {
             return false
         }
+        effects.reportProgress(.savingToOutbox)
         let event = try publisher.persistPublish(
             publish,
             feedDefinition: projectionManager.definition
@@ -165,6 +214,7 @@ final class HomeTimelinePublishWorkflow {
         await effects.persistDatabase(request.account)
         effects.setPhase(.loaded)
         outbox.requestImmediateDrain()
+        effects.reportProgress(.queued(eventID: event.id))
         return true
     }
 }

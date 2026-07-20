@@ -39,10 +39,10 @@ struct HomeTimelineView: View {
         navigation.isPresentingDetail
     }
 
-    private var composeSubmitHandler: ((ComposeSubmitRequest) async -> Bool)? {
+    private var composeSubmitHandler: ComposeFeatureModel.SubmitHandler? {
         guard sessionStore.account != nil else { return nil }
-        return { request in
-            await submitCompose(request)
+        return { request, onProgress in
+            await submitCompose(request, onProgress: onProgress)
         }
     }
 
@@ -90,7 +90,8 @@ struct HomeTimelineView: View {
             actions: liveTimelineStore
         )
         self.userActions = HomeTimelineUserActionCoordinator(
-            actions: liveTimelineStore
+            actions: liveTimelineStore,
+            eventStore: liveTimelineStore.presentationEventStore
         )
         self.viewportStoreSynchronizer = HomeTimelineViewportStoreSynchronizer(
             store: liveTimelineStore
@@ -144,7 +145,10 @@ struct HomeTimelineView: View {
             )
 
             if isPostDetailPresented {
-                HomeTimelineReplyButton(action: presentReplyComposer)
+                HomeTimelineReplyButton {
+                    guard let post = navigation.activePost else { return }
+                    presentReplyComposer(post)
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, AstrenzaSpacing.point18)
                     .padding(.bottom, AstrenzaSpacing.point24)
@@ -222,9 +226,7 @@ private extension HomeTimelineView {
                 onEmptyStateSecondaryAction: handleTimelineEmptyStateSecondaryAction,
                 onOpenPost: openPost,
                 onOpenProfile: openProfile,
-                onReplyPost: { _ in
-                    presentReplyComposer()
-                },
+                onReplyPost: presentReplyComposer,
                 onOpenMedia: openMedia,
                 onOpenURL: openURL,
                 onPostActionChoice: handlePostActionChoice,
@@ -264,9 +266,7 @@ private extension HomeTimelineView {
                 swipeSettings: swipeSettings,
                 onOpenPost: openProfilePost,
                 onOpenProfile: openProfileFromProfile,
-                onReplyPost: { _ in
-                    presentReplyComposer()
-                },
+                onReplyPost: presentReplyComposer,
                 onOpenMedia: openMedia,
                 onOpenURL: openURL
             )
@@ -433,11 +433,14 @@ private extension HomeTimelineView {
     }
 
     func presentComposer() {
-        presentComposer(mode: .post)
+        presentComposer(context: .post)
     }
 
-    func presentReplyComposer() {
-        presentComposer(mode: .reply)
+    func presentReplyComposer(_ post: TimelinePost) {
+        presentComposer(context: ComposeContextFactory.reply(
+            to: post,
+            eventStore: liveTimelineStore.presentationEventStore
+        ))
     }
 
     func presentSettings() {
@@ -503,17 +506,34 @@ private extension HomeTimelineView {
 
     func handlePostActionChoice(_ post: TimelinePost, choice: PostActionChoice) {
         guard sessionStore.account != nil else { return }
+        if choice == .quotedRepost {
+            presentComposer(context: ComposeContextFactory.quote(
+                post,
+                eventStore: liveTimelineStore.presentationEventStore
+            ))
+            return
+        }
         userActions.perform(choice, on: post)
     }
 
-    func submitCompose(_ request: ComposeSubmitRequest) async -> Bool {
-        await userActions.submit(request, signer: sessionStore.signer)
+    func submitCompose(
+        _ request: ComposeSubmitRequest,
+        onProgress: @escaping @MainActor @Sendable (
+            ComposeSubmissionState
+        ) -> Void
+    ) async -> Bool {
+        await userActions.submit(
+            request,
+            accountID: sessionStore.account?.pubkey,
+            signer: sessionStore.signer,
+            onProgress: onProgress
+        )
     }
 
-    func presentComposer(mode: ComposeSheetMode) {
+    func presentComposer(context: ComposeContext) {
         dismissFloatingMenus()
         guard presentation.prepareComposer(
-            mode: mode,
+            context: context,
             isInitialPresentationReady: didCompleteInitialAppearance
         ) else { return }
         DispatchQueue.main.async {

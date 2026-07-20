@@ -23,6 +23,7 @@ struct HomeTimelinePublishCoordinator: Sendable {
         _ input: NostrPublishInput,
         accountID: String,
         accountWriteRelays: [String],
+        taggedUserReadRelays: [String] = [],
         fallbackRelays: [String],
         signer: any NostrEventSigning,
         createdAt: Int = Int(Date().timeIntervalSince1970)
@@ -31,7 +32,7 @@ struct HomeTimelinePublishCoordinator: Sendable {
         let signedEvent = try await signer.sign(unsignedEvent)
         let destinationRelayURLs = NostrPublishDestinationResolver.relayDestinations(
             accountWriteRelays: accountWriteRelays,
-            taggedUserReadRelays: [],
+            taggedUserReadRelays: taggedUserReadRelays,
             fallbackRelays: fallbackRelays
         )
         guard !destinationRelayURLs.isEmpty else {

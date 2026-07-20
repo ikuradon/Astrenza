@@ -117,6 +117,10 @@ enum HomeTimelineStoreFactory {
         return NostrHomeTimelineStore(
             composition: HomeStoreComposition.make(
                 components: components
+            ),
+            blossomServerResolver: NostrBlossomServerResolver(
+                eventStore: eventStore,
+                relayClient: resolvedTimelineLoader.relayClient
             )
         )
     }

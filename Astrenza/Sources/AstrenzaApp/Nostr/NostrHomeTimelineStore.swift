@@ -1,17 +1,23 @@
 import AstrenzaCore
+import Foundation
 
 @MainActor
 final class NostrHomeTimelineStore {
     typealias Phase = NostrHomeTimelinePhase
 
     private let composition: HomeStoreComposition
+    private let blossomServerResolver: NostrBlossomServerResolver?
 
     var presentationEventStore: NostrEventStore? {
         composition.presentation.presentationEventStore
     }
 
-    init(composition: HomeStoreComposition) {
+    init(
+        composition: HomeStoreComposition,
+        blossomServerResolver: NostrBlossomServerResolver? = nil
+    ) {
         self.composition = composition
+        self.blossomServerResolver = blossomServerResolver
     }
 }
 
@@ -77,11 +83,33 @@ extension NostrHomeTimelineStore {
         )
     }
 
-    func enqueuePublish(_ input: NostrPublishInput, signer: any NostrEventSigning) async throws {
+    func enqueuePublish(
+        _ input: NostrPublishInput,
+        taggedUserReadRelays: [String] = [],
+        signer: any NostrEventSigning,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void = { _ in }
+    ) async throws -> Bool {
         try await composition.featureActions.enqueuePublish(
             input,
-            signer: signer
+            taggedUserReadRelays: taggedUserReadRelays,
+            signer: signer,
+            reportProgress: reportProgress
         )
+    }
+
+    func resolveBlossomServers(accountID: String) async -> [URL] {
+        var seen = Set<String>()
+        let relayURLs = (
+            resolvedRelays
+                + (account?.discoveryRelays ?? [])
+                + NostrHomeTimelineLoader.defaultBootstrapRelays
+        ).filter { seen.insert($0).inserted }
+        return await blossomServerResolver?.resolve(
+            accountID: accountID,
+            relayURLs: relayURLs
+        ) ?? []
     }
 
     func muteAuthor(authorPubkey: String) {

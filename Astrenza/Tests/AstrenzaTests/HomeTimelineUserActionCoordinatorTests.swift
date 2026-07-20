@@ -77,6 +77,7 @@ struct HomeTimelineUserActionCoordinatorTests {
 
         let didSubmit = await coordinator.submit(
             request(mode: .post, text: "unsigned"),
+            accountID: Self.accountID,
             signer: nil
         )
 
@@ -92,6 +93,7 @@ struct HomeTimelineUserActionCoordinatorTests {
 
         let didSubmitPost = await coordinator.submit(
             request(mode: .post, text: "plain"),
+            accountID: Self.accountID,
             signer: signer
         )
         let didSubmitReply = await coordinator.submit(
@@ -101,6 +103,7 @@ struct HomeTimelineUserActionCoordinatorTests {
                 isSensitive: true,
                 sensitiveReason: "spoiler"
             ),
+            accountID: Self.accountID,
             signer: signer
         )
 
@@ -108,8 +111,10 @@ struct HomeTimelineUserActionCoordinatorTests {
         #expect(didSubmitReply)
         #expect(actions.publishInputs == [
             .post(content: "plain", tags: []),
-            .post(
+            .reply(
                 content: "sensitive",
+                root: Self.replyReference.nostrReference,
+                parent: Self.replyReference.nostrReference,
                 tags: [["content-warning", "spoiler"]]
             )
         ])
@@ -120,17 +125,22 @@ struct HomeTimelineUserActionCoordinatorTests {
         let actions = UserActionHandlerSpy()
         let coordinator = HomeTimelineUserActionCoordinator(actions: actions)
         let request = ComposeSubmitRequest(
-            mode: .post,
+            context: .post,
             text: "hello :astrenza:",
             isSensitive: false,
             sensitiveReason: "",
             customEmojis: [ComposeCustomEmojiReference(
                 shortcode: "astrenza",
                 url: "https://emoji.example/astrenza.png"
-            )]
+            )],
+            media: []
         )
 
-        #expect(await coordinator.submit(request, signer: UserActionSigner()))
+        #expect(await coordinator.submit(
+            request,
+            accountID: Self.accountID,
+            signer: UserActionSigner()
+        ))
         #expect(actions.publishInputs == [
             .post(
                 content: "hello :astrenza:",
@@ -147,6 +157,7 @@ struct HomeTimelineUserActionCoordinatorTests {
 
         let didSubmit = await coordinator.submit(
             request(mode: .post, text: "failure"),
+            accountID: Self.accountID,
             signer: UserActionSigner()
         )
 
@@ -179,13 +190,27 @@ struct HomeTimelineUserActionCoordinatorTests {
         sensitiveReason: String = ""
     ) -> ComposeSubmitRequest {
         ComposeSubmitRequest(
-            mode: mode,
+            context: mode == .reply
+                ? .reply(ComposeReplyContext(
+                    root: Self.replyReference,
+                    parent: Self.replyReference,
+                    recipientPubkeys: []
+                ))
+                : .post,
             text: text,
             isSensitive: isSensitive,
             sensitiveReason: sensitiveReason,
-            customEmojis: []
+            customEmojis: [],
+            media: []
         )
     }
+
+    private static let accountID = String(repeating: "a", count: 64)
+    private static let replyReference = ComposeEventReference(
+        eventID: String(repeating: "1", count: 64),
+        relayHint: "wss://relay.example",
+        pubkey: String(repeating: "b", count: 64)
+    )
 }
 
 @MainActor
@@ -205,12 +230,24 @@ private final class UserActionHandlerSpy: HomeTimelineUserActionHandling {
 
     func enqueuePublish(
         _ input: NostrPublishInput,
-        signer: any NostrEventSigning
-    ) async throws {
+        taggedUserReadRelays: [String],
+        signer: any NostrEventSigning,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void
+    ) async throws -> Bool {
+        _ = (signer, taggedUserReadRelays)
         publishInputs.append(input)
+        reportProgress(.queued(eventID: "test-event"))
         if shouldFailPublish {
             throw Failure.publish
         }
+        return true
+    }
+
+    func resolveBlossomServers(accountID: String) async -> [URL] {
+        _ = accountID
+        return []
     }
 
     func muteAuthor(authorPubkey: String) {
@@ -219,6 +256,16 @@ private final class UserActionHandlerSpy: HomeTimelineUserActionHandling {
 
     func bookmark(eventID: String) {
         localMutations.append(.bookmark(eventID))
+    }
+}
+
+private extension ComposeEventReference {
+    var nostrReference: NostrReplyReference {
+        NostrReplyReference(
+            eventID: eventID,
+            relayHint: relayHint,
+            pubkey: pubkey
+        )
     }
 }
 

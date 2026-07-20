@@ -78,10 +78,11 @@ final class PublishWorkflowProbe:
         _ input: NostrPublishInput,
         accountID: String,
         accountWriteRelays: [String],
+        taggedUserReadRelays: [String],
         fallbackRelays: [String],
         signer: any NostrEventSigning
     ) async throws -> HomeTimelinePreparedPublish {
-        _ = signer
+        _ = (signer, taggedUserReadRelays)
         events.append(.prepare(
             input: input,
             accountID: accountID,

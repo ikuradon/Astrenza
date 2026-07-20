@@ -13,6 +13,7 @@ final class NostrSessionStore: ObservableObject {
     private let resolver: NostrLoginResolver
     private let accountStorage: NostrSessionAccountStorage
     private let accountSummaryCoordinator: NostrAccountSummaryCoordinator
+    private var signersByPubkey: [String: any NostrEventSigning] = [:]
 
     init(
         resolver: NostrLoginResolver = NostrLoginResolver(),
@@ -59,21 +60,23 @@ final class NostrSessionStore: ObservableObject {
         account = nil
         accounts = []
         signer = nil
+        signersByPubkey = [:]
         accountStorage.clear()
     }
 
     func selectAccount(_ pubkey: String) {
         guard let selected = accounts.first(where: { $0.pubkey == pubkey }) else { return }
         account = selected
-        signer = nil
+        signer = signersByPubkey[pubkey]
         persistAccounts()
     }
 
     func removeAccount(_ pubkey: String) {
         accounts.removeAll { $0.pubkey == pubkey }
+        signersByPubkey.removeValue(forKey: pubkey)
         if account?.pubkey == pubkey {
             account = accounts.first
-            signer = nil
+            signer = account.flatMap { signersByPubkey[$0.pubkey] }
         }
         persistAccounts()
     }
@@ -109,6 +112,9 @@ final class NostrSessionStore: ObservableObject {
         accounts.insert(newAccount, at: 0)
         account = newAccount
         signer = newSigner
+        if let newSigner {
+            signersByPubkey[newAccount.pubkey] = newSigner
+        }
         persistAccounts()
     }
 

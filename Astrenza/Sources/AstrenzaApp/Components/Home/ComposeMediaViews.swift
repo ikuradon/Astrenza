@@ -2,12 +2,50 @@ import SwiftUI
 import UIKit
 
 struct ComposeSelectedMedia: Identifiable, Equatable {
-    let id = UUID()
+    let id: UUID
     let image: UIImage
+    let localURL: URL?
+    let mimeType: String
     var altText: String?
+
+    init(
+        id: UUID = UUID(),
+        image: UIImage,
+        localURL: URL? = nil,
+        mimeType: String = "image/jpeg",
+        altText: String?
+    ) {
+        self.id = id
+        self.image = image
+        self.localURL = localURL
+        self.mimeType = mimeType
+        self.altText = altText
+    }
+
+    var uploadRequest: ComposeMediaUploadRequest? {
+        guard let localURL else { return nil }
+        let pixelSize = image.pixelSize
+        return ComposeMediaUploadRequest(
+            id: id,
+            localURL: localURL,
+            mimeType: mimeType,
+            width: Int(pixelSize.width),
+            height: Int(pixelSize.height),
+            altText: altText
+        )
+    }
 
     static func == (lhs: ComposeSelectedMedia, rhs: ComposeSelectedMedia) -> Bool {
         lhs.id == rhs.id
+    }
+}
+
+private extension UIImage {
+    var pixelSize: CGSize {
+        if let cgImage {
+            return CGSize(width: cgImage.width, height: cgImage.height)
+        }
+        return CGSize(width: size.width * scale, height: size.height * scale)
     }
 }
 
@@ -66,6 +104,78 @@ struct ComposeSelectedMediaStrip: View {
         .frame(height: 104)
     }
 }
+
+struct ComposeMediaPreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let media: ComposeSelectedMedia
+
+    var body: some View {
+        NavigationStack {
+            Image(uiImage: media.image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.astrenzaBackground)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done", action: dismiss.callAsFunction)
+                    }
+                }
+        }
+    }
+}
+
+struct ComposeMediaAltTextEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: UIImage
+    @State private var altText: String
+    let onSave: (String) -> Void
+
+    init(media: ComposeSelectedMedia, onSave: @escaping (String) -> Void) {
+        image = media.image
+        _altText = State(initialValue: media.altText ?? "")
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: AstrenzaSpacing.point16) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 260)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: AstrenzaRadius.point10,
+                        style: .continuous
+                    ))
+
+                TextField("Describe this image", text: $altText, axis: .vertical)
+                    .lineLimit(3...8)
+                    .textFieldStyle(.roundedBorder)
+
+                Spacer(minLength: 0)
+            }
+            .padding(AstrenzaSpacing.point18)
+            .background(Color.astrenzaBackground)
+            .navigationTitle("Image Description")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: dismiss.callAsFunction)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(altText.trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        ))
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 struct ComposeSelectedMediaThumbnail: View {
     let item: ComposeSelectedMedia

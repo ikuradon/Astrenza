@@ -28,8 +28,12 @@ protocol HomeStorePublishing: AnyObject {
     @discardableResult
     func enqueue(
         input: NostrPublishInput,
+        taggedUserReadRelays: [String],
         signer: any NostrEventSigning,
-        context: HomeTimelinePublishInteractionContext
+        context: HomeTimelinePublishInteractionContext,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void
     ) async throws -> Bool
 }
 
@@ -121,15 +125,21 @@ final class HomeStoreFeatureActionCoordinator {
 
     func enqueuePublish(
         _ input: NostrPublishInput,
-        signer: any NostrEventSigning
-    ) async throws {
+        taggedUserReadRelays: [String] = [],
+        signer: any NostrEventSigning,
+        reportProgress: @escaping @MainActor @Sendable (
+            HomeTimelinePublishStage
+        ) -> Void = { _ in }
+    ) async throws -> Bool {
         guard let account = accountSource.currentAccount(),
               let publish
-        else { return }
-        try await publish.enqueue(
+        else { return false }
+        return try await publish.enqueue(
             input: input,
+            taggedUserReadRelays: taggedUserReadRelays,
             signer: signer,
-            context: contexts.publishContext(account: account)
+            context: contexts.publishContext(account: account),
+            reportProgress: reportProgress
         )
     }
 

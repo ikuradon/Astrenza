@@ -3,7 +3,7 @@ import SwiftUI
 struct HomeTimelineNavigationDestinationActions {
     let onOpenPost: (TimelinePost) -> Void
     let onOpenProfile: (TimelinePost) -> Void
-    let onReply: () -> Void
+    let onReply: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
 }
@@ -72,7 +72,7 @@ private struct HomeTimelinePostDestinationView: View {
             replies: projection.replies,
             swipeSettings: swipeSettings,
             onOpenPost: actions.onOpenPost,
-            onReplyPost: { _ in actions.onReply() },
+            onReplyPost: actions.onReply,
             onOpenMedia: actions.onOpenMedia,
             onOpenURL: actions.onOpenURL
         )
@@ -97,7 +97,7 @@ private struct HomeTimelineProfileDestinationView: View {
             swipeSettings: swipeSettings,
             onOpenPost: actions.onOpenPost,
             onOpenProfile: actions.onOpenProfile,
-            onReplyPost: { _ in actions.onReply() },
+            onReplyPost: actions.onReply,
             onOpenMedia: actions.onOpenMedia,
             onOpenURL: actions.onOpenURL
         )
