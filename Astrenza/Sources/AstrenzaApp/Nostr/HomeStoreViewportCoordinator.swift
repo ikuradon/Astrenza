@@ -78,10 +78,17 @@ extension HomeStoreContextCoordinator: HomeStoreViewportContextProviding {}
 
 @MainActor
 final class HomeStoreViewportCoordinator {
+    private struct PendingEventsApplication {
+        let generation: UInt64
+        let task: Task<Bool, Never>
+    }
+
     private let interaction: any HomeStoreViewportInteracting
     private let projection: any HomeStoreProjectionViewportCoordinating
     private let state: any HomeStoreViewportStateSourcing
     private let contexts: any HomeStoreViewportContextProviding
+    private var pendingEventsApplication: PendingEventsApplication?
+    private var pendingEventsApplicationGeneration: UInt64 = 0
 
     init(
         interaction: any HomeStoreViewportInteracting,
@@ -170,7 +177,25 @@ final class HomeStoreViewportCoordinator {
 
     @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        await interaction.applyPendingNewEvents(contexts.viewportContext())
+        if let pendingEventsApplication {
+            return await pendingEventsApplication.task.value
+        }
+
+        pendingEventsApplicationGeneration &+= 1
+        let generation = pendingEventsApplicationGeneration
+        let context = contexts.viewportContext()
+        let task = Task { @MainActor [interaction] in
+            await interaction.applyPendingNewEvents(context)
+        }
+        pendingEventsApplication = PendingEventsApplication(
+            generation: generation,
+            task: task
+        )
+        let result = await task.value
+        if pendingEventsApplication?.generation == generation {
+            pendingEventsApplication = nil
+        }
+        return result
     }
 
     func loadOlder() {

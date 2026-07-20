@@ -34,7 +34,7 @@ struct TimelineFeedView: View {
     let onUnreadPillPlacementChanged: (HomeUnreadPillPlacement) -> Void
     let onLayoutCacheChanged: (TimelineLayoutCache) -> Void
     @State private var pullRefreshPresentation =
-        TimelinePullRefreshPresentation()
+        TimelinePullRefreshPresentation.idle
 
     init(
         posts: [TimelinePost],
@@ -195,8 +195,7 @@ struct TimelineFeedView: View {
             }
 
             TimelinePullRefreshIndicator(
-                isRefreshing: pullRefreshPresentation.isRefreshing,
-                progress: pullRefreshPresentation.progress
+                presentation: pullRefreshPresentation
             )
             .padding(.top, 80)
         }
@@ -245,19 +244,13 @@ struct TimelineFeedView: View {
 }
 
 private struct TimelinePullRefreshIndicator: View {
-    let isRefreshing: Bool
-    let progress: CGFloat
+    let presentation: TimelinePullRefreshPresentation
 
     var body: some View {
-        let visibleProgress = isRefreshing ? 1 : progress
         HStack(spacing: AstrenzaSpacing.point8) {
-            ProgressView(value: isRefreshing ? nil : visibleProgress)
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .tint(Color.astrenzaAccent)
-                .frame(width: 18, height: 18)
+            indicator
 
-            Text(isRefreshing ? "Updating" : "Pull to update")
+            Text(title)
                 .font(.astrenza(.point12, weight: .heavy, design: .rounded))
                 .foregroundStyle(.primary)
         }
@@ -268,12 +261,84 @@ private struct TimelinePullRefreshIndicator: View {
             in: Capsule()
         )
         .scaleEffect(0.92 + visibleProgress * 0.08)
-        .opacity(isRefreshing || progress > 0.08 ? 1 : 0)
+        .opacity(isVisible ? 1 : 0)
         .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHidden(!isVisible)
         .animation(
             .spring(duration: AstrenzaMotion.standard, bounce: 0.12),
-            value: isRefreshing
+            value: animationPhase
         )
-        .animation(.snappy(duration: AstrenzaMotion.instant), value: progress)
+        .animation(.snappy(duration: AstrenzaMotion.instant), value: visibleProgress)
+    }
+
+    @ViewBuilder
+    private var indicator: some View {
+        switch presentation {
+        case .refreshing:
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .tint(Color.astrenzaAccent)
+                .frame(width: 18, height: 18)
+        case .completed(let didUpdate):
+            Image(systemName: didUpdate ? "checkmark" : "checkmark.circle")
+                .font(.astrenza(.point12, weight: .black))
+                .foregroundStyle(Color.astrenzaAccent)
+                .frame(width: 18, height: 18)
+        case .idle, .pulling:
+            ProgressView(value: visibleProgress)
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .tint(Color.astrenzaAccent)
+                .frame(width: 18, height: 18)
+        }
+    }
+
+    private var title: String {
+        switch presentation {
+        case .idle, .pulling:
+            "Pull to update"
+        case .refreshing:
+            "Updating"
+        case .completed(let didUpdate):
+            didUpdate ? "Updated" : "Up to date"
+        }
+    }
+
+    private var visibleProgress: CGFloat {
+        switch presentation {
+        case .idle:
+            0
+        case .pulling(let progress):
+            progress
+        case .refreshing, .completed:
+            1
+        }
+    }
+
+    private var isVisible: Bool {
+        switch presentation {
+        case .idle:
+            false
+        case .pulling(let progress):
+            progress > 0.08
+        case .refreshing, .completed:
+            true
+        }
+    }
+
+    private var animationPhase: Int {
+        switch presentation {
+        case .idle:
+            0
+        case .pulling:
+            1
+        case .refreshing:
+            2
+        case .completed:
+            3
+        }
     }
 }

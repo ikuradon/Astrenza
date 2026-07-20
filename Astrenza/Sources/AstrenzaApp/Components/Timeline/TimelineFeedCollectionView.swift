@@ -1,9 +1,11 @@
 import SwiftUI
 import UIKit
 
-struct TimelinePullRefreshPresentation: Equatable {
-    var isRefreshing = false
-    var progress: CGFloat = 0
+enum TimelinePullRefreshPresentation: Equatable {
+    case idle
+    case pulling(progress: CGFloat)
+    case refreshing
+    case completed(didUpdate: Bool)
 }
 
 @MainActor

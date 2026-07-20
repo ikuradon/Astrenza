@@ -22,6 +22,7 @@ final class StoreViewportInteractionSpy: HomeStoreViewportInteracting {
 
     var applyPendingEventsResult = false
     var clearPendingEventsResult = false
+    var onApplyPendingEvents: (@MainActor () async -> Bool)?
     private(set) var calls: [Call] = []
 
     func setRestoreProjectionAnchor(
@@ -87,6 +88,9 @@ final class StoreViewportInteractionSpy: HomeStoreViewportInteracting {
         _ context: HomeTimelineViewportInteractionContext
     ) async -> Bool {
         calls.append(.applyPendingEvents(accountID(context)))
+        if let onApplyPendingEvents {
+            return await onApplyPendingEvents()
+        }
         return applyPendingEventsResult
     }
 

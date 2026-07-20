@@ -57,6 +57,9 @@ final class TimelineFeedViewController: UIViewController {
     private var isPullRefreshArmed = false
     private var isPullRefreshing = false
     private var pullRefreshProgress: CGFloat = 0
+    private var pullRefreshCompletionResult: Bool?
+    private var pullRefreshTask: Task<Void, Never>?
+    private var pullRefreshFeedbackTask: Task<Void, Never>?
     private var restoreRetryGeneration: UInt64 = 0
     private var missingRestoreAnchorAttempts = 0
     private var measuredRowHeights: [RowMeasurementKey: CGFloat] = [:]
@@ -182,6 +185,8 @@ final class TimelineFeedViewController: UIViewController {
         missingRestoreAnchorAttempts = 0
         saveViewportStateIfPossible(force: true)
         setUserScrollActive(false)
+        resetPullRefreshPresentation()
+        configuration = nil
     }
 
     private func makeDataSource()
@@ -468,6 +473,7 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private func resetForSourceChange() {
+        resetPullRefreshPresentation()
         restoreRetryGeneration &+= 1
         measuredRowHeights = [:]
         projectedRowHeights = [:]
@@ -1123,6 +1129,10 @@ final class TimelineFeedViewController: UIViewController {
 
     private func updatePullRefresh(offset: CGFloat) {
         guard configuration?.onRefresh != nil else { return }
+        guard !isPullRefreshing else {
+            publishPullRefreshPresentation()
+            return
+        }
         let progress = min(
             max(
                 abs(min(offset, 0)) / abs(pullRefreshTriggerOffset),
@@ -1130,9 +1140,7 @@ final class TimelineFeedViewController: UIViewController {
             ),
             1
         )
-        if !isPullRefreshing {
-            pullRefreshProgress = progress
-        }
+        pullRefreshProgress = progress
         if isUserScrollActive && offset <= pullRefreshTriggerOffset {
             isPullRefreshArmed = true
         }
@@ -1153,32 +1161,75 @@ final class TimelineFeedViewController: UIViewController {
         }
 
         isPullRefreshArmed = false
+        pullRefreshFeedbackTask?.cancel()
+        pullRefreshFeedbackTask = nil
+        pullRefreshCompletionResult = nil
         isPullRefreshing = true
         pullRefreshProgress = 1
         pendingRefreshAnchor = captureVisibleAnchor()
         pullRefreshSourceRevision = configuration?.sourceRevision
         publishPullRefreshPresentation()
 
-        Task { @MainActor [weak self] in
-            let expectsSourceChange = await onRefresh()
-            guard let self else { return }
-            if !expectsSourceChange {
+        pullRefreshTask?.cancel()
+        pullRefreshTask = Task { @MainActor [weak self] in
+            let didUpdate = await onRefresh()
+            guard let self, !Task.isCancelled else { return }
+            if !didUpdate {
                 pendingRefreshAnchor = nil
                 pullRefreshSourceRevision = nil
             }
             isPullRefreshing = false
             pullRefreshProgress = 0
+            pullRefreshCompletionResult = didUpdate
             publishPullRefreshPresentation()
+            pullRefreshTask = nil
+            schedulePullRefreshFeedbackDismissal()
         }
     }
 
     private func publishPullRefreshPresentation() {
-        configuration?.onPullRefreshPresentationChanged(
-            TimelinePullRefreshPresentation(
-                isRefreshing: isPullRefreshing,
-                progress: pullRefreshProgress
-            )
-        )
+        let presentation: TimelinePullRefreshPresentation
+        if isPullRefreshing {
+            presentation = .refreshing
+        } else if let pullRefreshCompletionResult {
+            presentation = .completed(didUpdate: pullRefreshCompletionResult)
+        } else if pullRefreshProgress > 0 {
+            presentation = .pulling(progress: pullRefreshProgress)
+        } else {
+            presentation = .idle
+        }
+        configuration?.onPullRefreshPresentationChanged(presentation)
+    }
+
+    private func schedulePullRefreshFeedbackDismissal() {
+        pullRefreshFeedbackTask?.cancel()
+        pullRefreshFeedbackTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard let self, !Task.isCancelled else { return }
+            pullRefreshCompletionResult = nil
+            pullRefreshFeedbackTask = nil
+            publishPullRefreshPresentation()
+        }
+    }
+
+    private func clearPullRefreshCompletion() {
+        guard pullRefreshCompletionResult != nil else { return }
+        pullRefreshFeedbackTask?.cancel()
+        pullRefreshFeedbackTask = nil
+        pullRefreshCompletionResult = nil
+        publishPullRefreshPresentation()
+    }
+
+    private func resetPullRefreshPresentation() {
+        pullRefreshTask?.cancel()
+        pullRefreshFeedbackTask?.cancel()
+        pullRefreshTask = nil
+        pullRefreshFeedbackTask = nil
+        isPullRefreshArmed = false
+        isPullRefreshing = false
+        pullRefreshProgress = 0
+        pullRefreshCompletionResult = nil
+        publishPullRefreshPresentation()
     }
 
     private func setUserScrollActive(_ isActive: Bool) {
@@ -1209,6 +1260,7 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserInteraction = true
+        clearPullRefreshCompletion()
         setUserScrollActive(true)
     }
 
