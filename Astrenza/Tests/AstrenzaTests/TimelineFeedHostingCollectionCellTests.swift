@@ -153,6 +153,68 @@ struct TimelineFeedHostingCollectionCellTests {
     }
 
     @MainActor
+    @Test("A resolved multiline profile about expands the header cell")
+    func resolvedMultilineProfileAboutExpandsHeaderCell() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: profileAboutLeadingContent(
+                    text: "Short profile about",
+                    revision: 1
+                ),
+                metrics: .profile
+            )
+        )
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+        let shortHeaderFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 0, section: 0)
+            )?.frame
+        )
+
+        let multilineAbout = (1 ... 8)
+            .map { "Profile about line \($0) must remain fully visible." }
+            .joined(separator: "\n")
+        controller.apply(
+            makeControllerConfiguration(
+                leadingContent: profileAboutLeadingContent(
+                    text: multilineAbout,
+                    revision: 2
+                ),
+                metrics: .profile
+            )
+        )
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+
+        let expandedHeaderFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 0, section: 0)
+            )?.frame
+        )
+        let postFrame = try #require(
+            collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: 1, section: 0)
+            )?.frame
+        )
+
+        #expect(expandedHeaderFrame.height > shortHeaderFrame.height + 100)
+        #expect(abs(expandedHeaderFrame.maxY - postFrame.minY) <= 0.5)
+    }
+
+    @MainActor
     @Test("Stable layout gives adjacent hosted rows disjoint frames")
     func stableLayoutKeepsAdjacentRowsDisjoint() throws {
         let (collectionView, dataSource) = makeCollectionView(
@@ -851,6 +913,27 @@ struct TimelineFeedHostingCollectionCellTests {
                 Color.clear
                     .frame(height: height)
                     .fixedSize(horizontal: false, vertical: true)
+            )
+        )
+    }
+
+    @MainActor
+    private func profileAboutLeadingContent(
+        text: String,
+        revision: Int
+    ) -> TimelineFeedLeadingContent {
+        TimelineFeedLeadingContent(
+            renderRevision: revision,
+            geometryRevision: revision,
+            rootView: AnyView(
+                VStack(spacing: AstrenzaSpacing.point16) {
+                    ProfileAboutText(text: text)
+                    Color.clear.frame(height: 42)
+                }
+                .padding(.horizontal, AstrenzaSpacing.point18)
+                .padding(.vertical, AstrenzaSpacing.point18)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             )
         )
     }

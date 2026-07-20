@@ -209,12 +209,7 @@ struct UserDetailView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            Text(profile.bio)
-                .font(.astrenza(.point18, weight: .medium))
-                .lineSpacing(3)
-                .foregroundStyle(Color.astrenzaText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            ProfileAboutText(text: profile.bio)
                 .padding(.top, AstrenzaSpacing.point4)
 
             HStack(spacing: AstrenzaSpacing.point10) {
@@ -376,7 +371,6 @@ struct UserDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(
                             maxWidth: .infinity,
-                            maxHeight: .infinity,
                             alignment: .topLeading
                         )
                 )
@@ -492,6 +486,22 @@ struct UserDetailView: View {
         }
 
         return selectedPosts.isEmpty ? posts : selectedPosts
+    }
+}
+
+struct ProfileAboutText: View {
+    let text: String
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.astrenza(.point18, weight: .medium))
+            .lineSpacing(3)
+            .foregroundStyle(Color.astrenzaText)
+            .multilineTextAlignment(.center)
+            .lineLimit(nil)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("profile.about")
     }
 }
 
