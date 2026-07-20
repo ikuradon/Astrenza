@@ -1,6 +1,7 @@
 import NostrHomeFeature
 import NostrProtocol
 import NostrRelay
+import NostrStoreAPI
 import NostrSync
 import Testing
 
@@ -119,6 +120,85 @@ struct NostrHomeFeatureTests {
                 values: [eventID]
             )
         ])
+    }
+
+    @Test("account bootstrap keeps cached kind 3 and kind 10002 when discovery is empty")
+    func accountBootstrapUsesKnownReplaceableState() async throws {
+        let accountPubkey = String(repeating: "3", count: 64)
+        let followedPubkey = String(repeating: "4", count: 64)
+        let readRelay = "wss://known-read.example"
+        let writeRelay = "wss://known-write.example"
+        let relayList = testEvent(
+            idCharacter: "c",
+            pubkey: accountPubkey,
+            createdAt: 200,
+            kind: 10_002,
+            tags: [["r", readRelay, "read"]]
+        )
+        let contacts = testEvent(
+            idCharacter: "d",
+            pubkey: accountPubkey,
+            createdAt: 201,
+            kind: 3,
+            tags: [["p", followedPubkey]]
+        )
+        let followedRelayList = testEvent(
+            idCharacter: "e",
+            pubkey: followedPubkey,
+            createdAt: 202,
+            kind: 10_002,
+            tags: [["r", writeRelay, "write"]]
+        )
+        let knownState = NostrHomeTimelineState(
+            relays: [readRelay],
+            followedPubkeys: [followedPubkey],
+            noteEvents: [],
+            metadataEvents: [],
+            relayListEvent: relayList,
+            contactListEvent: contacts,
+            authorRelayListEvents: [followedRelayList]
+        )
+        let loader = NostrHomeTimelineLoader(
+            relayClient: EmptyBootstrapRelayClient(),
+            bootstrapRelays: ["wss://bootstrap.example"],
+            discoveryPolicy: NostrHomeTimelineDiscoveryPolicy(
+                settlementMilliseconds: 1,
+                absoluteTimeoutMilliseconds: 20
+            )
+        )
+
+        let state = try await loader.bootstrapState(
+            account: NostrAccount(
+                pubkey: accountPubkey,
+                displayIdentifier: "known",
+                readOnly: true
+            ),
+            knownState: knownState
+        )
+
+        #expect(state.relays == [readRelay])
+        #expect(state.followedPubkeys == [followedPubkey])
+        #expect(state.relayListEvent?.id == relayList.id)
+        #expect(state.contactListEvent?.id == contacts.id)
+        #expect(state.authorRelayListEvents.map(\.id) == [followedRelayList.id])
+    }
+}
+
+private struct EmptyBootstrapRelayClient: NostrRelayFetching {
+    func fetch(
+        relayURL: String,
+        request: NostrRelayRequest
+    ) async throws -> [NostrEvent] {
+        []
+    }
+
+    func fetchMissingEventIDs(
+        relayURL: String,
+        filter: NostrRelayFilter,
+        localEvents: [NostrEvent],
+        subscriptionID: String
+    ) async throws -> [String] {
+        []
     }
 }
 

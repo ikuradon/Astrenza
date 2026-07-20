@@ -265,6 +265,7 @@ final class InitialLoadProbe: HomeTimelineInitialLoadRemoteLoading {
 
     func loadInitialState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
@@ -285,6 +286,7 @@ final class InitialLoadProbe: HomeTimelineInitialLoadRemoteLoading {
 
     func loadRuntimeBootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (

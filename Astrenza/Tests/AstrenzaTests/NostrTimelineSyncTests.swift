@@ -177,7 +177,72 @@ struct NostrTimelineSyncTests {
         ])
         #expect(authorsByRelay(in: plan)["wss://author-write.example"] == [outbox])
         #expect(authorsByRelay(in: plan)["wss://hint.example"] == [hinted])
-        #expect(authorsByRelay(in: plan)["wss://own.example"] == [fallback])
+        #expect(authorsByRelay(in: plan)["wss://own.example"] == [
+            outbox,
+            fallback,
+            hinted
+        ].sorted())
+    }
+
+    @Test("Full outbox backward requests use one primary relay per author before hedging")
+    func fullOutboxBackwardPlannerStagesCandidateRelays() throws {
+        let author = String(repeating: "e", count: 64)
+        let account = NostrAccount(
+            pubkey: String(repeating: "a", count: 64),
+            displayIdentifier: "account",
+            readOnly: true
+        )
+        let relayList = NostrEvent(
+            id: "relay-list",
+            pubkey: author,
+            createdAt: 200,
+            kind: 10_002,
+            tags: [["r", "wss://write.example", "write"]],
+            content: "",
+            sig: ""
+        )
+        let policy = NostrSyncPolicy(
+            mode: .fullOutbox,
+            networkType: .wifi,
+            lowPowerMode: false,
+            tapToLoadMedia: false,
+            queueOGPPreviews: true,
+            disableOGPOnCellular: false
+        )
+
+        let plan = try #require(HomeTimelineSyncPlanner().olderNotesPlan(
+            account: account,
+            followedPubkeys: [author],
+            oldestCreatedAt: 500,
+            relayURLs: ["wss://home.example"],
+            contactItems: [
+                NostrContactListItem(
+                    pubkey: author,
+                    relayHints: ["wss://hint.example"]
+                )
+            ],
+            authorRelayListEvents: [relayList],
+            observedRelayURLsByAuthor: [
+                author: ["wss://observed.example"]
+            ],
+            policy: policy,
+            requestID: "staged"
+        ))
+
+        #expect(plan.primaryPackets.count == 1)
+        #expect(plan.primaryPackets[0].relayURLs == ["wss://observed.example"])
+        #expect(plan.primaryPackets[0].filters[0]["authors"] == .strings([author]))
+        #expect(plan.hedgePackets.map(\.relayURLs) == [
+            ["wss://hint.example"],
+            ["wss://home.example"],
+            ["wss://write.example"]
+        ])
+        #expect(plan.hedgePackets.allSatisfy {
+            $0.filters[0]["authors"] == .strings([author])
+        })
+        #expect(Set(plan.primaryPackets.map(\.groupID)).count == 1)
+        #expect(Set(plan.hedgePackets.map(\.groupID)).count == 1)
+        #expect(plan.primaryPackets[0].groupID != plan.hedgePackets[0].groupID)
     }
 
     @Test("NIP-77 client messages encode relay frames")

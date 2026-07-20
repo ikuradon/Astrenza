@@ -1254,6 +1254,47 @@ public final class NostrEventStore: Sendable {
         }
     }
 
+    public func observedRelayURLsByAuthor(
+        authors: Set<String>,
+        limitPerAuthor: Int = 4
+    ) throws -> [String: [String]] {
+        guard !authors.isEmpty, limitPerAuthor > 0 else { return [:] }
+        let normalizedAuthors = Set(authors.map { $0.lowercased() })
+        let sortedAuthors = normalizedAuthors.sorted()
+        let placeholders = Array(
+            repeating: "?",
+            count: sortedAuthors.count
+        ).joined(separator: ", ")
+        var arguments = StatementArguments()
+        for author in sortedAuthors {
+            arguments += [author]
+        }
+
+        return try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT e.pubkey, s.relay_url, MAX(s.last_seen_at) AS last_seen_at
+                FROM event_sources s
+                JOIN events e ON e.event_id = s.event_id
+                WHERE e.pubkey IN (\(placeholders))
+                GROUP BY e.pubkey, s.relay_url
+                ORDER BY e.pubkey ASC, last_seen_at DESC, s.relay_url ASC
+                """,
+                arguments: arguments
+            )
+            var result: [String: [String]] = [:]
+            for row in rows {
+                let author: String = row["pubkey"]
+                guard result[author, default: []].count < limitPerAuthor else {
+                    continue
+                }
+                result[author, default: []].append(row["relay_url"])
+            }
+            return result
+        }
+    }
+
     public func saveTimelineEntries(_ entries: [NostrTimelineEntryRecord]) throws {
         guard !entries.isEmpty else { return }
 

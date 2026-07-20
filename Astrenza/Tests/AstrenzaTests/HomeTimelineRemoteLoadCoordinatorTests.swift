@@ -295,6 +295,7 @@ private struct RemoteStateLoaderStub: HomeTimelineStateLoading {
 
     func bootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
@@ -303,6 +304,7 @@ private struct RemoteStateLoaderStub: HomeTimelineStateLoading {
 
     func initialState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {

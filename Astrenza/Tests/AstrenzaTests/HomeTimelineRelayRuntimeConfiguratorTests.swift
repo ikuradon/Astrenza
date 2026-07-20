@@ -175,7 +175,9 @@ struct HomeTimelineRelayRuntimeConfiguratorTests {
             "wss://author-write.example"
         ])
         #expect(recorder.installAttempts.first?.flatMap(\.relayURLs) == [
-            "wss://author-write.example"
+            "wss://author-write.example",
+            "wss://one.example",
+            "wss://two.example"
         ])
     }
 

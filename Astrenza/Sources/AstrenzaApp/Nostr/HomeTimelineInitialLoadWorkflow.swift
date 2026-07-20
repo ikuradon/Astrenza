@@ -4,6 +4,7 @@ import AstrenzaCore
 protocol HomeTimelineInitialLoadRemoteLoading: Sendable {
     func loadInitialState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
@@ -14,6 +15,7 @@ protocol HomeTimelineInitialLoadRemoteLoading: Sendable {
 
     func loadRuntimeBootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
@@ -26,6 +28,7 @@ protocol HomeTimelineInitialLoadRemoteLoading: Sendable {
 extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoading {
     func loadInitialState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
@@ -34,7 +37,11 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoadin
         didFetch: @escaping @MainActor @Sendable () -> Void
     ) async -> HomeTimelineRemoteLoadOutcome {
         await load(
-            .initial(account: account, policy: policy),
+            .initial(
+                account: account,
+                knownState: knownState,
+                policy: policy
+            ),
             isCurrent: isCurrent,
             didReceiveStage: didReceiveStage,
             didFetch: didFetch
@@ -43,6 +50,7 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoadin
 
     func loadRuntimeBootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         isCurrent: @escaping @MainActor @Sendable () -> Bool,
         didReceiveStage: @escaping @MainActor @Sendable (
@@ -51,7 +59,11 @@ extension HomeTimelineRemoteLoadCoordinator: HomeTimelineInitialLoadRemoteLoadin
         didFetch: @escaping @MainActor @Sendable () -> Void
     ) async -> HomeTimelineRemoteLoadOutcome {
         await load(
-            .runtimeBootstrap(account: account, policy: policy),
+            .runtimeBootstrap(
+                account: account,
+                knownState: knownState,
+                policy: policy
+            ),
             isCurrent: isCurrent,
             didReceiveStage: didReceiveStage,
             didFetch: didFetch
@@ -64,17 +76,20 @@ struct HomeTimelineInitialLoadRequest: Equatable, Sendable {
     let lifecycle: HomeTimelineLifecycleToken
     let hasRelayRuntime: Bool
     let syncPolicy: NostrSyncPolicy
+    let knownState: NostrHomeTimelineState?
 
     init(
         account: NostrAccount,
         lifecycle: HomeTimelineLifecycleToken,
         hasRelayRuntime: Bool,
-        syncPolicy: NostrSyncPolicy = .default()
+        syncPolicy: NostrSyncPolicy = .default(),
+        knownState: NostrHomeTimelineState? = nil
     ) {
         self.account = account
         self.lifecycle = lifecycle
         self.hasRelayRuntime = hasRelayRuntime
         self.syncPolicy = syncPolicy
+        self.knownState = knownState
     }
 }
 
@@ -132,6 +147,7 @@ final class HomeTimelineInitialLoadWorkflow {
 
         let outcome = await remoteLoader.loadInitialState(
             account: request.account,
+            knownState: request.knownState,
             policy: request.syncPolicy,
             isCurrent: currentLifecycleHandler(for: request.lifecycle),
             didReceiveStage: stageHandler(
@@ -169,6 +185,7 @@ final class HomeTimelineInitialLoadWorkflow {
 
         let outcome = await remoteLoader.loadRuntimeBootstrapState(
             account: request.account,
+            knownState: request.knownState,
             policy: request.syncPolicy,
             isCurrent: currentLifecycleHandler(for: request.lifecycle),
             didReceiveStage: stageHandler(

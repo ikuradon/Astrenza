@@ -2583,10 +2583,14 @@ struct NostrCorePackageTests {
         ))
 
         let sources = try store.eventSources(eventID: event.id)
+        let observedRelays = try store.observedRelayURLsByAuthor(
+            authors: [event.pubkey]
+        )
         let relayProfile = try store.relayProfile(relayURL: "wss://relay.example")
         let relay = try #require(relayProfile)
 
         #expect(sources == [NostrEventSourceRecord(eventID: event.id, relayURL: "wss://relay.example", firstSeenAt: 600, lastSeenAt: 600)])
+        #expect(observedRelays[event.pubkey] == ["wss://relay.example"])
         #expect(relay.information?.name == "Relay Example")
         #expect(relay.information?.supportedNips == [1, 11, 65])
         #expect(relay.healthScore == 0.9)
@@ -3387,6 +3391,47 @@ struct NostrCorePackageTests {
         #expect(state.hasMoreOlder)
         #expect(await fake.missingSubscriptionIDs() == ["astrenza-neg-gap"])
         #expect(await fake.fetchSubscriptionIDs().contains("astrenza-gap-events"))
+    }
+
+    @Test("Home timeline loader does not mark older history exhausted after timeout")
+    func homeTimelineLoaderOlderTimeoutKeepsPaginationOpen() async throws {
+        let account = NostrAccount(
+            pubkey: String(repeating: "1", count: 64),
+            displayIdentifier: "npub-test",
+            readOnly: true
+        )
+        let followed = String(repeating: "2", count: 64)
+        let currentNote = signedShapeOnlyEvent(
+            kind: 1,
+            pubkey: followed,
+            createdAt: 300,
+            content: "current"
+        )
+        let fake = FakeRelayClient(
+            failingSubscriptionIDs: ["astrenza-home-older"]
+        )
+        let loader = NostrHomeTimelineLoader(
+            relayClient: fake,
+            bootstrapRelays: ["wss://bootstrap.example"],
+            pageLimit: 10
+        )
+        let current = NostrHomeTimelineState(
+            relays: ["wss://read.example"],
+            followedPubkeys: [followed],
+            noteEvents: [currentNote],
+            metadataEvents: [],
+            hasMoreOlder: true
+        )
+
+        let state = try await loader.olderState(
+            account: account,
+            current: current
+        )
+
+        #expect(state.hasMoreOlder)
+        #expect(state.relaySyncEvents.contains {
+            $0.subscriptionID == "astrenza-home-older" && $0.kind == .timeout
+        })
     }
 
     @Test("Home timeline loader uses database local events for NIP-77 backfill")

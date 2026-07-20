@@ -69,10 +69,31 @@ final class HomeTimelineBackwardRequestRegistry {
         context: HomeFeedRuntimeContext,
         anchorEventID: String?
     ) {
+        registerOlderPage(
+            groupID: groupID,
+            context: context,
+            anchorEventID: anchorEventID,
+            requestedLimit: 0,
+            hasRemainingRelayCandidates: false,
+            receivedTimelineEventCount: 0
+        )
+    }
+
+    func registerOlderPage(
+        groupID: String,
+        context: HomeFeedRuntimeContext,
+        anchorEventID: String?,
+        requestedLimit: Int,
+        hasRemainingRelayCandidates: Bool,
+        receivedTimelineEventCount: Int = 0
+    ) {
         requestsByGroupID[groupID] = PendingBackwardRequest(
             feedContext: context,
             isOlderPage: true,
-            olderAnchorPostID: anchorEventID
+            olderAnchorPostID: anchorEventID,
+            requestedLimit: requestedLimit,
+            hasRemainingRelayCandidates: hasRemainingRelayCandidates,
+            receivedTimelineEventCount: receivedTimelineEventCount
         )
     }
 
@@ -83,13 +104,38 @@ final class HomeTimelineBackwardRequestRegistry {
         olderEventID: String,
         direction: TimelineGapFillDirection
     ) {
+        registerGap(
+            groupID: groupID,
+            context: context,
+            newerEventID: newerEventID,
+            olderEventID: olderEventID,
+            direction: direction,
+            requestedLimit: 0,
+            hasRemainingRelayCandidates: false,
+            receivedTimelineEventCount: 0
+        )
+    }
+
+    func registerGap(
+        groupID: String,
+        context: HomeFeedRuntimeContext,
+        newerEventID: String,
+        olderEventID: String,
+        direction: TimelineGapFillDirection,
+        requestedLimit: Int,
+        hasRemainingRelayCandidates: Bool,
+        receivedTimelineEventCount: Int = 0
+    ) {
         requestsByGroupID[groupID] = PendingBackwardRequest(
             feedContext: context,
             gap: PendingGapBackfill(
                 newerPostID: newerEventID,
                 olderPostID: olderEventID,
                 direction: direction
-            )
+            ),
+            requestedLimit: requestedLimit,
+            hasRemainingRelayCandidates: hasRemainingRelayCandidates,
+            receivedTimelineEventCount: receivedTimelineEventCount
         )
     }
 
@@ -195,6 +241,8 @@ struct PendingBackwardRequest: Equatable, Sendable {
     let isOlderPage: Bool
     let olderAnchorPostID: String?
     let gap: PendingGapBackfill?
+    let requestedLimit: Int
+    let hasRemainingRelayCandidates: Bool
     private(set) var receivedTimelineEventCount: Int
     private(set) var receivedTimelineEventIDs: [String]
     private(set) var sourceRequestIDs: [String]
@@ -204,6 +252,8 @@ struct PendingBackwardRequest: Equatable, Sendable {
         isOlderPage: Bool = false,
         olderAnchorPostID: String? = nil,
         gap: PendingGapBackfill? = nil,
+        requestedLimit: Int = 0,
+        hasRemainingRelayCandidates: Bool = false,
         receivedTimelineEventCount: Int = 0,
         receivedTimelineEventIDs: [String] = [],
         sourceRequestIDs: [String] = []
@@ -212,6 +262,8 @@ struct PendingBackwardRequest: Equatable, Sendable {
         self.isOlderPage = isOlderPage
         self.olderAnchorPostID = olderAnchorPostID
         self.gap = gap
+        self.requestedLimit = max(0, requestedLimit)
+        self.hasRemainingRelayCandidates = hasRemainingRelayCandidates
         self.receivedTimelineEventCount = receivedTimelineEventCount
         self.receivedTimelineEventIDs = receivedTimelineEventIDs
         self.sourceRequestIDs = sourceRequestIDs
@@ -226,6 +278,14 @@ struct PendingBackwardRequest: Equatable, Sendable {
         if !receivedTimelineEventIDs.contains(eventID) {
             receivedTimelineEventIDs.append(eventID)
         }
+    }
+
+    func completesCandidateCoverage(
+        with completion: NostrBackwardREQCompletion
+    ) -> Bool {
+        guard hasRemainingRelayCandidates else { return true }
+        guard completion.status == .completed else { return false }
+        return max(receivedTimelineEventCount, completion.eventCount) >= requestedLimit
     }
 }
 

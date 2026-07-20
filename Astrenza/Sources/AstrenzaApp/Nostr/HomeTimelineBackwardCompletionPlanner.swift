@@ -48,19 +48,25 @@ struct HomeTimelineBackwardCompletionPlanner: Sendable {
         let didReceiveTimelineEvents = input.completion.eventCount > 0 ||
             request.receivedTimelineEventCount > 0 ||
             !request.receivedTimelineEventIDs.isEmpty
+        let completesCandidateCoverage = request.completesCandidateCoverage(
+            with: input.completion
+        )
         let olderPageUpdate: HomeTimelineBackwardCompletionPlan.OlderPageUpdate?
         if request.isOlderPage, didReceiveTimelineEvents {
             olderPageUpdate = HomeTimelineBackwardCompletionPlan.OlderPageUpdate(
                 request: request,
                 anchorEventID: request.olderAnchorPostID ?? input.fallbackBottomEventID,
-                marksBoundaryGap: input.completion.status != .completed
+                marksBoundaryGap: completesCandidateCoverage &&
+                    input.completion.status != .completed
             )
         } else {
             olderPageUpdate = nil
         }
 
         let gapUpdate: HomeTimelineBackwardCompletionPlan.GapUpdate?
-        if let gap = request.gap, let context = request.feedContext {
+        if completesCandidateCoverage,
+           let gap = request.gap,
+           let context = request.feedContext {
             if input.completion.status == .completed {
                 gapUpdate = .reconcile(gap: gap, context: context)
             } else {
@@ -76,9 +82,10 @@ struct HomeTimelineBackwardCompletionPlanner: Sendable {
 
         return HomeTimelineBackwardCompletionPlan(
             acceptsTimelineRequest: true,
-            marksOlderEnd: request.isOlderPage &&
+            marksOlderEnd: completesCandidateCoverage &&
+                request.isOlderPage &&
                 input.completion.status == .completed &&
-                input.completion.eventCount == 0,
+                !didReceiveTimelineEvents,
             olderPageUpdate: olderPageUpdate,
             gapUpdate: gapUpdate
         )

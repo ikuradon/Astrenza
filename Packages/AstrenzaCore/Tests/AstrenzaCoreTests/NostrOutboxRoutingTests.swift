@@ -34,7 +34,11 @@ struct NostrOutboxRoutingTests {
             fallbackRelayURLs: ["wss://own.example"]
         )
 
-        #expect(routes[author] == ["wss://write.example"])
+        #expect(routes[author] == [
+            "wss://write.example",
+            "wss://hint.example",
+            "wss://own.example"
+        ])
     }
 
     @Test("kind 10002 が無い著者は kind 3 hint、さらに無ければ自分の relay を使う")
@@ -54,13 +58,49 @@ struct NostrOutboxRoutingTests {
             fallbackRelayURLs: ["wss://own.example"]
         )
 
-        #expect(routes[hinted] == ["wss://hint.example"])
+        #expect(routes[hinted] == [
+            "wss://hint.example",
+            "wss://own.example"
+        ])
         #expect(routes[unhinted] == ["wss://own.example"])
         #expect(NostrOutboxRelayRouting().authorsByRelay(
             relayURLsByAuthor: routes
         ) == [
             "wss://hint.example": [hinted],
-            "wss://own.example": [unhinted]
+            "wss://own.example": [hinted, unhinted]
+        ])
+    }
+
+    @Test("実際に受信したrelayを宣言値とfallbackより先に使う")
+    func prefersObservedRelayCandidates() {
+        let author = String(repeating: "d", count: 64)
+        let relayList = event(
+            id: "relay-list",
+            author: author,
+            createdAt: 300,
+            tags: [["r", "wss://announced.example", "write"]]
+        )
+
+        let routes = NostrOutboxRelayRouting().relayURLsByAuthor(
+            authors: [author],
+            relayListEvents: [relayList],
+            contactItems: [
+                NostrContactListItem(
+                    pubkey: author,
+                    relayHints: ["wss://hint.example"]
+                )
+            ],
+            observedRelayURLsByAuthor: [
+                author: ["wss://observed.example"]
+            ],
+            fallbackRelayURLs: ["wss://own.example"]
+        )
+
+        #expect(routes[author] == [
+            "wss://observed.example",
+            "wss://announced.example",
+            "wss://hint.example",
+            "wss://own.example"
         ])
     }
 

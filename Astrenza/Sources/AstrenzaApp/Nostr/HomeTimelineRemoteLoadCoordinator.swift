@@ -5,12 +5,14 @@ protocol HomeTimelineStateLoading: Sendable {
 
     func bootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState
 
     func initialState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState
@@ -40,8 +42,16 @@ extension HomeTimelineRelayStatusCoordinator:
     HomeTimelineFetchedRelayEventPersisting {}
 
 enum HomeTimelineRemoteLoadRequest: Sendable {
-    case initial(account: NostrAccount, policy: NostrSyncPolicy)
-    case runtimeBootstrap(account: NostrAccount, policy: NostrSyncPolicy)
+    case initial(
+        account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
+        policy: NostrSyncPolicy
+    )
+    case runtimeBootstrap(
+        account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
+        policy: NostrSyncPolicy
+    )
     case refresh(
         account: NostrAccount,
         current: NostrHomeTimelineState,
@@ -57,11 +67,11 @@ enum HomeTimelineRemoteLoadRequest: Sendable {
 
 extension HomeTimelineRemoteLoadRequest {
     static func initial(account: NostrAccount) -> Self {
-        .initial(account: account, policy: .default())
+        .initial(account: account, knownState: nil, policy: .default())
     }
 
     static func runtimeBootstrap(account: NostrAccount) -> Self {
-        .runtimeBootstrap(account: account, policy: .default())
+        .runtimeBootstrap(account: account, knownState: nil, policy: .default())
     }
 
     static func refresh(
@@ -144,15 +154,17 @@ final class HomeTimelineRemoteLoadCoordinator {
         onStage: @escaping @Sendable (NostrHomeTimelineLoadStage) async -> Void
     ) async throws -> NostrHomeTimelineState {
         switch request {
-        case .initial(let account, let policy):
+        case .initial(let account, let knownState, let policy):
             try await loader.initialState(
                 account: account,
+                knownState: knownState,
                 policy: policy,
                 onStage: onStage
             )
-        case .runtimeBootstrap(let account, let policy):
+        case .runtimeBootstrap(let account, let knownState, let policy):
             try await loader.bootstrapState(
                 account: account,
+                knownState: knownState,
                 policy: policy,
                 onStage: onStage
             )

@@ -34,6 +34,27 @@ struct HomeTimelineBackwardCompletionPlannerTests {
         #expect(plan.olderPageUpdate == nil)
     }
 
+    @Test("A primary candidate EOSE does not mark older history exhausted")
+    func primaryCandidateDoesNotMarkOlderEnd() throws {
+        let request = PendingBackwardRequest(
+            feedContext: try context(),
+            isOlderPage: true,
+            olderAnchorPostID: "anchor",
+            requestedLimit: 100,
+            hasRemainingRelayCandidates: true
+        )
+        let plan = HomeTimelineBackwardCompletionPlanner().plan(.init(
+            request: request,
+            completion: completion(),
+            fallbackBottomEventID: "bottom",
+            isCurrentFeedContext: true
+        ))
+
+        #expect(plan.acceptsTimelineRequest)
+        #expect(!plan.marksOlderEnd)
+        #expect(plan.olderPageUpdate == nil)
+    }
+
     @Test("A completed older page with events reloads without creating a boundary gap")
     func reloadsCompletedOlderPage() throws {
         let request = olderRequest(context: try context(), anchorEventID: nil)
@@ -87,6 +108,25 @@ struct HomeTimelineBackwardCompletionPlannerTests {
         ))
 
         #expect(plan.gapUpdate == .reconcile(gap: gap, context: context))
+    }
+
+    @Test("A primary candidate gap EOSE waits for remaining candidates")
+    func primaryCandidateGapWaitsForHedge() throws {
+        let context = try context()
+        let request = PendingBackwardRequest(
+            feedContext: context,
+            gap: gap(),
+            requestedLimit: 10,
+            hasRemainingRelayCandidates: true
+        )
+        let plan = HomeTimelineBackwardCompletionPlanner().plan(.init(
+            request: request,
+            completion: completion(),
+            fallbackBottomEventID: nil,
+            isCurrentFeedContext: true
+        ))
+
+        #expect(plan.gapUpdate == nil)
     }
 
     @Test("A partial gap is restored as unresolved")

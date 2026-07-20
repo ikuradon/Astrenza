@@ -128,7 +128,8 @@ final class HomeTimelineLoadInteractionWorkflow {
                 account: account,
                 lifecycle: lifecycle,
                 hasRelayRuntime: context.state.hasRelayRuntime,
-                syncPolicy: context.state.syncPolicy
+                syncPolicy: context.state.syncPolicy,
+                knownState: context.effects.environment.currentState()
             ),
             effects: loadEffects(account: account, for: context.effects)
         )

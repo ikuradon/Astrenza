@@ -121,6 +121,42 @@ struct BackwardRequestCoordinatorTests {
         #expect(firstOutcome == .completed(system.activeDefinition))
     }
 
+    @Test("Full outbox older loading hedges remaining candidates after an empty primary EOSE")
+    @MainActor
+    func hedgesRemainingFullOutboxCandidates() async throws {
+        let installer = BackwardRequestPacketInstallerSpy()
+        let system = try BackwardRequestTestSystem(
+            installer: installer,
+            includesOutboxRelay: true
+        )
+        let policy = NostrSyncPolicy(
+            mode: .fullOutbox,
+            networkType: .wifi,
+            lowPowerMode: false,
+            tapToLoadMedia: false,
+            queueOGPPreviews: true,
+            disableOGPOnCellular: false
+        )
+
+        let task = Task {
+            await system.application.requestOlder(
+                account: system.account,
+                policy: policy
+            )
+        }
+        let primary = try await installedPacket(from: installer, at: 0)
+        #expect(primary.relayURLs == [system.outboxRelayURL])
+        system.registry.complete(completion(groupID: primary.groupID))
+
+        let hedge = try await installedPacket(from: installer, at: 1)
+        #expect(hedge.relayURLs == [system.relayURL])
+        #expect(hedge.groupID != primary.groupID)
+        system.registry.complete(completion(groupID: hedge.groupID))
+
+        #expect(await task.value == .completed(system.activeDefinition))
+        #expect(installer.installations.count == 2)
+    }
+
     @Test("An unavailable installer performs no projection or registry work")
     @MainActor
     func skipsWithoutInstaller() async throws {
@@ -249,12 +285,17 @@ struct BackwardRequestCoordinatorTests {
 
     @MainActor
     private func installedPacket(
-        from installer: BackwardRequestPacketInstallerSpy
+        from installer: BackwardRequestPacketInstallerSpy,
+        at index: Int = 0
     ) async throws -> NostrREQPacket {
-        for _ in 0..<20 where installer.installations.isEmpty {
+        for _ in 0..<40 where installer.installations.count <= index {
             await Task.yield()
         }
-        return try #require(installer.installations.first?.packets.first)
+        guard installer.installations.indices.contains(index) else {
+            Issue.record("Expected backward installation at index \(index)")
+            throw CancellationError()
+        }
+        return try #require(installer.installations[index].packets.first)
     }
 
     private func completion(groupID: String) -> NostrBackwardREQCompletion {
@@ -298,6 +339,7 @@ extension BackwardRequestFailureScenario: CustomTestStringConvertible {
 @MainActor
 private struct BackwardRequestTestSystem {
     let relayURL = "wss://relay.example"
+    let outboxRelayURL = "wss://outbox.example"
     let account: NostrAccount
     let newerEvent: NostrEvent
     let olderEvent: NostrEvent
@@ -311,13 +353,15 @@ private struct BackwardRequestTestSystem {
 
     init(
         installer: BackwardRequestPacketInstallerSpy?,
-        includesOlderBoundary: Bool = true
+        includesOlderBoundary: Bool = true,
+        includesOutboxRelay: Bool = false
     ) throws {
         let model = try Self.modelFixture()
         let content = Self.content(
             model: model,
             relayURL: relayURL,
-            includesOlderBoundary: includesOlderBoundary
+            includesOlderBoundary: includesOlderBoundary,
+            outboxRelayURL: includesOutboxRelay ? outboxRelayURL : nil
         )
         let projection = Self.projection(model: model)
         let registry = HomeTimelineBackwardRequestRegistry()
@@ -380,9 +424,21 @@ private struct BackwardRequestTestSystem {
     private static func content(
         model: ModelFixture,
         relayURL: String,
-        includesOlderBoundary: Bool
+        includesOlderBoundary: Bool,
+        outboxRelayURL: String?
     ) -> HomeTimelineContentCoordinator {
         let content = HomeTimelineContentCoordinator(eventStore: nil)
+        let authorRelayListEvents = outboxRelayURL.map { relayURL in
+            [NostrEvent(
+                id: String(repeating: "3", count: 64),
+                pubkey: model.account.pubkey,
+                createdAt: 400,
+                kind: 10_002,
+                tags: [["r", relayURL, "write"]],
+                content: "",
+                sig: String(repeating: "0", count: 128)
+            )]
+        } ?? []
         _ = content.replace(
             with: NostrHomeTimelineState(
                 relays: [relayURL],
@@ -390,7 +446,8 @@ private struct BackwardRequestTestSystem {
                 noteEvents: includesOlderBoundary
                     ? [model.newerEvent, model.olderEvent]
                     : [model.newerEvent],
-                metadataEvents: []
+                metadataEvents: [],
+                authorRelayListEvents: authorRelayListEvents
             ),
             accountID: model.account.pubkey
         )

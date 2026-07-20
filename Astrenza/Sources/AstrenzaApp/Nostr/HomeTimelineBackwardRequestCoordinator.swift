@@ -45,6 +45,26 @@ final class HomeTimelineBackwardRequestCoordinator {
     private let gapStatePersistence:
         (any HomeTimelineGapRequestStatePersisting)?
 
+    private enum StageOutcome {
+        case unavailable
+        case completed(
+            definition: NostrFeedDefinitionRecord,
+            completion: NostrBackwardREQCompletion
+        )
+        case failed(HomeTimelineBackwardRequestDiagnostic)
+
+        var publicOutcome: HomeTimelineBackwardRequestOutcome {
+            switch self {
+            case .unavailable:
+                .unavailable
+            case .completed(let definition, _):
+                .completed(definition)
+            case .failed(let diagnostic):
+                .failed(diagnostic)
+            }
+        }
+    }
+
     init(
         contentCoordinator: HomeTimelineContentCoordinator,
         timelineRepository: HomeTimelineRepository,
@@ -81,7 +101,10 @@ final class HomeTimelineBackwardRequestCoordinator {
         guard content.followedPubkeys == definitionContent.followedPubkeys,
               let oldestCreatedAt = content.noteEvents.map(\.createdAt).min()
         else { return .unavailable }
-        guard let packet = syncPlanner.olderNotesPacket(
+        let authors = content.followedPubkeys.isEmpty
+            ? [account.pubkey]
+            : content.followedPubkeys
+        guard let plan = syncPlanner.olderNotesPlan(
             account: account,
             followedPubkeys: content.followedPubkeys,
             oldestCreatedAt: oldestCreatedAt,
@@ -90,22 +113,48 @@ final class HomeTimelineBackwardRequestCoordinator {
                 from: content.contactListEvent
             ),
             authorRelayListEvents: content.authorRelayListEvents,
+            observedRelayURLsByAuthor:
+                timelineRepository.observedRelayURLsByAuthor(authors),
             policy: policy
         )
         else { return .unavailable }
 
-        return await install(
-            packet,
+        let primary = await install(
+            plan.primaryPackets,
             feed: feed,
             fallbackRelayURL: content.resolvedRelays.first,
             failurePrefix: "older enqueue failed"
-        ) {
+        ) { groupID in
             backwardRequestRegistry.registerOlderPage(
-                groupID: packet.groupID,
+                groupID: groupID,
                 context: feed.context,
-                anchorEventID: content.noteEvents.last?.id
+                anchorEventID: content.noteEvents.last?.id,
+                requestedLimit: plan.requestedLimit,
+                hasRemainingRelayCandidates: plan.hasHedge
             )
         }
+        guard case .completed(_, let primaryCompletion) = primary,
+              shouldInstallHedge(
+                plan: plan,
+                completion: primaryCompletion
+              )
+        else { return primary.publicOutcome }
+
+        return await install(
+            plan.hedgePackets,
+            feed: feed,
+            fallbackRelayURL: content.resolvedRelays.first,
+            failurePrefix: "older hedge enqueue failed"
+        ) { groupID in
+            backwardRequestRegistry.registerOlderPage(
+                groupID: groupID,
+                context: feed.context,
+                anchorEventID: content.noteEvents.last?.id,
+                requestedLimit: plan.requestedLimit,
+                hasRemainingRelayCandidates: false,
+                receivedTimelineEventCount: primaryCompletion.eventCount
+            )
+        }.publicOutcome
     }
 
     func requestGap(
@@ -136,7 +185,10 @@ final class HomeTimelineBackwardRequestCoordinator {
             id: gap.olderPostID,
             inMemoryEvents: content.noteEvents
         ) else { return .unavailable }
-        guard let packet = syncPlanner.gapNotesPacket(
+        let authors = content.followedPubkeys.isEmpty
+            ? [account.pubkey]
+            : content.followedPubkeys
+        guard let plan = syncPlanner.gapNotesPlan(
             account: account,
             followedPubkeys: content.followedPubkeys,
             newerEvent: newerEvent,
@@ -147,6 +199,8 @@ final class HomeTimelineBackwardRequestCoordinator {
                 from: content.contactListEvent
             ),
             authorRelayListEvents: content.authorRelayListEvents,
+            observedRelayURLsByAuthor:
+                timelineRepository.observedRelayURLsByAuthor(authors),
             policy: policy
         ) else { return .unavailable }
 
@@ -155,8 +209,8 @@ final class HomeTimelineBackwardRequestCoordinator {
             olderPostID: gap.olderPostID,
             direction: direction
         )
-        return await install(
-            packet,
+        let primary = await install(
+            plan.primaryPackets,
             feed: feed,
             fallbackRelayURL: content.resolvedRelays.first,
             failurePrefix: "gap enqueue failed",
@@ -166,13 +220,15 @@ final class HomeTimelineBackwardRequestCoordinator {
                     context: feed.context
                 )
             }
-        ) {
+        ) { groupID in
             backwardRequestRegistry.registerGap(
-                groupID: packet.groupID,
+                groupID: groupID,
                 context: feed.context,
                 newerEventID: gap.newerPostID,
                 olderEventID: gap.olderPostID,
-                direction: direction
+                direction: direction,
+                requestedLimit: plan.requestedLimit,
+                hasRemainingRelayCandidates: plan.hasHedge
             )
             try gapStatePersistence?.markGapRequested(
                 newerEventID: gap.newerPostID,
@@ -180,6 +236,33 @@ final class HomeTimelineBackwardRequestCoordinator {
                 definition: feed.definition
             )
         }
+        guard case .completed(_, let primaryCompletion) = primary,
+              shouldInstallHedge(plan: plan, completion: primaryCompletion)
+        else { return primary.publicOutcome }
+
+        return await install(
+            plan.hedgePackets,
+            feed: feed,
+            fallbackRelayURL: content.resolvedRelays.first,
+            failurePrefix: "gap hedge enqueue failed",
+            rollback: { [gapStatePersistence] in
+                gapStatePersistence?.markGapUnresolved(
+                    pendingGap,
+                    context: feed.context
+                )
+            }
+        ) { groupID in
+            backwardRequestRegistry.registerGap(
+                groupID: groupID,
+                context: feed.context,
+                newerEventID: gap.newerPostID,
+                olderEventID: gap.olderPostID,
+                direction: direction,
+                requestedLimit: plan.requestedLimit,
+                hasRemainingRelayCandidates: false,
+                receivedTimelineEventCount: primaryCompletion.eventCount
+            )
+        }.publicOutcome
     }
 
     private func currentFeed(
@@ -199,16 +282,20 @@ final class HomeTimelineBackwardRequestCoordinator {
     }
 
     private func install(
-        _ packet: NostrREQPacket,
+        _ packets: [NostrREQPacket],
         feed: (definition: NostrFeedDefinitionRecord, context: HomeFeedRuntimeContext),
         fallbackRelayURL: String?,
         failurePrefix: String,
         rollback: (() -> Void)? = nil,
-        register: () throws -> Void
-    ) async -> HomeTimelineBackwardRequestOutcome {
-        guard let packetInstaller, !Task.isCancelled else { return .unavailable }
+        register: (_ groupID: String) throws -> Void
+    ) async -> StageOutcome {
+        guard let packet = packets.first,
+              packets.allSatisfy({ $0.groupID == packet.groupID }),
+              let packetInstaller,
+              !Task.isCancelled
+        else { return .unavailable }
         do {
-            try register()
+            try register(packet.groupID)
         } catch {
             backwardRequestRegistry.remove(groupID: packet.groupID)
             return .failed(HomeTimelineBackwardRequestDiagnostic(
@@ -218,7 +305,7 @@ final class HomeTimelineBackwardRequestCoordinator {
             ))
         }
         do {
-            try await packetInstaller([packet], .authors)
+            try await packetInstaller(packets, .authors)
         } catch is CancellationError {
             rollbackRequest(
                 groupID: packet.groupID,
@@ -249,16 +336,29 @@ final class HomeTimelineBackwardRequestCoordinator {
             )
             return .unavailable
         }
-        guard await backwardRequestRegistry.waitForCompletion(
+        guard let completion = await backwardRequestRegistry.waitForCompletion(
             groupID: packet.groupID
-        ) != nil,
+        ),
               !Task.isCancelled,
               projectionController.isCurrent(
                 feed.context,
                 accountID: feed.definition.accountID
               )
         else { return .unavailable }
-        return .completed(feed.definition)
+        return .completed(
+            definition: feed.definition,
+            completion: completion
+        )
+    }
+
+    private func shouldInstallHedge(
+        plan: HomeTimelineBackwardPacketPlan,
+        completion: NostrBackwardREQCompletion
+    ) -> Bool {
+        plan.hasHedge && (
+            completion.status != .completed ||
+                completion.eventCount < plan.requestedLimit
+        )
     }
 
     private func rollbackRequest(

@@ -22,6 +22,16 @@ struct HomeTimelineForwardPlan {
     let mode: NostrSyncMode
 }
 
+struct HomeTimelineBackwardPacketPlan {
+    let primaryPackets: [NostrREQPacket]
+    let hedgePackets: [NostrREQPacket]
+    let requestedLimit: Int
+
+    var hasHedge: Bool {
+        !hedgePackets.isEmpty
+    }
+}
+
 struct HomeTimelineSyncPlanner {
     static let homeForwardGroupPrefix = NostrHomeForwardREQBuilder.subscriptionID
     private static let fullOutboxSubscriptionPrefix = NostrHomeForwardREQBuilder.subscriptionID + "-outbox"
@@ -123,22 +133,68 @@ struct HomeTimelineSyncPlanner {
         limit: Int = 100,
         requestID: String = UUID().uuidString
     ) -> NostrREQPacket? {
-        NostrBackwardREQBuilder.olderNotes(
-            authors: timelineAuthors(account: account, followedPubkeys: followedPubkeys),
-            until: oldestCreatedAt - 1,
+        olderNotesPlan(
+            account: account,
+            followedPubkeys: followedPubkeys,
+            oldestCreatedAt: oldestCreatedAt,
+            relayURLs: relayURLs,
+            contactItems: contactItems,
+            authorRelayListEvents: authorRelayListEvents,
+            policy: policy,
             limit: limit,
-            relayURLs: selectedRelayURLs(
-                authors: timelineAuthors(
-                    account: account,
-                    followedPubkeys: followedPubkeys
-                ),
-                contactItems: contactItems,
-                authorRelayListEvents: authorRelayListEvents,
-                fallbackRelayURLs: relayURLs,
-                policy: policy
-            ),
             requestID: requestID
+        )?.primaryPackets.first
+    }
+
+    func olderNotesPlan(
+        account: NostrAccount,
+        followedPubkeys: [String],
+        oldestCreatedAt: Int,
+        relayURLs: [String],
+        contactItems: [NostrContactListItem] = [],
+        authorRelayListEvents: [NostrEvent] = [],
+        observedRelayURLsByAuthor: [String: [String]] = [:],
+        policy: NostrSyncPolicy = .default(),
+        limit: Int = 100,
+        requestID: String = UUID().uuidString
+    ) -> HomeTimelineBackwardPacketPlan? {
+        let authors = timelineAuthors(
+            account: account,
+            followedPubkeys: followedPubkeys
         )
+        let safeLimit = max(1, limit)
+        guard policy.mode == .fullOutbox else {
+            guard let packet = NostrBackwardREQBuilder.olderNotes(
+                authors: authors,
+                until: oldestCreatedAt - 1,
+                limit: safeLimit,
+                relayURLs: relayURLs,
+                requestID: requestID
+            ) else { return nil }
+            return HomeTimelineBackwardPacketPlan(
+                primaryPackets: [packet],
+                hedgePackets: [],
+                requestedLimit: safeLimit
+            )
+        }
+
+        return fullOutboxBackwardPlan(
+            authors: authors,
+            contactItems: contactItems,
+            authorRelayListEvents: authorRelayListEvents,
+            observedRelayURLsByAuthor: observedRelayURLsByAuthor,
+            fallbackRelayURLs: relayURLs,
+            primaryGroupID: "astrenza-older-notes-\(requestID)",
+            hedgeGroupID: "astrenza-older-notes-\(requestID)-hedge",
+            requestedLimit: safeLimit
+        ) { scopedAuthors in
+            [[
+                "kinds": .ints([1, 5, 6]),
+                "authors": .strings(scopedAuthors),
+                "until": .int(max(0, oldestCreatedAt - 1)),
+                "limit": .int(safeLimit)
+            ]]
+        }
     }
 
     func gapNotesPacket(
@@ -153,23 +209,75 @@ struct HomeTimelineSyncPlanner {
         policy: NostrSyncPolicy = .default(),
         requestID: String = UUID().uuidString
     ) -> NostrREQPacket? {
-        NostrBackwardREQBuilder.notesWindow(
-            authors: timelineAuthors(account: account, followedPubkeys: followedPubkeys),
-            since: olderEvent.createdAt + 1,
-            until: newerEvent.createdAt - 1,
-            limit: max(1, min(missingEstimate, 250)),
-            relayURLs: selectedRelayURLs(
-                authors: timelineAuthors(
-                    account: account,
-                    followedPubkeys: followedPubkeys
-                ),
-                contactItems: contactItems,
-                authorRelayListEvents: authorRelayListEvents,
-                fallbackRelayURLs: relayURLs,
-                policy: policy
-            ),
+        gapNotesPlan(
+            account: account,
+            followedPubkeys: followedPubkeys,
+            newerEvent: newerEvent,
+            olderEvent: olderEvent,
+            missingEstimate: missingEstimate,
+            relayURLs: relayURLs,
+            contactItems: contactItems,
+            authorRelayListEvents: authorRelayListEvents,
+            policy: policy,
             requestID: requestID
+        )?.primaryPackets.first
+    }
+
+    func gapNotesPlan(
+        account: NostrAccount,
+        followedPubkeys: [String],
+        newerEvent: NostrEvent,
+        olderEvent: NostrEvent,
+        missingEstimate: Int,
+        relayURLs: [String],
+        contactItems: [NostrContactListItem] = [],
+        authorRelayListEvents: [NostrEvent] = [],
+        observedRelayURLsByAuthor: [String: [String]] = [:],
+        policy: NostrSyncPolicy = .default(),
+        requestID: String = UUID().uuidString
+    ) -> HomeTimelineBackwardPacketPlan? {
+        let authors = timelineAuthors(
+            account: account,
+            followedPubkeys: followedPubkeys
         )
+        let safeSince = max(0, olderEvent.createdAt + 1)
+        let safeUntil = max(0, newerEvent.createdAt - 1)
+        let safeLimit = max(1, min(missingEstimate, 250))
+        guard safeSince <= safeUntil else { return nil }
+        guard policy.mode == .fullOutbox else {
+            guard let packet = NostrBackwardREQBuilder.notesWindow(
+                authors: authors,
+                since: safeSince,
+                until: safeUntil,
+                limit: safeLimit,
+                relayURLs: relayURLs,
+                requestID: requestID
+            ) else { return nil }
+            return HomeTimelineBackwardPacketPlan(
+                primaryPackets: [packet],
+                hedgePackets: [],
+                requestedLimit: safeLimit
+            )
+        }
+
+        return fullOutboxBackwardPlan(
+            authors: authors,
+            contactItems: contactItems,
+            authorRelayListEvents: authorRelayListEvents,
+            observedRelayURLsByAuthor: observedRelayURLsByAuthor,
+            fallbackRelayURLs: relayURLs,
+            primaryGroupID: "astrenza-gap-notes-\(requestID)",
+            hedgeGroupID: "astrenza-gap-notes-\(requestID)-hedge",
+            requestedLimit: safeLimit
+        ) { scopedAuthors in
+            [[
+                "kinds": .ints([1, 5, 6]),
+                "authors": .strings(scopedAuthors),
+                "since": .int(safeSince),
+                "until": .int(safeUntil),
+                "limit": .int(safeLimit)
+            ]]
+        }
     }
 
     func dependencyPackets(
@@ -213,23 +321,61 @@ struct HomeTimelineSyncPlanner {
         followedPubkeys.isEmpty ? [account.pubkey] : followedPubkeys
     }
 
-    private func selectedRelayURLs(
+    private func fullOutboxBackwardPlan(
         authors: [String],
         contactItems: [NostrContactListItem],
         authorRelayListEvents: [NostrEvent],
+        observedRelayURLsByAuthor: [String: [String]],
         fallbackRelayURLs: [String],
-        policy: NostrSyncPolicy
-    ) -> [String] {
-        guard policy.mode == .fullOutbox else { return fallbackRelayURLs }
-        let routes = NostrOutboxRelayRouting().relayURLsByAuthor(
+        primaryGroupID: String,
+        hedgeGroupID: String,
+        requestedLimit: Int,
+        filters: ([String]) -> [[String: AnySendableJSON]]
+    ) -> HomeTimelineBackwardPacketPlan? {
+        let routing = NostrOutboxRelayRouting()
+        let candidates = routing.relayURLsByAuthor(
             authors: authors,
             relayListEvents: authorRelayListEvents,
             contactItems: contactItems,
+            observedRelayURLsByAuthor: observedRelayURLsByAuthor,
             fallbackRelayURLs: fallbackRelayURLs
         )
-        var seen = Set<String>()
-        return authors.flatMap { routes[$0.lowercased()] ?? [] }.filter {
-            seen.insert($0).inserted
+        let primary = candidates.mapValues { Array($0.prefix(1)) }
+        let hedge = candidates.mapValues { Array($0.dropFirst()) }
+        let primaryPackets = relayScopedBackwardPackets(
+            relayURLsByAuthor: primary,
+            groupID: primaryGroupID,
+            filters: filters
+        )
+        guard !primaryPackets.isEmpty else { return nil }
+        return HomeTimelineBackwardPacketPlan(
+            primaryPackets: primaryPackets,
+            hedgePackets: relayScopedBackwardPackets(
+                relayURLsByAuthor: hedge,
+                groupID: hedgeGroupID,
+                filters: filters
+            ),
+            requestedLimit: requestedLimit
+        )
+    }
+
+    private func relayScopedBackwardPackets(
+        relayURLsByAuthor: [String: [String]],
+        groupID: String,
+        filters: ([String]) -> [[String: AnySendableJSON]]
+    ) -> [NostrREQPacket] {
+        let authorsByRelay = NostrOutboxRelayRouting().authorsByRelay(
+            relayURLsByAuthor: relayURLsByAuthor
+        )
+        return authorsByRelay.keys.sorted().enumerated().map { index, relayURL in
+            let authors = (authorsByRelay[relayURL] ?? []).sorted()
+            return NostrREQPacket(
+                strategy: .backward,
+                subscriptionID: "\(groupID)-req-\(index + 1)",
+                groupID: groupID,
+                filters: filters(authors),
+                relayURLs: [relayURL]
+            )
         }
     }
 

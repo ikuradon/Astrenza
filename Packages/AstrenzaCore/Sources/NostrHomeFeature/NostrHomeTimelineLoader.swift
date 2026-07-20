@@ -65,12 +65,14 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     public func bootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState? = nil,
         policy: NostrSyncPolicy = .default(),
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
     ) async throws -> NostrHomeTimelineState {
         try await withBootstrapScope {
             try await bootstrapStateWithoutScope(
                 account: account,
+                knownState: knownState,
                 policy: policy,
                 onStage: onStage
             )
@@ -79,11 +81,13 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     private func bootstrapStateWithoutScope(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
         try await resolvedAccountBootstrapState(
             account: account,
+            knownState: knownState,
             policy: policy,
             onStage: onStage
         )
@@ -91,12 +95,14 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     public func initialState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState? = nil,
         policy: NostrSyncPolicy = .default(),
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)? = nil
     ) async throws -> NostrHomeTimelineState {
         try await withBootstrapScope {
             try await initialStateWithoutScope(
                 account: account,
+                knownState: knownState,
                 policy: policy,
                 onStage: onStage
             )
@@ -105,11 +111,13 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     private func initialStateWithoutScope(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
         let bootstrapState = try await resolvedAccountBootstrapState(
             account: account,
+            knownState: knownState,
             policy: policy,
             onStage: onStage
         )
@@ -163,11 +171,18 @@ public struct NostrHomeTimelineLoader: Sendable {
 
     private func resolvedAccountBootstrapState(
         account: NostrAccount,
+        knownState: NostrHomeTimelineState?,
         policy: NostrSyncPolicy,
         onStage: (@Sendable (NostrHomeTimelineLoadStage) async -> Void)?
     ) async throws -> NostrHomeTimelineState {
         let discoveryStartedAt = ProcessInfo.processInfo.systemUptime
-        let discoveryRelays = (normalizedRelayURLs(account.discoveryRelays) + bootstrapRelays).uniqued()
+        let knownReadRelays = NostrRelayList.parse(
+            from: knownState?.relayListEvent
+        ).readRelays
+        let discoveryRelays = (
+            knownReadRelays + normalizedRelayURLs(account.discoveryRelays) +
+                bootstrapRelays
+        ).uniqued()
         let relayListRequest = NostrRelayRequest(
             subscriptionID: "astrenza-nip65",
             filters: [[
@@ -199,12 +214,18 @@ public struct NostrHomeTimelineLoader: Sendable {
         await onStage?(.resolvingContactList)
         let resolvedDiscoveryContact = try await discoveryContactResult
         var relaySyncEvents = resolvedRelayList.syncEvents + resolvedDiscoveryContact.syncEvents
-        let relayListEvent = resolvedRelayList.event
+        let relayListEvent = freshestReplaceableEvent(
+            knownState?.relayListEvent,
+            resolvedRelayList.event
+        )
         let relayList = NostrRelayList.parse(from: relayListEvent)
         let readRelays = relayList.readRelays.isEmpty ? bootstrapRelays : relayList.readRelays
         let contactRelays = (readRelays + discoveryRelays).uniqued()
 
-        var contactEvent = resolvedDiscoveryContact.event
+        var contactEvent = freshestReplaceableEvent(
+            knownState?.contactListEvent,
+            resolvedDiscoveryContact.event
+        )
         let additionalContactRelays = readRelays.filter { !discoveryRelays.contains($0) }
         let discoveryElapsedNanoseconds = UInt64(
             max(0, ProcessInfo.processInfo.systemUptime - discoveryStartedAt) * 1_000_000_000
@@ -220,17 +241,25 @@ public struct NostrHomeTimelineLoader: Sendable {
                     - discoveryElapsedNanoseconds
             )
             relaySyncEvents.append(contentsOf: supplementalContactResult.syncEvents)
-            contactEvent = supplementalContactResult.event
+            contactEvent = freshestReplaceableEvent(
+                contactEvent,
+                supplementalContactResult.event
+            )
         }
 
         let contacts = NostrContactList.pubkeys(from: contactEvent)
-        let authorRelayListEvents = try await authorRelayListEvents(
+        let fetchedAuthorRelayListEvents = try await authorRelayListEvents(
             authors: contacts,
             relays: contactRelays,
             accountID: account.pubkey,
             policy: policy,
             onStage: onStage,
             relaySyncEvents: &relaySyncEvents
+        )
+        let authorRelayListEvents = latestRelayListEvents(
+            (knownState?.authorRelayListEvents ?? []) +
+                fetchedAuthorRelayListEvents,
+            authors: Set(contacts.map { $0.lowercased() })
         )
 
         return NostrHomeTimelineState(
@@ -344,6 +373,9 @@ public struct NostrHomeTimelineLoader: Sendable {
                 before: oldestCreatedAt
             )
         }
+        let didCompleteCoveredRelayWindow =
+            !olderResult.syncEvents.isEmpty &&
+            olderResult.syncEvents.allSatisfy { $0.kind == .eose }
         relaySyncEvents.append(contentsOf: olderResult.syncEvents)
         var olderEvents = olderResult.events
         if olderEvents.isEmpty {
@@ -366,7 +398,9 @@ public struct NostrHomeTimelineLoader: Sendable {
                 contactListEvent: current.contactListEvent,
                 authorRelayListEvents: current.authorRelayListEvents,
                 nip05Resolutions: current.nip05Resolutions,
-                hasMoreOlder: false,
+                hasMoreOlder: didCompleteCoveredRelayWindow
+                    ? false
+                    : current.hasMoreOlder,
                 relaySyncEvents: relaySyncEvents
             )
         }
@@ -555,6 +589,18 @@ public struct NostrHomeTimelineLoader: Sendable {
         return latestByAuthor.values.sorted { lhs, rhs in
             lhs.pubkey < rhs.pubkey
         }
+    }
+
+    private func freshestReplaceableEvent(
+        _ lhs: NostrEvent?,
+        _ rhs: NostrEvent?
+    ) -> NostrEvent? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt ? lhs : rhs
+        }
+        return lhs.id <= rhs.id ? lhs : rhs
     }
 
     private func nip05Resolutions(

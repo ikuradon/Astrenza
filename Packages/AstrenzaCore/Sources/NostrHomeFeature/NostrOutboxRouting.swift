@@ -8,6 +8,7 @@ public struct NostrOutboxRelayRouting: Sendable {
         authors: [String],
         relayListEvents: [NostrEvent],
         contactItems: [NostrContactListItem] = [],
+        observedRelayURLsByAuthor: [String: [String]] = [:],
         fallbackRelayURLs: [String]
     ) -> [String: [String]] {
         let latestRelayListByAuthor = latestRelayListEvents(
@@ -23,17 +24,14 @@ public struct NostrOutboxRelayRouting: Sendable {
 
         return Dictionary(uniqueKeysWithValues: authors.map { author in
             let key = author.lowercased()
+            let observedRelays = observedRelayURLsByAuthor[key] ?? []
             let writeRelays = NostrRelayList.parse(
                 from: latestRelayListByAuthor[key]
             ).writeRelays
-            let relayURLs: [String]
-            if !writeRelays.isEmpty {
-                relayURLs = writeRelays
-            } else if let hints = hintsByAuthor[key], !hints.isEmpty {
-                relayURLs = deduplicated(hints)
-            } else {
-                relayURLs = fallback
-            }
+            let hints = hintsByAuthor[key] ?? []
+            let relayURLs = deduplicated(
+                observedRelays + writeRelays + hints + fallback
+            )
             return (key, relayURLs)
         })
     }

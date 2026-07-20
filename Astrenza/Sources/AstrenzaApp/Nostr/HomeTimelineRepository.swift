@@ -74,6 +74,17 @@ struct HomeTimelineRepository: Sendable {
         return result
     }
 
+    func observedRelayURLsByAuthor(
+        _ authors: [String],
+        limitPerAuthor: Int = 4
+    ) -> [String: [String]] {
+        guard let eventStore else { return [:] }
+        return (try? eventStore.observedRelayURLsByAuthor(
+            authors: Set(authors.map { $0.lowercased() }),
+            limitPerAuthor: limitPerAuthor
+        )) ?? [:]
+    }
+
     func olderBackfillEvents(
         accountID: String,
         followedPubkeys: [String],

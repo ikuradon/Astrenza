@@ -33,7 +33,8 @@ struct HomeTimelineLoadInteractionTests {
         #expect(fixture.router.initialRequest == HomeTimelineInitialLoadRequest(
             account: fixture.account,
             lifecycle: fixture.lifecycle,
-            hasRelayRuntime: true
+            hasRelayRuntime: true,
+            knownState: fixture.timelineState
         ))
         #expect(fixture.router.refreshRequest == HomeTimelineRefreshRequest(
             account: fixture.account,
@@ -64,7 +65,7 @@ struct HomeTimelineLoadInteractionTests {
         #expect(fixture.router.localBackfillEvents == [])
         #expect(fixture.router.resolvedRelays == fixture.resolvedRelays)
         #expect(fixture.probe.relayAvailabilityReads == 1)
-        #expect(fixture.probe.currentStateReads == 1)
+        #expect(fixture.probe.currentStateReads == 2)
         #expect(fixture.probe.backfillRequests == [fixture.account.pubkey])
         #expect(fixture.probe.resolvedRelayReads == 1)
     }
