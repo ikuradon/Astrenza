@@ -83,6 +83,7 @@ private struct HomeTimelinePostDestinationView: View {
             replies: projection.replies,
             swipeSettings: swipeSettings,
             onOpenPost: actions.onOpenPost,
+            onOpenProfile: actions.onOpenProfile,
             onReplyPost: actions.onReply,
             onOpenMedia: actions.onOpenMedia,
             onOpenURL: actions.onOpenURL

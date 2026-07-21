@@ -6,6 +6,7 @@ struct PostDetailView: View {
     let replies: [TimelinePost]
     let swipeSettings: TimelineSwipeSettings
     let onOpenPost: (TimelinePost) -> Void
+    let onOpenProfile: (TimelinePost) -> Void
     let onReplyPost: (TimelinePost) -> Void
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
@@ -113,7 +114,7 @@ struct PostDetailView: View {
             onOpenURL(url)
             return .handled
         case .profile(let pubkey, _):
-            onOpenPost(profilePost(pubkey: pubkey))
+            onOpenProfile(profilePost(pubkey: pubkey))
             return .handled
         case .event(let eventID, _, _, _):
             onOpenPost(referencedEventPost(eventID: eventID))
@@ -172,21 +173,33 @@ struct PostDetailView: View {
 
     private var postHeader: some View {
         HStack(alignment: .top, spacing: AstrenzaTimelineMetrics.rowAvatarSpacing) {
-            AvatarView(style: post.avatar, size: AstrenzaTimelineMetrics.avatarSize)
+            Button {
+                onOpenProfile(post)
+            } label: {
+                HStack(alignment: .top, spacing: AstrenzaTimelineMetrics.rowAvatarSpacing) {
+                    AvatarView(style: post.avatar, size: AstrenzaTimelineMetrics.avatarSize)
 
-            HStack(alignment: .top, spacing: AstrenzaSpacing.point6) {
-                TimelineAuthorHeader(author: post.author, isLocked: post.isLocked)
+                    HStack(alignment: .top, spacing: AstrenzaSpacing.point6) {
+                        TimelineAuthorHeader(author: post.author, isLocked: post.isLocked)
 
-                if post.contentWarning != nil {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.astrenza(.point12, weight: .black))
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Sensitive post")
-                        .padding(.top, AstrenzaSpacing.point1)
-                        .fixedSize()
+                        if post.contentWarning != nil {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.astrenza(.point12, weight: .black))
+                                .foregroundStyle(.orange)
+                                .accessibilityLabel("Sensitive post")
+                                .padding(.top, AstrenzaSpacing.point1)
+                                .fixedSize()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Open profile for \(post.author.primaryText)")
+            .accessibilityIdentifier("post.detail.profile.\(post.author.pubkey)")
 
             if showsReplyParentIndicator {
                 ReplyParentIndicator()
@@ -262,7 +275,7 @@ struct PostDetailView: View {
             post: threadPost,
             swipeSettings: swipeSettings,
             onOpenPost: onOpenPost,
-            onOpenProfile: { _ in },
+            onOpenProfile: onOpenProfile,
             onReplyPost: onReplyPost,
             onOpenMedia: onOpenMedia,
             onOpenURL: onOpenURL,
