@@ -80,8 +80,8 @@ struct TimelineFeedViewportMutationPlannerTests {
         #expect(position == .preserve(visibleAnchor))
     }
 
-    @Test("Realtime follow commits only while idle at the live edge")
-    func realtimeFollowCommitRequiresIdleLiveEdge() {
+    @Test("Realtime follow commits while idle despite layout offset compensation")
+    func realtimeFollowCommitIgnoresLayoutOffsetCompensation() {
         let planned = TimelineFeedSnapshotPosition.followNewest(
             fallback: visibleAnchor
         )
@@ -91,10 +91,6 @@ struct TimelineFeedViewportMutationPlannerTests {
             planned: planned,
             isUserInteractionActive: true
         ) == .unchanged)
-        #expect(committedPosition(
-            planned: planned,
-            contentOffset: 24
-        ) == .preserve(visibleAnchor))
         #expect(committedPosition(
             planned: planned,
             followsRealtimeEntries: false
@@ -133,8 +129,7 @@ struct TimelineFeedViewportMutationPlannerTests {
     private func committedPosition(
         planned: TimelineFeedSnapshotPosition,
         followsRealtimeEntries: Bool = true,
-        isUserInteractionActive: Bool = false,
-        contentOffset: CGFloat = 0
+        isUserInteractionActive: Bool = false
     ) -> TimelineFeedSnapshotPosition {
         TimelineFeedSnapshotPositionCommitPlanner.position(
             for: TimelineFeedSnapshotPositionCommitInput(
@@ -143,8 +138,7 @@ struct TimelineFeedViewportMutationPlannerTests {
                 isUserInteractionActive: isUserInteractionActive,
                 isPullRefreshProtected: false,
                 isRestoreProtected: false,
-                isRestoreBlocked: false,
-                contentOffset: contentOffset
+                isRestoreBlocked: false
             )
         )
     }

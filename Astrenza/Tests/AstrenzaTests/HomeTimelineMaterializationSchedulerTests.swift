@@ -92,6 +92,57 @@ struct HomeTimelineMaterializationSchedulerTests {
         #expect(!scheduler.hasPendingMaterialization)
     }
 
+    @Test("A non-positional update preserves in-flight realtime follow intent")
+    @MainActor
+    func nonPositionalUpdatePreservesInFlightRealtimeIntent() async throws {
+        let scheduler = HomeTimelineMaterializationScheduler(
+            defaultDelayNanoseconds: 0
+        )
+        let probe = MaterializationProbe()
+        let pass = try #require(scheduler.beginMaterialization(
+            allowsRealtimeFollow: true
+        ))
+
+        scheduler.schedule(
+            allowsRealtimeFollow: nil,
+            materialize: { permission in
+                probe.permissions.append(permission)
+            }
+        )
+
+        for _ in 0..<100 where probe.permissions.isEmpty {
+            await Task.yield()
+        }
+
+        #expect(!scheduler.completeMaterialization(pass))
+        #expect(probe.permissions == [true])
+    }
+
+    @Test("A catch-up update still overrides in-flight realtime follow intent")
+    @MainActor
+    func catchUpUpdateOverridesInFlightRealtimeIntent() async throws {
+        let scheduler = HomeTimelineMaterializationScheduler(
+            defaultDelayNanoseconds: 0
+        )
+        let probe = MaterializationProbe()
+        _ = try #require(scheduler.beginMaterialization(
+            allowsRealtimeFollow: true
+        ))
+
+        scheduler.schedule(
+            allowsRealtimeFollow: false,
+            materialize: { permission in
+                probe.permissions.append(permission)
+            }
+        )
+
+        for _ in 0..<100 where probe.permissions.isEmpty {
+            await Task.yield()
+        }
+
+        #expect(probe.permissions == [false])
+    }
+
     @Test("Scrolling invalidates in-flight work and defers one replacement")
     @MainActor
     func scrollingInvalidatesInFlightPass() throws {

@@ -20,6 +20,7 @@ final class HomeTimelineMaterializationScheduler {
     private var needsNewestProjectionReload = false
     private var materializationGeneration: UInt64 = 0
     private var isMaterializationInFlight = false
+    private var inFlightAllowsRealtimeFollow: Bool?
 
     init(defaultDelayNanoseconds: UInt64 = 16_000_000) {
         self.defaultDelayNanoseconds = defaultDelayNanoseconds
@@ -47,7 +48,7 @@ final class HomeTimelineMaterializationScheduler {
         followState.reset()
         self.renderFingerprint = renderFingerprint
         needsNewestProjectionReload = false
-        invalidateMaterialization()
+        invalidateMaterialization(preservingRealtimeFollowIntent: false)
     }
 
     func setScrollActive(_ isActive: Bool, materialize: @escaping MaterializeHandler) {
@@ -60,7 +61,7 @@ final class HomeTimelineMaterializationScheduler {
             needsMaterializationAfterScroll = true
             scheduledTask?.cancel()
             scheduledTask = nil
-            invalidateMaterialization()
+            invalidateMaterialization(preservingRealtimeFollowIntent: true)
         } else if needsMaterializationAfterScroll {
             schedule(materialize: materialize)
         }
@@ -82,13 +83,14 @@ final class HomeTimelineMaterializationScheduler {
         guard !isScrollActive else {
             needsMaterializationAfterScroll = true
             followState.enqueue(allowsRealtimeFollow: allowsRealtimeFollow)
-            invalidateMaterialization()
+            invalidateMaterialization(preservingRealtimeFollowIntent: true)
             return nil
         }
         followState.clearPendingPermission()
         needsMaterializationAfterScroll = false
         materializationGeneration &+= 1
         isMaterializationInFlight = true
+        inFlightAllowsRealtimeFollow = allowsRealtimeFollow
         return HomeTimelineMaterializationPass(
             generation: materializationGeneration,
             allowsRealtimeFollow: allowsRealtimeFollow,
@@ -105,7 +107,7 @@ final class HomeTimelineMaterializationScheduler {
             followState.enqueue(allowsRealtimeFollow: allowsRealtimeFollow)
         }
         if isMaterializationInFlight {
-            invalidateMaterialization()
+            invalidateMaterialization(preservingRealtimeFollowIntent: true)
         }
         needsMaterializationAfterScroll = true
         guard !isScrollActive, scheduledTask == nil else { return }
@@ -128,6 +130,7 @@ final class HomeTimelineMaterializationScheduler {
               pass.generation == materializationGeneration
         else { return false }
         isMaterializationInFlight = false
+        inFlightAllowsRealtimeFollow = nil
         return true
     }
 
@@ -136,7 +139,7 @@ final class HomeTimelineMaterializationScheduler {
         scheduledTask = nil
         needsMaterializationAfterScroll = false
         followState.clearPendingPermission()
-        invalidateMaterialization()
+        invalidateMaterialization(preservingRealtimeFollowIntent: false)
     }
 
     func shouldPublish(renderFingerprint: [Int]) -> Bool {
@@ -156,7 +159,16 @@ final class HomeTimelineMaterializationScheduler {
         )
     }
 
-    private func invalidateMaterialization() {
+    private func invalidateMaterialization(
+        preservingRealtimeFollowIntent: Bool
+    ) {
+        if preservingRealtimeFollowIntent,
+           let inFlightAllowsRealtimeFollow {
+            followState.enqueue(
+                allowsRealtimeFollow: inFlightAllowsRealtimeFollow
+            )
+        }
+        inFlightAllowsRealtimeFollow = nil
         materializationGeneration &+= 1
         isMaterializationInFlight = false
     }

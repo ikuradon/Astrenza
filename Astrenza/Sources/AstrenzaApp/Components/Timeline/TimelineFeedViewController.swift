@@ -853,7 +853,6 @@ final class TimelineFeedViewController: UIViewController {
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
             retainCellPayloadsForCurrentSnapshot()
-            isApplyingSnapshot = false
             view.layoutIfNeeded()
             if configuration?.sourceIdentity == appliedSourceIdentity {
                 applyPostSnapshotPosition(
@@ -862,6 +861,7 @@ final class TimelineFeedViewController: UIViewController {
                         plannedInteractionGeneration
                 )
             }
+            isApplyingSnapshot = false
             if pullRefreshSourceRevision != appliedSourceRevision {
                 pendingRefreshAnchor = nil
                 pullRefreshSourceRevision = nil
@@ -905,8 +905,7 @@ final class TimelineFeedViewController: UIViewController {
                     pendingRefreshAnchor != nil || isPullRefreshing,
                 isRestoreProtected:
                     configuration?.viewportRestoreProtectionActive == true,
-                isRestoreBlocked: restoreCoordinator.blocksPersistence,
-                contentOffset: collectionView.contentOffset.y
+                isRestoreBlocked: restoreCoordinator.blocksPersistence
             )
         )
         switch position {
@@ -1594,7 +1593,8 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !isProgrammaticScroll,
-              !restoreCoordinator.blocksPersistence
+              !restoreCoordinator.blocksPersistence,
+              !isSnapshotLayoutAdjustment(scrollView)
         else { return }
 
         let offset = scrollView.contentOffset.y
@@ -1603,6 +1603,16 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
         updateReadLinePositions()
         publishUnreadPillPlacement()
         saveViewportStateIfPossible()
+    }
+
+    private func isSnapshotLayoutAdjustment(
+        _ scrollView: UIScrollView
+    ) -> Bool {
+        isApplyingSnapshot &&
+            !isUserScrollActive &&
+            !scrollView.isTracking &&
+            !scrollView.isDragging &&
+            !scrollView.isDecelerating
     }
 
     func scrollViewDidEndDragging(

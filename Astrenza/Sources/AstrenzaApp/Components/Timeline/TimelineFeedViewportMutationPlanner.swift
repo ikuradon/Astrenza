@@ -70,7 +70,6 @@ struct TimelineFeedSnapshotPositionCommitInput {
     let isPullRefreshProtected: Bool
     let isRestoreProtected: Bool
     let isRestoreBlocked: Bool
-    let contentOffset: CGFloat
 }
 
 enum TimelineFeedSnapshotPositionCommitPlanner {
@@ -85,10 +84,7 @@ enum TimelineFeedSnapshotPositionCommitPlanner {
         let canFollowNewest = input.followsRealtimeEntries &&
             !input.isPullRefreshProtected &&
             !input.isRestoreProtected &&
-            !input.isRestoreBlocked &&
-            input.contentOffset <=
-                HomeTimelineViewportRestorePolicy
-                    .newestWindowMaximumOffset
+            !input.isRestoreBlocked
         guard canFollowNewest else {
             return fallback.map(TimelineFeedSnapshotPosition.preserve) ??
                 .unchanged
