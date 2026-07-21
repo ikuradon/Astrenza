@@ -135,22 +135,45 @@ struct TimelineAuthorHeader: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: AstrenzaSpacing.point5) {
-                Image(systemName: author.secondarySystemName)
-                    .font(.astrenza(.point10, weight: .bold))
-                    .foregroundStyle(secondaryIconStyle)
-                    .frame(width: 12)
-
-                Text(author.secondaryText)
-                    .font(.system(size: AstrenzaTimelineMetrics.authorSecondaryFontSize, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .minimumScaleFactor(0.9)
-            }
+            TimelineAuthorSecondaryIdentity(
+                author: author,
+                iconFont: .astrenza(.point10, weight: .bold),
+                textFont: .system(
+                    size: AstrenzaTimelineMetrics.authorSecondaryFontSize,
+                    weight: .semibold,
+                    design: .rounded
+                ),
+                iconWidth: 12,
+                minimumScaleFactor: 0.9
+            )
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct TimelineAuthorSecondaryIdentity: View {
+    let author: TimelineAuthor
+    let iconFont: Font
+    let textFont: Font
+    let iconWidth: CGFloat
+    let minimumScaleFactor: CGFloat
+
+    var body: some View {
+        HStack(spacing: AstrenzaSpacing.point5) {
+            Image(systemName: author.secondarySystemName)
+                .font(iconFont)
+                .foregroundStyle(secondaryIconStyle)
+                .frame(width: iconWidth)
+                .accessibilityLabel(secondaryAccessibilityLabel)
+
+            Text(author.secondaryText)
+                .font(textFont)
+                .foregroundStyle(Color.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .minimumScaleFactor(minimumScaleFactor)
+        }
     }
 
     private var secondaryIconStyle: AnyShapeStyle {
@@ -163,6 +186,19 @@ struct TimelineAuthorHeader: View {
             AnyShapeStyle(Color.secondary)
         case .absent:
             AnyShapeStyle(.tertiary)
+        }
+    }
+
+    private var secondaryAccessibilityLabel: String {
+        switch author.nip05Status {
+        case .valid:
+            "NIP-05 verified"
+        case .invalid:
+            "NIP-05 verification failed"
+        case .unchecked:
+            "NIP-05 not verified"
+        case .absent:
+            "NIP-05 unavailable"
         }
     }
 }

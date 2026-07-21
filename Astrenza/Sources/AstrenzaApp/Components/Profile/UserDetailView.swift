@@ -188,26 +188,19 @@ struct UserDetailView: View {
 
     private var profileSummary: some View {
         VStack(spacing: AstrenzaSpacing.point9) {
-            HStack(spacing: AstrenzaSpacing.point8) {
-                Text(profile.author.primaryText)
-                    .font(.astrenza(.point31, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                if profile.author.nip05Status == .valid {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.astrenza(.point18, weight: .black))
-                        .foregroundStyle(Color.green)
-                        .accessibilityLabel("NIP-05 resolved")
-                }
-            }
-            .frame(maxWidth: .infinity)
-
-            Text(profile.author.secondaryText)
-                .font(.astrenza(.point22, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
+            Text(profile.author.primaryText)
+                .font(.astrenza(.point31, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(maxWidth: .infinity)
+
+            TimelineAuthorSecondaryIdentity(
+                author: profile.author,
+                iconFont: .astrenza(.point16, weight: .bold),
+                textFont: .astrenza(.point22, weight: .semibold, design: .rounded),
+                iconWidth: 20,
+                minimumScaleFactor: 1
+            )
 
             ProfileAboutText(text: profile.bio)
                 .padding(.top, AstrenzaSpacing.point4)
