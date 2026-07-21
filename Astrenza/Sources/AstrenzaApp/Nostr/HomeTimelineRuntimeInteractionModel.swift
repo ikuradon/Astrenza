@@ -265,6 +265,19 @@ struct HomeTimelineRuntimeEventEnvelope: Equatable, Sendable {
     let relayURL: String
     let subscriptionID: String
     let event: NostrEvent
+    let receivedWhileRealtime: Bool?
+
+    init(
+        relayURL: String,
+        subscriptionID: String,
+        event: NostrEvent,
+        receivedWhileRealtime: Bool? = nil
+    ) {
+        self.relayURL = relayURL
+        self.subscriptionID = subscriptionID
+        self.event = event
+        self.receivedWhileRealtime = receivedWhileRealtime
+    }
 }
 
 enum HomeTimelineRuntimeStoreAsyncAction: Equatable, Sendable {

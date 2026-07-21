@@ -100,9 +100,9 @@ struct HomeTimelineFeedSyncCoordinatorTests {
         #expect(coordinator.activeContextCount == 0)
     }
 
-    @Test("Realtime requires EOSE from every expected forward subscription")
+    @Test("Realtime starts per subscription without waiting for every relay")
     @MainActor
-    func forwardRealtimeRequiresEveryEOSE() throws {
+    func forwardRealtimeStartsAfterFirstEOSE() throws {
         let eventStore = try NostrEventStore.inMemory()
         let registry = HomeTimelineBackwardRequestRegistry()
         let coordinator = HomeTimelineFeedSyncCoordinator(
@@ -163,7 +163,15 @@ struct HomeTimelineFeedSyncCoordinatorTests {
             subscriptionID: firstKey.subscriptionID,
             completion: .eose
         )
-        #expect(!firstEOSE.isRealtime)
+        #expect(firstEOSE.isRealtime)
+        #expect(coordinator.isRealtime(
+            relayURL: firstKey.relayURL,
+            subscriptionID: firstKey.subscriptionID
+        ))
+        #expect(!coordinator.isRealtime(
+            relayURL: secondKey.relayURL,
+            subscriptionID: secondKey.subscriptionID
+        ))
         #expect(firstEOSE.diagnostic.kind == .eose)
         #expect(firstEOSE.diagnostic.eventCount == 1)
         #expect(firstEOSE.diagnostic.newestCreatedAt == 100)
@@ -175,6 +183,10 @@ struct HomeTimelineFeedSyncCoordinatorTests {
             completion: .eose
         )
         #expect(secondEOSE.isRealtime)
+        #expect(coordinator.isRealtime(
+            relayURL: secondKey.relayURL,
+            subscriptionID: secondKey.subscriptionID
+        ))
         #expect(secondEOSE.diagnostic.eventCount == 0)
         #expect(coordinator.activeRequestCount == 2)
         #expect(coordinator.context(
@@ -187,7 +199,11 @@ struct HomeTimelineFeedSyncCoordinatorTests {
             subscriptionID: firstKey.subscriptionID,
             completion: .closed(message: "closed")
         )
-        #expect(!closed.isRealtime)
+        #expect(closed.isRealtime)
+        #expect(!coordinator.isRealtime(
+            relayURL: firstKey.relayURL,
+            subscriptionID: firstKey.subscriptionID
+        ))
         #expect(closed.diagnostic.kind == .closed)
         #expect(coordinator.activeRequestCount == 1)
 

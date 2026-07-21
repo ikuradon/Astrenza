@@ -187,7 +187,9 @@ final class HomeTimelineRuntimeInteractionWorkflow {
                     event: envelope.event,
                     account: context.state.account,
                     hasRelayRuntime: context.state.hasRelayRuntime,
-                    receivedWhileRealtime: context.state.receivedWhileRealtime
+                    receivedWhileRealtime:
+                        envelope.receivedWhileRealtime ??
+                        context.state.receivedWhileRealtime
                 )
             },
             effects: eventEffects(

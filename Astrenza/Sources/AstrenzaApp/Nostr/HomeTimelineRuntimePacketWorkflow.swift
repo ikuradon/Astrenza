@@ -63,12 +63,18 @@ final class HomeTimelineRuntimePacketWorkflow {
             guard application.wasHandled else { continue }
 
             switch application.action {
-            case .event(let relayURL, let subscriptionID, let event):
+            case .event(
+                let relayURL,
+                let subscriptionID,
+                let event,
+                let receivedWhileRealtime
+            ):
                 handlers.applyState(application)
                 pendingEvents.append(HomeTimelineRuntimeEventEnvelope(
                     relayURL: relayURL,
                     subscriptionID: subscriptionID,
-                    event: event
+                    event: event,
+                    receivedWhileRealtime: receivedWhileRealtime
                 ))
             case .backwardCompleted(let completion):
                 await flushEvents()

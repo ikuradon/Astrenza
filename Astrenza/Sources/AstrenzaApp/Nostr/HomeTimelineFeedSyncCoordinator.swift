@@ -75,6 +75,13 @@ final class HomeTimelineFeedSyncCoordinator {
         state.activeContextCount
     }
 
+    func isRealtime(relayURL: String, subscriptionID: String) -> Bool {
+        state.isRealtime(for: key(
+            relayURL: relayURL,
+            subscriptionID: subscriptionID
+        ))
+    }
+
     func reset(finishingActiveRequestsWith reason: NostrFeedSyncEndReason? = nil) {
         if let reason {
             finishActiveRequests(reason: reason)

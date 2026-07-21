@@ -121,9 +121,14 @@ struct HomeTimelineRuntimeSyncState {
     private var initialForwardSubscriptions = Set<RuntimeSubscriptionKey>()
     private var initialForwardResults: [RuntimeSubscriptionKey: InitialForwardResult] = [:]
 
+    // Forward REQは購読ごとにEOSE後のlive streamへ移る。1 relayの応答待ちで
+    // 他relayのlive表示と追従を止めず、cohort全体の完了はinitialSyncProgressで扱う。
     var isRealtime: Bool {
-        !expectedForwardSubscriptions.isEmpty &&
-            expectedForwardSubscriptions.isSubset(of: forwardEOSESubscriptions)
+        !forwardEOSESubscriptions.isEmpty
+    }
+
+    func isRealtime(for key: RuntimeSubscriptionKey) -> Bool {
+        forwardEOSESubscriptions.contains(key)
     }
 
     var initialSyncState: HomeTimelineInitialSyncState {

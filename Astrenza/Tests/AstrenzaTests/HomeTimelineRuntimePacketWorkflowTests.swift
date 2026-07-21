@@ -51,7 +51,8 @@ struct HomeTimelineRuntimePacketWorkflowTests {
         let action = HomeTimelineRuntimePacketAction.event(
             relayURL: runtimePacketTestRelayURL,
             subscriptionID: "astrenza-home-forward-workflow",
-            event: event
+            event: event,
+            receivedWhileRealtime: true
         )
         let application = HomeTimelineRuntimePacketApplication.handled(
             realtimeState: false,
@@ -66,7 +67,8 @@ struct HomeTimelineRuntimePacketWorkflowTests {
             .handleEvent(
                 relayURL: runtimePacketTestRelayURL,
                 subscriptionID: "astrenza-home-forward-workflow",
-                event: event
+                event: event,
+                receivedWhileRealtime: true
             )
         ])
     }
@@ -171,7 +173,9 @@ private final class RuntimePacketWorkflowProbe {
                     self?.events.append(.handleEvent(
                         relayURL: event.relayURL,
                         subscriptionID: event.subscriptionID,
-                        event: event.event
+                        event: event.event,
+                        receivedWhileRealtime:
+                            event.receivedWhileRealtime ?? false
                     ))
                 }
             },
@@ -191,7 +195,8 @@ private enum RuntimePacketWorkflowProbeEvent: Equatable, Sendable {
     case handleEvent(
         relayURL: String,
         subscriptionID: String,
-        event: NostrEvent
+        event: NostrEvent,
+        receivedWhileRealtime: Bool
     )
     case handleBackwardCompletion(NostrBackwardREQCompletion)
 }

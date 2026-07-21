@@ -31,10 +31,25 @@ struct RuntimeEventProcessingRequest: Equatable, Sendable {
     let relayURL: String
     let subscriptionID: String
     let event: NostrEvent
+    let receivedWhileRealtime: Bool
+
+    init(
+        relayURL: String,
+        subscriptionID: String,
+        event: NostrEvent,
+        receivedWhileRealtime: Bool = false
+    ) {
+        self.relayURL = relayURL
+        self.subscriptionID = subscriptionID
+        self.event = event
+        self.receivedWhileRealtime = receivedWhileRealtime
+    }
 }
 
 struct RuntimeEventProcessingHandlers: Sendable {
-    typealias PresentationStateProvider = @MainActor @Sendable () -> HomeTimelineRuntimeEventPresentationState
+    typealias PresentationStateProvider = @MainActor @Sendable (
+        _ receivedWhileRealtime: Bool
+    ) -> HomeTimelineRuntimeEventPresentationState
 
     let forwardPresentationState: PresentationStateProvider
     let ensureFeedDefinition: @MainActor @Sendable () async -> Void
@@ -50,7 +65,11 @@ extension HomeTimelineRuntimeEventProcessor: HomeTimelineRuntimeEventProcessing 
             relayURL: request.relayURL,
             subscriptionID: request.subscriptionID,
             event: request.event,
-            forwardPresentationState: handlers.forwardPresentationState,
+            forwardPresentationState: {
+                handlers.forwardPresentationState(
+                    request.receivedWhileRealtime
+                )
+            },
             ensureFeedDefinition: handlers.ensureFeedDefinition,
             activeFeedContext: handlers.activeFeedContext
         )
@@ -276,15 +295,12 @@ final class HomeTimelineRuntimeEventCoordinator {
                 RuntimeEventProcessingRequest(
                     relayURL: request.relayURL,
                     subscriptionID: request.subscriptionID,
-                    event: request.event
+                    event: request.event,
+                    receivedWhileRealtime: request.receivedWhileRealtime
                 )
             },
             handlers: RuntimeEventProcessingHandlers(
-                forwardPresentationState: {
-                    handlers.presentationState(
-                        requests.first?.receivedWhileRealtime ?? false
-                    )
-                },
+                forwardPresentationState: handlers.presentationState,
                 ensureFeedDefinition: { [weak self] in
                     await self?.ensureFeedDefinition(accountID: account.pubkey)
                 },

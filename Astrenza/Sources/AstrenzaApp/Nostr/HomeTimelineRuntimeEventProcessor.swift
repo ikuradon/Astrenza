@@ -118,7 +118,7 @@ final class HomeTimelineRuntimeEventProcessor {
                 subscriptionID: subscriptionID,
                 event: event
             )],
-            forwardPresentationState: forwardPresentationState,
+            forwardPresentationState: { _ in forwardPresentationState() },
             ensureFeedDefinition: ensureFeedDefinition,
             activeFeedContext: activeFeedContext
         )[0]
@@ -126,7 +126,9 @@ final class HomeTimelineRuntimeEventProcessor {
 
     func process(
         _ requests: [RuntimeEventProcessingRequest],
-        forwardPresentationState: () -> HomeTimelineRuntimeEventPresentationState,
+        forwardPresentationState: (
+            _ receivedWhileRealtime: Bool
+        ) -> HomeTimelineRuntimeEventPresentationState,
         ensureFeedDefinition: () async -> Void,
         activeFeedContext: () -> HomeFeedRuntimeContext?
     ) async -> [HomeTimelineRuntimeEventProcessingOutcome] {
@@ -161,7 +163,9 @@ final class HomeTimelineRuntimeEventProcessor {
             let applicationPlan: HomeTimelineRuntimeEventApplicationPlan
             switch item.kind {
             case .forward:
-                let presentationState = forwardPresentationState()
+                let presentationState = forwardPresentationState(
+                    item.receivedWhileRealtime
+                )
                 applicationPlan = applicationPlanner.planForward(.init(
                     event: item.event,
                     embeddedEvent: ingestResult.eventResult.embeddedEvent,
@@ -235,6 +239,7 @@ final class HomeTimelineRuntimeEventProcessor {
                     )
                 )),
                 kind: .forward,
+                receivedWhileRealtime: input.receivedWhileRealtime,
                 backwardRequestKey: nil,
                 persistenceFailurePrefix: "event save failed"
             )
@@ -270,6 +275,7 @@ final class HomeTimelineRuntimeEventProcessor {
                 )
             )),
             kind: .backward(isTimelineBackfill: isTimelineBackfill),
+            receivedWhileRealtime: false,
             backwardRequestKey: requestKey,
             persistenceFailurePrefix: "backward event save failed"
         )
@@ -296,6 +302,7 @@ final class HomeTimelineRuntimeEventProcessor {
         let event: NostrEvent
         let ingestRequest: HomeTimelineProjectedEventIngestRequest
         let kind: Kind
+        let receivedWhileRealtime: Bool
         let backwardRequestKey: String?
         let persistenceFailurePrefix: String
     }

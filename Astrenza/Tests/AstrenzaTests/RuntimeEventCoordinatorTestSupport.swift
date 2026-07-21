@@ -32,7 +32,9 @@ final class RuntimeEventProcessorSpy: HomeTimelineRuntimeEventProcessing {
         await handlers.ensureFeedDefinition()
         activeFeedContexts.append(handlers.activeFeedContext())
         beforePresentationSample?()
-        presentationStates.append(handlers.forwardPresentationState())
+        presentationStates.append(handlers.forwardPresentationState(
+            request.receivedWhileRealtime
+        ))
         return outcome
     }
 }

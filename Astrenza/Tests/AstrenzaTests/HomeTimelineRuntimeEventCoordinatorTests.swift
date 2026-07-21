@@ -5,6 +5,28 @@ import Testing
 @Suite("Home timeline runtime event coordinator")
 @MainActor
 struct HomeTimelineRuntimeEventCoordinatorTests {
+    @Test("Batched events retain their own realtime classification")
+    func batchedEventsRetainRealtimeClassification() async throws {
+        let system = try RuntimeEventCoordinatorTestSystem(
+            outcome: .processed(HomeTimelineRuntimeEventProcessingResult(
+                applicationPlan: HomeTimelineRuntimeEventApplicationPlan(),
+                backwardRequestKey: nil
+            ))
+        )
+
+        await system.coordinator.handle(
+            [
+                system.request(receivedWhileRealtime: false),
+                system.request(receivedWhileRealtime: true)
+            ],
+            handlers: system.probe.handlers
+        )
+
+        #expect(system.processor.presentationStates.map(
+            \.receivedWhileRealtime
+        ) == [false, true])
+    }
+
     @Test("Processed events apply once and finish runtime bookkeeping")
     func processedEventApplication() async throws {
         var plan = HomeTimelineRuntimeEventApplicationPlan()

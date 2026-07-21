@@ -131,10 +131,61 @@ struct RuntimePacketRoutingTests {
         #expect(eventApplication.action == .event(
             relayURL: runtimePacketTestRelayURL,
             subscriptionID: subscriptionID,
-            event: runtimeEvent
+            event: runtimeEvent,
+            receivedWhileRealtime: false
         ))
         #expect(completionApplication.action == .backwardCompleted(completion))
         #expect(eventApplication.realtimeState == nil)
         #expect(completionApplication.relayStatusTransition == nil)
+    }
+
+    @Test("EVENT is live only after its own forward subscription reaches EOSE")
+    @MainActor
+    func classifiesRealtimePerForwardSubscription() throws {
+        let fixture = RuntimePacketFixture()
+        let request = try fixture.prepareForwardRequest(suffix: "live-event")
+        let context = fixture.context()
+        _ = fixture.coordinator.handle(
+            .requestStarted(request.attempt),
+            context: context
+        )
+        let event = runtimePacketEvent(idSeed: "4", createdAt: 200)
+
+        let catchUp = fixture.coordinator.handle(
+            .event(
+                relayURL: runtimePacketTestRelayURL,
+                subscriptionID: request.packet.subscriptionID,
+                event: event
+            ),
+            context: context
+        )
+        _ = fixture.coordinator.handle(
+            .eose(
+                relayURL: runtimePacketTestRelayURL,
+                subscriptionID: request.packet.subscriptionID
+            ),
+            context: context
+        )
+        let live = fixture.coordinator.handle(
+            .event(
+                relayURL: runtimePacketTestRelayURL,
+                subscriptionID: request.packet.subscriptionID,
+                event: event
+            ),
+            context: context
+        )
+
+        #expect(catchUp.action == .event(
+            relayURL: runtimePacketTestRelayURL,
+            subscriptionID: request.packet.subscriptionID,
+            event: event,
+            receivedWhileRealtime: false
+        ))
+        #expect(live.action == .event(
+            relayURL: runtimePacketTestRelayURL,
+            subscriptionID: request.packet.subscriptionID,
+            event: event,
+            receivedWhileRealtime: true
+        ))
     }
 }

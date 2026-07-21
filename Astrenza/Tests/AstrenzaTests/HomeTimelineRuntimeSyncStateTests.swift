@@ -5,8 +5,8 @@ import Testing
 
 @Suite("Home timeline runtime sync state")
 struct HomeTimelineRuntimeSyncStateTests {
-    @Test("Realtime begins only after every expected relay subscription reaches EOSE")
-    func realtimeRequiresEveryExpectedSubscription() {
+    @Test("Realtime begins per relay while initial sync waits for the full cohort")
+    func realtimeIsIndependentFromInitialSyncSettlement() {
         let first = RuntimeSubscriptionKey(
             relayURL: "wss://relay-one.example",
             subscriptionID: "home-0"
@@ -28,7 +28,9 @@ struct HomeTimelineRuntimeSyncStateTests {
         ))
 
         state.markForwardEOSE(first)
-        #expect(!state.isRealtime)
+        #expect(state.isRealtime)
+        #expect(state.isRealtime(for: first))
+        #expect(!state.isRealtime(for: second))
         #expect(state.initialSyncState == .awaitingRelayResponses)
         #expect(state.initialSyncProgress.completedRelayCount == 1)
 
@@ -37,8 +39,13 @@ struct HomeTimelineRuntimeSyncStateTests {
         #expect(state.initialSyncState == .synchronized)
 
         state.invalidateForwardSubscriptions(relayURL: first.relayURL)
-        #expect(!state.isRealtime)
+        #expect(state.isRealtime)
+        #expect(!state.isRealtime(for: first))
+        #expect(state.isRealtime(for: second))
         #expect(state.initialSyncState == .synchronized)
+
+        state.invalidateForwardSubscription(second)
+        #expect(!state.isRealtime)
     }
 
     @Test("Initial sync distinguishes partial and unavailable terminal results")
@@ -99,7 +106,7 @@ struct HomeTimelineRuntimeSyncStateTests {
 
         state.markForwardEOSE(later)
         #expect(state.initialSyncState == .unavailable)
-        #expect(!state.isRealtime)
+        #expect(state.isRealtime)
 
         state.markForwardEOSE(first)
         #expect(state.initialSyncState == .synchronized)

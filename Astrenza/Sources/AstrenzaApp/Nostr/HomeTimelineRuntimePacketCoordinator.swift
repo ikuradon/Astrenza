@@ -11,7 +11,8 @@ enum HomeTimelineRuntimePacketAction: Equatable, Sendable {
     case event(
         relayURL: String,
         subscriptionID: String,
-        event: NostrEvent
+        event: NostrEvent,
+        receivedWhileRealtime: Bool
     )
     case backwardCompleted(NostrBackwardREQCompletion)
 }
@@ -79,7 +80,11 @@ final class HomeTimelineRuntimePacketCoordinator {
             return .handled(action: .event(
                 relayURL: relayURL,
                 subscriptionID: subscriptionID,
-                event: event
+                event: event,
+                receivedWhileRealtime: feedSyncCoordinator.isRealtime(
+                    relayURL: relayURL,
+                    subscriptionID: subscriptionID
+                )
             ))
         case .backwardCompleted(let completion):
             return .handled(action: .backwardCompleted(completion))
