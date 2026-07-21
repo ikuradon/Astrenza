@@ -141,6 +141,31 @@ struct HomeTimelineViewportStateTests {
         ))
     }
 
+    @Test("Live mode is exposed only for a realtime Home live edge")
+    func liveModeRequiresRealtimeHomeLiveEdge() {
+        #expect(HomeTimelineLiveModePolicy.isEnabled(
+            selectedTimeline: .home,
+            isRealtime: true,
+            isAtNewestWindow: true,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: false
+        ))
+        #expect(!HomeTimelineLiveModePolicy.isEnabled(
+            selectedTimeline: .lists,
+            isRealtime: true,
+            isAtNewestWindow: true,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: false
+        ))
+        #expect(!HomeTimelineLiveModePolicy.isEnabled(
+            selectedTimeline: .home,
+            isRealtime: true,
+            isAtNewestWindow: true,
+            isRestoreProtected: false,
+            isDetachedFromLiveEdge: true
+        ))
+    }
+
     private func makeState(
         restoredViewportState: TimelineViewportState? = nil
     ) -> HomeTimelineViewportState {

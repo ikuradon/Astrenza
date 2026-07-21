@@ -10,8 +10,7 @@ struct HomeTimelineFeedContentView: View {
     let viewportState: TimelineViewportState?
     let scrollCommand: TimelineScrollCommand?
     let viewportRestoreProtectionActive: Bool
-    let isTimelineAtNewestWindow: Bool
-    let isTimelineDetachedFromLiveEdge: Bool
+    let followsRealtimeEntries: Bool
     let layoutCache: TimelineLayoutCache
     let onEmptyStatePrimaryAction: () -> Void
     let onEmptyStateSecondaryAction: (() -> Void)?
@@ -92,17 +91,6 @@ struct HomeTimelineFeedContentView: View {
         case .lists:
             store.listContentRevision
         }
-    }
-
-    private var followsRealtimeEntries: Bool {
-        guard selectedTimeline == .home else { return false }
-        return HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
-            isRealtime: store.isHomeTimelineRealtime &&
-                store.realtimeFollowSourceRevision == sourceRevision,
-            isAtNewestWindow: isTimelineAtNewestWindow,
-            isRestoreProtected: viewportRestoreProtectionActive,
-            isDetachedFromLiveEdge: isTimelineDetachedFromLiveEdge
-        )
     }
 
     private var unreadCountAnchorPostID: TimelinePost.ID? {

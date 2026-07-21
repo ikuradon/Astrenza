@@ -5,6 +5,7 @@ struct HomeTimelineChromeView: View {
     let visibleTab: TimelineTab
     let isPostDetailPresented: Bool
     let collapseProgress: CGFloat
+    let isRealtimeModeEnabled: Bool
     let unreadPillPlacement: HomeUnreadPillPlacement
     let onDismissFloatingMenus: () -> Void
     let onRelayStatusTap: () -> Void
@@ -75,6 +76,7 @@ struct HomeTimelineChromeView: View {
                 isTimelineMenuPresented: $isTimelineMenuPresented,
                 isUserSwitcherPresented: $isUserSwitcherPresented,
                 collapseProgress: collapseProgress,
+                isRealtimeModeEnabled: isRealtimeModeEnabled,
                 onDismissFloatingMenus: onDismissFloatingMenus,
                 onRelayStatusTap: onRelayStatusTap,
                 onSettingsTap: onSettingsTap,

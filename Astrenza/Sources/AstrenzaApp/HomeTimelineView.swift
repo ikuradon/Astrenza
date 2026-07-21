@@ -39,6 +39,22 @@ struct HomeTimelineView: View {
         navigation.isPresentingDetail
     }
 
+    private var isRealtimeModeEnabled: Bool {
+        HomeTimelineLiveModePolicy.isEnabled(
+            selectedTimeline: selectedTimeline,
+            isRealtime: liveTimelineStore.isHomeTimelineRealtime,
+            isAtNewestWindow: viewport.isAtNewestWindow,
+            isRestoreProtected: viewport.isRestoreProtectionActive,
+            isDetachedFromLiveEdge: viewport.isDetachedFromLiveEdge
+        )
+    }
+
+    private var followsRealtimeEntries: Bool {
+        isRealtimeModeEnabled &&
+            liveTimelineStore.realtimeFollowSourceRevision ==
+            liveTimelineStore.resolvedContentRevision
+    }
+
     private var composeSubmitHandler: ComposeFeatureModel.SubmitHandler? {
         guard sessionStore.account != nil else { return nil }
         return { request, onProgress in
@@ -134,6 +150,7 @@ struct HomeTimelineView: View {
                 visibleTab: visibleTab,
                 isPostDetailPresented: isPostDetailPresented,
                 collapseProgress: topChromeCollapseProgress,
+                isRealtimeModeEnabled: isRealtimeModeEnabled,
                 unreadPillPlacement: unreadPillPlacement,
                 onDismissFloatingMenus: dismissFloatingMenus,
                 onRelayStatusTap: presentRelayStatus,
@@ -221,8 +238,7 @@ private extension HomeTimelineView {
                 viewportState: viewport.viewportState,
                 scrollCommand: viewport.scrollCommand,
                 viewportRestoreProtectionActive: viewport.isRestoreProtectionActive,
-                isTimelineAtNewestWindow: viewport.isAtNewestWindow,
-                isTimelineDetachedFromLiveEdge: viewport.isDetachedFromLiveEdge,
+                followsRealtimeEntries: followsRealtimeEntries,
                 layoutCache: viewport.layoutCache,
                 onEmptyStatePrimaryAction: handleTimelineEmptyStatePrimaryAction,
                 onEmptyStateSecondaryAction: handleTimelineEmptyStateSecondaryAction,

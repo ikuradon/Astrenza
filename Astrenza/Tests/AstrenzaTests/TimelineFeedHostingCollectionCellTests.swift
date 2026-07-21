@@ -104,6 +104,61 @@ struct TimelineFeedHostingCollectionCellTests {
     }
 
     @MainActor
+    @Test("Rapid realtime revisions retire in order and publish the newest snapshot")
+    func rapidRealtimeRevisionsPublishNewestSnapshot() async throws {
+        let controller = TimelineFeedViewController()
+        controller.apply(makeControllerConfiguration(
+            leadingContent: nil,
+            metrics: .home,
+            postIDs: ["old-1", "old-2"],
+            sourceRevision: 1,
+            followsRealtimeEntries: true
+        ))
+        controller.view.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: 390,
+            height: 844
+        )
+        controller.view.layoutIfNeeded()
+
+        controller.apply(makeControllerConfiguration(
+            leadingContent: nil,
+            metrics: .home,
+            postIDs: ["new-1", "old-1", "old-2"],
+            sourceRevision: 2,
+            followsRealtimeEntries: true
+        ))
+        controller.apply(makeControllerConfiguration(
+            leadingContent: nil,
+            metrics: .home,
+            postIDs: ["new-2", "new-1", "old-1", "old-2"],
+            sourceRevision: 3,
+            followsRealtimeEntries: true
+        ))
+        controller.apply(makeControllerConfiguration(
+            leadingContent: nil,
+            metrics: .home,
+            postIDs: [
+                "new-3", "new-2", "new-1", "old-1", "old-2",
+            ],
+            sourceRevision: 4,
+            followsRealtimeEntries: true
+        ))
+
+        for _ in 0 ..< 8 {
+            await Task.yield()
+        }
+        controller.view.layoutIfNeeded()
+        let collectionView = try #require(
+            controller.view.subviews.first as? UICollectionView
+        )
+
+        #expect(collectionView.numberOfItems(inSection: 0) == 5)
+        #expect(abs(collectionView.contentOffset.y) <= 0.5)
+    }
+
+    @MainActor
     @Test("Profile surface keeps its header and post rows full width")
     func profileSurfaceUsesOneFullWidthLayout() async throws {
         let controller = TimelineFeedViewController()
@@ -997,16 +1052,22 @@ struct TimelineFeedHostingCollectionCellTests {
         leadingContent: TimelineFeedLeadingContent?,
         metrics: TimelineFeedCollectionMetrics,
         postCount: Int = 1,
-        sourceIdentity: String = "surface-test"
+        sourceIdentity: String = "surface-test",
+        postIDs: [TimelinePost.ID]? = nil,
+        sourceRevision: Int = 1,
+        followsRealtimeEntries: Bool = false
     ) -> TimelineFeedCollectionConfiguration {
-        TimelineFeedCollectionConfiguration(
-            entries: (0 ..< postCount).map { index in
-                .post(makeTimelinePost(id: "surface-post-\(index)"))
+        let resolvedPostIDs = postIDs ?? (0 ..< postCount).map {
+            "surface-post-\($0)"
+        }
+        return TimelineFeedCollectionConfiguration(
+            entries: resolvedPostIDs.map { postID in
+                .post(makeTimelinePost(id: postID))
             },
             leadingContent: leadingContent,
             metrics: metrics,
             sourceIdentity: sourceIdentity,
-            sourceRevision: 1,
+            sourceRevision: sourceRevision,
             viewportIdentity: TimelineFeedViewportIdentity(
                 accountID: "test-account",
                 timelineKey: "test-timeline"
@@ -1015,7 +1076,7 @@ struct TimelineFeedHostingCollectionCellTests {
             viewportState: nil,
             scrollCommand: nil,
             viewportRestoreProtectionActive: false,
-            followsRealtimeEntries: false,
+            followsRealtimeEntries: followsRealtimeEntries,
             layoutCache: TimelineLayoutCache(),
             unreadCountAnchorPostID: nil,
             onOpenPost: { _ in },

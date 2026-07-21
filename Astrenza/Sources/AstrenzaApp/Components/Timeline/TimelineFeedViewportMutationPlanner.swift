@@ -3,7 +3,7 @@ import Foundation
 enum TimelineFeedSnapshotPosition: Equatable {
     case unchanged
     case preserve(TimelineFeedVisibleAnchor)
-    case newest
+    case followNewest(fallback: TimelineFeedVisibleAnchor?)
 }
 
 struct TimelineFeedViewportMutationInput {
@@ -22,7 +22,7 @@ enum TimelineFeedViewportMutationPlanner {
         for input: TimelineFeedViewportMutationInput
     ) -> TimelineFeedSnapshotPosition {
         if shouldFollowNewest(input) {
-            return .newest
+            return .followNewest(fallback: input.visibleAnchor)
         }
         if let refreshAnchor = input.refreshAnchor,
            input.newIDs.contains(refreshAnchor.postID) {
@@ -60,5 +60,39 @@ enum TimelineFeedViewportMutationPlanner {
             didRestoreViewport: !input.isRestoreBlocked,
             isRestoringViewport: input.isRestoreBlocked
         )
+    }
+}
+
+struct TimelineFeedSnapshotPositionCommitInput {
+    let plannedPosition: TimelineFeedSnapshotPosition
+    let followsRealtimeEntries: Bool
+    let isUserInteractionActive: Bool
+    let isPullRefreshProtected: Bool
+    let isRestoreProtected: Bool
+    let isRestoreBlocked: Bool
+    let contentOffset: CGFloat
+}
+
+enum TimelineFeedSnapshotPositionCommitPlanner {
+    static func position(
+        for input: TimelineFeedSnapshotPositionCommitInput
+    ) -> TimelineFeedSnapshotPosition {
+        guard !input.isUserInteractionActive else { return .unchanged }
+        guard case .followNewest(let fallback) = input.plannedPosition else {
+            return input.plannedPosition
+        }
+
+        let canFollowNewest = input.followsRealtimeEntries &&
+            !input.isPullRefreshProtected &&
+            !input.isRestoreProtected &&
+            !input.isRestoreBlocked &&
+            input.contentOffset <=
+                HomeTimelineViewportRestorePolicy
+                    .newestWindowMaximumOffset
+        guard canFollowNewest else {
+            return fallback.map(TimelineFeedSnapshotPosition.preserve) ??
+                .unchanged
+        }
+        return input.plannedPosition
     }
 }

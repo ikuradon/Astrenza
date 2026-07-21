@@ -30,6 +30,36 @@ final class TimelineFeedViewController: UIViewController {
         let localeIdentifier: String
     }
 
+    private struct EntriesApplication {
+        let entries: [TimelineFeedEntry]
+        let forceSnapshotApplication: Bool
+        let forceVisibleReconfiguration: Bool
+        let reconfigureAllVisible: Bool
+        let forceLeadingReconfiguration: Bool
+        let forceGeometryProjection: Bool
+
+        func merging(_ newer: EntriesApplication) -> EntriesApplication {
+            EntriesApplication(
+                entries: newer.entries,
+                forceSnapshotApplication:
+                    forceSnapshotApplication ||
+                    newer.forceSnapshotApplication,
+                forceVisibleReconfiguration:
+                    forceVisibleReconfiguration ||
+                    newer.forceVisibleReconfiguration,
+                reconfigureAllVisible:
+                    reconfigureAllVisible ||
+                    newer.reconfigureAllVisible,
+                forceLeadingReconfiguration:
+                    forceLeadingReconfiguration ||
+                    newer.forceLeadingReconfiguration,
+                forceGeometryProjection:
+                    forceGeometryProjection ||
+                    newer.forceGeometryProjection
+            )
+        }
+    }
+
     private enum RowMeasurementReuseKey: Hashable {
         case simplePost(bodyTextHeightInPixels: Int)
         case exact(TimelineFeedCellSizingIdentity)
@@ -52,9 +82,7 @@ final class TimelineFeedViewController: UIViewController {
     private var readLinePositionByPostID:
         [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
-    private var pendingPostSnapshotPosition =
-        TimelineFeedSnapshotPosition.unchanged
-    private var pendingPreservedAnchor: TimelineFeedVisibleAnchor?
+    private var pendingEntriesApplication: EntriesApplication?
     private var pendingRefreshAnchor: TimelineFeedVisibleAnchor?
     private var pullRefreshSourceRevision: Int?
     private var fetchingGapDirections:
@@ -71,6 +99,7 @@ final class TimelineFeedViewController: UIViewController {
     private var isApplyingSnapshot = false
     private var isProgrammaticScroll = false
     private var isUserScrollActive = false
+    private var viewportInteractionGeneration: UInt64 = 0
     private var isPullRefreshArmed = false
     private var isPullRefreshing = false
     private var pullRefreshProgress: CGFloat = 0
@@ -230,6 +259,7 @@ final class TimelineFeedViewController: UIViewController {
         restoreRetryGeneration &+= 1
         missingRestoreAnchorAttempts = 0
         saveViewportStateIfPossible(force: true)
+        pendingEntriesApplication = nil
         setUserScrollActive(false)
         resetPullRefreshPresentation()
     }
@@ -653,7 +683,7 @@ final class TimelineFeedViewController: UIViewController {
         isLeadingContentPresented = false
         postOrderByID = [:]
         readLinePositionByPostID = [:]
-        pendingPreservedAnchor = nil
+        pendingEntriesApplication = nil
         pendingRefreshAnchor = nil
         pullRefreshSourceRevision = nil
         fetchingGapDirections = [:]
@@ -678,6 +708,27 @@ final class TimelineFeedViewController: UIViewController {
         forceLeadingReconfiguration: Bool = false,
         forceGeometryProjection: Bool = false
     ) {
+        let application = EntriesApplication(
+            entries: newEntries,
+            forceSnapshotApplication: forceSnapshotApplication,
+            forceVisibleReconfiguration: forceVisibleReconfiguration,
+            reconfigureAllVisible: reconfigureAllVisible,
+            forceLeadingReconfiguration: forceLeadingReconfiguration,
+            forceGeometryProjection: forceGeometryProjection
+        )
+        guard !isApplyingSnapshot, !isUserScrollActive else {
+            pendingEntriesApplication = pendingEntriesApplication?
+                .merging(application) ?? application
+            return
+        }
+        applyEntries(application)
+    }
+
+    @discardableResult
+    private func applyEntries(
+        _ application: EntriesApplication
+    ) -> Bool {
+        let newEntries = application.entries
         let oldIDs = entries.map(\.id)
         let newIDs = newEntries.map(\.id)
         let presentsLeadingContent = configuration?.leadingContent != nil
@@ -688,18 +739,18 @@ final class TimelineFeedViewController: UIViewController {
             entries: newEntries,
             leadingContent: configuration?.leadingContent
         )
-        guard forceSnapshotApplication ||
+        guard application.forceSnapshotApplication ||
                 structureChanged ||
-                forceVisibleReconfiguration ||
-                forceLeadingReconfiguration ||
-                forceGeometryProjection
+                application.forceVisibleReconfiguration ||
+                application.forceLeadingReconfiguration ||
+                application.forceGeometryProjection
         else {
             entries = newEntries
             entriesByID = Dictionary(
                 uniqueKeysWithValues: newEntries.map { ($0.id, $0) }
             )
             rebuildPostOrder()
-            return
+            return false
         }
 
         let oldIDSet = Set(oldIDs)
@@ -713,9 +764,9 @@ final class TimelineFeedViewController: UIViewController {
             .intersection(oldIDSet)
             .intersection(newIDSet)
         var reconfiguredIDs: Set<TimelineFeedEntry.ID>
-        if !forceVisibleReconfiguration {
+        if !application.forceVisibleReconfiguration {
             reconfiguredIDs = []
-        } else if reconfigureAllVisible {
+        } else if application.reconfigureAllVisible {
             reconfiguredIDs = commonVisibleIDs
         } else {
             let oldFingerprintsByID = Dictionary(
@@ -742,7 +793,8 @@ final class TimelineFeedViewController: UIViewController {
         }
 
         let visibleAnchor = captureVisibleAnchor()
-        pendingPostSnapshotPosition = TimelineFeedViewportMutationPlanner
+        let plannedInteractionGeneration = viewportInteractionGeneration
+        let postSnapshotPosition = TimelineFeedViewportMutationPlanner
             .position(
                 for: TimelineFeedViewportMutationInput(
                     oldIDs: oldIDs,
@@ -785,7 +837,8 @@ final class TimelineFeedViewController: UIViewController {
             ? [.leadingContent] + entryItemIDs
             : entryItemIDs
         snapshot.appendItems(collectionItemIDs, toSection: .main)
-        if forceLeadingReconfiguration && presentsLeadingContent {
+        if application.forceLeadingReconfiguration &&
+            presentsLeadingContent {
             snapshot.reconfigureItems([.leadingContent])
         }
         if !reconfiguredIDs.isEmpty {
@@ -794,22 +847,34 @@ final class TimelineFeedViewController: UIViewController {
             )
         }
 
+        let appliedSourceIdentity = configuration?.sourceIdentity
+        let appliedSourceRevision = configuration?.sourceRevision
         isApplyingSnapshot = true
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
             retainCellPayloadsForCurrentSnapshot()
             isApplyingSnapshot = false
             view.layoutIfNeeded()
-            applyPostSnapshotPosition()
-            if pullRefreshSourceRevision != configuration?.sourceRevision {
+            if configuration?.sourceIdentity == appliedSourceIdentity {
+                applyPostSnapshotPosition(
+                    postSnapshotPosition,
+                    plannedInteractionGeneration:
+                        plannedInteractionGeneration
+                )
+            }
+            if pullRefreshSourceRevision != appliedSourceRevision {
                 pendingRefreshAnchor = nil
                 pullRefreshSourceRevision = nil
+            }
+            if applyPendingEntriesIfPossible() {
+                return
             }
             attemptPendingRestoreIfPossible()
             publishInitialViewportReadyIfPossible()
             updateReadLinePositions()
             publishUnreadPillPlacement(force: true)
         }
+        return true
     }
 
     private func retainCellPayloadsForCurrentSnapshot() {
@@ -820,17 +885,48 @@ final class TimelineFeedViewController: UIViewController {
         )
     }
 
-    private func applyPostSnapshotPosition() {
-        let position = pendingPostSnapshotPosition
-        pendingPostSnapshotPosition = .unchanged
+    private func applyPostSnapshotPosition(
+        _ plannedPosition: TimelineFeedSnapshotPosition,
+        plannedInteractionGeneration: UInt64
+    ) {
+        let position = TimelineFeedSnapshotPositionCommitPlanner.position(
+            for: TimelineFeedSnapshotPositionCommitInput(
+                plannedPosition: plannedPosition,
+                followsRealtimeEntries:
+                    configuration?.followsRealtimeEntries == true,
+                isUserInteractionActive:
+                    viewportInteractionGeneration !=
+                    plannedInteractionGeneration ||
+                    isUserScrollActive ||
+                    collectionView.isTracking ||
+                    collectionView.isDragging ||
+                    collectionView.isDecelerating,
+                isPullRefreshProtected:
+                    pendingRefreshAnchor != nil || isPullRefreshing,
+                isRestoreProtected:
+                    configuration?.viewportRestoreProtectionActive == true,
+                isRestoreBlocked: restoreCoordinator.blocksPersistence,
+                contentOffset: collectionView.contentOffset.y
+            )
+        )
         switch position {
         case .unchanged:
             break
         case .preserve(let anchor):
             preserve(anchor)
-        case .newest:
+        case .followNewest:
             setContentOffset(0)
         }
+    }
+
+    @discardableResult
+    private func applyPendingEntriesIfPossible() -> Bool {
+        guard !isApplyingSnapshot,
+              !isUserScrollActive,
+              let pendingEntriesApplication
+        else { return false }
+        self.pendingEntriesApplication = nil
+        return applyEntries(pendingEntriesApplication)
     }
 
     private func rebuildPostOrder() {
@@ -1461,9 +1557,13 @@ final class TimelineFeedViewController: UIViewController {
     private func setUserScrollActive(_ isActive: Bool) {
         guard isUserScrollActive != isActive else { return }
         isUserScrollActive = isActive
+        if isActive {
+            viewportInteractionGeneration &+= 1
+        }
         configuration?.onScrollActivityChanged(isActive)
         if !isActive {
             commitDeferredGeometryProjectionIfNeeded()
+            _ = applyPendingEntriesIfPossible()
         }
     }
 }

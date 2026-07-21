@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import Astrenza
 
@@ -18,7 +19,7 @@ struct TimelineFeedViewportMutationPlannerTests {
             for: input(followsRealtimeEntries: true)
         )
 
-        #expect(position == .newest)
+        #expect(position == .followNewest(fallback: visibleAnchor))
     }
 
     @Test("Pull refresh preserves its original anchor over realtime")
@@ -79,6 +80,37 @@ struct TimelineFeedViewportMutationPlannerTests {
         #expect(position == .preserve(visibleAnchor))
     }
 
+    @Test("Realtime follow commits only while idle at the live edge")
+    func realtimeFollowCommitRequiresIdleLiveEdge() {
+        let planned = TimelineFeedSnapshotPosition.followNewest(
+            fallback: visibleAnchor
+        )
+
+        #expect(committedPosition(planned: planned) == planned)
+        #expect(committedPosition(
+            planned: planned,
+            isUserInteractionActive: true
+        ) == .unchanged)
+        #expect(committedPosition(
+            planned: planned,
+            contentOffset: 24
+        ) == .preserve(visibleAnchor))
+        #expect(committedPosition(
+            planned: planned,
+            followsRealtimeEntries: false
+        ) == .preserve(visibleAnchor))
+    }
+
+    @Test("An interaction never receives a programmatic anchor correction")
+    func activeInteractionLeavesPlannedPreservationUnchanged() {
+        let committed = committedPosition(
+            planned: .preserve(visibleAnchor),
+            isUserInteractionActive: true
+        )
+
+        #expect(committed == .unchanged)
+    }
+
     private func input(
         newIDs: [TimelineFeedEntry.ID] = ["new", "visible", "refresh"],
         refreshAnchor: TimelineFeedVisibleAnchor? = nil,
@@ -95,6 +127,25 @@ struct TimelineFeedViewportMutationPlannerTests {
             followsRealtimeEntries: followsRealtimeEntries,
             isRestoreProtected: isRestoreProtected,
             isRestoreBlocked: isRestoreBlocked
+        )
+    }
+
+    private func committedPosition(
+        planned: TimelineFeedSnapshotPosition,
+        followsRealtimeEntries: Bool = true,
+        isUserInteractionActive: Bool = false,
+        contentOffset: CGFloat = 0
+    ) -> TimelineFeedSnapshotPosition {
+        TimelineFeedSnapshotPositionCommitPlanner.position(
+            for: TimelineFeedSnapshotPositionCommitInput(
+                plannedPosition: planned,
+                followsRealtimeEntries: followsRealtimeEntries,
+                isUserInteractionActive: isUserInteractionActive,
+                isPullRefreshProtected: false,
+                isRestoreProtected: false,
+                isRestoreBlocked: false,
+                contentOffset: contentOffset
+            )
         )
     }
 }

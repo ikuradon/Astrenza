@@ -147,12 +147,16 @@ struct HomeTimelineViewportState {
 }
 
 enum HomeTimelineViewportRestorePolicy {
+    static let newestWindowMaximumOffset: CGFloat = 6
+
     static func isAtNewestWindow(
         offset: CGFloat,
         isRestoreProtected: Bool,
         isDetachedFromLiveEdge: Bool
     ) -> Bool {
-        !isRestoreProtected && !isDetachedFromLiveEdge && offset <= 6
+        !isRestoreProtected &&
+            !isDetachedFromLiveEdge &&
+            offset <= newestWindowMaximumOffset
     }
 
     static func followsRealtimeEntries(
@@ -162,5 +166,23 @@ enum HomeTimelineViewportRestorePolicy {
         isDetachedFromLiveEdge: Bool
     ) -> Bool {
         isRealtime && !isRestoreProtected && !isDetachedFromLiveEdge && isAtNewestWindow
+    }
+}
+
+enum HomeTimelineLiveModePolicy {
+    static func isEnabled(
+        selectedTimeline: TimelineKind,
+        isRealtime: Bool,
+        isAtNewestWindow: Bool,
+        isRestoreProtected: Bool,
+        isDetachedFromLiveEdge: Bool
+    ) -> Bool {
+        guard selectedTimeline == .home else { return false }
+        return HomeTimelineViewportRestorePolicy.followsRealtimeEntries(
+            isRealtime: isRealtime,
+            isAtNewestWindow: isAtNewestWindow,
+            isRestoreProtected: isRestoreProtected,
+            isDetachedFromLiveEdge: isDetachedFromLiveEdge
+        )
     }
 }

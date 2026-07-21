@@ -6,6 +6,7 @@ struct HomeTimelineTopBar: View {
     @Binding var isTimelineMenuPresented: Bool
     @Binding var isUserSwitcherPresented: Bool
     let collapseProgress: CGFloat
+    let isRealtimeModeEnabled: Bool
     let onDismissFloatingMenus: () -> Void
     let onRelayStatusTap: () -> Void
     let onSettingsTap: () -> Void
@@ -69,6 +70,19 @@ struct HomeTimelineTopBar: View {
                 HStack(spacing: AstrenzaSpacing.point7) {
                     Text(selectedTimeline.title)
                         .font(.astrenza(.point20, weight: .bold, design: .rounded))
+                    if isRealtimeModeEnabled {
+                        Image(systemName: "bolt.fill")
+                            .font(.astrenza(.point11, weight: .black))
+                            .foregroundStyle(Color.astrenzaAccent)
+                            .accessibilityLabel("Live")
+                            .accessibilityIdentifier(
+                                "home.timeline.live_indicator"
+                            )
+                            .transition(
+                                .scale(scale: 0.72)
+                                    .combined(with: .opacity)
+                            )
+                    }
                     Image(systemName: "chevron.down")
                         .font(.astrenza(.point15, weight: .bold))
                         .rotationEffect(.degrees(isTimelineMenuPresented ? 180 : 0))
@@ -78,6 +92,10 @@ struct HomeTimelineTopBar: View {
                 .frame(height: 42)
                 .contentShape(Capsule())
                 .astrenzaGlass(tint: Color.white.opacity(0.04), in: Capsule())
+                .animation(
+                    .snappy(duration: AstrenzaMotion.fast),
+                    value: isRealtimeModeEnabled
+                )
             }
             .buttonStyle(.plain)
             .overlay(alignment: .top) {
