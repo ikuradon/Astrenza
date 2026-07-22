@@ -259,6 +259,46 @@ struct HomeTimelineViewportStateTests {
         #expect(!state.isRealtimeModeEnabled)
     }
 
+    @Test("Applying a pending stack never flashes LIVE before the anchor is committed")
+    func pendingRefreshNeverFlashesLive() {
+        var state = makeLiveState(sourceRevision: 10)
+        _ = state.synchronizeLiveContext(.init(
+            selectedTimeline: .home,
+            isRealtimeAvailable: true,
+            pendingEventCount: 3
+        ))
+        #expect(state.mode == .browsing)
+
+        _ = state.beginRefresh()
+        _ = state.synchronizeLiveContext(.init(
+            selectedTimeline: .home,
+            isRealtimeAvailable: true,
+            pendingEventCount: 0
+        ))
+        _ = state.completeRefresh(
+            didUpdate: true,
+            sourceRevision: 12
+        )
+        _ = state.observeViewport(observation(
+            collectionHead: "old",
+            visibleHead: "old",
+            sourceRevision: 11
+        ))
+
+        #expect(state.mode == .refreshing(expectedSourceRevision: 12))
+        #expect(!state.isRealtimeModeEnabled)
+
+        _ = state.observeViewport(observation(
+            collectionHead: "new",
+            visibleHead: "old",
+            isAtContentStart: false,
+            sourceRevision: 12
+        ))
+
+        #expect(state.mode == .browsing)
+        #expect(!state.isRealtimeModeEnabled)
+    }
+
     @Test("A physical head waits for forward EOSE before showing LIVE")
     func physicalHeadWaitsForRealtimeReadiness() {
         var state = makeState()

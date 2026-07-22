@@ -90,11 +90,56 @@ struct TimelineFeedViewportMutationPlannerTests {
         #expect(committedPosition(
             planned: planned,
             isUserInteractionActive: true
-        ) == .unchanged)
+        ) == .preserve(visibleAnchor))
+        #expect(committedPosition(
+            planned: planned,
+            isPullRefreshProtected: true
+        ) == .preserve(visibleAnchor))
         #expect(committedPosition(
             planned: planned,
             followsRealtimeEntries: false
         ) == .preserve(visibleAnchor))
+    }
+
+    @Test("Refresh anchor waits for the requested revision, not an intermediate revision")
+    func refreshAnchorWaitsForRequestedRevision() {
+        var transaction = TimelineFeedRefreshAnchorTransaction()
+        transaction.begin(anchor: refreshAnchor)
+
+        transaction.didPresent(sourceRevision: 11)
+        transaction.receive(
+            TimelineFeedRefreshResult(
+                didUpdate: true,
+                sourceRevision: 12
+            ),
+            presentedSourceRevision: 11
+        )
+
+        #expect(transaction.isProtected)
+        #expect(transaction.anchor == refreshAnchor)
+        #expect(transaction.expectedSourceRevision == 12)
+
+        transaction.didPresent(sourceRevision: 12)
+
+        #expect(!transaction.isProtected)
+        #expect(transaction.anchor == nil)
+        #expect(transaction.expectedSourceRevision == nil)
+    }
+
+    @Test("Refresh result releases an anchor already presented by UICollectionView")
+    func refreshResultReleasesAlreadyPresentedAnchor() {
+        var transaction = TimelineFeedRefreshAnchorTransaction()
+        transaction.begin(anchor: refreshAnchor)
+
+        transaction.receive(
+            TimelineFeedRefreshResult(
+                didUpdate: true,
+                sourceRevision: 12
+            ),
+            presentedSourceRevision: 12
+        )
+
+        #expect(!transaction.isProtected)
     }
 
     @Test("An interaction never receives a programmatic anchor correction")
@@ -129,14 +174,15 @@ struct TimelineFeedViewportMutationPlannerTests {
     private func committedPosition(
         planned: TimelineFeedSnapshotPosition,
         followsRealtimeEntries: Bool = true,
-        isUserInteractionActive: Bool = false
+        isUserInteractionActive: Bool = false,
+        isPullRefreshProtected: Bool = false
     ) -> TimelineFeedSnapshotPosition {
         TimelineFeedSnapshotPositionCommitPlanner.position(
             for: TimelineFeedSnapshotPositionCommitInput(
                 plannedPosition: planned,
                 followsRealtimeEntries: followsRealtimeEntries,
                 isUserInteractionActive: isUserInteractionActive,
-                isPullRefreshProtected: false,
+                isPullRefreshProtected: isPullRefreshProtected,
                 isRestoreProtected: false,
                 isRestoreBlocked: false
             )

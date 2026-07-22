@@ -83,8 +83,8 @@ final class TimelineFeedViewController: UIViewController {
         [TimelinePost.ID: TimelinePostReadLinePosition] = [:]
     private var restoreCoordinator = TimelineFeedViewportRestoreCoordinator()
     private var pendingEntriesApplication: EntriesApplication?
-    private var pendingRefreshAnchor: TimelineFeedVisibleAnchor?
-    private var pullRefreshSourceRevision: Int?
+    private var refreshAnchorTransaction =
+        TimelineFeedRefreshAnchorTransaction()
     private var fetchingGapDirections:
         [TimelineGap.ID: TimelineGapFillDirection] = [:]
     private var lastScrollCommandID: UUID?
@@ -687,8 +687,7 @@ final class TimelineFeedViewController: UIViewController {
         postOrderByID = [:]
         readLinePositionByPostID = [:]
         pendingEntriesApplication = nil
-        pendingRefreshAnchor = nil
-        pullRefreshSourceRevision = nil
+        refreshAnchorTransaction.reset()
         fetchingGapDirections = [:]
         lastScrollCommandID = nil
         initialViewportReadySourceIdentity = nil
@@ -756,6 +755,9 @@ final class TimelineFeedViewController: UIViewController {
             )
             rebuildPostOrder()
             presentedSourceRevision = configuration?.sourceRevision
+            refreshAnchorTransaction.didPresent(
+                sourceRevision: presentedSourceRevision
+            )
             publishViewportObservation(force: true)
             return false
         }
@@ -807,7 +809,7 @@ final class TimelineFeedViewController: UIViewController {
                     oldIDs: oldIDs,
                     newIDs: newIDs,
                     visibleAnchor: visibleAnchor,
-                    refreshAnchor: pendingRefreshAnchor,
+                    refreshAnchor: refreshAnchorTransaction.anchor,
                     isPullRefreshing: isPullRefreshing,
                     followsRealtimeEntries:
                         configuration?.followsRealtimeEntries == true,
@@ -870,11 +872,10 @@ final class TimelineFeedViewController: UIViewController {
                 presentedSourceRevision = appliedSourceRevision
             }
             isApplyingSnapshot = false
+            refreshAnchorTransaction.didPresent(
+                sourceRevision: presentedSourceRevision
+            )
             publishViewportObservation(force: true)
-            if pullRefreshSourceRevision != appliedSourceRevision {
-                pendingRefreshAnchor = nil
-                pullRefreshSourceRevision = nil
-            }
             if applyPendingEntriesIfPossible() {
                 return
             }
@@ -911,7 +912,8 @@ final class TimelineFeedViewController: UIViewController {
                     collectionView.isDragging ||
                     collectionView.isDecelerating,
                 isPullRefreshProtected:
-                    pendingRefreshAnchor != nil || isPullRefreshing,
+                    refreshAnchorTransaction.isProtected ||
+                    isPullRefreshing,
                 isRestoreProtected:
                     configuration?.viewportRestoreProtectionActive == true,
                 isRestoreBlocked: restoreCoordinator.blocksPersistence
@@ -1174,7 +1176,9 @@ final class TimelineFeedViewController: UIViewController {
     }
 
     private func publishViewportObservation(force: Bool = false) {
-        guard let configuration else { return }
+        guard !isApplyingSnapshot,
+              let configuration
+        else { return }
         let observation = TimelineFeedViewportObservation(
             collectionHeadPostID: entries.first?.post?.id,
             visibleHeadPostID: captureVisibleAnchor()?.postID,
@@ -1518,23 +1522,22 @@ final class TimelineFeedViewController: UIViewController {
         pullRefreshCompletionResult = nil
         isPullRefreshing = true
         pullRefreshProgress = 1
-        pendingRefreshAnchor = captureVisibleAnchor()
-        let refreshAnchor = pendingRefreshAnchor
-        pullRefreshSourceRevision = configuration?.sourceRevision
+        let refreshAnchor = captureVisibleAnchor()
+        refreshAnchorTransaction.begin(anchor: refreshAnchor)
         publishPullRefreshPresentation()
         publishViewportObservation(force: true)
 
         pullRefreshTask?.cancel()
         pullRefreshTask = Task { @MainActor [weak self] in
-            let didUpdate = await onRefresh(refreshAnchor)
+            let result = await onRefresh(refreshAnchor)
             guard let self, !Task.isCancelled else { return }
-            if !didUpdate {
-                pendingRefreshAnchor = nil
-                pullRefreshSourceRevision = nil
-            }
+            refreshAnchorTransaction.receive(
+                result,
+                presentedSourceRevision: presentedSourceRevision
+            )
             isPullRefreshing = false
             pullRefreshProgress = 0
-            pullRefreshCompletionResult = didUpdate
+            pullRefreshCompletionResult = result.didUpdate
             publishPullRefreshPresentation()
             publishViewportObservation(force: true)
             pullRefreshTask = nil
@@ -1584,6 +1587,7 @@ final class TimelineFeedViewController: UIViewController {
         isPullRefreshing = false
         pullRefreshProgress = 0
         pullRefreshCompletionResult = nil
+        refreshAnchorTransaction.reset()
         publishPullRefreshPresentation()
     }
 

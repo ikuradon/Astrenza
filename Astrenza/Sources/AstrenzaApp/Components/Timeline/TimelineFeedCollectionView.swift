@@ -71,7 +71,7 @@ struct TimelineFeedCellPayloadStore {
 struct TimelineFeedCollectionConfiguration {
     typealias RefreshHandler = @MainActor (
         _ anchor: TimelineFeedVisibleAnchor?
-    ) async -> Bool
+    ) async -> TimelineFeedRefreshResult
 
     let entries: [TimelineFeedEntry]
     let leadingContent: TimelineFeedLeadingContent?

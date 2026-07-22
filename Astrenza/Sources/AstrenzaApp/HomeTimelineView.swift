@@ -542,7 +542,7 @@ private extension HomeTimelineView {
 
     func refreshVisibleTimeline(
         preserving anchor: TimelineFeedVisibleAnchor?
-    ) async -> Bool {
+    ) async -> TimelineFeedRefreshResult {
         viewportStoreSynchronizer.applyRefreshPreparation(
             viewport.beginRefresh(),
             context: timelineInteractionContext
@@ -551,14 +551,18 @@ private extension HomeTimelineView {
             context: timelineInteractionContext,
             preserving: anchor?.postID
         )
+        let sourceRevision = liveTimelineStore.resolvedContentRevision
         viewportStoreSynchronizer.applyNewestWindowUpdate(
             viewport.completeRefresh(
                 didUpdate: didUpdate,
-                sourceRevision: liveTimelineStore.resolvedContentRevision
+                sourceRevision: sourceRevision
             ),
             context: timelineInteractionContext
         )
-        return didUpdate
+        return TimelineFeedRefreshResult(
+            didUpdate: didUpdate,
+            sourceRevision: sourceRevision
+        )
     }
 
     func loadOlderVisibleTimeline(_: TimelinePost.ID) {

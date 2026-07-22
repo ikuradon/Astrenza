@@ -124,7 +124,11 @@ struct HashtagTimelineView: View {
             onPostActionChoice: actions.onPostActionChoice,
             onRefresh: { _ in
                 _ = viewport.prepareRefresh()
-                return await store.refresh()
+                let didUpdate = await store.refresh()
+                return TimelineFeedRefreshResult(
+                    didUpdate: didUpdate,
+                    sourceRevision: store.contentRevision
+                )
             },
             onLoadOlderPost: { _ in store.loadOlder() },
             onScrollOffsetChanged: { offset in
