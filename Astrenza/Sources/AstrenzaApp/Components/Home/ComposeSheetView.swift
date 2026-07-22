@@ -119,32 +119,36 @@ struct ComposeSheetView: View {
 
     private func loadLiveSuggestions() async {
         guard let accountID, let eventStore else { return }
-        await applySuggestionSource(accountID: accountID, eventStore: eventStore)
+        let hasCompleteCachedCatalog = await applySuggestionSource(
+            accountID: accountID,
+            eventStore: eventStore
+        )
         guard !Task.isCancelled, let onResolveCustomEmojis else { return }
-        isCustomEmojiResolving = true
+        isCustomEmojiResolving = !hasCompleteCachedCatalog
         defer { isCustomEmojiResolving = false }
         await onResolveCustomEmojis(accountID)
         guard !Task.isCancelled else { return }
-        await applySuggestionSource(accountID: accountID, eventStore: eventStore)
+        _ = await applySuggestionSource(accountID: accountID, eventStore: eventStore)
     }
 
     private func applySuggestionSource(
         accountID: String,
         eventStore: NostrEventStore
-    ) async {
+    ) async -> Bool {
         let source = await Task.detached(priority: .userInitiated) {
             ComposeSuggestionSnapshot.source(
                 accountID: accountID,
                 eventStore: eventStore
             )
         }.value
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return false }
         suggestions = ComposeSuggestionSnapshot.project(
             profiles: source.profiles,
             recentNotes: source.recentNotes,
             emojiListEvent: source.emojiListEvent,
             emojiSetEvents: source.emojiSetEvents
         )
+        return source.hasCompleteEmojiCatalog
     }
 
     private var hasDraftContent: Bool {

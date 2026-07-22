@@ -2,6 +2,11 @@ import AstrenzaCore
 import Foundation
 
 actor NostrComposeEmojiResolver {
+    private struct ActiveResolution {
+        let id: UUID
+        let task: Task<Bool, Never>
+    }
+
     private struct RelayResult: Sendable {
         let relayURL: String
         let events: [NostrEvent]
@@ -10,13 +15,16 @@ actor NostrComposeEmojiResolver {
     private let eventStore: NostrEventStore?
     private let relayClient: any NostrRelayFetching
     private let refreshIntervalSeconds: Int
+    private let cacheRefreshIntervalSeconds: Int
     private let now: @Sendable () -> Int
     private var lastAttemptAtByAccountID: [String: Int] = [:]
+    private var activeResolutionByAccountID: [String: ActiveResolution] = [:]
 
     init(
         eventStore: NostrEventStore?,
         relayClient: any NostrRelayFetching,
         refreshIntervalSeconds: Int = 60,
+        cacheRefreshIntervalSeconds: Int = 15 * 60,
         now: @escaping @Sendable () -> Int = {
             Int(Date().timeIntervalSince1970)
         }
@@ -24,6 +32,7 @@ actor NostrComposeEmojiResolver {
         self.eventStore = eventStore
         self.relayClient = relayClient
         self.refreshIntervalSeconds = max(0, refreshIntervalSeconds)
+        self.cacheRefreshIntervalSeconds = max(0, cacheRefreshIntervalSeconds)
         self.now = now
     }
 
@@ -37,20 +46,65 @@ actor NostrComposeEmojiResolver {
               let eventStore
         else { return false }
 
+        if let activeResolution = activeResolutionByAccountID[normalizedAccountID] {
+            return await activeResolution.task.value
+        }
+
+        let resolutionID = UUID()
+        let task = Task { [self] in
+            await resolveUncoalesced(
+                accountID: normalizedAccountID,
+                relayURLs: relayURLs,
+                eventStore: eventStore
+            )
+        }
+        activeResolutionByAccountID[normalizedAccountID] = ActiveResolution(
+            id: resolutionID,
+            task: task
+        )
+        let didPersist = await task.value
+        if activeResolutionByAccountID[normalizedAccountID]?.id == resolutionID {
+            activeResolutionByAccountID[normalizedAccountID] = nil
+        }
+        return didPersist
+    }
+
+    private func resolveUncoalesced(
+        accountID: String,
+        relayURLs: [String],
+        eventStore: NostrEventStore
+    ) async -> Bool {
         let attemptAt = now()
-        if let lastAttemptAt = lastAttemptAtByAccountID[normalizedAccountID],
+        let cachedListEvent = try? eventStore.latestReplaceableEvent(
+            pubkey: accountID,
+            kind: 10_030
+        )
+        let cachedReferences = NostrEmojiSetReference.references(in: cachedListEvent)
+        let cachedReferencesNeedingRefresh = referencesNeedingRefresh(
+            cachedReferences,
+            eventStore: eventStore,
+            now: attemptAt
+        )
+        let listNeedsRefresh = cachedListEvent.map {
+            !isFresh(event: $0, eventStore: eventStore, now: attemptAt)
+        } ?? true
+        guard listNeedsRefresh || !cachedReferencesNeedingRefresh.isEmpty else {
+            return false
+        }
+
+        if let lastAttemptAt = lastAttemptAtByAccountID[accountID],
            attemptAt - lastAttemptAt < refreshIntervalSeconds {
             return false
         }
-        lastAttemptAtByAccountID[normalizedAccountID] = attemptAt
+        lastAttemptAtByAccountID[accountID] = attemptAt
 
         let baseRelays = NostrRelayURL.normalizedStrings(relayURLs)
         var didPersist = false
-        if !baseRelays.isEmpty {
+        if listNeedsRefresh, !baseRelays.isEmpty {
             let request = NostrRelayRequest(
                 subscriptionID: "astrenza-emoji-list-\(UUID().uuidString.prefix(8))",
                 filters: [[
-                    "authors": .strings([normalizedAccountID]),
+                    "authors": .strings([accountID]),
                     "kinds": .ints([10_030]),
                     "limit": .int(1)
                 ]]
@@ -60,7 +114,7 @@ actor NostrComposeEmojiResolver {
                 request: request
             )
             let listEvents = results.flatMap(\.events).filter {
-                $0.kind == 10_030 && $0.pubkey == normalizedAccountID
+                $0.kind == 10_030 && $0.pubkey == accountID
             }
             if !listEvents.isEmpty {
                 didPersist = persist(
@@ -73,14 +127,19 @@ actor NostrComposeEmojiResolver {
         }
 
         guard let emojiListEvent = try? eventStore.latestReplaceableEvent(
-            pubkey: normalizedAccountID,
+            pubkey: accountID,
             kind: 10_030
         ) else { return didPersist }
         let references = NostrEmojiSetReference.references(in: emojiListEvent)
-        guard !references.isEmpty else { return didPersist }
+        let referencesToFetch = referencesNeedingRefresh(
+            references,
+            eventStore: eventStore,
+            now: attemptAt
+        )
+        guard !referencesToFetch.isEmpty else { return didPersist }
 
         let setFetchPlan = makeSetFetchPlan(
-            references: references,
+            references: referencesToFetch,
             baseRelays: baseRelays,
             eventStore: eventStore
         )
@@ -89,7 +148,7 @@ actor NostrComposeEmojiResolver {
             concurrencyLimit: 4
         )
 
-        let expectedAddresses = Set(references.map(\.address))
+        let expectedAddresses = Set(referencesToFetch.map(\.address))
         let setEvents = setResults.flatMap(\.events).filter { event in
             guard event.kind == 30_030,
                   let dTag = event.tags.first(where: {
@@ -109,6 +168,34 @@ actor NostrComposeEmojiResolver {
             ) || didPersist
         }
         return didPersist
+    }
+
+    private func referencesNeedingRefresh(
+        _ references: [NostrEmojiSetReference],
+        eventStore: NostrEventStore,
+        now: Int
+    ) -> [NostrEmojiSetReference] {
+        references.filter { reference in
+            guard let event = try? eventStore.latestAddressableEvent(
+                kind: 30_030,
+                pubkey: reference.pubkey,
+                dTag: reference.dTag
+            ) else { return true }
+            return !isFresh(event: event, eventStore: eventStore, now: now)
+        }
+    }
+
+    private func isFresh(
+        event: NostrEvent,
+        eventStore: NostrEventStore,
+        now: Int
+    ) -> Bool {
+        guard cacheRefreshIntervalSeconds > 0 else { return false }
+        let lastSeenAt = (try? eventStore.eventSources(eventID: event.id))?
+            .map(\.lastSeenAt)
+            .max()
+        guard let lastSeenAt else { return false }
+        return now - lastSeenAt < cacheRefreshIntervalSeconds
     }
 
     private func fetch(

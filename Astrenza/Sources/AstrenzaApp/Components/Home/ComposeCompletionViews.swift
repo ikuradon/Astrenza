@@ -376,6 +376,20 @@ struct ComposeSuggestionSource: Sendable {
     let recentNotes: [NostrEvent]
     let emojiListEvent: NostrEvent?
     let emojiSetEvents: [NostrEvent]
+
+    var hasCompleteEmojiCatalog: Bool {
+        guard let emojiListEvent else { return false }
+        let availableAddresses = Set<String>(emojiSetEvents.compactMap { event in
+            guard event.kind == 30_030,
+                  let dTag = event.tags.first(where: {
+                      $0.count >= 2 && $0[0] == "d"
+                  })?[1]
+            else { return nil }
+            return "30030:\(event.pubkey.lowercased()):\(dTag)"
+        })
+        return NostrEmojiSetReference.references(in: emojiListEvent)
+            .allSatisfy { availableAddresses.contains($0.address) }
+    }
 }
 
 struct ComposeHashtagCandidateCell: View {

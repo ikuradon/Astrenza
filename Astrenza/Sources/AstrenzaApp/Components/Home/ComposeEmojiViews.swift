@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 extension ComposeCustomEmojiCandidate {
     static let mockValues: [ComposeCustomEmojiCandidate] = [
@@ -268,20 +269,12 @@ private struct ComposeEmojiSetIcon: View {
     let set: ComposeCustomEmojiSet
 
     var body: some View {
-        if let imageURL = set.imageURL {
-            AsyncImage(url: imageURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                case .empty, .failure:
-                    fallback
-                @unknown default:
-                    fallback
+        fallback
+            .overlay {
+                if let imageURL = set.imageURL {
+                    ComposeCachedEmojiImage(url: imageURL)
                 }
             }
-        } else {
-            fallback
-        }
     }
 
     private var fallback: some View {
@@ -344,20 +337,12 @@ private struct ComposeCustomEmojiIcon: View {
     let candidate: ComposeCustomEmojiCandidate
 
     var body: some View {
-        if let imageURL = candidate.imageURL {
-            AsyncImage(url: imageURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                case .empty, .failure:
-                    fallback
-                @unknown default:
-                    fallback
+        fallback
+            .overlay {
+                if let imageURL = candidate.imageURL {
+                    ComposeCachedEmojiImage(url: imageURL)
                 }
             }
-        } else {
-            fallback
-        }
     }
 
     private var fallback: some View {
@@ -370,5 +355,31 @@ private struct ComposeCustomEmojiIcon: View {
             .foregroundStyle(candidate.tint)
             .minimumScaleFactor(0.65)
             .lineLimit(1)
+    }
+}
+
+private struct ComposeCachedEmojiImage: View {
+    let url: URL
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Color.clear
+            }
+        }
+        .task(id: url.absoluteString) {
+            image = nil
+            let loadedImage = try? await NostrImageCache.shared.image(
+                for: url,
+                maximumPixelSize: NostrImageCache.customEmojiMaximumPixelSize
+            )
+            guard !Task.isCancelled else { return }
+            image = loadedImage
+        }
     }
 }
