@@ -122,7 +122,7 @@ struct HashtagTimelineView: View {
             onOpenMedia: actions.onOpenMedia,
             onOpenURL: actions.onOpenURL,
             onPostActionChoice: actions.onPostActionChoice,
-            onRefresh: {
+            onRefresh: { _ in
                 _ = viewport.prepareRefresh()
                 return await store.refresh()
             },
@@ -133,6 +133,7 @@ struct HashtagTimelineView: View {
                 }
                 _ = viewport.updateNewestWindow(for: offset)
             },
+            onViewportObservationChanged: { _ in },
             onViewportRestoreCompleted: { offset in
                 _ = viewport.completeRestore()
                 _ = viewport.updateNewestWindow(

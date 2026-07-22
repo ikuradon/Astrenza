@@ -5,20 +5,18 @@ import Testing
 @Suite("Home timeline feed action coordinator")
 @MainActor
 struct HomeTimelineFeedActionCoordinatorTests {
-    @Test("Refresh prepares the viewport before applying pending events")
-    func refreshPreservesEffectOrder() async {
+    @Test("Refresh applies pending events with the visible anchor")
+    func refreshPreservesVisibleAnchor() async {
         let actions = FeedActionHandlerSpy()
         actions.applyPendingResult = true
         let coordinator = HomeTimelineFeedActionCoordinator(actions: actions)
-        var calls: [FeedActionCall] = []
-        actions.onCall = { calls.append($0) }
-
-        let didRefresh = await coordinator.refresh(context: .liveHome) {
-            calls.append(.prepareViewport)
-        }
+        let didRefresh = await coordinator.refresh(
+            context: .liveHome,
+            preserving: "visible"
+        )
 
         #expect(didRefresh)
-        #expect(calls == [.prepareViewport, .applyPendingEvents])
+        #expect(actions.calls == [.applyPendingEvents("visible")])
     }
 
     @Test("Feed mutations require an account on the Home timeline")
@@ -28,8 +26,6 @@ struct HomeTimelineFeedActionCoordinatorTests {
         actions.backfillResult = true
         let coordinator = HomeTimelineFeedActionCoordinator(actions: actions)
         let gap = makeGap()
-        var prepareCount = 0
-
         for context in [
             HomeTimelineInteractionContext(
                 hasLiveAccount: false,
@@ -40,9 +36,10 @@ struct HomeTimelineFeedActionCoordinatorTests {
                 timeline: .relays
             )
         ] {
-            let didRefresh = await coordinator.refresh(context: context) {
-                prepareCount += 1
-            }
+            let didRefresh = await coordinator.refresh(
+                context: context,
+                preserving: "visible"
+            )
             coordinator.loadOlder(context: context)
             let didBackfill = await coordinator.backfillGap(
                 gap,
@@ -59,7 +56,6 @@ struct HomeTimelineFeedActionCoordinatorTests {
             #expect(!didBackfill)
         }
 
-        #expect(prepareCount == 0)
         #expect(actions.calls.isEmpty)
     }
 
@@ -112,8 +108,7 @@ private extension HomeTimelineInteractionContext {
 }
 
 private enum FeedActionCall: Equatable {
-    case prepareViewport
-    case applyPendingEvents
+    case applyPendingEvents(TimelinePost.ID?)
     case loadOlder
     case backfillGap(String, TimelineGapFillDirection)
     case setScrollActive(Bool)
@@ -127,8 +122,10 @@ private final class FeedActionHandlerSpy: HomeTimelineFeedActionHandling {
     var onCall: ((FeedActionCall) -> Void)?
     private(set) var calls: [FeedActionCall] = []
 
-    func applyPendingNewEvents() async -> Bool {
-        record(.applyPendingEvents)
+    func applyPendingNewEvents(
+        preserving anchorPostID: TimelinePost.ID?
+    ) async -> Bool {
+        record(.applyPendingEvents(anchorPostID))
         return applyPendingResult
     }
 

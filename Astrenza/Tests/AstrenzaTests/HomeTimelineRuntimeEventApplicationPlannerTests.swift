@@ -57,6 +57,31 @@ struct HomeTimelineRuntimeEventApplicationPlannerTests {
         }
     }
 
+    @Test("Catch-up notes enter the projection without realtime following")
+    func catchupNotePreservesViewport() {
+        let note = event(kind: 1, idCharacter: "9")
+
+        let plan = HomeTimelineRuntimeEventApplicationPlanner().planForward(
+            .init(
+                event: note,
+                embeddedEvent: nil,
+                projectsIntoCurrentFeed: true,
+                receivedWhileRealtime: false,
+                hasRestoreProjectionAnchor: true,
+                isTimelineAtNewestWindow: false,
+                hasPendingEvents: true
+            )
+        )
+
+        var expected = HomeTimelineRuntimeEventApplicationPlan()
+        expected.invalidatesListEntries = true
+        expected.dependencyEvent = note
+        expected.projectionUpdate = .reloadNewestAndSchedule(
+            allowsRealtimeFollow: false
+        )
+        #expect(plan == expected)
+    }
+
     @Test("Unprojected forward events only invalidate derived list entries")
     func unprojectedForwardEvent() {
         let note = event(kind: 1, idCharacter: "d")

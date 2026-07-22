@@ -3,7 +3,9 @@ import AstrenzaCore
 @MainActor
 protocol HomeTimelineFeedActionHandling: AnyObject {
     @discardableResult
-    func applyPendingNewEvents() async -> Bool
+    func applyPendingNewEvents(
+        preserving anchorPostID: TimelinePost.ID?
+    ) async -> Bool
 
     func loadOlder()
 
@@ -31,11 +33,12 @@ final class HomeTimelineFeedActionCoordinator {
 
     func refresh(
         context: HomeTimelineInteractionContext,
-        prepareViewport: () -> Void
+        preserving anchorPostID: TimelinePost.ID?
     ) async -> Bool {
         guard context.canMutateLiveHome else { return false }
-        prepareViewport()
-        return await actions.applyPendingNewEvents()
+        return await actions.applyPendingNewEvents(
+            preserving: anchorPostID
+        )
     }
 
     func loadOlder(context: HomeTimelineInteractionContext) {

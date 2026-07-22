@@ -144,12 +144,25 @@ final class HomeTimelineViewportInteractionWorkflow {
 
     @discardableResult
     func applyPendingNewEvents(
-        _ context: HomeTimelineViewportInteractionContext
+        _ context: HomeTimelineViewportInteractionContext,
+        preserving anchorPostID: TimelinePost.ID?
     ) async -> Bool {
         await pendingEvents.apply(
-            context.state.pendingEvents,
+            HomeTimelinePendingEventsState(
+                account: context.state.pendingEvents.account,
+                hasPendingProjectionReload:
+                    context.state.pendingEvents.hasPendingProjectionReload,
+                presentationAnchorEventID: anchorPostID
+            ),
             effects: context.pendingEventsEffects
         )
+    }
+
+    @discardableResult
+    func applyPendingNewEvents(
+        _ context: HomeTimelineViewportInteractionContext
+    ) async -> Bool {
+        await applyPendingNewEvents(context, preserving: nil)
     }
 
     @discardableResult

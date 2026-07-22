@@ -5,6 +5,7 @@ protocol HomeTimelineViewportStoreHandling: AnyObject {
     func setRestoreProjectionAnchor(_ anchorEventID: String?)
     func setTimelineAtNewestWindow(_ isAtNewestWindow: Bool)
     func markNewestMaterializedWindowRead()
+    func clearRestoreProjectionAnchorWithoutReload()
 }
 
 extension NostrHomeTimelineStore: HomeTimelineViewportStoreHandling {}
@@ -40,11 +41,18 @@ final class HomeTimelineViewportStoreSynchronizer {
             store.setTimelineAtNewestWindow(false)
             store.setRestoreProjectionAnchor(returnAnchor.anchorPostID)
         case .showNewest:
-            store.markNewestMaterializedWindowRead()
-            // ページング後の先頭Rowは最新とは限らないため、最新windowを先に復元する。
-            store.setRestoreProjectionAnchor(nil)
-            store.setTimelineAtNewestWindow(true)
+            store.clearRestoreProjectionAnchorWithoutReload()
+            store.setTimelineAtNewestWindow(false)
         }
+    }
+
+    func applyRefreshPreparation(
+        _ update: HomeTimelineViewportState.NewestWindowUpdate,
+        context: HomeTimelineInteractionContext
+    ) {
+        guard context.canMutateLiveHome else { return }
+        store.clearRestoreProjectionAnchorWithoutReload()
+        applyNewestWindowUpdate(update, context: context)
     }
 
     func applyRestoreSnapshot(
@@ -53,6 +61,6 @@ final class HomeTimelineViewportStoreSynchronizer {
     ) {
         guard context.canMutateLiveHome else { return }
         store.setRestoreProjectionAnchor(snapshot.viewportState?.anchorPostID)
-        store.setTimelineAtNewestWindow(snapshot.viewportState == nil)
+        store.setTimelineAtNewestWindow(false)
     }
 }

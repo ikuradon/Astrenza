@@ -25,7 +25,6 @@ struct HomeTimelinePendingEventsWorkflowTests {
 
         #expect(didApplyPendingEvents == scenario.expectedResult)
         var expectedEvents: [PendingEventsProbe.Event] = [
-            .applyProjectionViewportTransition(.resetToNewest),
             .reloadNewestProjection(account),
             .materializeEntries,
             .waitForPendingPresentation
@@ -80,10 +79,35 @@ struct HomeTimelinePendingEventsWorkflowTests {
         #expect(!didApply)
         #expect(workflow.hasBufferedEvents)
         #expect(probe.events == [
-            .applyProjectionViewportTransition(.resetToNewest),
             .reloadNewestProjection(account),
             .materializeEntries,
             .waitForPendingPresentation
+        ])
+    }
+
+    @Test("Pending projection reload preserves and releases the refresh anchor")
+    func pendingReloadUsesRefreshAnchor() async {
+        let account = pendingEventsAccount()
+        let probe = PendingEventsProbe()
+        let workflow = HomeTimelinePendingEventsWorkflow(
+            buffer: pendingEventBuffer(eventIDs: ["event"])
+        )
+
+        _ = await workflow.apply(
+            HomeTimelinePendingEventsState(
+                account: account,
+                hasPendingProjectionReload: false,
+                presentationAnchorEventID: "visible-anchor"
+            ),
+            effects: probe.effects
+        )
+
+        #expect(Array(probe.events.prefix(3)) == [
+            .applyProjectionViewportTransition(
+                .setRestoreAnchor("visible-anchor")
+            ),
+            .reloadNewestProjection(account),
+            .applyProjectionViewportTransition(.setRestoreAnchor(nil))
         ])
     }
 

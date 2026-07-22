@@ -73,11 +73,15 @@ struct HomeTimelineRuntimeEventApplicationPlanner: Sendable {
 
         plan.dependencyEvent = input.event
         plan.embeddedDependencyEvent = input.embeddedEvent
-        if !input.hasRestoreProjectionAnchor,
+        if !input.receivedWhileRealtime {
+            plan.projectionUpdate = .reloadNewestAndSchedule(
+                allowsRealtimeFollow: false
+            )
+        } else if !input.hasRestoreProjectionAnchor,
            input.isTimelineAtNewestWindow,
            !input.hasPendingEvents {
             plan.projectionUpdate = .reloadNewestAndSchedule(
-                allowsRealtimeFollow: input.receivedWhileRealtime
+                allowsRealtimeFollow: true
             )
         } else {
             plan.projectionUpdate = .bufferPendingEvent(input.event.id)

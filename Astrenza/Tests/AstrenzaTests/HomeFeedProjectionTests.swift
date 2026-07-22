@@ -151,6 +151,138 @@ struct HomeFeedProjectionTests {
 }
 
 extension HomeFeedProjectionTests {
+    @Test("Startup newest reload preserves the current head and marks a disconnected gap")
+    @MainActor
+    func startupNewestReloadPreservesCurrentHead() async throws {
+        let plan = try projectionPlan(
+            accountID: String(repeating: "a", count: 64)
+        )
+        let currentHead = event(
+            id: String(repeating: "4", count: 64),
+            createdAt: 10,
+            kind: 1,
+            tags: []
+        )
+        let newest = event(
+            id: String(repeating: "5", count: 64),
+            createdAt: 20,
+            kind: 1,
+            tags: []
+        )
+        let loader = SuspendedHomeFeedWindowLoader()
+        let controller = HomeFeedProjectionController(
+            eventStore: nil,
+            windowLoader: loader
+        )
+        controller.activate(
+            definition: plan.definition,
+            window: window(
+                definition: plan.definition,
+                events: [currentHead]
+            ),
+            sourceAuthors: plan.sourceAuthors
+        )
+
+        let reload = Task {
+            await controller.reloadNewest(
+                accountID: plan.definition.accountID,
+                followedPubkeys: plan.sourceAuthors,
+                liveEvents: []
+            )
+        }
+        try #require(await waitForRequestCount(1, loader: loader))
+        #expect(loader.resumeRequest(
+            at: 0,
+            with: window(
+                definition: plan.definition,
+                events: [newest]
+            )
+        ))
+
+        let result = try #require(await reload.value)
+        #expect(result.memberships.map(\.eventID) == [
+            newest.id,
+            currentHead.id,
+        ])
+        let gap = try #require(result.gaps.first)
+        #expect(gap.newerEventID == newest.id)
+        #expect(gap.olderEventID == currentHead.id)
+        #expect(gap.state == .unresolved)
+    }
+
+    @Test("Newest reload merges around the visible refresh anchor")
+    @MainActor
+    func newestReloadPreservesRefreshAnchorWindow() async throws {
+        let plan = try projectionPlan(
+            accountID: String(repeating: "a", count: 64)
+        )
+        let anchor = event(
+            id: String(repeating: "7", count: 64),
+            createdAt: 10,
+            kind: 1,
+            tags: []
+        )
+        let older = event(
+            id: String(repeating: "8", count: 64),
+            createdAt: 5,
+            kind: 1,
+            tags: []
+        )
+        let newest = event(
+            id: String(repeating: "9", count: 64),
+            createdAt: 20,
+            kind: 1,
+            tags: []
+        )
+        let loader = SuspendedHomeFeedWindowLoader()
+        let controller = HomeFeedProjectionController(
+            eventStore: nil,
+            windowLoader: loader
+        )
+        controller.activate(
+            definition: plan.definition,
+            window: window(
+                definition: plan.definition,
+                events: [anchor, older]
+            ),
+            sourceAuthors: plan.sourceAuthors
+        )
+
+        let reload = Task {
+            await controller.reloadNewest(
+                accountID: plan.definition.accountID,
+                followedPubkeys: plan.sourceAuthors,
+                liveEvents: [],
+                preserving: anchor.id
+            )
+        }
+        try #require(await waitForRequestCount(1, loader: loader))
+        #expect(loader.resumeRequest(
+            at: 0,
+            with: window(
+                definition: plan.definition,
+                events: [newest]
+            )
+        ))
+
+        let result = try #require(await reload.value)
+        #expect(result.memberships.map(\.eventID) == [
+            newest.id,
+            anchor.id,
+            older.id
+        ])
+        #expect(result.events.map(\.id) == [
+            newest.id,
+            anchor.id,
+            older.id
+        ])
+        let gap = try #require(result.gaps.first)
+        #expect(result.gaps.count == 1)
+        #expect(gap.newerEventID == newest.id)
+        #expect(gap.olderEventID == anchor.id)
+        #expect(gap.state == .unresolved)
+    }
+
     @Test("A newer window request supersedes an older completion")
     @MainActor
     func newerWindowRequestSupersedesOlderCompletion() async throws {
@@ -358,16 +490,23 @@ extension HomeFeedProjectionTests {
         definition: NostrFeedDefinitionRecord,
         event: NostrEvent
     ) -> NostrFeedWindow {
+        window(definition: definition, events: [event])
+    }
+
+    private func window(
+        definition: NostrFeedDefinitionRecord,
+        events: [NostrEvent]
+    ) -> NostrFeedWindow {
         NostrFeedWindow(
             definition: definition,
             memberships: HomeFeedProjectionBuilder.memberships(
-                events: [event],
+                events: events,
                 feedID: definition.feedID,
                 feedRevision: definition.revision,
                 reason: "test",
                 insertedAt: 100
             ),
-            events: [event],
+            events: events,
             deletedItems: [],
             gaps: []
         )
@@ -384,11 +523,16 @@ extension HomeFeedProjectionTests {
         ))
     }
 
-    private func event(id: String, kind: Int, tags: [[String]]) -> NostrEvent {
+    private func event(
+        id: String,
+        createdAt: Int = 10,
+        kind: Int,
+        tags: [[String]]
+    ) -> NostrEvent {
         NostrEvent(
             id: id,
             pubkey: String(repeating: "d", count: 64),
-            createdAt: 10,
+            createdAt: createdAt,
             kind: kind,
             tags: tags,
             content: "event",

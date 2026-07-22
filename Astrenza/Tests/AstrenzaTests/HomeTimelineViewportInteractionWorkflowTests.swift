@@ -54,7 +54,6 @@ struct HomeTimelineViewportWorkflowTests {
 
         #expect(didApply)
         #expect(fixture.applicationProbe.events == [
-            .applyProjectionViewportTransition(.resetToNewest),
             .reloadNewestProjectionWindow(fixture.account),
             .materializeEntries(false),
             .waitForPendingPresentation,

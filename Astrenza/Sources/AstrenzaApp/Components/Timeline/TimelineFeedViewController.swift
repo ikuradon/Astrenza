@@ -94,6 +94,8 @@ final class TimelineFeedViewController: UIViewController {
     private var lastLoadedOlderPostID: TimelinePost.ID?
     private var lastSavedViewportAnchor: TimelineFeedVisibleAnchor?
     private var lastSavedViewportOffset: CGFloat = 0
+    private var lastViewportObservation: TimelineFeedViewportObservation?
+    private var presentedSourceRevision: Int?
     private var lastViewportSaveTime: TimeInterval = 0
     private var hasUserInteraction = false
     private var isApplyingSnapshot = false
@@ -180,6 +182,7 @@ final class TimelineFeedViewController: UIViewController {
         attemptPendingRestoreIfPossible()
         publishInitialViewportReadyIfPossible()
         publishUnreadPillPlacement()
+        publishViewportObservation()
     }
 
     private func applyMetrics(_ metrics: TimelineFeedCollectionMetrics) {
@@ -693,6 +696,8 @@ final class TimelineFeedViewController: UIViewController {
         lastLoadedOlderPostID = nil
         lastSavedViewportAnchor = nil
         lastSavedViewportOffset = 0
+        lastViewportObservation = nil
+        presentedSourceRevision = nil
         lastViewportSaveTime = 0
         hasUserInteraction = false
         isProgrammaticScroll = true
@@ -750,6 +755,8 @@ final class TimelineFeedViewController: UIViewController {
                 uniqueKeysWithValues: newEntries.map { ($0.id, $0) }
             )
             rebuildPostOrder()
+            presentedSourceRevision = configuration?.sourceRevision
+            publishViewportObservation(force: true)
             return false
         }
 
@@ -860,8 +867,10 @@ final class TimelineFeedViewController: UIViewController {
                     plannedInteractionGeneration:
                         plannedInteractionGeneration
                 )
+                presentedSourceRevision = appliedSourceRevision
             }
             isApplyingSnapshot = false
+            publishViewportObservation(force: true)
             if pullRefreshSourceRevision != appliedSourceRevision {
                 pendingRefreshAnchor = nil
                 pullRefreshSourceRevision = nil
@@ -952,6 +961,9 @@ final class TimelineFeedViewController: UIViewController {
             setContentOffset(0)
         case .viewport(let state):
             positionViewport(state)
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.publishViewportObservation(force: true)
         }
     }
 
@@ -1159,6 +1171,25 @@ final class TimelineFeedViewController: UIViewController {
             )
         }
         return nil
+    }
+
+    private func publishViewportObservation(force: Bool = false) {
+        guard let configuration else { return }
+        let observation = TimelineFeedViewportObservation(
+            collectionHeadPostID: entries.first?.post?.id,
+            visibleHeadPostID: captureVisibleAnchor()?.postID,
+            isAtContentStart:
+                collectionView.contentOffset.y <=
+                minimumContentOffset +
+                HomeTimelineViewportRestorePolicy
+                    .newestWindowMaximumOffset,
+            isUserScrollActive: isUserScrollActive,
+            isPullRefreshing: isPullRefreshing,
+            sourceRevision: presentedSourceRevision ?? 0
+        )
+        guard force || observation != lastViewportObservation else { return }
+        lastViewportObservation = observation
+        configuration.onViewportObservationChanged(observation)
     }
 
     private func preserve(_ anchor: TimelineFeedVisibleAnchor) {
@@ -1488,12 +1519,14 @@ final class TimelineFeedViewController: UIViewController {
         isPullRefreshing = true
         pullRefreshProgress = 1
         pendingRefreshAnchor = captureVisibleAnchor()
+        let refreshAnchor = pendingRefreshAnchor
         pullRefreshSourceRevision = configuration?.sourceRevision
         publishPullRefreshPresentation()
+        publishViewportObservation(force: true)
 
         pullRefreshTask?.cancel()
         pullRefreshTask = Task { @MainActor [weak self] in
-            let didUpdate = await onRefresh()
+            let didUpdate = await onRefresh(refreshAnchor)
             guard let self, !Task.isCancelled else { return }
             if !didUpdate {
                 pendingRefreshAnchor = nil
@@ -1503,6 +1536,7 @@ final class TimelineFeedViewController: UIViewController {
             pullRefreshProgress = 0
             pullRefreshCompletionResult = didUpdate
             publishPullRefreshPresentation()
+            publishViewportObservation(force: true)
             pullRefreshTask = nil
             schedulePullRefreshFeedbackDismissal()
         }
@@ -1560,6 +1594,7 @@ final class TimelineFeedViewController: UIViewController {
             viewportInteractionGeneration &+= 1
         }
         configuration?.onScrollActivityChanged(isActive)
+        publishViewportObservation(force: true)
         if !isActive {
             commitDeferredGeometryProjectionIfNeeded()
             _ = applyPendingEntriesIfPossible()
@@ -1602,6 +1637,7 @@ extension TimelineFeedViewController: UICollectionViewDelegate {
         updatePullRefresh(offset: offset)
         updateReadLinePositions()
         publishUnreadPillPlacement()
+        publishViewportObservation()
         saveViewportStateIfPossible()
     }
 

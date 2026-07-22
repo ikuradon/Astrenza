@@ -393,6 +393,7 @@ struct UserDetailView: View {
             onBackfillGap: nil,
             onScrollOffsetChanged: { scrollOffset = $0 },
             onScrollActivityChanged: { _ in },
+            onViewportObservationChanged: { _ in },
             onInitialViewportReady: {},
             onViewportRestoreCompleted: { _ in },
             onViewportStateChanged: { _ in },

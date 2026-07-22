@@ -85,7 +85,8 @@ final class StoreViewportInteractionSpy: HomeStoreViewportInteracting {
     }
 
     func applyPendingNewEvents(
-        _ context: HomeTimelineViewportInteractionContext
+        _ context: HomeTimelineViewportInteractionContext,
+        preserving anchorPostID: TimelinePost.ID?
     ) async -> Bool {
         calls.append(.applyPendingEvents(accountID(context)))
         if let onApplyPendingEvents {

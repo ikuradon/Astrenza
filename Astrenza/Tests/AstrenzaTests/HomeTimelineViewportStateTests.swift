@@ -107,8 +107,8 @@ struct HomeTimelineViewportStateTests {
         #expect(state.returnAnchor == restoredViewport)
         #expect(state.viewportState == nil)
         #expect(!state.isRestoreProtectionActive)
-        #expect(!state.isDetachedFromLiveEdge)
-        #expect(state.isAtNewestWindow)
+        #expect(state.isDetachedFromLiveEdge)
+        #expect(!state.isAtNewestWindow)
         #expect(state.scrollCommand?.target == .top)
 
         let restoreAction = state.prepareHomeRetap(latestSavedViewportState: nil)
@@ -136,7 +136,7 @@ struct HomeTimelineViewportStateTests {
         #expect(!state.isAtNewestWindow)
         #expect(update == .init(
             isAtNewestWindow: false,
-            shouldUpdateState: true,
+            shouldUpdateState: false,
             shouldPublishToStore: true
         ))
     }
@@ -166,12 +166,158 @@ struct HomeTimelineViewportStateTests {
         ))
     }
 
+    @Test("LIVE requires the applied collection head to be the visible head")
+    func liveRequiresActualCollectionHead() {
+        var state = makeState()
+        _ = state.synchronizeLiveContext(.init(
+            selectedTimeline: .home,
+            isRealtimeAvailable: true,
+            pendingEventCount: 0
+        ))
+
+        let liveUpdate = state.observeViewport(observation(
+            collectionHead: "newest",
+            visibleHead: "newest"
+        ))
+
+        #expect(state.mode == .live)
+        #expect(state.isRealtimeModeEnabled)
+        #expect(liveUpdate.isAtNewestWindow)
+
+        let browsingUpdate = state.observeViewport(observation(
+            collectionHead: "newest",
+            visibleHead: "anchor"
+        ))
+
+        #expect(state.mode == .browsing)
+        #expect(!state.isRealtimeModeEnabled)
+        #expect(!browsingUpdate.isAtNewestWindow)
+    }
+
+    @Test("Pending events keep the physical head out of LIVE")
+    func pendingEventsDisableLiveAtPhysicalHead() {
+        var state = makeState()
+        _ = state.observeViewport(observation(
+            collectionHead: "newest",
+            visibleHead: "newest"
+        ))
+        _ = state.synchronizeLiveContext(.init(
+            selectedTimeline: .home,
+            isRealtimeAvailable: true,
+            pendingEventCount: 4
+        ))
+
+        #expect(state.mode == .browsing)
+        #expect(!state.isAtNewestWindow)
+        #expect(!state.isRealtimeModeEnabled)
+    }
+
+    @Test("Vertical interaction exits LIVE before the content offset changes")
+    func scrollActivityExitsLiveImmediately() {
+        var state = makeLiveState()
+
+        let update = state.setUserScrollActive(true)
+
+        #expect(state.mode == .browsing)
+        #expect(!update.isAtNewestWindow)
+        #expect(update.shouldPublishToStore)
+    }
+
+    @Test("UIKit pull-refresh protection cannot briefly re-enter LIVE")
+    func pullRefreshObservationDisablesLive() {
+        var state = makeLiveState()
+
+        _ = state.observeViewport(observation(
+            collectionHead: "newest",
+            visibleHead: "newest",
+            isUserScrollActive: false,
+            isPullRefreshing: true
+        ))
+
+        #expect(state.mode == .browsing)
+        #expect(!state.isRealtimeModeEnabled)
+        #expect(!state.isAtNewestWindow)
+    }
+
+    @Test("Refresh stays protected until its revision reaches UICollectionView")
+    func refreshWaitsForAppliedSourceRevision() {
+        var state = makeLiveState(sourceRevision: 10)
+
+        _ = state.beginRefresh()
+        _ = state.completeRefresh(didUpdate: true, sourceRevision: 11)
+
+        #expect(state.mode == .refreshing(expectedSourceRevision: 11))
+        #expect(!state.isRealtimeModeEnabled)
+
+        _ = state.observeViewport(observation(
+            collectionHead: "new",
+            visibleHead: "old",
+            sourceRevision: 11
+        ))
+
+        #expect(state.mode == .browsing)
+        #expect(!state.isRealtimeModeEnabled)
+    }
+
+    @Test("A physical head waits for forward EOSE before showing LIVE")
+    func physicalHeadWaitsForRealtimeReadiness() {
+        var state = makeState()
+        _ = state.synchronizeLiveContext(.init(
+            selectedTimeline: .home,
+            isRealtimeAvailable: false,
+            pendingEventCount: 0
+        ))
+        _ = state.observeViewport(observation(
+            collectionHead: "newest",
+            visibleHead: "newest"
+        ))
+
+        #expect(state.mode == .head)
+        #expect(state.isAtNewestWindow)
+        #expect(!state.isRealtimeModeEnabled)
+    }
+
     private func makeState(
         restoredViewportState: TimelineViewportState? = nil
     ) -> HomeTimelineViewportState {
         HomeTimelineViewportState(
             restoredViewportState: restoredViewportState,
             layoutCache: TimelineLayoutCache()
+        )
+    }
+
+    private func makeLiveState(
+        sourceRevision: Int = 1
+    ) -> HomeTimelineViewportState {
+        var state = makeState()
+        _ = state.synchronizeLiveContext(.init(
+            selectedTimeline: .home,
+            isRealtimeAvailable: true,
+            pendingEventCount: 0
+        ))
+        _ = state.observeViewport(observation(
+            collectionHead: "newest",
+            visibleHead: "newest",
+            sourceRevision: sourceRevision
+        ))
+        return state
+    }
+
+    private func observation(
+        collectionHead: TimelinePost.ID?,
+        visibleHead: TimelinePost.ID?,
+        isAtContentStart: Bool = true,
+        isUserScrollActive: Bool = false,
+        isPullRefreshing: Bool = false,
+        sourceRevision: Int = 1
+    ) -> TimelineFeedViewportObservation {
+        TimelineFeedViewportObservation(
+            collectionHeadPostID: collectionHead,
+            visibleHeadPostID: visibleHead,
+            isAtContentStart: isAtContentStart,
+            isUserScrollActive: isUserScrollActive,
+            isPullRefreshing: isPullRefreshing,
+            sourceRevision: sourceRevision
         )
     }
 

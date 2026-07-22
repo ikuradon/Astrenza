@@ -52,6 +52,7 @@ protocol HomeTimelineMaterializationCoordinating: AnyObject {
 
     func reloadNewestProjection(
         account: NostrAccount,
+        preserving anchorEventID: String?,
         onCompletion: ProjectionReloadHandler?
     )
 
@@ -135,11 +136,13 @@ final class HomeProjectionInteractionWorkflow {
 
     func reloadNewestProjection(
         account: NostrAccount,
+        preserving anchorEventID: String? = nil,
         onCompletion: HomeTimelineMaterializationCoordinating
             .ProjectionReloadHandler? = nil
     ) {
         materialization.reloadNewestProjection(
             account: account,
+            preserving: anchorEventID,
             onCompletion: onCompletion
         )
     }

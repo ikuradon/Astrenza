@@ -69,6 +69,10 @@ struct TimelineFeedCellPayloadStore {
 
 @MainActor
 struct TimelineFeedCollectionConfiguration {
+    typealias RefreshHandler = @MainActor (
+        _ anchor: TimelineFeedVisibleAnchor?
+    ) async -> Bool
+
     let entries: [TimelineFeedEntry]
     let leadingContent: TimelineFeedLeadingContent?
     let metrics: TimelineFeedCollectionMetrics
@@ -88,12 +92,14 @@ struct TimelineFeedCollectionConfiguration {
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
-    let onRefresh: (() async -> Bool)?
+    let onRefresh: RefreshHandler?
     let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
     let onBackfillGap:
         ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onScrollActivityChanged: (Bool) -> Void
+    let onViewportObservationChanged:
+        (TimelineFeedViewportObservation) -> Void
     let onInitialViewportReady: () -> Void
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void

@@ -57,6 +57,7 @@ struct HomeTimelineChromeView: View {
 
             if isVisible,
                selectedTimeline == .home,
+               !isRealtimeModeEnabled,
                timelineStore.visibleUnreadBadgeCount > 0,
                let unreadPillOffsetY = unreadPillPlacement.offsetY {
                 unreadBadge(offsetY: unreadPillOffsetY)

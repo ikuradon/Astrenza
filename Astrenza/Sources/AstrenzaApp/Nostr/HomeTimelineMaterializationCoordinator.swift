@@ -45,6 +45,7 @@ final class HomeTimelineMaterializationCoordinator {
 
     func reloadNewestProjection(
         account: NostrAccount,
+        preserving anchorEventID: String? = nil,
         onCompletion: ProjectionReloadHandler? = nil
     ) {
         let content = contentCoordinator.snapshot
@@ -53,7 +54,8 @@ final class HomeTimelineMaterializationCoordinator {
             await projectionController.reloadNewest(
                 accountID: account.pubkey,
                 followedPubkeys: content.followedPubkeys,
-                liveEvents: content.noteEvents
+                liveEvents: content.noteEvents,
+                preserving: anchorEventID
             )
         }
     }

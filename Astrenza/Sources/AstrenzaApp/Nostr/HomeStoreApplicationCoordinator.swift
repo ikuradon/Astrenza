@@ -148,7 +148,11 @@ extension HomeStoreApplicationCoordinator {
     }
 
     func reloadNewestProjectionWindow(account: NostrAccount) {
-        collaborators.projection.reloadNewestProjection(account: account)
+        collaborators.projection.reloadNewestProjection(
+            account: account,
+            preserving:
+                collaborators.viewport.restoreProjectionAnchorEventID
+        )
     }
 
     func reloadProjectionWindow(

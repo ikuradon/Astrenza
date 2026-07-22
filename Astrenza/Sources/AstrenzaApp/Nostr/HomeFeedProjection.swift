@@ -143,6 +143,10 @@ enum HomeFeedProjectionBuilder {
             limit: retainedLimit
         )
         let retainedEventIDs = Set(retainedMemberships.map(\.eventID))
+        let boundaryGap = disconnectedBoundaryGap(
+            current,
+            loaded
+        )
 
         var eventsByID = Dictionary(uniqueKeysWithValues: current.events.map { ($0.id, $0) })
         loaded.events.forEach { eventsByID[$0.id] = $0 }
@@ -159,6 +163,7 @@ enum HomeFeedProjectionBuilder {
             gaps: mergedGaps(
                 current.gaps,
                 loaded.gaps,
+                boundaryGap: boundaryGap,
                 retainedEventIDs: retainedEventIDs
             )
         )
@@ -211,10 +216,11 @@ enum HomeFeedProjectionBuilder {
     private static func mergedGaps(
         _ current: [NostrFeedGapRecord],
         _ loaded: [NostrFeedGapRecord],
+        boundaryGap: NostrFeedGapRecord?,
         retainedEventIDs: Set<String>
     ) -> [NostrFeedGapRecord] {
         var gapsByBoundary: [String: NostrFeedGapRecord] = [:]
-        (current + loaded).forEach { gap in
+        (current + loaded + [boundaryGap].compactMap { $0 }).forEach { gap in
             let key = "\(gap.newerEventID)\u{0}\(gap.olderEventID)"
             if let existing = gapsByBoundary[key], existing.updatedAt > gap.updatedAt {
                 return
@@ -235,6 +241,63 @@ enum HomeFeedProjectionBuilder {
                 }
                 return lhs.olderEventID < rhs.olderEventID
             }
+    }
+
+    private static func disconnectedBoundaryGap(
+        _ current: NostrFeedWindow,
+        _ loaded: NostrFeedWindow
+    ) -> NostrFeedGapRecord? {
+        let currentIDs = Set(current.memberships.map(\.eventID))
+        guard currentIDs.isDisjoint(
+            with: loaded.memberships.map(\.eventID)
+        ),
+        let currentNewest = orderedMemberships(current.memberships).first,
+        let currentOldest = orderedMemberships(current.memberships).last,
+        let loadedNewest = orderedMemberships(loaded.memberships).first,
+        let loadedOldest = orderedMemberships(loaded.memberships).last
+        else { return nil }
+
+        let newerBoundary: NostrFeedMembershipRecord
+        let olderBoundary: NostrFeedMembershipRecord
+        if membershipPrecedes(loadedOldest, currentNewest) {
+            newerBoundary = loadedOldest
+            olderBoundary = currentNewest
+        } else if membershipPrecedes(currentOldest, loadedNewest) {
+            newerBoundary = currentOldest
+            olderBoundary = loadedNewest
+        } else {
+            return nil
+        }
+
+        let timestamp = max(
+            newerBoundary.insertedAt,
+            olderBoundary.insertedAt
+        )
+        return NostrFeedGapRecord(
+            feedID: loaded.definition.feedID,
+            feedRevision: loaded.definition.revision,
+            newerEventID: newerBoundary.eventID,
+            olderEventID: olderBoundary.eventID,
+            state: .unresolved,
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+    }
+
+    private static func orderedMemberships(
+        _ memberships: [NostrFeedMembershipRecord]
+    ) -> [NostrFeedMembershipRecord] {
+        memberships.sorted(by: membershipPrecedes)
+    }
+
+    private static func membershipPrecedes(
+        _ lhs: NostrFeedMembershipRecord,
+        _ rhs: NostrFeedMembershipRecord
+    ) -> Bool {
+        if lhs.sortTimestamp != rhs.sortTimestamp {
+            return lhs.sortTimestamp > rhs.sortTimestamp
+        }
+        return lhs.eventID < rhs.eventID
     }
 
     private static func stableSpecificationHash(_ data: Data) -> String {

@@ -56,6 +56,10 @@ extension NostrHomeTimelineStore {
         composition.viewport.setRestoreProjectionAnchor(anchorEventID)
     }
 
+    func clearRestoreProjectionAnchorWithoutReload() {
+        composition.viewport.clearRestoreProjectionAnchorWithoutReload()
+    }
+
     func restoredViewportState(accountID: String, timelineKey: String) -> TimelineViewportState? {
         composition.projection.restoredViewportState(
             accountID: accountID,
@@ -94,8 +98,17 @@ extension NostrHomeTimelineStore {
     }
 
     @discardableResult
+    func applyPendingNewEvents(
+        preserving anchorPostID: TimelinePost.ID?
+    ) async -> Bool {
+        await composition.viewport.applyPendingNewEvents(
+            preserving: anchorPostID
+        )
+    }
+
+    @discardableResult
     func applyPendingNewEvents() async -> Bool {
-        await composition.viewport.applyPendingNewEvents()
+        await applyPendingNewEvents(preserving: nil)
     }
 
     func loadOlder() {

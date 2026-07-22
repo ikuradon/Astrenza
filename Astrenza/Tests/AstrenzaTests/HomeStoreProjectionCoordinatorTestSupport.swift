@@ -76,6 +76,7 @@ final class StoreProjectionInteractionSpy: HomeStoreProjectionInteracting {
 
     func reloadNewestProjection(
         account: NostrAccount,
+        preserving anchorEventID: String?,
         onCompletion: HomeTimelineMaterializationCoordinating
             .ProjectionReloadHandler?
     ) {

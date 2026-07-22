@@ -44,6 +44,7 @@ protocol HomeStoreProjectionInteracting: AnyObject {
     ) -> TimelineViewportState?
     func reloadNewestProjection(
         account: NostrAccount,
+        preserving anchorEventID: String?,
         onCompletion: HomeTimelineMaterializationCoordinating
             .ProjectionReloadHandler?
     )
@@ -117,11 +118,13 @@ final class HomeStoreProjectionCoordinator {
 
     func reloadNewestProjection(
         account: NostrAccount,
+        preserving anchorEventID: String? = nil,
         onCompletion: HomeTimelineMaterializationCoordinating
             .ProjectionReloadHandler? = nil
     ) {
         interaction.reloadNewestProjection(
             account: account,
+            preserving: anchorEventID,
             onCompletion: onCompletion
         )
     }

@@ -50,9 +50,8 @@ struct ViewportStoreSynchronizerTests {
         #expect(store.calls == [
             .setNewestWindow(false),
             .setRestoreAnchor("return-anchor"),
-            .markNewestRead,
-            .setRestoreAnchor(nil),
-            .setNewestWindow(true)
+            .clearRestoreAnchorWithoutReload,
+            .setNewestWindow(false)
         ])
     }
 
@@ -81,7 +80,7 @@ struct ViewportStoreSynchronizerTests {
             .setRestoreAnchor("restored"),
             .setNewestWindow(false),
             .setRestoreAnchor(nil),
-            .setNewestWindow(true)
+            .setNewestWindow(false)
         ])
     }
 
@@ -152,6 +151,7 @@ private final class ViewportStoreHandlerSpy:
         case setRestoreAnchor(String?)
         case setNewestWindow(Bool)
         case markNewestRead
+        case clearRestoreAnchorWithoutReload
     }
 
     private(set) var calls: [Call] = []
@@ -166,5 +166,9 @@ private final class ViewportStoreHandlerSpy:
 
     func markNewestMaterializedWindowRead() {
         calls.append(.markNewestRead)
+    }
+
+    func clearRestoreProjectionAnchorWithoutReload() {
+        calls.append(.clearRestoreAnchorWithoutReload)
     }
 }

@@ -21,12 +21,14 @@ struct TimelineFeedView: View {
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
-    let onRefresh: (() async -> Bool)?
+    let onRefresh: TimelineFeedCollectionConfiguration.RefreshHandler?
     let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
     let onBackfillGap:
         ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onScrollActivityChanged: (Bool) -> Void
+    let onViewportObservationChanged:
+        (TimelineFeedViewportObservation) -> Void
     let onInitialViewportReady: () -> Void
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
@@ -58,11 +60,14 @@ struct TimelineFeedView: View {
         onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         onOpenURL: @escaping (URL) -> Void,
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
-        onRefresh: (() async -> Bool)? = nil,
+        onRefresh: TimelineFeedCollectionConfiguration.RefreshHandler? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
+        onViewportObservationChanged: @escaping (
+            TimelineFeedViewportObservation
+        ) -> Void = { _ in },
         onInitialViewportReady: @escaping () -> Void = {},
         onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
@@ -98,6 +103,8 @@ struct TimelineFeedView: View {
             onBackfillGap: onBackfillGap,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onScrollActivityChanged: onScrollActivityChanged,
+            onViewportObservationChanged:
+                onViewportObservationChanged,
             onInitialViewportReady: onInitialViewportReady,
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,
@@ -131,11 +138,14 @@ struct TimelineFeedView: View {
         onOpenMedia: @escaping (TimelineMedia, Int) -> Void,
         onOpenURL: @escaping (URL) -> Void,
         onPostActionChoice: @escaping (TimelinePost, PostActionChoice) -> Void = { _, _ in },
-        onRefresh: (() async -> Bool)? = nil,
+        onRefresh: TimelineFeedCollectionConfiguration.RefreshHandler? = nil,
         onLoadOlderPost: ((TimelinePost.ID) -> Void)? = nil,
         onBackfillGap: ((TimelineGap, TimelineGapFillDirection) async -> Bool)? = nil,
         onScrollOffsetChanged: @escaping (CGFloat) -> Void,
         onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
+        onViewportObservationChanged: @escaping (
+            TimelineFeedViewportObservation
+        ) -> Void = { _ in },
         onInitialViewportReady: @escaping () -> Void = {},
         onViewportRestoreCompleted: @escaping (CGFloat) -> Void = { _ in },
         onViewportStateChanged: @escaping (TimelineViewportState) -> Void,
@@ -173,6 +183,8 @@ struct TimelineFeedView: View {
         self.onBackfillGap = onBackfillGap
         self.onScrollOffsetChanged = onScrollOffsetChanged
         self.onScrollActivityChanged = onScrollActivityChanged
+        self.onViewportObservationChanged =
+            onViewportObservationChanged
         self.onInitialViewportReady = onInitialViewportReady
         self.onViewportRestoreCompleted = onViewportRestoreCompleted
         self.onViewportStateChanged = onViewportStateChanged
@@ -235,6 +247,8 @@ struct TimelineFeedView: View {
             onBackfillGap: onBackfillGap,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onScrollActivityChanged: onScrollActivityChanged,
+            onViewportObservationChanged:
+                onViewportObservationChanged,
             onInitialViewportReady: onInitialViewportReady,
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,

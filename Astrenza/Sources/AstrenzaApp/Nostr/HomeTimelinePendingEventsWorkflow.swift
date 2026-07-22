@@ -3,6 +3,17 @@ import AstrenzaCore
 struct HomeTimelinePendingEventsState: Equatable, Sendable {
     let account: NostrAccount?
     let hasPendingProjectionReload: Bool
+    let presentationAnchorEventID: String?
+
+    init(
+        account: NostrAccount?,
+        hasPendingProjectionReload: Bool,
+        presentationAnchorEventID: String? = nil
+    ) {
+        self.account = account
+        self.hasPendingProjectionReload = hasPendingProjectionReload
+        self.presentationAnchorEventID = presentationAnchorEventID
+    }
 }
 
 struct HomeTimelinePendingEventsEffects: Sendable {
@@ -46,8 +57,17 @@ final class HomeTimelinePendingEventsWorkflow {
         let hadPendingEvents = buffer.hasEvents ||
             state.hasPendingProjectionReload
 
-        effects.applyProjectionViewportTransition(.resetToNewest)
+        if let anchorEventID = state.presentationAnchorEventID {
+            effects.applyProjectionViewportTransition(
+                .setRestoreAnchor(anchorEventID)
+            )
+        }
         effects.reloadNewestProjection(account)
+        if state.presentationAnchorEventID != nil {
+            effects.applyProjectionViewportTransition(
+                .setRestoreAnchor(nil)
+            )
+        }
         effects.materializeEntries()
         guard await effects.waitForPendingPresentation(), !Task.isCancelled else {
             return false

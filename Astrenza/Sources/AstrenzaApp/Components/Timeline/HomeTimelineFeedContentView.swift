@@ -20,12 +20,14 @@ struct HomeTimelineFeedContentView: View {
     let onOpenMedia: (TimelineMedia, Int) -> Void
     let onOpenURL: (URL) -> Void
     let onPostActionChoice: (TimelinePost, PostActionChoice) -> Void
-    let onRefresh: (() async -> Bool)?
+    let onRefresh: TimelineFeedCollectionConfiguration.RefreshHandler?
     let onLoadOlderPost: ((TimelinePost.ID) -> Void)?
     let onBackfillGap:
         ((TimelineGap, TimelineGapFillDirection) async -> Bool)?
     let onScrollOffsetChanged: (CGFloat) -> Void
     let onScrollActivityChanged: (Bool) -> Void
+    let onViewportObservationChanged:
+        (TimelineFeedViewportObservation) -> Void
     let onInitialViewportReady: () -> Void
     let onViewportRestoreCompleted: (CGFloat) -> Void
     let onViewportStateChanged: (TimelineViewportState) -> Void
@@ -60,6 +62,8 @@ struct HomeTimelineFeedContentView: View {
             onBackfillGap: hasLiveAccount ? onBackfillGap : nil,
             onScrollOffsetChanged: onScrollOffsetChanged,
             onScrollActivityChanged: onScrollActivityChanged,
+            onViewportObservationChanged:
+                onViewportObservationChanged,
             onInitialViewportReady: onInitialViewportReady,
             onViewportRestoreCompleted: onViewportRestoreCompleted,
             onViewportStateChanged: onViewportStateChanged,

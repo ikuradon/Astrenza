@@ -29,7 +29,8 @@ protocol HomeStoreViewportInteracting: AnyObject {
         _ context: HomeTimelineViewportInteractionContext
     )
     func applyPendingNewEvents(
-        _ context: HomeTimelineViewportInteractionContext
+        _ context: HomeTimelineViewportInteractionContext,
+        preserving anchorPostID: TimelinePost.ID?
     ) async -> Bool
     func clearPendingEvents(
         _ context: HomeTimelineViewportInteractionContext
@@ -134,6 +135,10 @@ final class HomeStoreViewportCoordinator {
         )
     }
 
+    func clearRestoreProjectionAnchorWithoutReload() {
+        _ = projection.apply(.setRestoreAnchor(nil))
+    }
+
     func refresh() {
         interaction.refresh(contexts.viewportContext())
     }
@@ -176,7 +181,9 @@ final class HomeStoreViewportCoordinator {
     }
 
     @discardableResult
-    func applyPendingNewEvents() async -> Bool {
+    func applyPendingNewEvents(
+        preserving anchorPostID: TimelinePost.ID?
+    ) async -> Bool {
         if let pendingEventsApplication {
             return await pendingEventsApplication.task.value
         }
@@ -185,7 +192,10 @@ final class HomeStoreViewportCoordinator {
         let generation = pendingEventsApplicationGeneration
         let context = contexts.viewportContext()
         let task = Task { @MainActor [interaction] in
-            await interaction.applyPendingNewEvents(context)
+            await interaction.applyPendingNewEvents(
+                context,
+                preserving: anchorPostID
+            )
         }
         pendingEventsApplication = PendingEventsApplication(
             generation: generation,
@@ -196,6 +206,11 @@ final class HomeStoreViewportCoordinator {
             pendingEventsApplication = nil
         }
         return result
+    }
+
+    @discardableResult
+    func applyPendingNewEvents() async -> Bool {
+        await applyPendingNewEvents(preserving: nil)
     }
 
     func loadOlder() {

@@ -40,12 +40,16 @@ struct HomeTimelineView: View {
     }
 
     private var isRealtimeModeEnabled: Bool {
-        HomeTimelineLiveModePolicy.isEnabled(
+        viewport.isRealtimeModeEnabled
+    }
+
+    private var viewportLiveContext: HomeTimelineViewportLiveContext {
+        HomeTimelineViewportLiveContext(
             selectedTimeline: selectedTimeline,
-            isRealtime: liveTimelineStore.isHomeTimelineRealtime,
-            isAtNewestWindow: viewport.isAtNewestWindow,
-            isRestoreProtected: viewport.isRestoreProtectionActive,
-            isDetachedFromLiveEdge: viewport.isDetachedFromLiveEdge
+            isRealtimeAvailable:
+                liveTimelineStore.isHomeTimelineRealtime,
+            pendingEventCount:
+                liveTimelineStore.unmaterializedNewCount
         )
     }
 
@@ -176,6 +180,9 @@ struct HomeTimelineView: View {
             }
         }
         .onAppear(perform: completeInitialAppearanceIfNeeded)
+        .onChange(of: viewportLiveContext, initial: true) { _, context in
+            synchronizeTimelineLiveContext(context)
+        }
         .onChange(of: selectedTab) { _, newValue in
             handleTabSelection(newValue)
         }
@@ -253,6 +260,8 @@ private extension HomeTimelineView {
                 onBackfillGap: backfillVisibleTimelineGap,
                 onScrollOffsetChanged: handleTimelineScrollOffset,
                 onScrollActivityChanged: handleTimelineScrollActivityChanged,
+                onViewportObservationChanged:
+                    handleTimelineViewportObservation,
                 onInitialViewportReady: onInitialViewportReady,
                 onViewportRestoreCompleted: handleTimelineViewportRestoreCompleted,
                 onViewportStateChanged: saveTimelineViewportState,
@@ -323,12 +332,24 @@ private extension HomeTimelineView {
             viewport.applyScrollOffset(newChromeOffset)
         }
 
-        synchronizeTimelineNewestWindowState(for: offset)
     }
 
     func handleTimelineScrollActivityChanged(_ isActive: Bool) {
+        viewportStoreSynchronizer.applyNewestWindowUpdate(
+            viewport.setUserScrollActive(isActive),
+            context: timelineInteractionContext
+        )
         feedActions.setTimelineScrollActive(
             isActive,
+            context: timelineInteractionContext
+        )
+    }
+
+    func handleTimelineViewportObservation(
+        _ observation: TimelineFeedViewportObservation
+    ) {
+        viewportStoreSynchronizer.applyNewestWindowUpdate(
+            viewport.observeViewport(observation),
             context: timelineInteractionContext
         )
     }
@@ -350,23 +371,21 @@ private extension HomeTimelineView {
 
     func handleTimelineViewportRestoreCompleted(_ restoredOffset: CGFloat) {
         guard viewport.completeRestore() else { return }
-        synchronizeTimelineNewestWindowState(
-            for: restoredOffset,
-            forceStoreSync: true
+        viewportStoreSynchronizer.applyNewestWindowUpdate(
+            viewport.synchronizeLiveContext(
+                viewportLiveContext,
+                forceStoreSync: true
+            ),
+            context: timelineInteractionContext
         )
     }
 
-    func synchronizeTimelineNewestWindowState(
-        for offset: CGFloat,
-        forceStoreSync: Bool = false
+    func synchronizeTimelineLiveContext(
+        _ context: HomeTimelineViewportLiveContext
     ) {
         guard timelineInteractionContext.canMutateLiveHome else { return }
-        let update = viewport.updateNewestWindow(
-            for: offset,
-            forceStoreSync: forceStoreSync
-        )
         viewportStoreSynchronizer.applyNewestWindowUpdate(
-            update,
+            viewport.synchronizeLiveContext(context),
             context: timelineInteractionContext
         )
     }
@@ -521,13 +540,25 @@ private extension HomeTimelineView {
         )
     }
 
-    func refreshVisibleTimeline() async -> Bool {
-        await feedActions.refresh(context: timelineInteractionContext) {
-            viewportStoreSynchronizer.applyNewestWindowUpdate(
-                viewport.prepareRefresh(),
-                context: timelineInteractionContext
-            )
-        }
+    func refreshVisibleTimeline(
+        preserving anchor: TimelineFeedVisibleAnchor?
+    ) async -> Bool {
+        viewportStoreSynchronizer.applyRefreshPreparation(
+            viewport.beginRefresh(),
+            context: timelineInteractionContext
+        )
+        let didUpdate = await feedActions.refresh(
+            context: timelineInteractionContext,
+            preserving: anchor?.postID
+        )
+        viewportStoreSynchronizer.applyNewestWindowUpdate(
+            viewport.completeRefresh(
+                didUpdate: didUpdate,
+                sourceRevision: liveTimelineStore.resolvedContentRevision
+            ),
+            context: timelineInteractionContext
+        )
+        return didUpdate
     }
 
     func loadOlderVisibleTimeline(_: TimelinePost.ID) {

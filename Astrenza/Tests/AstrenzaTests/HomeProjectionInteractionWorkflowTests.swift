@@ -268,7 +268,9 @@ private final class MaterializationInteractionSpy:
     }
 
     func reloadNewestProjection(
-        account: NostrAccount, onCompletion: ProjectionReloadHandler?
+        account: NostrAccount,
+        preserving anchorEventID: String?,
+        onCompletion: ProjectionReloadHandler?
     ) {
         newestAccountID = account.pubkey
         onCompletion?(reloadNewestResult)

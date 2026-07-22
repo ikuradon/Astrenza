@@ -1,5 +1,140 @@
 import CoreGraphics
 
+struct TimelineFeedViewportObservation: Equatable {
+    let collectionHeadPostID: TimelinePost.ID?
+    let visibleHeadPostID: TimelinePost.ID?
+    let isAtContentStart: Bool
+    let isUserScrollActive: Bool
+    let isPullRefreshing: Bool
+    let sourceRevision: Int
+}
+
+struct HomeTimelineViewportLiveContext: Equatable {
+    let selectedTimeline: TimelineKind
+    let isRealtimeAvailable: Bool
+    let pendingEventCount: Int
+
+    static let inactive = HomeTimelineViewportLiveContext(
+        selectedTimeline: .home,
+        isRealtimeAvailable: false,
+        pendingEventCount: 0
+    )
+}
+
+enum HomeTimelineViewportMode: Equatable {
+    case restoring
+    case refreshing(expectedSourceRevision: Int?)
+    case browsing
+    case head
+    case live
+
+    var isAtNewestWindow: Bool {
+        self == .head || self == .live
+    }
+
+    var isLive: Bool {
+        self == .live
+    }
+}
+
+private struct HomeTimelineViewportMachine {
+    enum Intent {
+        case contextChanged(HomeTimelineViewportLiveContext)
+        case viewportObserved(TimelineFeedViewportObservation)
+        case scrollActivityChanged(Bool)
+        case restoreCompleted
+        case refreshBegan
+        case refreshCompleted(didUpdate: Bool, sourceRevision: Int)
+        case reset(isRestoring: Bool)
+        case invalidatePosition
+    }
+
+    private(set) var mode: HomeTimelineViewportMode
+    private var context = HomeTimelineViewportLiveContext.inactive
+    private var observation: TimelineFeedViewportObservation?
+    private var isRestoreActive: Bool
+    private var isScrollActive = false
+    private var refreshExpectedSourceRevision: Int?
+    private var isRefreshActive = false
+
+    init(isRestoring: Bool) {
+        isRestoreActive = isRestoring
+        mode = isRestoring ? .restoring : .browsing
+    }
+
+    mutating func reduce(_ intent: Intent) {
+        switch intent {
+        case .contextChanged(let context):
+            self.context = context
+        case .viewportObserved(let observation):
+            self.observation = observation
+            isScrollActive = observation.isUserScrollActive
+        case .scrollActivityChanged(let isActive):
+            isScrollActive = isActive
+        case .restoreCompleted:
+            isRestoreActive = false
+        case .refreshBegan:
+            isRefreshActive = true
+            refreshExpectedSourceRevision = nil
+        case .refreshCompleted(let didUpdate, let sourceRevision):
+            if didUpdate {
+                refreshExpectedSourceRevision = sourceRevision
+            } else {
+                isRefreshActive = false
+                refreshExpectedSourceRevision = nil
+            }
+        case .reset(let isRestoring):
+            observation = nil
+            isRestoreActive = isRestoring
+            isScrollActive = false
+            isRefreshActive = false
+            refreshExpectedSourceRevision = nil
+        case .invalidatePosition:
+            observation = nil
+            isScrollActive = false
+        }
+        reevaluate()
+    }
+
+    private mutating func reevaluate() {
+        if isRestoreActive {
+            mode = .restoring
+            return
+        }
+
+        if isRefreshActive {
+            if let expectedRevision = refreshExpectedSourceRevision,
+               let observation,
+               observation.sourceRevision >= expectedRevision {
+                isRefreshActive = false
+                refreshExpectedSourceRevision = nil
+            } else {
+                mode = .refreshing(
+                    expectedSourceRevision: refreshExpectedSourceRevision
+                )
+                return
+            }
+        }
+
+        guard !isScrollActive,
+              context.pendingEventCount == 0,
+              let observation,
+              !observation.isPullRefreshing,
+              observation.isAtContentStart,
+              let collectionHeadPostID = observation.collectionHeadPostID,
+              collectionHeadPostID == observation.visibleHeadPostID
+        else {
+            mode = .browsing
+            return
+        }
+
+        mode = context.selectedTimeline == .home &&
+            context.isRealtimeAvailable
+            ? .live
+            : .head
+    }
+}
+
 struct HomeTimelineViewportState {
     struct NewestWindowUpdate: Equatable {
         let isAtNewestWindow: Bool
@@ -20,6 +155,7 @@ struct HomeTimelineViewportState {
     private(set) var scrollCommand: TimelineScrollCommand?
     private(set) var viewportState: TimelineViewportState?
     private(set) var layoutCache: TimelineLayoutCache
+    private var machine: HomeTimelineViewportMachine
 
     init(
         restoredViewportState: TimelineViewportState?,
@@ -30,6 +166,9 @@ struct HomeTimelineViewportState {
         isAtNewestWindow = restoredViewportState == nil
         isRestoreProtectionActive = restoredViewportState != nil
         isDetachedFromLiveEdge = restoredViewportState != nil
+        machine = HomeTimelineViewportMachine(
+            isRestoring: restoredViewportState != nil
+        )
     }
 
     var topChromeCollapseProgress: CGFloat {
@@ -38,6 +177,14 @@ struct HomeTimelineViewportState {
 
     var isHomeReturnMode: Bool {
         returnAnchor != nil
+    }
+
+    var mode: HomeTimelineViewportMode {
+        machine.mode
+    }
+
+    var isRealtimeModeEnabled: Bool {
+        machine.mode.isLive
     }
 
     func shouldDismissFloatingMenus(for offset: CGFloat) -> Bool {
@@ -59,7 +206,53 @@ struct HomeTimelineViewportState {
     mutating func completeRestore() -> Bool {
         guard isRestoreProtectionActive else { return false }
         isRestoreProtectionActive = false
+        _ = applyMachineIntent(.restoreCompleted)
         return true
+    }
+
+    mutating func synchronizeLiveContext(
+        _ context: HomeTimelineViewportLiveContext,
+        forceStoreSync: Bool = false
+    ) -> NewestWindowUpdate {
+        applyMachineIntent(
+            .contextChanged(context),
+            forceStoreSync: forceStoreSync
+        )
+    }
+
+    mutating func observeViewport(
+        _ observation: TimelineFeedViewportObservation,
+        forceStoreSync: Bool = false
+    ) -> NewestWindowUpdate {
+        applyMachineIntent(
+            .viewportObserved(observation),
+            forceStoreSync: forceStoreSync
+        )
+    }
+
+    mutating func setUserScrollActive(
+        _ isActive: Bool
+    ) -> NewestWindowUpdate {
+        applyMachineIntent(.scrollActivityChanged(isActive))
+    }
+
+    mutating func beginRefresh() -> NewestWindowUpdate {
+        clearReturnAnchor()
+        releaseRestoreProtection(clearViewportState: true)
+        return applyMachineIntent(.refreshBegan, forceStoreSync: true)
+    }
+
+    mutating func completeRefresh(
+        didUpdate: Bool,
+        sourceRevision: Int
+    ) -> NewestWindowUpdate {
+        applyMachineIntent(
+            .refreshCompleted(
+                didUpdate: didUpdate,
+                sourceRevision: sourceRevision
+            ),
+            forceStoreSync: !didUpdate
+        )
     }
 
     mutating func updateNewestWindow(
@@ -96,14 +289,14 @@ struct HomeTimelineViewportState {
         if let returnAnchor {
             isDetachedFromLiveEdge = true
             isAtNewestWindow = false
+            _ = applyMachineIntent(.invalidatePosition)
             scrollCommand = TimelineScrollCommand(target: .viewport(returnAnchor))
             self.returnAnchor = nil
             return .restore(returnAnchor)
         }
 
-        isDetachedFromLiveEdge = false
         returnAnchor = latestSavedViewportState ?? currentViewportState
-        isAtNewestWindow = true
+        _ = applyMachineIntent(.invalidatePosition)
         scrollCommand = TimelineScrollCommand(target: .top)
         return .showNewest
     }
@@ -128,10 +321,18 @@ struct HomeTimelineViewportState {
         isDetachedFromLiveEdge = restoredViewportState != nil
         isAtNewestWindow = restoredViewportState == nil
         self.layoutCache = layoutCache
+        _ = applyMachineIntent(
+            .reset(isRestoring: restoredViewportState != nil),
+            forceStoreSync: true
+        )
     }
 
     mutating func releaseRestoreProtection(clearViewportState: Bool) {
+        let wasRestoreProtected = isRestoreProtectionActive
         isRestoreProtectionActive = false
+        if wasRestoreProtected {
+            _ = applyMachineIntent(.restoreCompleted)
+        }
         if clearViewportState {
             viewportState = nil
         }
@@ -143,6 +344,22 @@ struct HomeTimelineViewportState {
 
     mutating func applyLayoutCache(_ cache: TimelineLayoutCache) {
         layoutCache = cache
+    }
+
+    private mutating func applyMachineIntent(
+        _ intent: HomeTimelineViewportMachine.Intent,
+        forceStoreSync: Bool = false
+    ) -> NewestWindowUpdate {
+        let previousIsAtNewestWindow = isAtNewestWindow
+        machine.reduce(intent)
+        isAtNewestWindow = machine.mode.isAtNewestWindow
+        isDetachedFromLiveEdge = !isAtNewestWindow
+        let didChange = previousIsAtNewestWindow != isAtNewestWindow
+        return NewestWindowUpdate(
+            isAtNewestWindow: isAtNewestWindow,
+            shouldUpdateState: didChange,
+            shouldPublishToStore: forceStoreSync || didChange
+        )
     }
 }
 

@@ -152,7 +152,8 @@ extension HomeFeedProjectionController {
     func reloadNewest(
         accountID: String,
         followedPubkeys: [String],
-        liveEvents: [NostrEvent]
+        liveEvents: [NostrEvent],
+        preserving anchorEventID: String? = nil
     ) async -> NostrFeedWindow? {
         guard await ensureDefinition(
             accountID: accountID,
@@ -160,6 +161,7 @@ extension HomeFeedProjectionController {
             liveEvents: liveEvents
         ) else { return nil }
         guard let definition else { return nil }
+        let currentWindow = window
         let loadGeneration = beginWindowLoad()
         guard let loaded = try? await windowLoader.load(
             HomeFeedWindowLoadRequest(
@@ -171,8 +173,29 @@ extension HomeFeedProjectionController {
             generation: loadGeneration,
             definition: definition
         ) else { return nil }
-        window = loaded
-        return loaded
+        let mergeAnchorEventID = currentWindow.flatMap { currentWindow in
+            if let anchorEventID,
+               currentWindow.memberships.contains(where: {
+                   $0.eventID == anchorEventID
+               }) {
+                return anchorEventID
+            }
+            return currentWindow.memberships.first?.eventID
+        }
+        let resolvedWindow: NostrFeedWindow
+        if let mergeAnchorEventID,
+           let currentWindow {
+            resolvedWindow = HomeFeedProjectionBuilder.mergedWindow(
+                currentWindow,
+                with: loaded,
+                centeredOn: mergeAnchorEventID,
+                retainedLimit: retainedWindowLimit
+            )
+        } else {
+            resolvedWindow = loaded
+        }
+        window = resolvedWindow
+        return resolvedWindow
     }
 
     @discardableResult

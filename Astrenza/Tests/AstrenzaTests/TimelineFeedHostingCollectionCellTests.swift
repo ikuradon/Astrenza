@@ -1090,6 +1090,7 @@ struct TimelineFeedHostingCollectionCellTests {
             onBackfillGap: nil,
             onScrollOffsetChanged: { _ in },
             onScrollActivityChanged: { _ in },
+            onViewportObservationChanged: { _ in },
             onInitialViewportReady: {},
             onViewportRestoreCompleted: { _ in },
             onViewportStateChanged: { _ in },
