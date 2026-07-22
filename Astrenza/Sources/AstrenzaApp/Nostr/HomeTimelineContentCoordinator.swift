@@ -81,24 +81,18 @@ final class HomeTimelineContentCoordinator {
     }
 
     func replace(
-        with incoming: NostrHomeTimelineState,
-        accountID: String?
+        with incoming: NostrHomeTimelineState
     ) -> HomeTimelineContentSnapshot {
-        let storedRelayListEvent = accountID.flatMap { accountID in
-            try? eventStore?.latestReplaceableEvent(pubkey: accountID, kind: 10_002)
-        }
-        let storedContactListEvent = accountID.flatMap { accountID in
-            try? eventStore?.latestReplaceableEvent(pubkey: accountID, kind: 3)
-        }
+        // `NostrHomeTimelineState` は、MainActorへ届く前に永続化／loader workerで
+        // hydrate済みです。ここでreplaceable headを再検索すると処理が重複し、
+        // 大きなfollow集合の同期read中に起動アニメーションを止めてしまいます。
         let effectiveRelayListEvent = freshestReplaceableEvent([
             state.relayListEvent,
-            incoming.relayListEvent,
-            storedRelayListEvent
+            incoming.relayListEvent
         ])
         let effectiveContactListEvent = freshestReplaceableEvent([
             state.contactListEvent,
-            incoming.contactListEvent,
-            storedContactListEvent
+            incoming.contactListEvent
         ])
         let readRelays = NostrRelayList.parse(from: effectiveRelayListEvent).readRelays
         let effectiveRelays: [String]
@@ -116,13 +110,8 @@ final class HomeTimelineContentCoordinator {
         } else {
             effectiveFollowedPubkeys = incoming.followedPubkeys
         }
-        let storedAuthorRelayListEvents = (try? eventStore?.latestReplaceableEvents(
-            pubkeys: Set(effectiveFollowedPubkeys),
-            kind: 10_002
-        )) ?? []
         let effectiveAuthorRelayListEvents = freshestReplaceableEventsByAuthor(
-            state.authorRelayListEvents + incoming.authorRelayListEvents +
-                storedAuthorRelayListEvents,
+            state.authorRelayListEvents + incoming.authorRelayListEvents,
             authors: Set(effectiveFollowedPubkeys)
         )
 

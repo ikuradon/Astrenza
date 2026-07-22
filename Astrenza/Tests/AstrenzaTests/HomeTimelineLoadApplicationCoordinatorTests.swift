@@ -50,6 +50,43 @@ struct HomeTimelineLoadApplicationTests {
         #expect(system.lifecycle.hasCompletedRuntimeBootstrap)
     }
 
+    @Test("Loaded state is hydrated before MainActor application")
+    func loadedStateAwaitsHydration() async {
+        let hydratedRelays = ["wss://hydrated.example"]
+        let system = RemoteLoadApplicationTestSystem(hydrateState: { state, _ in
+            NostrHomeTimelineState(
+                relays: hydratedRelays,
+                followedPubkeys: state.followedPubkeys,
+                noteEvents: state.noteEvents,
+                metadataEvents: state.metadataEvents,
+                relayListEvent: state.relayListEvent,
+                contactListEvent: state.contactListEvent,
+                authorRelayListEvents: state.authorRelayListEvents,
+                nip05Resolutions: state.nip05Resolutions,
+                hasMoreOlder: state.hasMoreOlder,
+                relaySyncEvents: state.relaySyncEvents
+            )
+        })
+
+        await system.application.apply(
+            .loaded(system.state),
+            context: system.context(operation: .initial),
+            handlers: system.handlers()
+        )
+
+        let hydratedState = NostrHomeTimelineState(
+            relays: hydratedRelays,
+            followedPubkeys: system.state.followedPubkeys,
+            noteEvents: [],
+            metadataEvents: [],
+            hasMoreOlder: system.state.hasMoreOlder
+        )
+        #expect(system.probe.steps.first == .command(.replaceState(
+            hydratedState,
+            replacement: .complete
+        )))
+    }
+
     @Test("A loaded state rebuilds the restored projection instead of newest")
     func loadedStateReappliesRestoredProjection() async {
         let system = RemoteLoadApplicationTestSystem()
@@ -332,7 +369,10 @@ private struct RemoteLoadApplicationTestSystem {
 
     init(
         hasMoreOlder: Bool = true,
-        resolvedRelays: [String] = ["wss://relay.example"]
+        resolvedRelays: [String] = ["wss://relay.example"],
+        hydrateState: @escaping HomeTimelineLoadApplicationCoordinator.StateHydrator = {
+            state, _ in state
+        }
     ) {
         let account = NostrAccount(
             pubkey: String(repeating: "a", count: 64),
@@ -352,7 +392,8 @@ private struct RemoteLoadApplicationTestSystem {
         self.lifecycle = lifecycle
         self.lifecycleToken = lifecycle.begin(accountID: account.pubkey)
         self.application = HomeTimelineLoadApplicationCoordinator(
-            lifecycleCoordinator: lifecycle
+            lifecycleCoordinator: lifecycle,
+            hydrateState: hydrateState
         )
     }
 

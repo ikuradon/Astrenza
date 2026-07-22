@@ -272,8 +272,7 @@ struct HomeTimelineRuntimeEventApplicationCoordinatorTests {
                 followedPubkeys: [fixture.account.pubkey],
                 noteEvents: events,
                 metadataEvents: []
-            ),
-            accountID: fixture.account.pubkey
+            )
         )
     }
 

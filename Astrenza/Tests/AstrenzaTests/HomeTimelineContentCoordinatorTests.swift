@@ -4,9 +4,9 @@ import Testing
 
 @Suite("Home timeline content coordinator")
 struct HomeTimelineContentCoordinatorTests {
-    @Test("Stored replaceable heads override stale loader configuration")
+    @Test("Hydrated replacement does not query persisted heads again on MainActor")
     @MainActor
-    func storedReplaceableHeadsOverrideStaleLoaderConfiguration() throws {
+    func hydratedReplacementDoesNotRequeryPersistedHeads() throws {
         let eventStore = try NostrEventStore.inMemory()
         let accountID = String(repeating: "a", count: 64)
         let firstFollow = String(repeating: "b", count: 64)
@@ -56,52 +56,55 @@ struct HomeTimelineContentCoordinatorTests {
                 relayListEvent: staleRelayList,
                 contactListEvent: staleContactList,
                 hasMoreOlder: false
-            ),
-            accountID: accountID
+            )
         )
 
-        #expect(snapshot.resolvedRelays == [
-            "wss://relay-a.example",
-            "wss://relay-b.example"
-        ])
-        #expect(snapshot.followedPubkeys == [firstFollow, secondFollow])
+        #expect(snapshot.resolvedRelays == ["wss://stale.example"])
+        #expect(snapshot.followedPubkeys == [String(repeating: "d", count: 64)])
         #expect(snapshot.noteEvents == [note])
         #expect(snapshot.metadataEvents == [metadata])
-        #expect(snapshot.relayListEvent == storedRelayList)
-        #expect(snapshot.contactListEvent == storedContactList)
+        #expect(snapshot.relayListEvent == staleRelayList)
+        #expect(snapshot.contactListEvent == staleContactList)
         #expect(!snapshot.hasMoreOlder)
     }
 
     @Test("A newer empty contact list remains an explicit unfollow-all")
     @MainActor
-    func newerEmptyContactListRemainsExplicitUnfollowAll() throws {
-        let eventStore = try NostrEventStore.inMemory()
+    func newerEmptyContactListRemainsExplicitUnfollowAll() {
         let accountID = String(repeating: "a", count: 64)
+        let followed = String(repeating: "b", count: 64)
         let emptyContactList = event(
             id: "1",
             pubkey: accountID,
             createdAt: 300,
             kind: 3
         )
-        try eventStore.save(events: [emptyContactList])
         let staleContactList = event(
             id: "2",
             pubkey: accountID,
             createdAt: 100,
             kind: 3,
-            tags: [["p", String(repeating: "b", count: 64)]]
+            tags: [["p", followed]]
         )
-        let coordinator = HomeTimelineContentCoordinator(eventStore: eventStore)
+        let coordinator = HomeTimelineContentCoordinator(eventStore: nil)
+        _ = coordinator.replace(
+            with: NostrHomeTimelineState(
+                relays: [],
+                followedPubkeys: [followed],
+                noteEvents: [],
+                metadataEvents: [],
+                contactListEvent: staleContactList
+            )
+        )
 
         let snapshot = coordinator.replace(
             with: NostrHomeTimelineState(
                 relays: [],
-                followedPubkeys: [String(repeating: "b", count: 64)],
+                followedPubkeys: [],
                 noteEvents: [],
                 metadataEvents: [],
-                contactListEvent: staleContactList
-            ),
-            accountID: accountID
+                contactListEvent: emptyContactList
+            )
         )
 
         #expect(snapshot.followedPubkeys.isEmpty)
@@ -120,8 +123,7 @@ struct HomeTimelineContentCoordinatorTests {
                 followedPubkeys: [],
                 noteEvents: [],
                 metadataEvents: []
-            ),
-            accountID: nil
+            )
         )
 
         #expect(snapshot.resolvedRelays == ["wss://discovery.example"])
@@ -143,8 +145,7 @@ struct HomeTimelineContentCoordinatorTests {
                 followedPubkeys: [],
                 noteEvents: [],
                 metadataEvents: [stale]
-            ),
-            accountID: nil
+            )
         )
 
         let first = coordinator.rememberLatestMetadataEvent(candidate)
@@ -179,8 +180,7 @@ struct HomeTimelineContentCoordinatorTests {
                 followedPubkeys: [],
                 noteEvents: [ownedTarget, foreignTarget, untouched],
                 metadataEvents: []
-            ),
-            accountID: nil
+            )
         )
 
         let anchor = coordinator.removeEventsDeletedFromCurrentProjection(by: deletion)
@@ -230,8 +230,7 @@ struct HomeTimelineContentCoordinatorTests {
                 noteEvents: [note],
                 metadataEvents: [metadata],
                 hasMoreOlder: false
-            ),
-            accountID: accountID
+            )
         )
         let diagnostic = NostrRelaySyncEventRecord(
             accountID: accountID,
@@ -280,6 +279,88 @@ struct HomeTimelineContentCoordinatorTests {
             kind: kind,
             tags: tags,
             content: kind == 0 ? #"{"name":"profile"}"# : "event",
+            sig: String(repeating: "0", count: 128)
+        )
+    }
+}
+
+@Suite("Home timeline persisted configuration hydration")
+struct HomeTimelinePersistedConfigurationHydrationTests {
+    @Test("Local replaceable heads hydrate a stale remote state off MainActor")
+    func localReplaceableHeadsHydrateRemoteState() async throws {
+        let eventStore = try NostrEventStore.inMemory()
+        let accountID = String(repeating: "a", count: 64)
+        let followed = String(repeating: "b", count: 64)
+        let staleFollow = String(repeating: "c", count: 64)
+        let relayList = event(
+            id: "1",
+            pubkey: accountID,
+            createdAt: 300,
+            kind: 10_002,
+            tags: [["r", "wss://current.example", "read"]]
+        )
+        let contactList = event(
+            id: "2",
+            pubkey: accountID,
+            createdAt: 300,
+            kind: 3,
+            tags: [["p", followed]]
+        )
+        let authorRelayList = event(
+            id: "3",
+            pubkey: followed,
+            createdAt: 300,
+            kind: 10_002,
+            tags: [["r", "wss://author.example", "write"]]
+        )
+        try eventStore.save(events: [relayList, contactList, authorRelayList])
+        let worker = HomeTimelinePersistenceWorker(eventStore: eventStore)
+
+        let hydrated = await worker.hydratingReplaceableConfiguration(
+            in: NostrHomeTimelineState(
+                relays: ["wss://stale.example"],
+                followedPubkeys: [staleFollow],
+                noteEvents: [],
+                metadataEvents: [],
+                relayListEvent: event(
+                    id: "4",
+                    pubkey: accountID,
+                    createdAt: 100,
+                    kind: 10_002,
+                    tags: [["r", "wss://stale.example", "read"]]
+                ),
+                contactListEvent: event(
+                    id: "5",
+                    pubkey: accountID,
+                    createdAt: 100,
+                    kind: 3,
+                    tags: [["p", staleFollow]]
+                )
+            ),
+            accountID: accountID
+        )
+
+        #expect(hydrated.relays == ["wss://current.example"])
+        #expect(hydrated.followedPubkeys == [followed])
+        #expect(hydrated.relayListEvent == relayList)
+        #expect(hydrated.contactListEvent == contactList)
+        #expect(hydrated.authorRelayListEvents == [authorRelayList])
+    }
+
+    private func event(
+        id: Character,
+        pubkey: String,
+        createdAt: Int,
+        kind: Int,
+        tags: [[String]]
+    ) -> NostrEvent {
+        NostrEvent(
+            id: String(repeating: String(id), count: 64),
+            pubkey: pubkey,
+            createdAt: createdAt,
+            kind: kind,
+            tags: tags,
+            content: "",
             sig: String(repeating: "0", count: 128)
         )
     }

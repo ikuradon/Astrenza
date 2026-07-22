@@ -83,8 +83,8 @@ final class HomeTimelineStateApplicationCoordinator {
                 await snapshotCoordinator.restoredState(accountID: accountID)
             },
             resetPresentation: presentationCoordinator.reset,
-            replaceContent: { state, accountID in
-                contentCoordinator.replace(with: state, accountID: accountID)
+            replaceContent: { state, _ in
+                contentCoordinator.replace(with: state)
             },
             resetContent: contentCoordinator.reset,
             replaceNIP05Resolutions: dependencyCoordinator.replaceNIP05Resolutions,

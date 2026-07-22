@@ -185,8 +185,7 @@ struct RuntimeEventCoordinatorTestSystem {
                 followedPubkeys: [followedPubkey],
                 noteEvents: [event],
                 metadataEvents: []
-            ),
-            accountID: accountID
+            )
         )
         let lifecycle = HomeTimelineLifecycleCoordinator()
         let lifecycleToken = lifecycle.begin(accountID: accountID)

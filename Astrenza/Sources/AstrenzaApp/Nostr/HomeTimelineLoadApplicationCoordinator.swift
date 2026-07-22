@@ -69,10 +69,20 @@ struct HomeTimelineLoadApplicationHandlers: Sendable {
 
 @MainActor
 final class HomeTimelineLoadApplicationCoordinator {
-    private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
+    typealias StateHydrator = @Sendable (
+        _ state: NostrHomeTimelineState,
+        _ accountID: String
+    ) async -> NostrHomeTimelineState
 
-    init(lifecycleCoordinator: HomeTimelineLifecycleCoordinator) {
+    private let lifecycleCoordinator: HomeTimelineLifecycleCoordinator
+    private let hydrateState: StateHydrator
+
+    init(
+        lifecycleCoordinator: HomeTimelineLifecycleCoordinator,
+        hydrateState: @escaping StateHydrator = { state, _ in state }
+    ) {
         self.lifecycleCoordinator = lifecycleCoordinator
+        self.hydrateState = hydrateState
     }
 
     func apply(
@@ -97,6 +107,8 @@ final class HomeTimelineLoadApplicationCoordinator {
         context: HomeTimelineLoadApplicationContext,
         handlers: HomeTimelineLoadApplicationHandlers
     ) async {
+        let hydratedState = await hydrateState(state, context.account.pubkey)
+        guard isActive(context) else { return }
         let replacement: HomeTimelineLoadStateReplacement
         switch context.operation {
         case .runtimeBootstrap:
@@ -104,7 +116,7 @@ final class HomeTimelineLoadApplicationCoordinator {
         case .initial, .refresh, .older:
             replacement = .complete
         }
-        handlers.perform(.replaceState(state, replacement: replacement))
+        handlers.perform(.replaceState(hydratedState, replacement: replacement))
 
         if case .runtimeBootstrap = context.operation {
             lifecycleCoordinator.setRuntimeBootstrapCompleted(

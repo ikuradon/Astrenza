@@ -70,6 +70,58 @@ actor HomeTimelinePersistenceWorker {
         }
     }
 
+    /// Remote bootstrapがローカルheadより古いreplaceable eventで完了する競合を、
+    /// 永続化actor上で解決し、MainActorにはmemory stateの適用だけを残します。
+    func hydratingReplaceableConfiguration(
+        in incoming: NostrHomeTimelineState,
+        accountID: String
+    ) -> NostrHomeTimelineState {
+        let storedRelayListEvent = try? eventStore.latestReplaceableEvent(
+            pubkey: accountID,
+            kind: 10_002
+        )
+        let storedContactListEvent = try? eventStore.latestReplaceableEvent(
+            pubkey: accountID,
+            kind: 3
+        )
+        let relayListEvent = freshestReplaceableEvent(
+            incoming.relayListEvent,
+            storedRelayListEvent
+        )
+        let contactListEvent = freshestReplaceableEvent(
+            incoming.contactListEvent,
+            storedContactListEvent
+        )
+        let followedPubkeys: [String]
+        if contactListEvent?.id != incoming.contactListEvent?.id {
+            followedPubkeys = NostrContactList.pubkeys(from: contactListEvent)
+        } else {
+            followedPubkeys = incoming.followedPubkeys
+        }
+        let storedAuthorRelayListEvents = (try? eventStore.latestReplaceableEvents(
+            pubkeys: Set(followedPubkeys),
+            kind: 10_002
+        )) ?? []
+        let authorRelayListEvents = freshestRelayListEventsByAuthor(
+            incoming.authorRelayListEvents + storedAuthorRelayListEvents,
+            authors: Set(followedPubkeys)
+        )
+        let persistedReadRelays = NostrRelayList.parse(from: relayListEvent).readRelays
+
+        return NostrHomeTimelineState(
+            relays: persistedReadRelays.isEmpty ? incoming.relays : persistedReadRelays,
+            followedPubkeys: followedPubkeys,
+            noteEvents: incoming.noteEvents,
+            metadataEvents: incoming.metadataEvents,
+            relayListEvent: relayListEvent,
+            contactListEvent: contactListEvent,
+            authorRelayListEvents: authorRelayListEvents,
+            nip05Resolutions: incoming.nip05Resolutions,
+            hasMoreOlder: incoming.hasMoreOlder,
+            relaySyncEvents: incoming.relaySyncEvents
+        )
+    }
+
     func restoredReadState(feedID: String) throws -> NostrFeedReadStateRecord? {
         try eventStore.feedReadState(feedID: feedID)
     }
@@ -119,5 +171,34 @@ actor HomeTimelinePersistenceWorker {
             readBoundary: boundary,
             updatedAt: updatedAt
         )
+    }
+
+    private func freshestReplaceableEvent(
+        _ lhs: NostrEvent?,
+        _ rhs: NostrEvent?
+    ) -> NostrEvent? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt ? lhs : rhs
+        }
+        return lhs.id <= rhs.id ? lhs : rhs
+    }
+
+    private func freshestRelayListEventsByAuthor(
+        _ events: [NostrEvent],
+        authors: Set<String>
+    ) -> [NostrEvent] {
+        let normalizedAuthors = Set(authors.map { $0.lowercased() })
+        var latestByAuthor: [String: NostrEvent] = [:]
+        for event in events where event.kind == 10_002 {
+            let author = event.pubkey.lowercased()
+            guard normalizedAuthors.contains(author) else { continue }
+            latestByAuthor[author] = freshestReplaceableEvent(
+                latestByAuthor[author],
+                event
+            )
+        }
+        return latestByAuthor.values.sorted { $0.pubkey < $1.pubkey }
     }
 }

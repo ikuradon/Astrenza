@@ -75,8 +75,7 @@ struct MaterializationOrderingTests {
                 followedPubkeys: [account.pubkey],
                 noteEvents: [event],
                 metadataEvents: []
-            ),
-            accountID: account.pubkey
+            )
         )
     }
 

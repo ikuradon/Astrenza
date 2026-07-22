@@ -276,8 +276,7 @@ private struct GapReconciliationApplicationTestSystem {
                     ? [newerEvent, olderEvent]
                     : [newerEvent],
                 metadataEvents: []
-            ),
-            accountID: accountID
+            )
         )
         let projection = HomeFeedProjectionController(eventStore: nil)
         projection.activate(

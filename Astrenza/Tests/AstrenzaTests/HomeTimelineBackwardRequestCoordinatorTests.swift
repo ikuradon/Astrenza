@@ -448,8 +448,7 @@ private struct BackwardRequestTestSystem {
                     : [model.newerEvent],
                 metadataEvents: [],
                 authorRelayListEvents: authorRelayListEvents
-            ),
-            accountID: model.account.pubkey
+            )
         )
         return content
     }

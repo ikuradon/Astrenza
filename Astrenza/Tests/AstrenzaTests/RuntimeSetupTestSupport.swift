@@ -191,8 +191,7 @@ struct RuntimeSetupTestSystem {
                 ],
                 metadataEvents: [],
                 contactListEvent: contactListEvent
-            ),
-            accountID: accountID
+            )
         )
         return coordinator
     }

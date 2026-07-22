@@ -184,10 +184,7 @@ struct HomeTimelineMaterializationCoordinatorTests {
         account: NostrAccount,
         in system: System
     ) {
-        _ = system.content.replace(
-            with: state(events: events, account: account),
-            accountID: account.pubkey
-        )
+        _ = system.content.replace(with: state(events: events, account: account))
     }
 
     private func installPersistedProjection(
@@ -216,7 +213,7 @@ struct HomeTimelineMaterializationCoordinatorTests {
             ),
             savedAt: 10
         )
-        _ = system.content.replace(with: state, accountID: account.pubkey)
+        _ = system.content.replace(with: state)
     }
 
     private func state(

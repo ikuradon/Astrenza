@@ -262,8 +262,7 @@ private struct BackwardCompletionTestSystem {
                 followedPubkeys: [accountID],
                 noteEvents: [],
                 metadataEvents: []
-            ),
-            accountID: accountID
+            )
         )
         let projection = HomeFeedProjectionController(eventStore: nil)
         projection.activate(

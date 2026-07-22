@@ -208,7 +208,16 @@ extension HomeTimelineStoreAssembly {
             refresh: refresh,
             olderPage: olderPage,
             outcomeApplication: HomeTimelineLoadApplicationCoordinator(
-                lifecycleCoordinator: coordination.lifecycleCoordinator
+                lifecycleCoordinator: coordination.lifecycleCoordinator,
+                hydrateState: { state, accountID in
+                    guard let worker = persistence.persistenceWorker else {
+                        return state
+                    }
+                    return await worker.hydratingReplaceableConfiguration(
+                        in: state,
+                        accountID: accountID
+                    )
+                }
             )
         )
         return HomeTimelineStoreLoadFeatures(
